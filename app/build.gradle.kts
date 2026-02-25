@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.20"
     alias(libs.plugins.kotlin.ksp)
+    id("com.diffplug.spotless") version "8.2.1"
 }
 
 val localProperties = Properties()
@@ -184,4 +185,15 @@ dependencies {
 
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.browser:browser:1.8.0")
+}
+
+spotless {
+    kotlin {
+        target("src/main/java/**/*.kt", "src/main/kotlin/**/*.kt")
+        licenseHeaderFile(rootProject.file("spotless/copyright.kt"))
+    }
+    cpp {
+        target("src/main/cpp/mobi_jni_bridge.c", "src/main/cpp/Woff2Converter.cpp")
+        licenseHeaderFile(rootProject.file("spotless/copyright.kt"))
+    }
 }
