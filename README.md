@@ -1,12 +1,27 @@
-# Episteme Reader
+<div align="center">
 
-A native Android document reader application built with Kotlin and Jetpack Compose.
+  <h1>
+    <img src="docs/ICON.png" height="48" style="vertical-align: middle; border-radius: 12px;" alt="Episteme Reader Icon"/> 
+    &nbsp;Episteme Reader
+  </h1>
 
-![Episteme Reader](docs/feature_graphic.png)
+  <p>A native Android document reader application built with Kotlin and Jetpack Compose.</p>
+
+  <a href="https://play.google.com/store/apps/details?id=com.aryan.reader">
+      <img alt="Get it on Google Play" src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" height="70"/>
+  </a>
+
+</div>
+
+<br/>
+
+![Episteme Reader Preview](docs/EPISTEME.png)
 
 ## Overview
 
 Episteme Reader is an offline-first application designed for reading various document formats. It leverages native Android technologies and C++ libraries to provide a performant reading experience with customization capabilities.
+
+> **Note:** This is the Open Source (OSS) edition of Episteme Reader. The version available on the Google Play Store is built from this core but includes additional proprietary features.
 
 ## Features
 
@@ -27,7 +42,7 @@ Episteme Reader is an offline-first application designed for reading various doc
 
 ### General
 *   **Text-to-Speech (TTS):** Read documents aloud using the system TTS engine.
-*   **File Management:** Built-in file browser and library organization.
+*   **File Management:** Built-in library organization.
 
 ## Architecture
 
@@ -35,14 +50,15 @@ Episteme Reader is an offline-first application designed for reading various doc
 *   **Architecture:** MVVM with Unidirectional Data Flow.
 *   **Database:** Room (SQLite) for metadata and annotations.
 *   **PDF Engine:** `pdfium-android` (Native PDFium bindings).
+*   **EPUB Engine:** Utilizes standard `WebView` for vertical scrolling mode, and a custom rendering engine for paginated mode.
 *   **Mobi Engine:** Custom JNI bindings to `libmobi`.
 
 ## Building from Source
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/episteme-oss.git
-    cd episteme-oss
+    git clone https://github.com/Aryan-Raj3112/episteme.git
+    cd episteme
     ```
 
 2.  **Build:**
@@ -53,13 +69,13 @@ Episteme Reader is an offline-first application designed for reading various doc
 
 ## Open Source Libraries
 
-This project uses the following open-source libraries:
+This project is made possible by the Android open-source ecosystem:
 
-*   [pdfium-android](https://github.com/barteksc/PdfiumAndroid)
-*   [libmobi](https://github.com/bfabiszewski/libmobi)
-*   [Coil](https://coil-kt.github.io/coil/)
-*   [Jsoup](https://jsoup.org/)
-*   [Flexmark](https://github.com/vsch/flexmark-java)
+*   **Core & UI:** AndroidX, Jetpack Compose, Kotlinx Serialization
+*   **Document Engines:** PdfiumAndroidKt (PDF), libmobi (MOBI/AZW3), Google WOFF2 (Fonts)
+*   **Parsers:** Jsoup (HTML/EPUB), Flexmark (Markdown)
+*   **Media & Image Loading:** Coil, Media3 (ExoPlayer)
+*   **Utilities:** Room (Database), Timber (Logging)
 
 ## License
 

@@ -78,6 +78,19 @@ android {
             )
         }
     }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
+            val flavor = variant.productFlavors.getOrNull(0)?.name ?: ""
+            val buildType = variant.buildType.name
+            val version = variant.versionName
+
+            output.outputFileName = "Episteme-$flavor-v$version-$buildType.apk"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
