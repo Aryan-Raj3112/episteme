@@ -1,8 +1,8 @@
 <div align="center">
 
   <h1>
-    <img src="docs/ICON.png" height="48" style="vertical-align: middle; border-radius: 12px;" alt="Episteme Reader Icon"/> 
-    &nbsp;Episteme Reader
+    <img src="docs/ICON.png" height="48" width="48" align="middle" alt="Episteme Reader Icon"/>
+    <span>&nbsp;Episteme Reader</span>
   </h1>
 
   <p>A native Android document reader application built with Kotlin and Jetpack Compose.</p>

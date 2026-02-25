@@ -1,6 +1,6 @@
 /*
  * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme Authors
+ * Copyright (C) 2026 Episteme
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
- * Electronic mail: epistemereader@gmail.com
+ * mail: epistemereader@gmail.com
  */
 package com.aryan.reader.epubreader
 
