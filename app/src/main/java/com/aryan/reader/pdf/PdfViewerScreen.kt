@@ -102,6 +102,8 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
@@ -588,6 +590,7 @@ fun PdfViewerScreen(
     var showBars by remember { mutableStateOf(true) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by remember { mutableStateOf<String?>(null) }
+    var isScrollLocked by remember { mutableStateOf(false) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
@@ -3208,6 +3211,7 @@ fun PdfViewerScreen(
                                                 virtualPage = virtualPage,
                                                 totalPages = totalDisplayPages,
                                                 isDarkMode = isPdfDarkMode,
+                                                isScrollLocked = isScrollLocked,
                                                 onScaleChanged = { newScale ->
                                                     if (pagerState.currentPage == pageIndex) {
                                                         currentPageScale = newScale
@@ -3597,6 +3601,7 @@ fun PdfViewerScreen(
                                             state = verticalReaderState,
                                             pdfDocument = docHolder,
                                             isDarkMode = isPdfDarkMode,
+                                            isScrollLocked = isScrollLocked,
                                             totalPages = totalDisplayPages,
                                             pageAspectRatios = ratiosHolder,
                                             virtualPages = virtualPages,
@@ -4016,6 +4021,14 @@ fun PdfViewerScreen(
                                     )
                                 }
 
+                                IconButton(onClick = { isScrollLocked = !isScrollLocked }) {
+                                    Icon(
+                                        imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                        contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
                                 IconButton(onClick = { isFullScreen = true }) {
                                     Icon(
                                         imageVector = Icons.Default.Fullscreen,
@@ -4064,29 +4077,6 @@ fun PdfViewerScreen(
                                             imageVector = Icons.Default.Brush,
                                             contentDescription = "Import SVG",
                                             tint = Color(0xFFE91E63)
-                                        )
-                                    }
-
-                                    IconButton(onClick = {
-                                        val page = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
-                                        val demoAnnos = DemoAnnotationGenerator.generateDemoAnnotations(page)
-
-                                        val existing = allAnnotations[page] ?: emptyList()
-                                        allAnnotations = allAnnotations + (page to (existing + demoAnnos))
-
-                                        demoAnnos.forEach { annot ->
-                                            undoStack.add(HistoryAction.Add(page, annot))
-                                        }
-                                        redoStack.clear()
-
-                                        coroutineScope.launch {
-                                            snackbarHostState.showSnackbar("Demo annotations injected!")
-                                        }
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Inject Demo Annotations",
-                                            tint = Color(0xFF2E7D32)
                                         )
                                     }
                                 }

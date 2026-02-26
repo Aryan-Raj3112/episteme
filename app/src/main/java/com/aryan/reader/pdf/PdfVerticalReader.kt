@@ -214,6 +214,7 @@ internal fun PdfVerticalReader(
     onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
     isAutoScrollPlaying: Boolean = false,
     isAutoScrollTempPaused: Boolean = false,
+    isScrollLocked: Boolean = false,
     autoScrollSpeed: Float = 1.0f,
     onInteractionListener: () -> Unit = {}
 ) {
@@ -837,7 +838,7 @@ internal fun PdfVerticalReader(
                     })
                 }
 
-                .pointerInput(totalDocHeight, isEditMode, selectedTool) {
+                .pointerInput(totalDocHeight, isEditMode, selectedTool, isScrollLocked) {
                     val tracker = VelocityTracker()
                     val decay = exponentialDecay<Float>()
                     val touchSlop = viewConfiguration.touchSlop
@@ -916,7 +917,9 @@ internal fun PdfVerticalReader(
                                 }
 
                                 val zoomChange = event.calculateZoom()
-                                val panChange = event.calculatePan()
+                                val rawPanChange = event.calculatePan()
+                                val panChange = if (isScrollLocked) Offset(0f, rawPanChange.y) else rawPanChange
+
                                 val centroid = event.calculateCentroid(useCurrent = false)
                                 val panMagnitude = panChange.getDistance()
                                 val currentCentroidSize = event.calculateCentroidSize(
@@ -1065,7 +1068,7 @@ internal fun PdfVerticalReader(
                                     coroutineScope {
                                         launch {
                                             val rawX = velocity.x * flingSensitivity
-                                            val flingX = if (abs(rawX) > minFlingVelocity) rawX
+                                            val flingX = if (abs(rawX) > minFlingVelocity && !isScrollLocked) rawX
                                             else 0f
 
                                             if (flingX != 0f) panXAnimatable.animateDecay(
