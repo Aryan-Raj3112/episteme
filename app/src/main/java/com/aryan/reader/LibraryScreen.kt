@@ -1334,8 +1334,8 @@ private fun FolderSyncScreen(
 
     if (syncedFolderUri == null) {
         EmptyState(
-            title = "Auto-Sync a Folder",
-            message = "Select a folder on your device. Episteme will automatically find and import any new books you add to it. A great way to keep your library in sync with your downloads folder!",
+            title = "Import files from a Folder",
+            message = "Select a folder on your device. Episteme will automatically find and import any new books you add to it.",
             onSelectFileClick = onSelectFolderClick,
             modifier = Modifier.fillMaxSize()
         )

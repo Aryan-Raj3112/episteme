@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// PdfVerticalReader.kt
 @file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH", "VariableNeverRead")
 
 package com.aryan.reader.pdf
@@ -210,7 +211,10 @@ internal fun PdfVerticalReader(
     onTextBoxSelect: (String) -> Unit = {},
     bottomContentPaddingPx: Float = 0f,
     topContentPaddingPx: Float = 0f,
-    onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> }
+    onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
+    isAutoScrollPlaying: Boolean = false,
+    autoScrollSpeed: Float = 1.0f,
+    onInteractionListener: () -> Unit = {}
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -480,8 +484,45 @@ internal fun PdfVerticalReader(
             }
         }
 
+        LaunchedEffect(isAutoScrollPlaying, autoScrollSpeed, totalDocHeight, screenHeight) {
+            if (isAutoScrollPlaying) {
+                val baseSpeedPxPerSec = 30f
+                var lastFrameTime = withFrameNanos { it }
+
+                while (isActive) {
+                    val frameTime = withFrameNanos { it }
+                    val deltaSeconds = (frameTime - lastFrameTime) / 1_000_000_000f
+                    lastFrameTime = frameTime
+
+                    if (deltaSeconds > 0.1f) continue
+
+                    val pixelMove = (baseSpeedPxPerSec * autoScrollSpeed) * deltaSeconds
+
+                    val currentPanY = panYAnimatable.value
+                    val currentZoom = zoomAnimatable.value
+                    val zoomedDocHeight = totalDocHeight * currentZoom
+
+                    val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+
+                    val newPanY = (currentPanY - pixelMove).coerceIn(minPanY, headerHeightPx)
+
+                    panYAnimatable.snapTo(newPanY)
+
+                    @Suppress("ControlFlowWithEmptyBody") if (newPanY <= minPanY + 0.1f) {
+                        // Reached end
+                    }
+                }
+            }
+        }
+
         var highResScale by remember { mutableFloatStateOf(1f) }
         var isInteracting by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isInteracting) {
+            if (isInteracting && isAutoScrollPlaying) {
+                onInteractionListener()
+            }
+        }
 
         LaunchedEffect(isInteracting) {
             Timber.tag("PdfTouchDebug").i("VerticalReader: isInteracting changed to $isInteracting")

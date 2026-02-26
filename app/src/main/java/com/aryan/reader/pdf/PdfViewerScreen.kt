@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// PdfViewerScreen.kt
 @file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
 
 package com.aryan.reader.pdf
@@ -159,6 +160,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -227,6 +229,7 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SyncUpdateInfo
+import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -280,6 +283,17 @@ private const val OCR_LANGUAGE_SELECTED_KEY = "ocr_language_selected_key"
 private const val DOCK_LOCATION_KEY = "dock_location"
 private const val DOCK_OFFSET_X_KEY = "dock_offset_x"
 private const val DOCK_OFFSET_Y_KEY = "dock_offset_y"
+private const val PDF_AUTO_SCROLL_SPEED_KEY = "pdf_auto_scroll_speed"
+
+private fun savePdfAutoScrollSpeed(context: Context, speed: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PDF_AUTO_SCROLL_SPEED_KEY, speed) }
+}
+
+private fun loadPdfAutoScrollSpeed(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(PDF_AUTO_SCROLL_SPEED_KEY, 3.0f)
+}
 
 private fun generateShortId(): String {
     return Random.nextInt(1000, 9999).toString()
@@ -586,6 +600,23 @@ fun PdfViewerScreen(
         }
     }
 
+    var isDockDragging by remember { mutableStateOf(false) }
+
+    var isAutoScrollModeActive by remember { mutableStateOf(false) }
+    var isAutoScrollPlaying by remember { mutableStateOf(false) }
+    var autoScrollSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollSpeed(context)) }
+    var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+
+    val onAutoScrollInteraction = remember {
+        {
+            if (isAutoScrollPlaying) {
+                isAutoScrollPlaying = false
+            }
+        }
+    }
+
+    var paginationDraggingBoxId by remember { mutableStateOf<String?>(null) }
+
     val customFonts by viewModel.customFonts.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -609,9 +640,6 @@ fun PdfViewerScreen(
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
     var snapPreviewLocation by remember { mutableStateOf<DockLocation?>(null) }
-    var isDockDragging by remember { mutableStateOf(false) }
-
-    var paginationDraggingBoxId by remember { mutableStateOf<String?>(null) }
     var paginationDraggingOffset by remember { mutableStateOf(Offset.Zero) }
     var paginationDraggingSize by remember { mutableStateOf(Size.Zero) }
     var paginationDragPageHeight by remember { mutableFloatStateOf(0f) }
@@ -1074,6 +1102,7 @@ fun PdfViewerScreen(
 
     val onSingleTapStable = remember {
         {
+            onAutoScrollInteraction()
             if (selectedTextBoxId != null) {
                 val box = textBoxes.find { it.id == selectedTextBoxId }
                 if (box != null && box.text.trim().isEmpty()) {
@@ -3610,7 +3639,10 @@ fun PdfViewerScreen(
                                                     val oldBox = textBoxes[idx]
                                                     textBoxes[idx] = oldBox.copy(pageIndex = newPageIndex, relativeBounds = newBounds)
                                                 }
-                                            }
+                                            },
+                                            isAutoScrollPlaying = isAutoScrollPlaying,
+                                            autoScrollSpeed = autoScrollSpeed,
+                                            onInteractionListener = onAutoScrollInteraction
                                         )
                                     }
                                 }
@@ -4076,6 +4108,17 @@ fun PdfViewerScreen(
                                                     )
                                                 }
                                             })
+                                        HorizontalDivider()
+                                        DropdownMenuItem(
+                                            text = { Text("Auto Scroll") },
+                                            enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
+                                            onClick = {
+                                                showMoreMenu = false
+                                                isAutoScrollModeActive = true
+                                                isAutoScrollPlaying = true
+                                                showBars = false
+                                            }
+                                        )
                                         HorizontalDivider()
                                         DropdownMenuItem(text = {
                                             Text(
@@ -5505,6 +5548,42 @@ fun PdfViewerScreen(
                             }
                         }
                     }
+                }
+                val autoScrollPadding by animateDpAsState(
+                    targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
+                    label = "AutoScrollPadding"
+                )
+
+                val alignmentBias by animateFloatAsState(
+                    targetValue = if (isAutoScrollCollapsed) 1f else 0f,
+                    label = "AutoScrollAlignAnimation"
+                )
+
+                AnimatedVisibility(
+                    visible = isAutoScrollModeActive,
+                    enter = slideInVertically { it } + fadeIn(),
+                    exit = slideOutVertically { it } + fadeOut(),
+                    modifier = Modifier
+                        .align(BiasAlignment(alignmentBias, 1f))
+                        .padding(bottom = autoScrollPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    AutoScrollControls(
+                        isPlaying = isAutoScrollPlaying,
+                        onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
+                        speed = autoScrollSpeed,
+                        onSpeedChange = {
+                            autoScrollSpeed = it
+                            savePdfAutoScrollSpeed(context, it)
+                        },
+                        onClose = {
+                            isAutoScrollModeActive = false
+                            isAutoScrollPlaying = false
+                            showBars = true
+                        },
+                        isCollapsed = isAutoScrollCollapsed,
+                        onCollapseChange = { isAutoScrollCollapsed = it }
+                    )
                 }
             }
         }
