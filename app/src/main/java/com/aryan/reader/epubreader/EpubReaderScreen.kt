@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// EpubReaderScreen.kt
 @file:OptIn(ExperimentalSerializationApi::class) @file:Suppress("VariableNeverRead")
 
 package com.aryan.reader.epubreader
@@ -607,6 +608,8 @@ fun EpubReaderHost(
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
+    var isAutoScrollTempPaused by remember { mutableStateOf(false) }
+    val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var autoScrollSpeed by remember { mutableFloatStateOf(loadAutoScrollSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
@@ -618,10 +621,28 @@ fun EpubReaderHost(
     }
 
     fun updateAutoScrollState(playing: Boolean, speed: Float) {
-        updateAutoScrollJs(webViewRefForTts, playing, speed)
+        val effectivePlaying = playing && !isAutoScrollTempPaused
+        updateAutoScrollJs(webViewRefForTts, effectivePlaying, speed)
     }
 
-    LaunchedEffect(isAutoScrollModeActive, isAutoScrollPlaying, autoScrollSpeed) {
+    fun triggerAutoScrollTempPause(durationMs: Long) {
+        if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
+
+        autoScrollResumeJob.value?.cancel()
+
+        isAutoScrollTempPaused = true
+        updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
+
+        autoScrollResumeJob.value = scope.launch {
+            delay(durationMs)
+            if (isActive && isAutoScrollModeActive && isAutoScrollPlaying) {
+                isAutoScrollTempPaused = false
+                updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
+            }
+        }
+    }
+
+    LaunchedEffect(isAutoScrollModeActive, isAutoScrollPlaying, autoScrollSpeed, isAutoScrollTempPaused) {
         if (isAutoScrollModeActive) {
             updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
         } else {
@@ -632,6 +653,8 @@ fun EpubReaderHost(
     fun pauseAutoScroll() {
         if (isAutoScrollModeActive && isAutoScrollPlaying) {
             isAutoScrollPlaying = false
+            isAutoScrollTempPaused = false
+            autoScrollResumeJob.value?.cancel()
         }
     }
 
@@ -1615,11 +1638,8 @@ fun EpubReaderHost(
                                                 }
 
                                                 if (isAutoScrollModeActive && isAutoScrollPlaying) {
-                                                    Timber.d("Continuing Auto-Scroll for new chapter.")
-                                                    scope.launch {
-                                                        delay(300)
-                                                        updateAutoScrollState(true, autoScrollSpeed)
-                                                    }
+                                                    Timber.d("Continuing Auto-Scroll for new chapter with delay.")
+                                                    triggerAutoScrollTempPause(1000L)
                                                 }
                                             },
                                             onTap = {
@@ -1637,7 +1657,6 @@ fun EpubReaderHost(
                                                         Timber.d("Chapter tapped, showing main bars.")
                                                     }
                                                 }
-                                                pauseAutoScroll()
                                             },
                                             onPotentialScroll = {
                                                 if (showBars) {
@@ -1645,7 +1664,9 @@ fun EpubReaderHost(
                                                     showFormatAdjustmentBars = false
                                                     Timber.d("Scroll/Drag detected, hiding bars.")
                                                 }
-                                                pauseAutoScroll()
+                                                if (isAutoScrollModeActive && isAutoScrollPlaying) {
+                                                    triggerAutoScrollTempPause(1000L)
+                                                }
                                             },
                                             onAutoScrollChapterEnd = {
                                                 Timber.d("Screen: onAutoScrollChapterEnd triggered. Current Index: $currentChapterIndex")
@@ -2646,7 +2667,17 @@ fun EpubReaderHost(
                 ) {
                     AutoScrollControls(
                         isPlaying = isAutoScrollPlaying,
-                        onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
+                        isTempPaused = isAutoScrollTempPaused,
+                        onPlayPauseToggle = {
+                            if (isAutoScrollPlaying) {
+                                isAutoScrollPlaying = false
+                                isAutoScrollTempPaused = false
+                                autoScrollResumeJob.value?.cancel()
+                            } else {
+                                isAutoScrollPlaying = true
+                                isAutoScrollTempPaused = false
+                            }
+                        },
                         speed = autoScrollSpeed,
                         onSpeedChange = {
                             autoScrollSpeed = it

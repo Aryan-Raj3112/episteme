@@ -17,7 +17,6 @@
  *
  * mail: epistemereader@gmail.com
  */
-// PdfViewerScreen.kt
 @file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
 
 package com.aryan.reader.pdf
@@ -604,13 +603,27 @@ fun PdfViewerScreen(
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
+    var isAutoScrollTempPaused by remember { mutableStateOf(false) }
+    val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var autoScrollSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+
+    fun triggerAutoScrollTempPause(durationMs: Long) {
+        if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
+        autoScrollResumeJob.value?.cancel()
+        isAutoScrollTempPaused = true
+        autoScrollResumeJob.value = coroutineScope.launch {
+            delay(durationMs)
+            if (isActive && isAutoScrollModeActive && isAutoScrollPlaying) {
+                isAutoScrollTempPaused = false
+            }
+        }
+    }
 
     val onAutoScrollInteraction = remember {
         {
             if (isAutoScrollPlaying) {
-                isAutoScrollPlaying = false
+                triggerAutoScrollTempPause(1000L)
             }
         }
     }
@@ -1102,7 +1115,6 @@ fun PdfViewerScreen(
 
     val onSingleTapStable = remember {
         {
-            onAutoScrollInteraction()
             if (selectedTextBoxId != null) {
                 val box = textBoxes.find { it.id == selectedTextBoxId }
                 if (box != null && box.text.trim().isEmpty()) {
@@ -3641,6 +3653,7 @@ fun PdfViewerScreen(
                                                 }
                                             },
                                             isAutoScrollPlaying = isAutoScrollPlaying,
+                                            isAutoScrollTempPaused = isAutoScrollTempPaused,
                                             autoScrollSpeed = autoScrollSpeed,
                                             onInteractionListener = onAutoScrollInteraction
                                         )
@@ -5570,6 +5583,7 @@ fun PdfViewerScreen(
                 ) {
                     AutoScrollControls(
                         isPlaying = isAutoScrollPlaying,
+                        isTempPaused = isAutoScrollTempPaused,
                         onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
                         speed = autoScrollSpeed,
                         onSpeedChange = {

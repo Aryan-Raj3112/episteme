@@ -213,6 +213,7 @@ internal fun PdfVerticalReader(
     topContentPaddingPx: Float = 0f,
     onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
     isAutoScrollPlaying: Boolean = false,
+    isAutoScrollTempPaused: Boolean = false,
     autoScrollSpeed: Float = 1.0f,
     onInteractionListener: () -> Unit = {}
 ) {
@@ -484,8 +485,8 @@ internal fun PdfVerticalReader(
             }
         }
 
-        LaunchedEffect(isAutoScrollPlaying, autoScrollSpeed, totalDocHeight, screenHeight) {
-            if (isAutoScrollPlaying) {
+        LaunchedEffect(isAutoScrollPlaying, isAutoScrollTempPaused, autoScrollSpeed, totalDocHeight, screenHeight) {
+            if (isAutoScrollPlaying && !isAutoScrollTempPaused) {
                 val baseSpeedPxPerSec = 30f
                 var lastFrameTime = withFrameNanos { it }
 

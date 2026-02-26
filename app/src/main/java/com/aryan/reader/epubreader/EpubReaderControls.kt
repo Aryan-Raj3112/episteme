@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// EpubReaderControls.kt
 package com.aryan.reader.epubreader
 
 import android.annotation.SuppressLint
@@ -77,6 +78,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -664,7 +666,8 @@ fun AutoScrollControls(
     onClose: () -> Unit,
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isTempPaused: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(50),
@@ -698,19 +701,28 @@ fun AutoScrollControls(
                         )
                     }
 
-                    FilledIconButton(
-                        onClick = onPlayPauseToggle,
-                        modifier = Modifier.size(40.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            modifier = Modifier.size(24.dp)
-                        )
+                    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        FilledIconButton(
+                            onClick = onPlayPauseToggle,
+                            modifier = Modifier.size(40.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        if (isTempPaused) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(40.dp),
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                                strokeWidth = 3.dp
+                            )
+                        }
                     }
 
                 } else {
@@ -767,19 +779,28 @@ fun AutoScrollControls(
                             .background(MaterialTheme.colorScheme.outlineVariant)
                     )
 
-                    FilledIconButton(
-                        onClick = onPlayPauseToggle,
-                        modifier = Modifier.size(40.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            modifier = Modifier.size(24.dp)
-                        )
+                    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        FilledIconButton(
+                            onClick = onPlayPauseToggle,
+                            modifier = Modifier.size(40.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        if (isTempPaused) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(40.dp),
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                                strokeWidth = 3.dp
+                            )
+                        }
                     }
 
                     IconButton(
