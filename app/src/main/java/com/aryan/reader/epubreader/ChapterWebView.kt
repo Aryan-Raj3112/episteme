@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// ChapterWebView.kt
 package com.aryan.reader.epubreader
 
 import android.annotation.SuppressLint
@@ -27,7 +28,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
-import timber.log.Timber
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -36,13 +36,14 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -69,6 +70,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -86,6 +88,7 @@ import com.aryan.reader.countWords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import timber.log.Timber
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -326,6 +329,8 @@ fun ChapterWebView(
     currentTextAlign: ReaderTextAlign,
     onHighlightClicked: () -> Unit,
     onAutoScrollChapterEnd: () -> Unit = {},
+    activeHighlightPalette: List<HighlightColor>,
+    onUpdatePalette: (Int, HighlightColor) -> Unit
 ) {
     Timber.d(
         "RenderChapterViaWebView for '$chapterTitle', Key: $key, isDarkTheme: $isDarkTheme, initialScrollTarget: $initialScrollTarget"
@@ -339,6 +344,8 @@ fun ChapterWebView(
     var customMenuState by remember { mutableStateOf<CustomMenuState?>(null) }
 
     val jsToInject = remember(context) { getJsToInject(context) }
+
+    var showPaletteManager by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentFontSize, currentLineHeight) {
         localWebViewRef?.evaluateJavascript(
@@ -542,9 +549,9 @@ fun ChapterWebView(
                         }
                         addJavascriptInterface(
                             CfiJsBridge(
-                            onCfiReady = { cfi -> onCfiGenerated(cfi) },
-                            onCfiForBookmarkReady = { cfi -> onBookmarkCfiGenerated(cfi) }
-                        ), "CfiBridge")
+                                onCfiReady = { cfi -> onCfiGenerated(cfi) },
+                                onCfiForBookmarkReady = { cfi -> onBookmarkCfiGenerated(cfi) }
+                            ), "CfiBridge")
                         addJavascriptInterface(SnippetJsBridge { cfi, snippet ->
                             onSnippetForBookmarkReady(
                                 cfi,
@@ -812,45 +819,51 @@ fun ChapterWebView(
                     Column(
                         modifier = Modifier.width(IntrinsicSize.Max)
                     ) {
-                        // 1. Color Row (Improved sizing and gaps)
                         Row(
                             modifier = Modifier
                                 .padding(vertical = 12.dp, horizontal = 12.dp)
                                 .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center, // Centered colors
+                            horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            HighlightColor.entries.forEach { colorEnum ->
+                            activeHighlightPalette.forEachIndexed { index, colorEnum ->
                                 Box(
                                     modifier = Modifier
-                                        .padding(horizontal = 8.dp)
-                                        .size(24.dp)
+                                        .padding(horizontal = 6.dp)
+                                        .size(32.dp)
                                         .background(colorEnum.color, CircleShape)
-                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape)
-                                        .clickable {
-                                            Timber.d("Kotlin: Color clicked. Existing? ${state.isExistingHighlight}")
-
-                                            if (state.isExistingHighlight && state.cfi != null) {
-                                                // UPDATE EXISTING HIGHLIGHT
-                                                Timber.d("Kotlin: Requesting UPDATE via JS for CFI: ${state.cfi}")
-                                                localWebViewRef?.evaluateJavascript(
-                                                    "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${state.cfi}', '${colorEnum.cssClass}', '${colorEnum.id}');",
-                                                    null
-                                                )
-                                            } else {
-                                                // CREATE NEW HIGHLIGHT
-                                                Timber.d("Kotlin: Requesting CREATE via JS")
-                                                localWebViewRef?.evaluateJavascript(
-                                                    "javascript:window.HighlightBridgeHelper.createUserHighlight('${colorEnum.cssClass}', '${colorEnum.id}');",
-                                                    null
-                                                )
-                                            }
-                                            state.finishActionModeCallback()
-                                            localWebViewRef?.clearFocus()
-                                            customMenuState = null
+                                        .pointerInput(colorEnum) {
+                                            detectTapGestures(
+                                                onTap = {
+                                                    Timber.d("Kotlin: Color clicked. Existing? ${state.isExistingHighlight}")
+                                                    if (state.isExistingHighlight && state.cfi != null) {
+                                                        localWebViewRef?.evaluateJavascript(
+                                                            "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${state.cfi}', '${colorEnum.cssClass}', '${colorEnum.id}');",
+                                                            null
+                                                        )
+                                                    } else {
+                                                        localWebViewRef?.evaluateJavascript(
+                                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${colorEnum.cssClass}', '${colorEnum.id}');",
+                                                            null
+                                                        )
+                                                    }
+                                                    state.finishActionModeCallback()
+                                                    localWebViewRef?.clearFocus()
+                                                    customMenuState = null
+                                                },
+                                                onLongPress = {
+                                                    showPaletteManager = true
+                                                }
+                                            )
                                         }
                                 )
                             }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+                            SpectrumButton(
+                                onClick = { showPaletteManager = true },
+                                size = 32.dp
+                            )
                         }
 
                         // 2. Delete Option (Only for existing highlights)
@@ -978,6 +991,18 @@ fun ChapterWebView(
                     }
                 }
             }
+        }
+        if (showPaletteManager) {
+            PaletteManagerDialog(
+                currentPalette = activeHighlightPalette,
+                onDismiss = { showPaletteManager = false },
+                onSave = { newPalette ->
+                    newPalette.forEachIndexed { index, color ->
+                        onUpdatePalette(index, color)
+                    }
+                    showPaletteManager = false
+                }
+            )
         }
     }
 }

@@ -38,6 +38,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -65,7 +77,17 @@ enum class HighlightColor(val id: String, val color: Color, val cssClass: String
     YELLOW("yellow", Color(0xFFFBC02D), "user-highlight-yellow"),
     GREEN("green", Color(0xFF388E3C), "user-highlight-green"),
     BLUE("blue", Color(0xFF1976D2), "user-highlight-blue"),
-    RED("red", Color(0xFFD32F2F), "user-highlight-red")
+    RED("red", Color(0xFFD32F2F), "user-highlight-red"),
+    PURPLE("purple", Color(0xFF7B1FA2), "user-highlight-purple"),
+    ORANGE("orange", Color(0xFFF57C00), "user-highlight-orange"),
+    CYAN("cyan", Color(0xFF0097A7), "user-highlight-cyan"),
+    MAGENTA("magenta", Color(0xFFC2185B), "user-highlight-magenta"),
+    LIME("lime", Color(0xFFAFB42B), "user-highlight-lime"),
+    PINK("pink", Color(0xFFE91E63), "user-highlight-pink"),
+    TEAL("teal", Color(0xFF00796B), "user-highlight-teal"),
+    INDIGO("indigo", Color(0xFF303F9F), "user-highlight-indigo"),
+    BLACK("black", Color(0xFF424242), "user-highlight-black"),
+    WHITE("white", Color(0xFFF5F5F5), "user-highlight-white");
 }
 
 data class UserHighlight(
@@ -86,6 +108,24 @@ fun escapeJsString(value: String): String {
         .replace("\t", "\\t")
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
+}
+
+fun saveHighlightPalette(context: Context, palette: List<HighlightColor>) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val ids = palette.joinToString(",") { it.id }
+    prefs.edit { putString("highlight_palette_ids", ids) }
+}
+
+fun loadHighlightPalette(context: Context): List<HighlightColor> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val savedIds = prefs.getString("highlight_palette_ids", null)
+    if (savedIds != null) {
+        val list = savedIds.split(",").mapNotNull { id ->
+            HighlightColor.entries.find { it.id == id }
+        }
+        if (list.size == 4) return list
+    }
+    return listOf(HighlightColor.YELLOW, HighlightColor.GREEN, HighlightColor.BLUE, HighlightColor.RED)
 }
 
 // --- Persistence Helpers ---
@@ -284,4 +324,111 @@ fun BookmarkButton(
             )
         }
     }
+}
+
+@Composable
+fun SpectrumButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 32.dp
+) {
+    val rainbowColors = listOf(
+        Color.Red, Color(0xFFFF7F00), Color.Yellow, Color.Green,
+        Color.Blue, Color(0xFF4B0082), Color(0xFF8B00FF)
+    )
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(
+                brush = Brush.sweepGradient(rainbowColors),
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick)
+    )
+}
+
+@Composable
+fun PaletteManagerDialog(
+    currentPalette: List<HighlightColor>,
+    onSave: (List<HighlightColor>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var tempPalette by remember { mutableStateOf(currentPalette.toMutableList()) }
+    var selectedSlotIndex by remember { mutableIntStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Customize Palette", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Tap a slot to edit:", style = MaterialTheme.typography.bodySmall)
+                Row(
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    tempPalette.forEachIndexed { index, colorEnum ->
+                        val isSelected = index == selectedSlotIndex
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(colorEnum.color, CircleShape)
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, // Thin ring if selected
+                                    shape = CircleShape
+                                )
+                                .clip(CircleShape)
+                                .clickable { selectedSlotIndex = index }
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected Slot",
+                                    tint = if (colorEnum == HighlightColor.WHITE) Color.Black else Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
+                // 2. Bottom Grid: Available Colors
+                Text("Select a color for the slot:", style = MaterialTheme.typography.bodySmall)
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.height(200.dp)
+                ) {
+                    items(HighlightColor.entries) { colorOption ->
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(colorOption.color, CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), CircleShape)
+                                .clickable {
+                                    val newList = tempPalette.toMutableList()
+                                    newList[selectedSlotIndex] = colorOption
+                                    tempPalette = newList
+                                }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(tempPalette) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

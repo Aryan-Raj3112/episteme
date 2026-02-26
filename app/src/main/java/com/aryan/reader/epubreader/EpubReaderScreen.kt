@@ -283,6 +283,19 @@ fun EpubReaderHost(
         }
     }
 
+    var currentHighlightPalette by remember {
+        mutableStateOf(loadHighlightPalette(context))
+    }
+
+    val onUpdateHighlightPalette: (Int, HighlightColor) -> Unit = { index, newColor ->
+        val newList = currentHighlightPalette.toMutableList()
+        if (index in newList.indices) {
+            newList[index] = newColor
+            currentHighlightPalette = newList
+            saveHighlightPalette(context, newList)
+        }
+    }
+
     LaunchedEffect(userHighlights.size, userHighlights.toList()) {
         saveHighlightsToPrefs(context, epubBook.title, userHighlights)
     }
@@ -1541,6 +1554,8 @@ fun EpubReaderHost(
                                             initialCfi = cfiToLoad,
                                             initialFragmentId = fragmentToLoad.also { },
                                             userHighlights = userHighlights.filter { it.chapterIndex == targetChapterIndex },
+                                            activeHighlightPalette = currentHighlightPalette,
+                                            onUpdatePalette = onUpdateHighlightPalette,
                                             onHighlightCreated = { cfi, text, colorId ->
                                                 Timber.d("Vertical Mode (Source): Creating Highlight. CFI: $cfi")
                                                 Timber.d("Vertical Mode (Source): Text Snippet: '${text.take(50)}...'")
@@ -2090,6 +2105,8 @@ fun EpubReaderHost(
                                 lineHeightMultiplier = currentLineHeight,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
+                                activeHighlightPalette = currentHighlightPalette,
+                                onUpdatePalette = onUpdateHighlightPalette,
                                 ttsHighlightInfo = TtsHighlightInfo(
                                     text = ttsState.currentText ?: "",
                                     cfi = ttsState.sourceCfi ?: "",
