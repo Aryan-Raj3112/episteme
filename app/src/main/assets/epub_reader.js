@@ -30,6 +30,12 @@
                 word-break: break-word; -webkit-text-size-adjust: 100%;
                 text-rendering: optimizeLegibility; -webkit-user-select: none;
                 -moz-user-select: none; -ms-user-select: none; user-select: none;
+                scroll-behavior: auto !important;
+            }
+
+            #content-container {
+                will-change: transform;
+                transition: none !important;
             }
 
             p, div, li, td, th, span {
@@ -2649,7 +2655,7 @@ window.findFirstVisibleCfi=function (cfiArray) {
 })();
 
 (function () {
-        const TAG_AUTO_SCROLL="AutoScrollDiagnosis"; // Define the tag
+        const TAG_AUTO_SCROLL="AutoScrollDiagnosis";
 
         window.autoScroll= {
             active: false,
@@ -2672,27 +2678,21 @@ window.findFirstVisibleCfi=function (cfiArray) {
                 this.accumulator=0.0;
                 if (this.animationId) cancelAnimationFrame(this.animationId);
                 this.loop();
-            }
-
-            ,
+            },
 
             stop: function () {
-                console.log(`$ {
-                        TAG_AUTO_SCROLL
-                    }
-
-                    : Stopping auto-scroll.`);
-                this.active=false;
-                const container=document.getElementById('content-container') || document.body;
-                if (container) container.style.transform='none';
-
+                this.active = false;
                 if (this.animationId) {
                     cancelAnimationFrame(this.animationId);
-                    this.animationId=null;
+                    this.animationId = null;
                 }
-            }
 
-            ,
+                const container = document.getElementById('content-container') || document.body;
+                if (container) {
+                    container.style.transform = 'none';
+                    window.scrollBy(0, 0);
+                }
+            },
 
             updateSpeed: function (newSpeed) {
                 console.log(`$ {
@@ -2710,109 +2710,39 @@ window.findFirstVisibleCfi=function (cfiArray) {
             ,
 
             loop: function () {
-                if ( !this.active) return;
+                if (!this.active) return;
 
-                this.accumulator +=this.speed;
+                this.accumulator += this.speed;
 
-                const pixelsToScroll=Math.floor(this.accumulator);
-                const subPixelRemainder=this.accumulator - pixelsToScroll;
+                const totalPixelsToScroll = Math.floor(this.accumulator);
 
-                if (pixelsToScroll >=1) {
-                    const prevScrollY=window.scrollY;
-                    window.scrollBy(0, pixelsToScroll);
-                    this.accumulator -=pixelsToScroll;
+                if (totalPixelsToScroll >= 1) {
+                    const prevScrollY = window.scrollY;
+                    window.scrollBy(0, totalPixelsToScroll);
 
-                    // Calculation logic
-                    const innerH=window.innerHeight;
-                    const scrollY=window.scrollY;
-                    const docHeight=document.documentElement.scrollHeight; // Usually more reliable than body.scrollHeight
+                    this.accumulator -= totalPixelsToScroll;
 
-                    const currentScrollPos=scrollY + innerH;
-
-                    // Relaxed threshold slightly (from 2 to 3) to account for sub-pixel rendering differences
-                    const isAtBottom=currentScrollPos >=(docHeight - 3);
-                    const isStuck=(scrollY===prevScrollY);
-
-                    // Log only when we are very close to the bottom or stuck, to avoid spamming
-                    if (isAtBottom || isStuck || (docHeight - currentScrollPos < 50)) {
-                        console.log(`$ {
-                                TAG_AUTO_SCROLL
-                            }
-
-                            : Loop Status -> ScrollY: $ {
-                                Math.round(scrollY)
-                            }
-
-                            , InnerH: $ {
-                                innerH
-                            }
-
-                            , Pos: $ {
-                                Math.round(currentScrollPos)
-                            }
-
-                            , DocH: $ {
-                                docHeight
-                            }
-
-                            `);
-
-                        console.log(`$ {
-                                TAG_AUTO_SCROLL
-                            }
-
-                            : Check -> AtBottom: $ {
-                                isAtBottom
-                            }
-
-                            , Stuck: $ {
-                                isStuck
-                            }
-
-                            `);
-                    }
+                    const scrollY = window.scrollY;
+                    const docHeight = document.documentElement.scrollHeight;
+                    const innerH = window.innerHeight;
+                    const isAtBottom = (scrollY + innerH) >= (docHeight - 3);
+                    const isStuck = (totalPixelsToScroll > 0 && scrollY === prevScrollY && prevScrollY > 0);
 
                     if (isAtBottom || isStuck) {
-                        console.log(`$ {
-                                TAG_AUTO_SCROLL
-                            }
-
-                            : End of chapter detected. Calling Bridge.`);
                         this.stop();
-                        const container=document.getElementById('content-container') || document.body;
-                        container.style.transform='none';
-
                         if (window.AutoScrollBridge && window.AutoScrollBridge.onChapterEnd) {
                             window.AutoScrollBridge.onChapterEnd();
                         }
-
-                        else {
-                            console.log(`$ {
-                                    TAG_AUTO_SCROLL
-                                }
-
-                                : AutoScrollBridge not found !`);
-                        }
-
                         return;
                     }
                 }
 
-                const container=document.getElementById('content-container') || document.body;
-
+                const container = document.getElementById('content-container') || document.body;
                 if (container) {
-                    container.style.transform=`translateY(-$ {
-                            subPixelRemainder
-                        }
-
-                        px)`;
+                    container.style.transform = `translate3d(0, -${this.accumulator}px, 0)`;
                 }
 
-                this.animationId=requestAnimationFrame(this.loop.bind(this));
-            }
-
-            ,
-        }
-
-        ;
+                this.animationId = requestAnimationFrame(this.loop.bind(this));
+            },
+        };
     })();

@@ -487,7 +487,7 @@ internal fun PdfVerticalReader(
 
         LaunchedEffect(isAutoScrollPlaying, isAutoScrollTempPaused, autoScrollSpeed, totalDocHeight, screenHeight) {
             if (isAutoScrollPlaying && !isAutoScrollTempPaused) {
-                val baseSpeedPxPerSec = 30f
+                val baseSpeedPxPerSec = 80f
                 var lastFrameTime = withFrameNanos { it }
 
                 while (isActive) {

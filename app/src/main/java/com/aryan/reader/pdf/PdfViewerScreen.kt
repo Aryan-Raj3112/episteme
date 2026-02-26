@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// PdfViewerScreen.kt
 @file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
 
 package com.aryan.reader.pdf
@@ -283,6 +284,28 @@ private const val DOCK_LOCATION_KEY = "dock_location"
 private const val DOCK_OFFSET_X_KEY = "dock_offset_x"
 private const val DOCK_OFFSET_Y_KEY = "dock_offset_y"
 private const val PDF_AUTO_SCROLL_SPEED_KEY = "pdf_auto_scroll_speed"
+private const val PDF_AUTO_SCROLL_LOCKED_KEY = "pdf_auto_scroll_locked"
+private const val PDF_AUTO_SCROLL_USE_SLIDER_KEY = "pdf_auto_scroll_use_slider"
+
+private fun savePdfAutoScrollLocked(context: Context, isLocked: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_AUTO_SCROLL_LOCKED_KEY, isLocked) }
+}
+
+private fun loadPdfAutoScrollLocked(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_AUTO_SCROLL_LOCKED_KEY, false)
+}
+
+private fun savePdfAutoScrollUseSlider(context: Context, useSlider: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_AUTO_SCROLL_USE_SLIDER_KEY, useSlider) }
+}
+
+private fun loadPdfAutoScrollUseSlider(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_AUTO_SCROLL_USE_SLIDER_KEY, false)
+}
 
 private fun savePdfAutoScrollSpeed(context: Context, speed: Float) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -607,6 +630,9 @@ fun PdfViewerScreen(
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var autoScrollSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+
+    var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
+    var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
 
     fun triggerAutoScrollTempPause(durationMs: Long) {
         if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
@@ -4129,7 +4155,7 @@ fun PdfViewerScreen(
                                                 showMoreMenu = false
                                                 isAutoScrollModeActive = true
                                                 isAutoScrollPlaying = true
-                                                showBars = false
+                                                showBars = true
                                             }
                                         )
                                         HorizontalDivider()
@@ -5567,13 +5593,15 @@ fun PdfViewerScreen(
                     label = "AutoScrollPadding"
                 )
 
+                val isAutoScrollControlsVisible = isAutoScrollModeActive && (!isAutoScrollLocked || showBars)
+
                 val alignmentBias by animateFloatAsState(
                     targetValue = if (isAutoScrollCollapsed) 1f else 0f,
                     label = "AutoScrollAlignAnimation"
                 )
 
                 AnimatedVisibility(
-                    visible = isAutoScrollModeActive,
+                    visible = isAutoScrollControlsVisible,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier
@@ -5586,6 +5614,7 @@ fun PdfViewerScreen(
                         isTempPaused = isAutoScrollTempPaused,
                         onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
                         speed = autoScrollSpeed,
+                        maxSpeed = 20f,
                         onSpeedChange = {
                             autoScrollSpeed = it
                             savePdfAutoScrollSpeed(context, it)
@@ -5596,7 +5625,17 @@ fun PdfViewerScreen(
                             showBars = true
                         },
                         isCollapsed = isAutoScrollCollapsed,
-                        onCollapseChange = { isAutoScrollCollapsed = it }
+                        onCollapseChange = { isAutoScrollCollapsed = it },
+                        isLocked = isAutoScrollLocked,
+                        onLockToggle = {
+                            isAutoScrollLocked = !isAutoScrollLocked
+                            savePdfAutoScrollLocked(context, isAutoScrollLocked)
+                        },
+                        useSlider = autoScrollUseSlider,
+                        onInputModeToggle = {
+                            autoScrollUseSlider = !autoScrollUseSlider
+                            savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
+                        }
                     )
                 }
             }

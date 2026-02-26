@@ -172,6 +172,30 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import androidx.compose.ui.BiasAlignment
+import androidx.core.content.edit
+
+private const val AUTO_SCROLL_LOCKED_KEY = "auto_scroll_locked"
+private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
+
+private fun saveAutoScrollLocked(context: Context, isLocked: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(AUTO_SCROLL_LOCKED_KEY, isLocked)}
+}
+
+private fun loadAutoScrollLocked(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(AUTO_SCROLL_LOCKED_KEY, false)
+}
+
+private fun saveAutoScrollUseSlider(context: Context, useSlider: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(AUTO_SCROLL_USE_SLIDER_KEY, useSlider) }
+}
+
+private fun loadAutoScrollUseSlider(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(AUTO_SCROLL_USE_SLIDER_KEY, false)
+}
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
@@ -613,6 +637,9 @@ fun EpubReaderHost(
     var autoScrollSpeed by remember { mutableFloatStateOf(loadAutoScrollSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
+    var isAutoScrollLocked by remember { mutableStateOf(loadAutoScrollLocked(context)) }
+    var autoScrollUseSlider by remember { mutableStateOf(loadAutoScrollUseSlider(context)) }
+
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("Disposing sample MediaPlayer.")
@@ -637,7 +664,7 @@ fun EpubReaderHost(
             delay(durationMs)
             if (isActive && isAutoScrollModeActive && isAutoScrollPlaying) {
                 isAutoScrollTempPaused = false
-                updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
+                @Suppress("KotlinConstantConditions") updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
             }
         }
     }
@@ -647,14 +674,6 @@ fun EpubReaderHost(
             updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
         } else {
             webViewRefForTts?.evaluateJavascript("javascript:window.autoScroll.stop();", null)
-        }
-    }
-
-    fun pauseAutoScroll() {
-        if (isAutoScrollModeActive && isAutoScrollPlaying) {
-            isAutoScrollPlaying = false
-            isAutoScrollTempPaused = false
-            autoScrollResumeJob.value?.cancel()
         }
     }
 
@@ -2641,6 +2660,7 @@ fun EpubReaderHost(
                         isAutoScrollModeActive = true
                         isAutoScrollPlaying = true
                         showBars = false
+                        showBars = true
                     },
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter)
@@ -2656,8 +2676,10 @@ fun EpubReaderHost(
                     label = "AutoScrollAlignAnimation"
                 )
 
+                val isAutoScrollControlsVisible = isAutoScrollModeActive && (!isAutoScrollLocked || showBars)
+
                 AnimatedVisibility(
-                    visible = isAutoScrollModeActive,
+                    visible = isAutoScrollControlsVisible,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier
@@ -2679,6 +2701,7 @@ fun EpubReaderHost(
                             }
                         },
                         speed = autoScrollSpeed,
+                        maxSpeed = 10f,
                         onSpeedChange = {
                             autoScrollSpeed = it
                             saveAutoScrollSpeed(context, it)
@@ -2689,7 +2712,17 @@ fun EpubReaderHost(
                             showBars = true
                         },
                         isCollapsed = isAutoScrollCollapsed,
-                        onCollapseChange = { isAutoScrollCollapsed = it }
+                        onCollapseChange = { isAutoScrollCollapsed = it },
+                        isLocked = isAutoScrollLocked,
+                        onLockToggle = {
+                            isAutoScrollLocked = !isAutoScrollLocked
+                            saveAutoScrollLocked(context, isAutoScrollLocked)
+                        },
+                        useSlider = autoScrollUseSlider,
+                        onInputModeToggle = {
+                            autoScrollUseSlider = !autoScrollUseSlider
+                            saveAutoScrollUseSlider(context, autoScrollUseSlider)
+                        }
                     )
                 }
 

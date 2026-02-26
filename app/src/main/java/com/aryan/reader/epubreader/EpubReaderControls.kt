@@ -72,12 +72,15 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -657,6 +660,7 @@ suspend fun captureWebViewVisibleArea(webView: WebView): Bitmap? {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AutoScrollControls(
     isPlaying: Boolean,
@@ -666,16 +670,23 @@ fun AutoScrollControls(
     onClose: () -> Unit,
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
+    isLocked: Boolean,
+    onLockToggle: () -> Unit,
+    useSlider: Boolean,
+    onInputModeToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    maxSpeed: Float = 10f,
     isTempPaused: Boolean = false,
 ) {
     Surface(
-        shape = RoundedCornerShape(50),
+        shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 6.dp,
+        tonalElevation = 8.dp,
         shadowElevation = 6.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier.animateContentSize()
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        modifier = modifier
+            .widthIn(max = 400.dp)
+            .animateContentSize()
     ) {
         AnimatedContent(
             targetState = isCollapsed,
@@ -684,134 +695,226 @@ fun AutoScrollControls(
             },
             label = "AutoScrollUnified"
         ) { collapsed ->
-            Row(
-                modifier = Modifier.padding(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (collapsed) {
+            if (collapsed) {
+                // COLLAPSED STATE: Ultra-Compact Pill
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Expand Button
                     IconButton(
                         onClick = { onCollapseChange(false) },
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ChevronLeft,
                             contentDescription = "Expand",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        FilledIconButton(
-                            onClick = onPlayPauseToggle,
-                            modifier = Modifier.size(40.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        if (isTempPaused) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(40.dp),
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                                strokeWidth = 3.dp
-                            )
-                        }
-                    }
-
-                } else {
-                    IconButton(
-                        onClick = onClose,
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(24.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant)
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(0.dp)
-                    ) {
-                        IconButton(
-                            onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(0.1f)) },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(Icons.Default.Remove, "Slower", modifier = Modifier.size(18.dp))
-                        }
-
-                        Text(
-                            text = "%.1fx".format(speed),
-                            style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
-                            modifier = Modifier.widthIn(min = 40.dp),
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        IconButton(
-                            onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(10f)) },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(Icons.Default.Add, "Faster", modifier = Modifier.size(18.dp))
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(24.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant)
-                    )
-
-                    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        FilledIconButton(
-                            onClick = onPlayPauseToggle,
-                            modifier = Modifier.size(40.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        if (isTempPaused) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(40.dp),
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                                strokeWidth = 3.dp
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = { onCollapseChange(true) },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChevronRight,
-                            contentDescription = "Collapse",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    // Play/Pause Mini
+                    Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        FilledIconButton(
+                            onClick = onPlayPauseToggle,
+                            modifier = Modifier.size(36.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        if (isTempPaused) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(36.dp),
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    }
+                }
+            } else {
+                // EXPANDED STATE: Card-like Layout
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    // Top Row: Utility Actions (Right aligned)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Label
+                        Text(
+                            text = "Auto Scroll",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        // Tools Row
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            // Lock
+                            IconButton(
+                                onClick = onLockToggle,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isLocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                                    contentDescription = if (isLocked) "Unlock" else "Lock",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = if (isLocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            // Swap Input
+                            IconButton(
+                                onClick = onInputModeToggle,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SwapHoriz,
+                                    contentDescription = "Swap Controls",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            // Collapse
+                            IconButton(
+                                onClick = { onCollapseChange(true) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = "Collapse",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            // Close
+                            IconButton(
+                                onClick = onClose,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Bottom Row: Primary Controls
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // 1. Play/Pause Button
+                        Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                            FilledIconButton(
+                                onClick = onPlayPauseToggle,
+                                modifier = Modifier.size(48.dp),
+                                colors = IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            if (isTempPaused) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(48.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                        }
+
+                        // 2. Speed Controls (Weight to fill space)
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (useSlider) {
+                                // Slider Mode: Text + Slider
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "%.1fx".format(speed),
+                                        style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                                        modifier = Modifier.width(45.dp),
+                                        textAlign = TextAlign.End
+                                    )
+                                    val minSpeed = 0.1f
+                                    val steps = ((maxSpeed - minSpeed) / 0.1f).roundToInt() - 1
+
+                                    Slider(
+                                        value = speed,
+                                        onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
+                                        valueRange = minSpeed..maxSpeed,
+                                        steps = if (steps > 0) steps else 0,
+                                        modifier = Modifier.weight(1f),
+                                        thumb = {
+                                            Surface(
+                                                modifier = Modifier.size(20.dp),
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                shadowElevation = 2.dp
+                                            ) {}
+                                        }
+                                    )
+                                }
+                            } else {
+                                // Stepper Mode: Segmented Pill
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.height(48.dp).fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        IconButton(
+                                            onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(0.1f)) },
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Default.Remove, "Slower")
+                                        }
+
+                                        Text(
+                                            text = "%.1fx".format(speed),
+                                            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                                            textAlign = TextAlign.Center
+                                        )
+
+                                        IconButton(
+                                            onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(10f)) },
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Default.Add, "Faster")
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
