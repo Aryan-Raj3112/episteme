@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// PdfPageComposable
 @file:Suppress(
     "RemoveRedundantQualifierName", "COMPOSE_APPLIER_CALL_MISMATCH", "UnusedVariable", "unused"
 )
@@ -434,6 +435,7 @@ internal fun PdfPageComposable(
     onTextBoxDragEnd: () -> Unit = {},
     onDragPageTurn: (Int) -> Unit = {},
     draggingBoxId: String? = null,
+    isScrollLocked: Boolean = false,
     isVisible: Boolean = true,
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
@@ -2422,7 +2424,8 @@ internal fun PdfPageComposable(
                 isZoomEnabled,
                 isVerticalScroll,
                 isEditMode,
-                onTwoFingerSwipe
+                onTwoFingerSwipe,
+                isScrollLocked
             ) {
                 if (!isZoomEnabled || isVerticalScroll || actualBitmapWidthPx == 0 || activeDraggingHandle != null) return@pointerInput
 
@@ -2453,7 +2456,8 @@ internal fun PdfPageComposable(
                         }
 
                         if (!canceled) {
-                            val panChange = event.calculatePan()
+                            val rawPanChange = event.calculatePan()
+                            val panChange = if (isScrollLocked) Offset(0f, rawPanChange.y) else rawPanChange
                             val zoomChange = event.calculateZoom()
 
                             if (scale > 1f) {
@@ -2622,13 +2626,15 @@ internal fun PdfPageComposable(
                         coroutineScope.launch {
                             coroutineScope {
                                 launch {
-                                    Animatable(startX).animateDecay(
-                                        velocity.x, decay
-                                    ) {
-                                        val newX = value.coerceIn(
-                                            -maxOffsetX, maxOffsetX
-                                        )
-                                        offset = offset.copy(x = newX)
+                                    if (!isScrollLocked) {
+                                        Animatable(startX).animateDecay(
+                                            velocity.x, decay
+                                        ) {
+                                            val newX = value.coerceIn(
+                                                -maxOffsetX, maxOffsetX
+                                            )
+                                            offset = offset.copy(x = newX)
+                                        }
                                     }
                                 }
                                 launch {
