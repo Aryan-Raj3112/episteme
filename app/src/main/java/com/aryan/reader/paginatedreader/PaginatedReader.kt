@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// PaginatedReader.kt
 package com.aryan.reader.paginatedreader
 
 import android.annotation.SuppressLint
@@ -51,6 +52,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -143,7 +147,9 @@ import com.aryan.reader.R
 import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epubreader.HighlightColor
+import com.aryan.reader.epubreader.PaletteManagerDialog
 import com.aryan.reader.epubreader.ReaderTextAlign
+import com.aryan.reader.epubreader.SpectrumButton
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
@@ -360,10 +366,10 @@ private fun WrappingContentLayout(
 
         val imagePlacable = if (imageRenderWidthPx > 0 && imageRenderHeightPx > 0) {
             measurables.first().measure(
-                    Constraints.fixed(
-                        imageRenderWidthPx.roundToInt(), imageRenderHeightPx.roundToInt()
-                    )
+                Constraints.fixed(
+                    imageRenderWidthPx.roundToInt(), imageRenderHeightPx.roundToInt()
                 )
+            )
         } else {
             null
         }
@@ -392,8 +398,8 @@ private fun WrappingContentLayout(
 
             val styleForMeasure =
                 remainingText.spanStyles.firstOrNull { it.item.fontFamily != null }?.item?.fontFamily?.let {
-                        textStyle.copy(fontFamily = it)
-                    } ?: textStyle
+                    textStyle.copy(fontFamily = it)
+                } ?: textStyle
 
             val layoutResult = textMeasurer.measure(
                 remainingText, style = styleForMeasure, constraints = lineConstraints
@@ -488,7 +494,9 @@ fun PaginatedReaderScreen(
     onWordSelectedForAiDefinition: (String) -> Unit,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
-    onHighlightDeleted: (String) -> Unit
+    onHighlightDeleted: (String) -> Unit,
+    activeHighlightPalette: List<HighlightColor>,
+    onUpdatePalette: (Int, HighlightColor) -> Unit
 ) {
     LaunchedEffect(userHighlights) {
         Timber.d("PaginatedReaderScreen: Received ${userHighlights.size} highlights.")
@@ -757,7 +765,9 @@ fun PaginatedReaderScreen(
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
-            isDarkTheme = isDarkTheme
+            isDarkTheme = isDarkTheme,
+            activeHighlightPalette = activeHighlightPalette,
+            onUpdatePalette = onUpdatePalette
         )
     }
 }
@@ -1079,7 +1089,7 @@ private fun TextWithEmphasis(
     activeSelection: PaginatedSelection?,
     @Suppress("unused") onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
-    isDarkTheme: Boolean,
+    @Suppress("unused") isDarkTheme: Boolean,
     onRegisterLayout: ((TextLayoutResult, LayoutCoordinates) -> Unit)? = null
 ) {
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -1107,36 +1117,20 @@ private fun TextWithEmphasis(
                                 range.first, range.last + 1
                             )
 
-                            if (isDarkTheme) {
-                                Timber.d(
-                                    "DRAWING: Highlight '${highlight.text.take(10)}' on Block ${block.cfi} at range $range"
-                                )
-                            }
-
-                            if (isDarkTheme) {
-                                drawPath(
-                                    path,
-                                    highlight.color.color.copy(alpha = 0.6f),
-                                    blendMode = BlendMode.SrcOver
-                                )
-                            } else {
-                                drawPath(
-                                    path,
-                                    highlight.color.color.copy(alpha = 0.5f),
-                                    blendMode = BlendMode.Multiply
-                                )
-                            }
+                            drawPath(
+                                path,
+                                highlight.color.color.copy(alpha = 0.4f),
+                                blendMode = BlendMode.SrcOver
+                            )
 
                             if (highlight.cfi == pressedHighlightCfi) {
                                 drawPath(
                                     path,
-                                    Color.White.copy(alpha = 0.3f),
+                                    Color.Black.copy(alpha = 0.1f),
                                     blendMode = BlendMode.SrcOver
                                 )
                             }
-                        } catch (_: Exception) {
-                            // Ignore layout errors during drawing
-                        }
+                        } catch (_: Exception) { }
                     }
                 }
             }
@@ -1174,8 +1168,7 @@ private fun TextWithEmphasis(
         val lineLeft = layout.getLineLeft(lineIndex)
         val lineRight = layout.getLineRight(lineIndex)
         if (offset.x < minOf(lineLeft, lineRight) - 50 || offset.x > maxOf(
-                lineLeft,
-                lineRight
+                lineLeft, lineRight
             ) + 50
         ) {
             return null
@@ -1316,6 +1309,8 @@ internal fun PaginatedReaderContent(
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
+    activeHighlightPalette: List<HighlightColor>,
+    onUpdatePalette: (Int, HighlightColor) -> Unit,
     isDarkTheme: Boolean
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -1330,6 +1325,8 @@ internal fun PaginatedReaderContent(
     val blockLayoutMap = remember {
         androidx.compose.runtime.mutableStateMapOf<String, Triple<TextLayoutResult, LayoutCoordinates, Int>>()
     }
+    var showColorPickerDialog by remember { mutableStateOf<Int?>(null) }
+    var showPaletteManager by remember { mutableStateOf(false) }
 
     if (showExternalLinkDialog != null) {
         val urlToShow = showExternalLinkDialog!!
@@ -1433,8 +1430,7 @@ internal fun PaginatedReaderContent(
                 LocalTextToolbar provides textToolbar, LocalClipboard provides dictionaryClipboard
             ) {
                 HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxSize()
+                    state = pagerState, modifier = Modifier.fillMaxSize()
                 ) { pageIndex ->
                     var pageContent by remember { mutableStateOf<Page?>(null) }
                     var currentChapterPath by remember { mutableStateOf<String?>(null) }
@@ -1524,7 +1520,9 @@ internal fun PaginatedReaderContent(
                                                 if (block.style.backgroundColor.isSpecified) {
                                                     Modifier.background(
                                                         block.style.backgroundColor,
-                                                        shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
+                                                        shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
+                                                            block.style.borderRadius
+                                                        ) else androidx.compose.ui.graphics.RectangleShape
                                                     )
                                                 } else {
                                                     Modifier
@@ -1535,7 +1533,9 @@ internal fun PaginatedReaderContent(
                                                     BorderStroke(
                                                         border.width, border.color
                                                     ),
-                                                    shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
+                                                    shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
+                                                        block.style.borderRadius
+                                                    ) else androidx.compose.ui.graphics.RectangleShape
                                                 )
                                             } ?: Modifier)
 
@@ -1830,10 +1830,10 @@ internal fun PaginatedReaderContent(
                                                         if (block.itemMarkerImage != null) {
                                                             val imageRequest =
                                                                 Builder(LocalContext.current).data(
-                                                                        File(
-                                                                            block.itemMarkerImage
-                                                                        )
-                                                                    ).crossfade(true).build()
+                                                                    File(
+                                                                        block.itemMarkerImage
+                                                                    )
+                                                                ).crossfade(true).build()
                                                             val imageSize = with(density) {
                                                                 (textStyle.fontSize.value * 0.8f).sp.toDp()
                                                             }
@@ -1842,8 +1842,8 @@ internal fun PaginatedReaderContent(
                                                                 model = imageRequest,
                                                                 contentDescription = "List item marker",
                                                                 modifier = markerAreaModifier.height(
-                                                                        imageSize
-                                                                    ),
+                                                                    imageSize
+                                                                ),
                                                                 alignment = Alignment.CenterEnd,
                                                                 contentScale = ContentScale.FillHeight
                                                             )
@@ -2093,16 +2093,16 @@ internal fun PaginatedReaderContent(
 
                                                             val imageRequest =
                                                                 Builder(LocalContext.current).data(
-                                                                        SvgData(
-                                                                            block.svgContent
+                                                                    SvgData(
+                                                                        block.svgContent
+                                                                    )
+                                                                ).listener(
+                                                                    onError = { _, result ->
+                                                                        Timber.e(
+                                                                            result.throwable,
+                                                                            "Coil failed to load SVG for MathBlock."
                                                                         )
-                                                                    ).listener(
-                                                                        onError = { _, result ->
-                                                                            Timber.e(
-                                                                                result.throwable,
-                                                                                "Coil failed to load SVG for MathBlock."
-                                                                            )
-                                                                        }).build()
+                                                                    }).build()
 
                                                             val colorFilter =
                                                                 if (block.isFromMathJax) ColorFilter.tint(
@@ -2361,8 +2361,8 @@ internal fun PaginatedReaderContent(
                                                                                     Text(
                                                                                         text = blockInCell.content,
                                                                                         style = cellTextStyle.copy(
-                                                                                                fontWeight = FontWeight.Bold
-                                                                                            ),
+                                                                                            fontWeight = FontWeight.Bold
+                                                                                        ),
                                                                                         modifier = Modifier.fillMaxWidth()
                                                                                     )
                                                                                 }
@@ -2416,11 +2416,10 @@ internal fun PaginatedReaderContent(
                                                                                         model = Builder(
                                                                                             LocalContext.current
                                                                                         ).data(
-                                                                                                File(
-                                                                                                    blockInCell.path
-                                                                                                )
+                                                                                            File(
+                                                                                                blockInCell.path
                                                                                             )
-                                                                                            .build(),
+                                                                                        ).build(),
                                                                                         contentDescription = blockInCell.altText,
                                                                                         contentScale = ContentScale.Fit,
                                                                                         modifier = Modifier.fillMaxWidth()
@@ -2470,231 +2469,232 @@ internal fun PaginatedReaderContent(
                 }, onDismissRequest = { state.onHide() }) {
                     PaginatedTextSelectionMenu(
                         onCopy = {
-                        isForDictionary = false
-                        isForHighlight = false
-                        state.onCopy()
-                        state.onHide()
-                    }, onSelectAll = {
-                        state.onSelectAll?.invoke()
-                        state.onHide()
-                    }, onDictionary = {
-                        isForDictionary = true
-                        state.onCopy()
-                        isForDictionary = false
-                        state.onHide()
-                    }, onHighlight = { color ->
-                        Timber.d("Menu: Highlight option clicked. Color: ${color.id}")
-                        isForHighlight = true
-                        state.onCopy()
-                        isForHighlight = false
+                            isForDictionary = false
+                            isForHighlight = false
+                            state.onCopy()
+                            state.onHide()
+                        }, onSelectAll = {
+                            state.onSelectAll?.invoke()
+                            state.onHide()
+                        }, onDictionary = {
+                            isForDictionary = true
+                            state.onCopy()
+                            isForDictionary = false
+                            state.onHide()
+                        }, onHighlight = { color ->
+                            Timber.d("Menu: Highlight option clicked. Color: ${color.id}")
+                            isForHighlight = true
+                            state.onCopy()
+                            isForHighlight = false
 
-                        capturedTextForAction?.let { text ->
-                            val selectionRect = state.rect
-                            Timber.d("Menu: Selection Rect: $selectionRect")
+                            capturedTextForAction?.let { text ->
+                                val selectionRect = state.rect
+                                Timber.d("Menu: Selection Rect: $selectionRect")
 
-                            // 1. Attempt Geometric Strategy (Hit Testing)
-                            var geometricSuccess = false
-                            val candidates = blockLayoutMap.filter { (_, triple) ->
-                                val (_, coords, _) = triple // Deconstruct Triple
-                                if (!coords.isAttached) return@filter false
-                                val pos = coords.positionInWindow()
-                                val size = coords.size.toSize()
-                                val blockRect = Rect(pos, size)
-                                val overlaps = blockRect.overlaps(selectionRect)
-                                overlaps
-                            }
+                                var geometricSuccess = false
+                                val candidates = blockLayoutMap.filter { (_, triple) ->
+                                    val (_, coords, _) = triple
+                                    if (!coords.isAttached) return@filter false
+                                    val pos = coords.positionInWindow()
+                                    val size = coords.size.toSize()
+                                    val blockRect = Rect(pos, size)
+                                    val overlaps = blockRect.overlaps(selectionRect)
+                                    overlaps
+                                }
 
-                            if (candidates.isNotEmpty()) {
-                                Timber.d(
-                                    "Menu: Geometric candidates found: ${candidates.keys}"
-                                )
-                                try {
-                                    val sorted = candidates.entries.sortedBy {
-                                        it.value.second.positionInWindow().y
-                                    }
-                                    val (startCfi, startTriple) = sorted.first()
-                                    val (endCfi, endTriple) = sorted.last()
-                                    val (startLayout, startCoords, startAbsOffset) = startTriple
-                                    val (endLayout, endCoords, endAbsOffset) = endTriple
-                                    val localStart =
-                                        startCoords.windowToLocal(selectionRect.topLeft)
-                                    val localEnd = endCoords.windowToLocal(
-                                        selectionRect.bottomRight
+                                if (candidates.isNotEmpty()) {
+                                    Timber.d(
+                                        "Menu: Geometric candidates found: ${candidates.keys}"
                                     )
-                                    var finalStartOffset =
-                                        startLayout.getOffsetForPosition(localStart)
-                                    var finalEndOffset = endLayout.getOffsetForPosition(localEnd)
-                                    var finalEndCfi = endCfi
-                                    val startText = startLayout.layoutInput.text.text
-
-                                    if (startCfi == endCfi) {
-                                        val matches = mutableListOf<Int>()
-                                        var idx = startText.indexOf(text)
-                                        while (idx != -1) {
-                                            matches.add(idx)
-                                            idx = startText.indexOf(text, idx + 1)
+                                    try {
+                                        val sorted = candidates.entries.sortedBy {
+                                            it.value.second.positionInWindow().y
                                         }
-                                        if (matches.isNotEmpty()) {
-                                            val bestMatch = matches.minBy {
-                                                abs(it - finalStartOffset)
-                                            }
-                                            finalStartOffset = bestMatch
-                                            finalEndOffset = bestMatch + text.length
-                                            Timber.d(
-                                                "Refined Single-Block Offset: $finalStartOffset"
-                                            )
-                                        }
-                                    } else {
-                                        val endText = endLayout.layoutInput.text.text
+                                        val (startCfi, startTriple) = sorted.first()
+                                        val (endCfi, endTriple) = sorted.last()
+                                        val (startLayout, startCoords, startAbsOffset) = startTriple
+                                        val (endLayout, endCoords, endAbsOffset) = endTriple
+                                        val localStart =
+                                            startCoords.windowToLocal(selectionRect.topLeft)
+                                        val localEnd = endCoords.windowToLocal(
+                                            selectionRect.bottomRight
+                                        )
+                                        var finalStartOffset =
+                                            startLayout.getOffsetForPosition(localStart)
+                                        var finalEndOffset = endLayout.getOffsetForPosition(localEnd)
+                                        var finalEndCfi = endCfi
+                                        val startText = startLayout.layoutInput.text.text
 
-                                        fun findBestMatch(
-                                            source: String,
-                                            query: String,
-                                            targetOffset: Int,
-                                            isSuffix: Boolean
-                                        ): Int {
-                                            if (query.isEmpty()) return -1
-                                            var bestIdx = -1
-                                            var minDiff = Int.MAX_VALUE
-                                            var idx = source.indexOf(query)
+                                        if (startCfi == endCfi) {
+                                            val matches = mutableListOf<Int>()
+                                            var idx = startText.indexOf(text)
                                             while (idx != -1) {
-                                                val cmpPoint = if (isSuffix) idx + query.length
-                                                else idx
-                                                val diff = abs(cmpPoint - targetOffset)
-                                                if (diff < minDiff) {
-                                                    minDiff = diff
-                                                    bestIdx = idx
-                                                }
-                                                idx = source.indexOf(query, idx + 1)
+                                                matches.add(idx)
+                                                idx = startText.indexOf(text, idx + 1)
                                             }
-                                            return bestIdx
-                                        }
-
-                                        var sMatch = -1
-                                        var eMatch = -1
-                                        var usedSuffixLen = 0
-
-                                        val maxChunk = minOf(text.length, 50)
-                                        for (len in maxChunk downTo 3) {
-                                            val prefix = text.take(len).trim()
-                                            if (prefix.isNotEmpty()) {
-                                                val idx = findBestMatch(
-                                                    startText,
-                                                    prefix,
-                                                    finalStartOffset,
-                                                    isSuffix = false
+                                            if (matches.isNotEmpty()) {
+                                                val bestMatch = matches.minBy {
+                                                    abs(it - finalStartOffset)
+                                                }
+                                                finalStartOffset = bestMatch
+                                                finalEndOffset = bestMatch + text.length
+                                                Timber.d(
+                                                    "Refined Single-Block Offset: $finalStartOffset"
                                                 )
-                                                if (idx != -1) {
-                                                    sMatch = idx
-                                                    Timber.d(
-                                                        "Refined Start: Found prefix '$prefix' at $idx"
+                                            }
+                                        } else {
+                                            val endText = endLayout.layoutInput.text.text
+
+                                            fun findBestMatch(
+                                                source: String,
+                                                query: String,
+                                                targetOffset: Int,
+                                                isSuffix: Boolean
+                                            ): Int {
+                                                if (query.isEmpty()) return -1
+                                                var bestIdx = -1
+                                                var minDiff = Int.MAX_VALUE
+                                                var idx = source.indexOf(query)
+                                                while (idx != -1) {
+                                                    val cmpPoint = if (isSuffix) idx + query.length
+                                                    else idx
+                                                    val diff = abs(cmpPoint - targetOffset)
+                                                    if (diff < minDiff) {
+                                                        minDiff = diff
+                                                        bestIdx = idx
+                                                    }
+                                                    idx = source.indexOf(query, idx + 1)
+                                                }
+                                                return bestIdx
+                                            }
+
+                                            var sMatch = -1
+                                            var eMatch = -1
+                                            var usedSuffixLen = 0
+
+                                            val maxChunk = minOf(text.length, 50)
+                                            for (len in maxChunk downTo 3) {
+                                                val prefix = text.take(len).trim()
+                                                if (prefix.isNotEmpty()) {
+                                                    val idx = findBestMatch(
+                                                        startText,
+                                                        prefix,
+                                                        finalStartOffset,
+                                                        isSuffix = false
                                                     )
-                                                    break
+                                                    if (idx != -1) {
+                                                        sMatch = idx
+                                                        Timber.d(
+                                                            "Refined Start: Found prefix '$prefix' at $idx"
+                                                        )
+                                                        break
+                                                    }
                                                 }
                                             }
-                                        }
 
-                                        for (len in maxChunk downTo 3) {
-                                            val suffix = text.takeLast(len).trim()
-                                            if (suffix.isNotEmpty()) {
-                                                val idx = findBestMatch(
-                                                    endText,
-                                                    suffix,
-                                                    finalEndOffset,
-                                                    isSuffix = true
+                                            for (len in maxChunk downTo 3) {
+                                                val suffix = text.takeLast(len).trim()
+                                                if (suffix.isNotEmpty()) {
+                                                    val idx = findBestMatch(
+                                                        endText,
+                                                        suffix,
+                                                        finalEndOffset,
+                                                        isSuffix = true
+                                                    )
+                                                    if (idx != -1) {
+                                                        eMatch = idx
+                                                        usedSuffixLen = suffix.length
+                                                        Timber.d(
+                                                            "Refined End: Found suffix '$suffix' at $idx"
+                                                        )
+                                                        break
+                                                    }
+                                                }
+                                            }
+
+                                            if (sMatch != -1 && eMatch != -1) {
+                                                finalStartOffset = sMatch
+                                                finalEndOffset = eMatch + usedSuffixLen
+                                            } else if (eMatch == -1) {
+                                                Timber.d(
+                                                    "Refined: Suffix not found in end block. Checking single block fit."
                                                 )
-                                                if (idx != -1) {
-                                                    eMatch = idx
-                                                    usedSuffixLen = suffix.length
-                                                    Timber.d(
-                                                        "Refined End: Found suffix '$suffix' at $idx"
-                                                    )
-                                                    break
+                                                val fitIdx = startText.indexOf(text)
+                                                if (fitIdx != -1) {
+                                                    finalEndCfi = startCfi
+                                                    finalStartOffset = fitIdx
+                                                    finalEndOffset = fitIdx + text.length
                                                 }
                                             }
                                         }
 
-                                        if (sMatch != -1 && eMatch != -1) {
-                                            finalStartOffset = sMatch
-                                            finalEndOffset = eMatch + usedSuffixLen
-                                        } else if (eMatch == -1) {
-                                            Timber.d(
-                                                "Refined: Suffix not found in end block. Checking single block fit."
-                                            )
-                                            val fitIdx = startText.indexOf(text)
-                                            if (fitIdx != -1) {
-                                                finalEndCfi = startCfi
-                                                finalStartOffset = fitIdx
-                                                finalEndOffset = fitIdx + text.length
-                                            }
-                                        }
-                                    }
+                                        val absStart = finalStartOffset + startAbsOffset
+                                        val absEnd =
+                                            finalEndOffset + if (startCfi == finalEndCfi) startAbsOffset
+                                            else endAbsOffset
 
-                                    val absStart = finalStartOffset + startAbsOffset
-                                    val absEnd =
-                                        finalEndOffset + if (startCfi == finalEndCfi) startAbsOffset
-                                        else endAbsOffset
-
-                                    val rangeCfi = if (startCfi == finalEndCfi) {
-                                        val actualStart = minOf(absStart, absEnd)
-                                        val actualEnd = maxOf(absStart, absEnd).coerceAtLeast(
+                                        val rangeCfi = if (startCfi == finalEndCfi) {
+                                            val actualStart = minOf(absStart, absEnd)
+                                            val actualEnd = maxOf(absStart, absEnd).coerceAtLeast(
                                                 actualStart + 1
                                             )
-                                        "$startCfi:$actualStart|$finalEndCfi:$actualEnd"
-                                    } else {
-                                        "$startCfi:$absStart|$finalEndCfi:$absEnd"
-                                    }
+                                            "$startCfi:$actualStart|$finalEndCfi:$actualEnd"
+                                        } else {
+                                            "$startCfi:$absStart|$finalEndCfi:$absEnd"
+                                        }
 
-                                    Timber.d("Menu: Geometric Success. CFI: $rangeCfi")
-                                    onHighlightCreated(rangeCfi, text, color.id)
-                                    geometricSuccess = true
-                                } catch (e: Exception) {
-                                    Timber.e(e, "Menu: Geometric calculation failed.")
-                                }
-                            }
-
-                            if (!geometricSuccess) {
-                                Timber.w("Menu: Falling back to text search.")
-                                val pageContent = onGetPage(pagerState.currentPage)
-                                val textBlocks =
-                                    pageContent?.content?.filterIsInstance<TextContentBlock>()
-                                        ?.filter { it.cfi != null } ?: emptyList()
-
-                                var startBlock: TextContentBlock? = null
-                                var endBlock: TextContentBlock? = null
-                                var startOffsetRel = -1
-                                var endOffsetRel = -1
-
-                                for (block in textBlocks) {
-                                    val content = block.content.text
-                                    val idx = content.indexOf(text)
-                                    if (idx != -1) {
-                                        startBlock = block
-                                        endBlock = block
-                                        startOffsetRel = idx
-                                        endOffsetRel = idx + text.length
-                                        break
+                                        Timber.d("Menu: Geometric Success. CFI: $rangeCfi")
+                                        onHighlightCreated(rangeCfi, text, color.id)
+                                        geometricSuccess = true
+                                    } catch (e: Exception) {
+                                        Timber.e(e, "Menu: Geometric calculation failed.")
                                     }
                                 }
 
-                                endBlock = startBlock
+                                if (!geometricSuccess) {
+                                    Timber.w("Menu: Falling back to text search.")
+                                    val pageContent = onGetPage(pagerState.currentPage)
+                                    val textBlocks =
+                                        pageContent?.content?.filterIsInstance<TextContentBlock>()
+                                            ?.filter { it.cfi != null } ?: emptyList()
 
-                                if (startBlock != null) {
-                                    val startAbs =
-                                        startBlock.startCharOffsetInSource + startOffsetRel
-                                    val endAbs =
-                                        endBlock.startCharOffsetInSource + (if (endOffsetRel != -1) endOffsetRel
-                                        else startOffsetRel + text.length)
-                                    onHighlightCreated(
-                                        "${startBlock.cfi}:$startAbs|${endBlock.cfi}:$endAbs",
-                                        text,
-                                        color.id
-                                    )
+                                    var startBlock: TextContentBlock? = null
+                                    var endBlock: TextContentBlock? = null
+                                    var startOffsetRel = -1
+                                    var endOffsetRel = -1
+
+                                    for (block in textBlocks) {
+                                        val content = block.content.text
+                                        val idx = content.indexOf(text)
+                                        if (idx != -1) {
+                                            startBlock = block
+                                            endBlock = block
+                                            startOffsetRel = idx
+                                            endOffsetRel = idx + text.length
+                                            break
+                                        }
+                                    }
+
+                                    endBlock = startBlock
+
+                                    if (startBlock != null) {
+                                        val startAbs =
+                                            startBlock.startCharOffsetInSource + startOffsetRel
+                                        val endAbs =
+                                            endBlock.startCharOffsetInSource + (if (endOffsetRel != -1) endOffsetRel
+                                            else startOffsetRel + text.length)
+                                        onHighlightCreated(
+                                            "${startBlock.cfi}:$startAbs|${endBlock.cfi}:$endAbs",
+                                            text,
+                                            color.id
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        state.onHide()
-                    }, onDelete = null, isProUser = isProUser, isOss = isOss
+                            state.onHide()
+                        }, onDelete = null, isProUser = isProUser, isOss = isOss,
+                        activeHighlightPalette = activeHighlightPalette,
+                        onOpenPaletteManager = { showPaletteManager = true }
                     )
                 }
             }
@@ -2706,29 +2706,59 @@ internal fun PaginatedReaderContent(
                 }, onDismissRequest = { activeSelection = null }) {
                     PaginatedTextSelectionMenu(
                         onCopy = {
-                        val clipboardManager =
-                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Copied Text", sel.text)
-                        clipboardManager.setPrimaryClip(clip)
-                        activeSelection = null
-                    }, onSelectAll = null, onDictionary = {
-                        if (isProUser || countWords(sel.text) <= 1) {
-                            onWordSelectedForAiDefinition(sel.text)
-                        } else {
-                            onShowDictionaryUpsellDialog()
-                        }
-                        activeSelection = null
-                    }, onHighlight = { color ->
-                        Timber.d(
-                            "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
-                        )
-                        val finalCfi = if (sel.startOffset > 0) "${sel.baseCfi}:${sel.startOffset}"
-                        else sel.baseCfi
-                        onHighlightCreated(finalCfi, sel.text, color.id)
-                        activeSelection = null
-                    }, onDelete = null, isProUser = isProUser, isOss = isOss
+                            val clipboardManager =
+                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("Copied Text", sel.text)
+                            clipboardManager.setPrimaryClip(clip)
+                            activeSelection = null
+                        }, onSelectAll = null, onDictionary = {
+                            if (isProUser || countWords(sel.text) <= 1) {
+                                onWordSelectedForAiDefinition(sel.text)
+                            } else {
+                                onShowDictionaryUpsellDialog()
+                            }
+                            activeSelection = null
+                        }, onHighlight = { color ->
+                            Timber.d(
+                                "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
+                            )
+                            val finalCfi = if (sel.startOffset > 0) "${sel.baseCfi}:${sel.startOffset}"
+                            else sel.baseCfi
+                            onHighlightCreated(finalCfi, sel.text, color.id)
+                            activeSelection = null
+                        }, onDelete = null, isProUser = isProUser, isOss = isOss,
+                        activeHighlightPalette = activeHighlightPalette,
+                        onOpenPaletteManager = { showPaletteManager = true }
                     )
                 }
+            }
+
+            if (showColorPickerDialog != null) {
+                AlertDialog(
+                    onDismissRequest = { showColorPickerDialog = null },
+                    title = { Text("Select Color") },
+                    text = {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 48.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            items(HighlightColor.entries) { colorOption ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .background(colorOption.color, CircleShape)
+                                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                                        .clickable {
+                                            onUpdatePalette(showColorPickerDialog!!, colorOption)
+                                            showColorPickerDialog = null
+                                        }
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { showColorPickerDialog = null }) { Text("Close") } }
+                )
             }
 
             // Edit Menu (Delete)
@@ -2739,29 +2769,50 @@ internal fun PaginatedReaderContent(
                 }, onDismissRequest = { activeHighlightForMenu = null }) {
                     PaginatedTextSelectionMenu(
                         onCopy = {
-                        val clipboardManager =
-                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Copied Text", highlight.text)
-                        clipboardManager.setPrimaryClip(clip)
-                        activeHighlightForMenu = null
-                    }, onSelectAll = null, onDictionary = {
-                        if (isProUser || countWords(highlight.text) <= 1) {
-                            onWordSelectedForAiDefinition(highlight.text)
-                        } else {
-                            onShowDictionaryUpsellDialog()
-                        }
-                        activeHighlightForMenu = null
-                    }, onHighlight = { color ->
-                        Timber.d("Menu: Updating highlight color to ${color.id}")
-                        onHighlightDeleted(highlight.cfi)
-                        onHighlightCreated(highlight.cfi, highlight.text, color.id)
-                        activeHighlightForMenu = null
-                    }, onDelete = {
-                        onHighlightDeleted(highlight.cfi)
-                        activeHighlightForMenu = null
-                    }, isProUser = isProUser, isOss = isOss
+                            val clipboardManager =
+                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("Copied Text", highlight.text)
+                            clipboardManager.setPrimaryClip(clip)
+                            activeHighlightForMenu = null
+                        },
+                        onSelectAll = null,
+                        onDictionary = {
+                            if (isProUser || countWords(highlight.text) <= 1) {
+                                onWordSelectedForAiDefinition(highlight.text)
+                            } else {
+                                onShowDictionaryUpsellDialog()
+                            }
+                            activeHighlightForMenu = null
+                        },
+                        onHighlight = { color ->
+                            Timber.d("Menu: Updating highlight color to ${color.id}")
+                            onHighlightDeleted(highlight.cfi)
+                            onHighlightCreated(highlight.cfi, highlight.text, color.id)
+                            activeHighlightForMenu = null
+                        },
+                        onDelete = {
+                            onHighlightDeleted(highlight.cfi)
+                            activeHighlightForMenu = null
+                        },
+                        isProUser = isProUser,
+                        isOss = isOss,
+                        activeHighlightPalette = activeHighlightPalette,
+                        onOpenPaletteManager = { showPaletteManager = true }
                     )
                 }
+            }
+
+            if (showPaletteManager) {
+                PaletteManagerDialog(
+                    currentPalette = activeHighlightPalette,
+                    onDismiss = { showPaletteManager = false },
+                    onSave = { newPalette ->
+                        newPalette.forEachIndexed { index, color ->
+                            onUpdatePalette(index, color)
+                        }
+                        showPaletteManager = false
+                    }
+                )
             }
         } else {
             Timber.w("Book has no pages to display.")
@@ -2811,9 +2862,11 @@ private fun PaginatedTextSelectionMenu(
     onSelectAll: (() -> Unit)?,
     onDictionary: () -> Unit,
     onHighlight: ((HighlightColor) -> Unit)?,
-    @Suppress("SameParameterValue") onDelete: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
-    isOss: Boolean
+    isOss: Boolean,
+    activeHighlightPalette: List<HighlightColor> = emptyList(),
+    onOpenPaletteManager: (() -> Unit)? = null
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -2822,7 +2875,7 @@ private fun PaginatedTextSelectionMenu(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.width(IntrinsicSize.Max)) {
-            // 1. Colors Row (Only show if highlighting is supported)
+            // 1. Colors Row
             if (onHighlight != null) {
                 Row(
                     modifier = Modifier
@@ -2831,18 +2884,22 @@ private fun PaginatedTextSelectionMenu(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    HighlightColor.entries.forEach { colorEnum ->
+                    activeHighlightPalette.forEach { colorEnum ->
                         Box(
                             modifier = Modifier
-                                .padding(horizontal = 8.dp)
-                                .size(24.dp)
+                                .padding(horizontal = 6.dp)
+                                .size(32.dp)
                                 .background(colorEnum.color, CircleShape)
-                                .border(
-                                    1.dp, MaterialTheme.colorScheme.outline.copy(
-                                        alpha = 0.5f
-                                    ), CircleShape
-                                )
-                                .clickable { onHighlight(colorEnum) })
+                                .clickable { onHighlight(colorEnum) }
+                        )
+                    }
+
+                    if (onOpenPaletteManager != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        SpectrumButton(
+                            onClick = onOpenPaletteManager,
+                            size = 32.dp
+                        )
                     }
                 }
                 HorizontalDivider()
@@ -3137,9 +3194,11 @@ private fun RenderFlexChildBlock(
         is TableBlock -> {
             Column(modifier = Modifier.fillMaxWidth()) {
                 childBlock.rows.forEach { tableRow ->
-                    Row(Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min)) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
+                    ) {
                         val hasFixedWidths =
                             tableRow.any { it.style.blockStyle.width != Dp.Unspecified }
 
@@ -3199,10 +3258,10 @@ private fun RenderFlexChildBlock(
                                     } else if (blockInCell is ImageBlock) {
                                         AsyncImage(
                                             model = Builder(LocalContext.current).data(
-                                                    File(
-                                                        blockInCell.path
-                                                    )
-                                                ).build(),
+                                                File(
+                                                    blockInCell.path
+                                                )
+                                            ).build(),
                                             contentDescription = blockInCell.altText,
                                             contentScale = ContentScale.Fit,
                                             modifier = Modifier.fillMaxWidth()
