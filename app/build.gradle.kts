@@ -70,7 +70,10 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            val storePath = localProperties.getProperty("MYAPP_RELEASE_STORE_FILE")
+            if (!storePath.isNullOrEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -168,8 +171,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-svg:2.6.0")
 
-    implementation(project(":pdfiumandroid"))
-
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-session:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
@@ -198,6 +199,8 @@ dependencies {
 
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.browser:browser:1.8.0")
+
+    implementation("io.legere:pdfiumandroid:1.0.35")
 }
 
 spotless {

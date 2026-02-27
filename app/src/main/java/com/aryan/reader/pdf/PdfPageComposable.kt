@@ -1,22 +1,3 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
 // PdfPageComposable
 @file:Suppress(
     "RemoveRedundantQualifierName", "COMPOSE_APPLIER_CALL_MISMATCH", "UnusedVariable", "unused"
@@ -137,7 +118,6 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
-import io.legere.pdfiumandroid.PdfPageObjectType
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
 import io.legere.pdfiumandroid.suspend.PdfTextPageKt
@@ -351,7 +331,6 @@ data class PageStaticData(
     val targetWidth: Int,
     val targetHeight: Int,
     val colorFilter: StableHolder<ColorFilter?>,
-    val imageScreenRects: StableHolder<List<Rect>>,
     val isDarkMode: Boolean
 )
 
@@ -630,7 +609,6 @@ internal fun PdfPageComposable(
 
     var highlightedTextScreenRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
     val ttsHighlightColor = Color(0xFFFFECB3).copy(alpha = 0.4f)
-    var imageScreenRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
 
     var allTextPageHighlightRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
 
@@ -1128,44 +1106,6 @@ internal fun PdfPageComposable(
                         Timber.w("Error closing tile page: ${e.message}")
                     }
                 }
-            }
-        }
-    }
-
-    LaunchedEffect(pageIndex, pdfDocumentItem, actualBitmapWidthPx, actualBitmapHeightPx, virtualPage) {
-        if (!isPdfPage) {
-            imageScreenRects = emptyList()
-            return@LaunchedEffect
-        }
-
-        if (actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0) {
-            imageScreenRects = emptyList()
-            return@LaunchedEffect
-        }
-
-        withContext(Dispatchers.IO) {
-            try {
-                pdfDocumentItem.openPage(pdfPageIndex).use { page ->
-                    val objects = page.getPageObjects()
-                    val foundImageRects =
-                        objects.filter { it.type == PdfPageObjectType.IMAGE }.mapNotNull { obj ->
-                            val pdfRect = obj.bounds
-                            val screenRect = page.mapRectToDevice(
-                                startX = 0,
-                                startY = 0,
-                                sizeX = actualBitmapWidthPx,
-                                sizeY = actualBitmapHeightPx,
-                                rotate = currentPageRotation,
-                                coords = pdfRect
-                            )
-                            if (screenRect.width() > 0 && screenRect.height() > 0) screenRect
-                            else null
-                        }
-                    imageScreenRects = foundImageRects
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Error fetching image objects for page $pageIndex")
-                imageScreenRects = emptyList()
             }
         }
     }
@@ -3244,8 +3184,6 @@ internal fun PdfPageComposable(
                 bitmapState != null && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0 -> {
                     val stableBitmapState = remember(bitmapState) { StableHolder(bitmapState) }
                     val stableTiles = remember(tiles) { StableHolder(tiles) }
-                    val stableImageScreenRects =
-                        remember(imageScreenRects) { StableHolder(imageScreenRects) }
                     val stableColorFilter = remember(colorFilter) { StableHolder(colorFilter) }
 
                     val staticData = remember(
@@ -3259,7 +3197,6 @@ internal fun PdfPageComposable(
                         actualBitmapWidthPx,
                         actualBitmapHeightPx,
                         stableColorFilter,
-                        stableImageScreenRects,
                         isDarkMode
                     ) {
                         Timber.tag("PdfDrawPerf").v(
@@ -3276,7 +3213,6 @@ internal fun PdfPageComposable(
                             targetWidth = actualBitmapWidthPx,
                             targetHeight = actualBitmapHeightPx,
                             colorFilter = stableColorFilter,
-                            imageScreenRects = stableImageScreenRects,
                             isDarkMode = isDarkMode
                         )
                     }
@@ -3576,7 +3512,6 @@ private fun PdfBitmapLayer(
     targetWidth: Int,
     targetHeight: Int,
     colorFilter: ColorFilter? = null,
-    imageScreenRects: List<Rect> = emptyList(),
     isDarkMode: Boolean = false
 ) {
     SideEffect {
@@ -3605,34 +3540,6 @@ private fun PdfBitmapLayer(
                     colorFilter = colorFilter
                 )
 
-                // 2. If Dark Mode, draw Images ON TOP without filter
-                if (isDarkMode && imageScreenRects.isNotEmpty()) {
-                    imageScreenRects.forEach { rect ->
-                        val scaleX = bitmapState.width.toFloat() / dstW.toFloat()
-                        val scaleY = bitmapState.height.toFloat() / dstH.toFloat()
-
-                        val srcLeft = (rect.left * scaleX).toInt().coerceAtLeast(0)
-                        val srcTop = (rect.top * scaleY).toInt().coerceAtLeast(0)
-                        val srcRight = (rect.right * scaleX).toInt().coerceAtMost(bitmapState.width)
-                        val srcBottom =
-                            (rect.bottom * scaleY).toInt().coerceAtMost(bitmapState.height)
-
-                        val w = srcRight - srcLeft
-                        val h = srcBottom - srcTop
-
-                        if (w > 0 && h > 0) {
-                            drawImage(
-                                image = bitmapState.asImageBitmap(),
-                                srcOffset = IntOffset(srcLeft, srcTop),
-                                srcSize = IntSize(w, h),
-                                dstOffset = IntOffset(rect.left, rect.top),
-                                dstSize = IntSize(rect.width(), rect.height()),
-                                colorFilter = null
-                            )
-                        }
-                    }
-                }
-
                 // 3. Draw Tiles
                 if (effectiveScale > 1f) {
                     tiles.forEach { tile ->
@@ -3647,52 +3554,6 @@ private fun PdfBitmapLayer(
                                 ),
                                 colorFilter = colorFilter
                             )
-
-                            // Draw Tile Images (Original Colors)
-                            if (isDarkMode && imageScreenRects.isNotEmpty()) {
-                                imageScreenRects.forEach { imgRect ->
-                                    if (Rect.intersects(imgRect, tile.renderRect)) {
-                                        val intersectLeft =
-                                            maxOf(imgRect.left, tile.renderRect.left)
-                                        val intersectTop = maxOf(imgRect.top, tile.renderRect.top)
-                                        val intersectRight =
-                                            minOf(imgRect.right, tile.renderRect.right)
-                                        val intersectBottom =
-                                            minOf(imgRect.bottom, tile.renderRect.bottom)
-
-                                        val width = intersectRight - intersectLeft
-                                        val height = intersectBottom - intersectTop
-
-                                        if (width > 0 && height > 0) {
-                                            val tileRelX = intersectLeft - tile.renderRect.left
-                                            val tileRelY = intersectTop - tile.renderRect.top
-                                            val tileScaleX =
-                                                tile.bitmap.width.toFloat() / tile.renderRect.width()
-                                                    .toFloat()
-                                            val tileScaleY =
-                                                tile.bitmap.height.toFloat() / tile.renderRect.height()
-                                                    .toFloat()
-                                            val srcX = (tileRelX * tileScaleX).toInt()
-                                            val srcY = (tileRelY * tileScaleY).toInt()
-                                            val srcW = (width * tileScaleX).toInt()
-                                            val srcH = (height * tileScaleY).toInt()
-
-                                            if (srcW > 0 && srcH > 0) {
-                                                drawImage(
-                                                    image = tile.bitmap.asImageBitmap(),
-                                                    srcOffset = IntOffset(srcX, srcY),
-                                                    srcSize = IntSize(srcW, srcH),
-                                                    dstOffset = IntOffset(
-                                                        intersectLeft, intersectTop
-                                                    ),
-                                                    dstSize = IntSize(width, height),
-                                                    colorFilter = null // Original Colors
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -4198,7 +4059,6 @@ private fun PdfPageStaticLayer(data: PageStaticData) {
         targetWidth = data.targetWidth,
         targetHeight = data.targetHeight,
         colorFilter = data.colorFilter.item,
-        imageScreenRects = data.imageScreenRects.item,
         isDarkMode = data.isDarkMode
     )
 }
@@ -4467,28 +4327,7 @@ private fun PdfPageRenderer(
 
                 // Layer 4: Page Number Indicator
                 if (totalPages > 0) {
-                    @Suppress("KotlinConstantConditions") val isOverImage = remember(
-                        staticData.imageScreenRects,
-                        staticData.targetWidth,
-                        staticData.targetHeight,
-                        density
-                    ) {
-                        val w = staticData.targetWidth
-                        val h = staticData.targetHeight
-                        if (w > 0 && h > 0) {
-                            val checkOffsetPx = with(density) { 20.dp.toPx().toInt() }
-                            val checkX = w - checkOffsetPx
-                            val checkY = h - checkOffsetPx
-
-                            staticData.imageScreenRects.item.any { rect ->
-                                rect.contains(checkX, checkY)
-                            }
-                        } else {
-                            false
-                        }
-                    }
-
-                    val pageNumColor = if (staticData.isDarkMode && !isOverImage) {
+                    val pageNumColor = if (staticData.isDarkMode) {
                         Color.White
                     } else {
                         Color.Black
