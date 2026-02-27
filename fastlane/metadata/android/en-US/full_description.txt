@@ -1,0 +1,11 @@
+Episteme Reader is an offline-first application designed for reading various document formats. It leverages native Android technologies and C++ libraries to provide a performant reading experience with customization capabilities.
+
+Features:
+* Documents: View PDF, Markdown (MD), TXT, and HTML files.
+* E-books: Read EPUB, MOBI, and AZW3 files using native parsing.
+* PDF Modes: Vertical Scroll and Paginated views.
+* Annotations: Draw directly on pages (ink, highlighter, eraser) or add text notes.
+* Customization: Adjust font size, margins, and import custom fonts (.ttf, .otf).
+* Organization: Built-in library management and Text-to-Speech (TTS) support.
+
+This is a completely free and open-source (OSS) app built natively using Jetpack Compose.
