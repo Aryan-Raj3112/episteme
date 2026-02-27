@@ -25,5 +25,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Reader"
 include(":app")
-include(":pdfiumandroid")
-include(":pdfiumandroid:arrow")
