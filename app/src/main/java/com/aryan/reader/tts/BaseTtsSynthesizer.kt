@@ -38,9 +38,9 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.delay
 
-private const val START_TIMEOUT_FAST_MS = 750L
-private const val START_TIMEOUT_RETRY_MS = 2500L
-private const val PROCESS_TIMEOUT_MS = 4000L
+private const val START_TIMEOUT_FAST_MS = 3000L
+private const val START_TIMEOUT_RETRY_MS = 4000L
+private const val PROCESS_TIMEOUT_MS = 15000L
 private const val MAX_RETRY_ATTEMPTS = 3
 
 class BaseTtsSynthesizer(private val context: Context) {

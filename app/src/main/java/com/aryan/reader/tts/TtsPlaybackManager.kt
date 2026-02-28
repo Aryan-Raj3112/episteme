@@ -180,9 +180,11 @@ class TtsPlaybackManager(
                 val ttsModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val playbackSource = args.getString(KEY_PLAYBACK_SOURCE)
                 val ttsMode = try { TtsMode.valueOf(ttsModeName ?: TtsMode.CLOUD.name) } catch (_: Exception) { TtsMode.CLOUD }
+
                 val richChunks = if (cfis != null && offsets != null && chunks.size == cfis.size && chunks.size == offsets.size) {
                     chunks.mapIndexed { index, text ->
-                        TtsChunk(text, cfis[index], offsets[index])
+                        val safeOffset = offsets.getOrNull(index) ?: -1
+                        TtsChunk(text, cfis[index], safeOffset)
                     }
                 } else {
                     chunks.map { TtsChunk(it, "", -1) }

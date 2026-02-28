@@ -20,6 +20,8 @@
 // MainScreen.kt
 package com.aryan.reader
 
+import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -32,13 +34,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.launch
 
 sealed class BottomBarScreen(val route: String, val label: String, val iconResId: Int) {
     object Home : BottomBarScreen("home", "Home", R.drawable.home)
@@ -56,6 +60,13 @@ fun MainScreen(
     windowSizeClass: WindowSizeClass,
     navController: NavHostController
 ) {
+    val context = LocalContext.current
+
+    SideEffect {
+        val activity = context as? ComponentActivity
+        activity?.enableEdgeToEdge()
+    }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val viewingShelfName = uiState.viewingShelfName
 
