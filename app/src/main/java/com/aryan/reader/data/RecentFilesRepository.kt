@@ -23,6 +23,7 @@ package com.aryan.reader.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.net.toUri
 import timber.log.Timber
 import com.aryan.reader.BookImporter
 import com.aryan.reader.paginatedreader.Locator
@@ -35,7 +36,7 @@ import java.io.FileOutputStream
 
 private const val COVER_CACHE_DIR = "cover_cache"
 
-class RecentFilesRepository(context: Context) {
+class RecentFilesRepository(private val context: Context) {
 
     private val recentFileDao = AppDatabase.getDatabase(context).recentFileDao()
     private val coverCacheDir = File(context.filesDir, COVER_CACHE_DIR)
@@ -112,6 +113,46 @@ class RecentFilesRepository(context: Context) {
         Timber.d("SyncDebug:   -> Final entity to insert: uri='${entityToInsert.uriString}', isAvailable=${entityToInsert.isAvailable}, isDeleted=${entityToInsert.isDeleted}, isRecent=${entityToInsert.isRecent}")
         recentFileDao.insertOrUpdateFile(entityToInsert)
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")
+    }
+
+    suspend fun syncLocalMetadataToFolder(bookId: String) = withContext(Dispatchers.IO) {
+        val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
+        val folderUriString = entity.sourceFolderUri
+
+        if (folderUriString != null) {
+            Timber.d("Syncing metadata to local folder for book: $bookId")
+
+            val metadata = FolderBookMetadata(
+                bookId = entity.bookId,
+                title = entity.title,
+                author = entity.author,
+                displayName = entity.displayName,
+                type = entity.type.name,
+                lastChapterIndex = entity.lastChapterIndex,
+                lastPage = entity.lastPage,
+                lastPositionCfi = entity.lastPositionCfi,
+                progressPercentage = entity.progressPercentage ?: 0f,
+                isRecent = entity.isRecent,
+                lastModifiedTimestamp = entity.lastModifiedTimestamp,
+                bookmarksJson = entity.bookmarks,
+                locatorBlockIndex = entity.locatorBlockIndex,
+                locatorCharOffset = entity.locatorCharOffset
+            )
+
+            LocalSyncUtils.saveMetadataToFolder(
+                context = context, // Now correctly references the property
+                sourceFolderUri = folderUriString.toUri(),
+                metadata = metadata
+            )
+        }
+    }
+
+    suspend fun deleteFilesBySourceFolder(folderUriString: String) = withContext(Dispatchers.IO) {
+        recentFileDao.deleteFilesBySourceFolder(folderUriString)
+    }
+
+    suspend fun findLegacyBooks(stableIdPrefix: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
+        return@withContext recentFileDao.getFilesWithIdPrefix(stableIdPrefix).map { it.toRecentFileItem() }
     }
 
     suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {

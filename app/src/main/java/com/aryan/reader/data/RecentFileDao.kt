@@ -61,6 +61,12 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files WHERE uriString = :uriString")
     suspend fun getFileByUri(uriString: String): RecentFileEntity?
 
+    @Query("DELETE FROM recent_files WHERE sourceFolderUri = :sourceFolderUri")
+    suspend fun deleteFilesBySourceFolder(sourceFolderUri: String)
+
+    @Query("SELECT * FROM recent_files WHERE bookId LIKE :prefix || '%'")
+    suspend fun getFilesWithIdPrefix(prefix: String): List<RecentFileEntity>
+
     @Query("DELETE FROM recent_files")
     suspend fun clearAll()
 
