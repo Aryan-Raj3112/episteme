@@ -20,9 +20,7 @@
 package com.aryan.reader.paginatedreader
 
 import android.content.Context
-import android.os.Build
 import timber.log.Timber
-import androidx.annotation.RequiresApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -51,7 +49,6 @@ class LocatorConverter(
     private val proto: ProtoBuf,
     private val context: Context
 ) {
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private suspend fun processAndCacheChapter(book: EpubBook, chapterIndex: Int): List<SemanticBlock>? = withContext(Dispatchers.IO) {
         try {
             val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
@@ -114,12 +111,7 @@ class LocatorConverter(
             proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
         } else {
             Timber.w("getLocatorFromCfi: Chapter $chapterIndex not in DB. Triggering on-demand processing.")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                processAndCacheChapter(book, chapterIndex)
-            } else {
-                Timber.e("On-demand processing requires API 34+, cannot proceed.")
-                null
-            }
+            processAndCacheChapter(book, chapterIndex)
         }
 
         if (allBlocks == null) {
@@ -238,9 +230,7 @@ class LocatorConverter(
         val allBlocks = if (processedChapter != null) {
             proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                processAndCacheChapter(book, locator.chapterIndex)
-            } else null
+            processAndCacheChapter(book, locator.chapterIndex)
         } ?: return@withContext null
 
         var offset = 0

@@ -48,7 +48,6 @@ private fun Color.luminance(): Float {
     return (0.299f * red + 0.587f * green + 0.114f * blue)
 }
 
-@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 object CssParser {
     private val FONT_FACE_REGEX = "@font-face\\s*\\{([^}]+)\\}".toRegex(RegexOption.DOT_MATCHES_ALL)
     private val URL_REGEX = "url\\((['\"]?)(.*?)\\1\\)".toRegex()

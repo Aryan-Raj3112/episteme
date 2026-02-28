@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 object LocalSyncUtils {
-    private const val SYNC_DIR_NAME = ".episteme"
+    private const val SYNC_DIR_NAME = "episteme"
     private const val TAG = "FolderSync"
 
     suspend fun saveMetadataToFolder(
