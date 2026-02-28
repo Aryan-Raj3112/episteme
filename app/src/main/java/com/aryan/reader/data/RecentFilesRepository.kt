@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// RecentFilesRepository.kt
 package com.aryan.reader.data
 
 import android.content.Context
@@ -58,6 +59,10 @@ class RecentFilesRepository(context: Context) {
 
     suspend fun getFileByUri(uriString: String): RecentFileItem? = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFileByUri(uriString)?.toRecentFileItem()
+    }
+
+    suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
+        return@withContext recentFileDao.getFilesBySourceFolder(sourceFolderUri).map { it.toRecentFileItem() }
     }
 
     suspend fun getAllFilesForSync(): List<RecentFileItem> = withContext(Dispatchers.IO) {

@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// LibraryScreen.kt
 package com.aryan.reader
 
 import android.content.Context
@@ -99,6 +100,7 @@ import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -130,6 +132,13 @@ fun LibraryScreen(
         initialPage = uiState.libraryScreenStartPage,
         pageCount = { 3 }
     )
+
+    LaunchedEffect(uiState.libraryScreenStartPage) {
+        if (pagerState.currentPage != uiState.libraryScreenStartPage) {
+            pagerState.animateScrollToPage(uiState.libraryScreenStartPage)
+        }
+    }
+
     val scope = rememberCoroutineScope()
 
     var isSearchActive by remember { mutableStateOf(false) }
@@ -1147,6 +1156,16 @@ private fun LibraryListItem(
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (item.sourceFolderUri != null) {
+                        Icon(
+                            imageVector = Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
                     Text(
                         text = item.title ?: item.displayName,
                         style = MaterialTheme.typography.titleMedium,

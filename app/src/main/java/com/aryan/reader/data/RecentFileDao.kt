@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// RecentFileDao.kt
 package com.aryan.reader.data
 
 import androidx.room.Dao
@@ -32,6 +33,9 @@ interface RecentFileDao {
 
     @Query("SELECT * FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileEntity>>
+
+    @Query("SELECT * FROM recent_files WHERE sourceFolderUri = :sourceFolderUri AND isDeleted = 0")
+    suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileEntity>
 
     @Query("SELECT * FROM recent_files")
     suspend fun getAllFiles(): List<RecentFileEntity>

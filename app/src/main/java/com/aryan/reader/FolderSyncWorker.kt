@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// FolderSyncWorker.kt
 package com.aryan.reader
 
 import android.content.Context
@@ -25,7 +26,6 @@ import timber.log.Timber
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
@@ -42,7 +42,6 @@ class FolderSyncWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     private val recentFilesRepository = RecentFilesRepository(appContext)
-    private val bookImporter = BookImporter(appContext)
     private val epubParser = EpubParser(appContext)
     private val mobiParser = MobiParser(appContext)
     private val pdfCoverGenerator = PdfCoverGenerator(appContext)
@@ -52,7 +51,7 @@ class FolderSyncWorker(
     }
 
     override suspend fun doWork(): Result {
-        Timber.d("Worker starting folder sync check.")
+        Timber.d("FolderSyncWorker: Starting Sync Check.")
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
         val folderUriString = prefs.getString(MainViewModel.KEY_SYNCED_FOLDER_URI, null)
 
@@ -65,14 +64,23 @@ class FolderSyncWorker(
 
         return withContext(Dispatchers.IO) {
             try {
-                val documentTree = DocumentFile.fromTreeUri(appContext, folderUri)
-                if (documentTree == null || !documentTree.isDirectory) {
-                    Timber.e("Could not read the synced folder URI: $folderUriString. Cancelling worker.")
-                    WorkManager.getInstance(appContext).cancelUniqueWork(WORK_NAME)
+                try {
+                    appContext.contentResolver.takePersistableUriPermission(
+                        folderUri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                    Timber.e("Lost permission to sync folder. User needs to re-select.")
                     return@withContext Result.failure()
                 }
 
-                val filesToScan = mutableListOf<DocumentFile>()
+                val documentTree = DocumentFile.fromTreeUri(appContext, folderUri)
+                if (documentTree == null || !documentTree.isDirectory) {
+                    Timber.e("Could not read the synced folder URI.")
+                    return@withContext Result.failure()
+                }
+
+                val currentDiskFiles = mutableListOf<DocumentFile>()
                 val fileQueue = ArrayDeque<DocumentFile>()
                 documentTree.listFiles().let { fileQueue.addAll(it) }
 
@@ -81,35 +89,48 @@ class FolderSyncWorker(
                     if (file.isDirectory) {
                         file.listFiles().let { fileQueue.addAll(it) }
                     } else if (file.isFile) {
-                        val fileName = file.name ?: ""
-                        if (fileName.endsWith(".pdf", true) || fileName.endsWith(".epub", true) || fileName.endsWith(".mobi", true) || fileName.endsWith(".azw3", true)) {
-                            filesToScan.add(file)
+                        val name = file.name ?: ""
+                        if (isValidExtension(name)) {
+                            currentDiskFiles.add(file)
                         }
                     }
                 }
 
-                var importedCount = 0
-                for (file in filesToScan) {
-                    val importResult = prepareBookForImport(file.uri)
-                    if (importResult != null) {
-                        val (internalUri, bookId, type) = importResult
-                        val displayName = file.name ?: "Unknown File"
-                        addBookToDatabase(internalUri, type, bookId, displayName, folderUriString)
-                        importedCount++
+                val foundBookIds = mutableSetOf<String>()
+                var addedCount = 0
+
+                for (file in currentDiskFiles) {
+                    val bookId = generateFastId(file)
+                    foundBookIds.add(bookId)
+
+                    val existingItem = recentFilesRepository.getFileByBookId(bookId)
+
+                    if (existingItem == null) {
+                        val type = getFileType(file.name ?: "", file.type)
+                        if (type != null) {
+                            addBookToDatabase(file.uri, type, bookId, file.name ?: "Unknown", folderUriString)
+                            addedCount++
+                        }
                     }
                 }
 
-                if (importedCount > 0) {
-                    Timber.d("Worker successfully imported $importedCount new book(s).")
-                } else {
-                    Timber.d("Worker found no new books to import.")
+                val dbFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+
+                val idsToMarkUnavailable = dbFolderBooks
+                    .filter { !foundBookIds.contains(it.bookId) }
+                    .map { it.bookId }
+
+                if (idsToMarkUnavailable.isNotEmpty()) {
+                    Timber.d("Reconciliation: Marking ${idsToMarkUnavailable.size} books as unavailable (file missing from disk).")
+                    recentFilesRepository.markAsDeleted(idsToMarkUnavailable)
                 }
 
-                prefs.edit {
-                    putLong(
-                        MainViewModel.KEY_LAST_FOLDER_SCAN_TIME,
-                        System.currentTimeMillis()
-                    )
+                // 5. Update Timestamp
+                if (addedCount > 0 || idsToMarkUnavailable.isNotEmpty()) {
+                    Timber.d("Folder Sync Complete. Added: $addedCount, Removed: ${idsToMarkUnavailable.size}")
+                    prefs.edit {
+                        putLong(MainViewModel.KEY_LAST_FOLDER_SCAN_TIME, System.currentTimeMillis())
+                    }
                 }
 
                 Result.success()
@@ -120,23 +141,28 @@ class FolderSyncWorker(
         }
     }
 
-    private suspend fun prepareBookForImport(externalUri: Uri): Triple<Uri, String, FileType>? {
-        val type = getFileTypeFromUri(externalUri, appContext) ?: return null
-
-        val hash = FileHasher.calculateSha256 {
-            appContext.contentResolver.openInputStream(externalUri)
-        } ?: return null
-
-        if (recentFilesRepository.getFileByBookId(hash) != null) {
-            return null // Already exists
-        }
-
-        val internalFile = bookImporter.importBook(externalUri) ?: return null
-        return Triple(internalFile.toUri(), hash, type)
+    private fun generateFastId(file: DocumentFile): String {
+        // Robust ID for local files without hashing content
+        return "local_${file.name}_${file.length()}_${file.lastModified()}"
     }
 
-    private fun getFileNameFromUri(uri: Uri): String? {
-        return DocumentFile.fromSingleUri(appContext, uri)?.name
+    private fun isValidExtension(name: String): Boolean {
+        return name.endsWith(".pdf", true) ||
+                name.endsWith(".epub", true) ||
+                name.endsWith(".mobi", true) ||
+                name.endsWith(".azw3", true) ||
+                name.endsWith(".md", true)
+    }
+
+    private fun getFileType(name: String, mimeType: String?): FileType? {
+        return when {
+            mimeType == "application/pdf" || name.endsWith(".pdf", true) -> FileType.PDF
+            mimeType == "application/epub+zip" || name.endsWith(".epub", true) -> FileType.EPUB
+            name.endsWith(".mobi", true) || name.endsWith(".azw3", true) -> FileType.MOBI
+            name.endsWith(".md", true) -> FileType.MD
+            name.endsWith(".txt", true) -> FileType.TXT
+            else -> null
+        }
     }
 
     private suspend fun addBookToDatabase(
@@ -150,34 +176,39 @@ class FolderSyncWorker(
         var title: String? = null
         var author: String? = null
 
-        if (type == FileType.EPUB || type == FileType.MOBI) {
-            val book = withContext(Dispatchers.IO) {
-                appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
-                    if (type == FileType.EPUB) {
-                        epubParser.createEpubBook(
-                            inputStream = inputStream,
-                            originalBookNameHint = displayName
-                        )
-                    } else {
-                        mobiParser.createMobiBook(
-                            inputStream = inputStream,
-                            originalBookNameHint = displayName
-                        )
+        try {
+            if (type == FileType.EPUB || type == FileType.MOBI) {
+                val book = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        if (type == FileType.EPUB) {
+                            epubParser.createEpubBook(
+                                inputStream = inputStream,
+                                originalBookNameHint = displayName,
+                                parseContent = false // Metadata only
+                            )
+                        } else {
+                            mobiParser.createMobiBook(
+                                inputStream = inputStream,
+                                originalBookNameHint = displayName
+                            )
+                        }
                     }
                 }
-            }
-            if (book != null) {
-                title = book.title.takeIf { it.isNotBlank() } ?: displayName
-                author = book.author.takeIf { it.isNotBlank() }
-                book.coverImage?.let {
+                if (book != null) {
+                    title = book.title.takeIf { it.isNotBlank() } ?: displayName
+                    author = book.author.takeIf { it.isNotBlank() }
+                    book.coverImage?.let {
+                        coverPath = recentFilesRepository.saveCoverToCache(it, uri)
+                    }
+                }
+            } else if (type == FileType.PDF) {
+                title = displayName
+                pdfCoverGenerator.generateCover(uri)?.let {
                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                 }
             }
-        } else if (type == FileType.PDF) {
-            title = displayName
-            pdfCoverGenerator.generateCover(uri)?.let {
-                coverPath = recentFilesRepository.saveCoverToCache(it, uri)
-            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to extract metadata for in-place file: $displayName")
         }
 
         val newItem = RecentFileItem(
@@ -192,32 +223,9 @@ class FolderSyncWorker(
             isAvailable = true,
             lastModifiedTimestamp = System.currentTimeMillis(),
             isDeleted = false,
-            isRecent = false, // Books from folder sync should not appear on the Home screen
+            isRecent = false, // Does not show on Home screen automatically
             sourceFolderUri = sourceFolderUri
         )
         recentFilesRepository.addRecentFile(newItem)
-        Timber.i("Worker added new book to database: $displayName")
-    }
-
-    private fun getFileTypeFromUri(uri: Uri, context: Context): FileType? {
-        val mimeType = context.contentResolver.getType(uri)
-        return when (mimeType) {
-            "application/pdf" -> FileType.PDF
-            "application/epub+zip" -> FileType.EPUB
-            "application/x-mobipocket-ebook",
-            "application/vnd.amazon.ebook",
-            "application/vnd.amazon.mobi8-ebook" -> FileType.MOBI
-            else -> {
-                val path = getFileNameFromUri(uri)
-                when {
-                    path?.endsWith(".pdf", ignoreCase = true) == true -> FileType.PDF
-                    path?.endsWith(".epub", ignoreCase = true) == true -> FileType.EPUB
-                    path?.endsWith(".mobi", ignoreCase = true) == true -> FileType.MOBI
-                    path?.endsWith(".azw3", ignoreCase = true) == true -> FileType.MOBI
-                    path?.endsWith(".prc", ignoreCase = true) == true -> FileType.MOBI
-                    else -> null
-                }
-            }
-        }
     }
 }

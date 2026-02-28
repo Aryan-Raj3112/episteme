@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// MainViewModel.kt
 @file:Suppress("DEPRECATION")
 
 package com.aryan.reader
@@ -99,6 +100,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 
 private const val KEY_RENDER_MODE = "render_mode"
+private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
 
 data class BannerMessage(val message: String, val isError: Boolean = false)
 
@@ -176,6 +178,7 @@ data class ReaderScreenState(
     val isAuthMenuExpanded: Boolean = false,
     val isProUser: Boolean = false,
     val isSyncEnabled: Boolean = false,
+    val isFolderSyncEnabled: Boolean = false,
     val bannerMessage: BannerMessage? = null,
     val deviceLimitState: DeviceLimitReachedState = DeviceLimitReachedState(),
     val isReplacingDevice: Boolean = false,
@@ -263,6 +266,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             },
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
+            isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
             syncedFolderUri = prefs.getString(KEY_SYNCED_FOLDER_URI, null),
             lastFolderScanTime = if (prefs.contains(KEY_LAST_FOLDER_SCAN_TIME)) prefs.getLong(
                 KEY_LAST_FOLDER_SCAN_TIME,
@@ -278,10 +282,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _prefsUpdateFlow
     ) { internalState, recentFilesFromDb, _ ->
         val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
-                recentFilesFromDb.any { dbItem ->
-                    dbItem.uriString == contextItem.uriString
-                }
-            }.toSet()
+            recentFilesFromDb.any { dbItem ->
+                dbItem.uriString == contextItem.uriString
+            }
+        }.toSet()
 
         if (validContextualItems.size != internalState.contextualActionItems.size) {
             Timber.d(
@@ -322,15 +326,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val shelvedBookIds = mutableSetOf<String>()
 
         val shelvesFromPrefs = shelfNames.map { shelfName ->
-                val bookIds = prefs.getStringSet(
-                    "$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()
-                ) ?: emptySet()
-                shelvedBookIds.addAll(bookIds)
-                val booksForShelf = sortedRecentFiles.filter {
-                    it.bookId in bookIds
-                }
-                Shelf(shelfName, booksForShelf)
-            }.sortedBy { it.name }
+            val bookIds = prefs.getStringSet(
+                "$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()
+            ) ?: emptySet()
+            shelvedBookIds.addAll(bookIds)
+            val booksForShelf = sortedRecentFiles.filter {
+                it.bookId in bookIds
+            }
+            Shelf(shelfName, booksForShelf)
+        }.sortedBy { it.name }
 
         val unshelvedBooks = sortedRecentFiles.filter { it.bookId !in shelvedBookIds }
         val allShelves = shelvesFromPrefs + Shelf("Unshelved", unshelvedBooks)
@@ -338,8 +342,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val booksAvailableForAdding =
             if (internalState.isAddingBooksToShelf && internalState.viewingShelfName != null) {
                 val currentShelfBooksUris = allShelves.find {
-                        it.name == internalState.viewingShelfName
-                    }?.books?.map { it.uriString }?.toSet() ?: emptySet()
+                    it.name == internalState.viewingShelfName
+                }?.books?.map { it.uriString }?.toSet() ?: emptySet()
 
                 when (internalState.addBooksSource) {
                     AddBooksSource.UNSHELVED -> unshelvedBooks
@@ -358,10 +362,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             booksAvailableForAdding = booksAvailableForAdding
         )
     }.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = ReaderScreenState()
-        )
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReaderScreenState()
+    )
 
     fun onSearchQueryChange(newQuery: String) {
         _internalState.update { it.copy(searchQuery = newQuery) }
@@ -574,10 +578,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val fontsRepository = FontsRepository(appContext)
 
     val customFonts = fontsRepository.getAllFonts().stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     private suspend fun syncFonts(userId: String) {
         Timber.d("Starting Font Sync...")
@@ -652,12 +656,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update { it.copy(isLoading = true) }
             val result = fontsRepository.importFont(uri)
             result.onSuccess { font ->
-                    if (uiState.value.isSyncEnabled) {
-                        uploadNewFont(font)
-                    }
-                }.onFailure {
-                    showBanner("Failed to import font: ${it.message}", isError = true)
+                if (uiState.value.isSyncEnabled) {
+                    uploadNewFont(font)
                 }
+            }.onFailure {
+                showBanner("Failed to import font: ${it.message}", isError = true)
+            }
             _internalState.update { it.copy(isLoading = false) }
         }
     }
@@ -1003,8 +1007,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun uploadSingleBookMetadata(book: RecentFileItem) {
-        if (!uiState.value.isSyncEnabled) {
-            Timber.tag("AnnotationSync").d("Sync disabled. Skipping upload.")
+        if (!uiState.value.isSyncEnabled) return
+
+        if (book.sourceFolderUri != null) {
+            Timber.d("Skipping metadata sync for local folder book: ${book.displayName}")
             return
         }
         val currentUser = uiState.value.currentUser ?: return
@@ -1095,9 +1101,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val metadataToSync = book.toBookMetadata().copy(
-                        lastModifiedTimestamp = System.currentTimeMillis(),
-                        hasAnnotations = hasAnyData
-                    )
+                    lastModifiedTimestamp = System.currentTimeMillis(),
+                    hasAnnotations = hasAnyData
+                )
 
                 firestoreRepository.syncBookMetadata(currentUser.uid, metadataToSync, deviceId)
                 Timber.tag("AnnotationSync")
@@ -1323,8 +1329,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val syncRequest =
                     PeriodicWorkRequestBuilder<FolderSyncWorker>(4, TimeUnit.HOURS).setConstraints(
-                            constraints
-                        ).build()
+                        constraints
+                    ).build()
 
                 workManager.enqueueUniquePeriodicWork(
                     FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.REPLACE, syncRequest
@@ -1411,19 +1417,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             var importedCount = 0
             for (file in filesToImport) {
-                val importResult = prepareBookForImport(file.uri)
-                if (importResult != null) {
-                    val (internalUri, bookId, type) = importResult
-                    val displayName = getFileNameFromUri(file.uri, appContext) ?: "Unknown File"
-                    addFileToRecent(
-                        internalUri,
-                        type,
-                        bookId,
-                        customDisplayName = displayName,
-                        isRecent = false,
-                        sourceFolderUri = folderUriString
-                    )
-                    importedCount++
+
+                val bookId = "local_${file.name}_${file.length()}_${file.lastModified()}"
+
+                val existingItem = recentFilesRepository.getFileByBookId(bookId)
+
+                if (existingItem == null) {
+                    val type = getFileTypeFromUri(file.uri, appContext)
+                    if (type != null) {
+                        addFileToRecent(
+                            uri = file.uri,
+                            type = type,
+                            bookId = bookId,
+                            customDisplayName = file.name ?: "Unknown File",
+                            isRecent = false,
+                            sourceFolderUri = folderUriString
+                        )
+                        importedCount++
+                    }
                 }
             }
 
@@ -1432,9 +1443,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             withContext(Dispatchers.Main) {
                 val message = if (importedCount > 0) {
-                    "Successfully imported $importedCount new book(s) from your folder."
+                    "Found $importedCount new book(s) in folder."
                 } else {
-                    "No new books found to import."
+                    "No new books found in folder."
                 }
                 _internalState.update {
                     it.copy(
@@ -1730,10 +1741,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _internalState.update {
                     it.copy(
                         isLoading = false, deviceLimitState = DeviceLimitReachedState(
-                        isLimitReached = true,
-                        registeredDevices = deviceItems.sortedByDescending { item ->
-                            item.lastSeen
-                        }))
+                            isLimitReached = true,
+                            registeredDevices = deviceItems.sortedByDescending { item ->
+                                item.lastSeen
+                            }))
                 }
             } ?: run {
                 showBanner("Please sign in to test device management.", isError = true)
@@ -1772,6 +1783,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun setFolderSyncEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_FOLDER_SYNC_ENABLED, enabled) }
+        _internalState.update { it.copy(isFolderSyncEnabled = enabled) }
+
+        if (enabled && uiState.value.isSyncEnabled) {
+            viewModelScope.launch { syncWithCloud(showBanner = false) }
+        }
+    }
+
     private fun syncWithCloud(showBanner: Boolean = false) = viewModelScope.launch {
         val hasPermissions = googleDriveRepository.hasDrivePermissions(appContext)
         val currentUser = _internalState.value.currentUser
@@ -1800,7 +1820,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 firestoreRepository.getAllShelves(currentUser.uid)
             }
             val localBooks = withContext(Dispatchers.IO) {
-                recentFilesRepository.getAllFilesForSync()
+                val allFiles = recentFilesRepository.getAllFilesForSync()
+                if (_internalState.value.isFolderSyncEnabled) {
+                    allFiles
+                } else {
+                    allFiles.filter { it.sourceFolderUri == null }
+                }
             }
 
             val localShelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()).orEmpty()
@@ -1830,8 +1855,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (local != null && remote != null) {
                     Timber.tag("AnnotationSync").d(
-                            "Checking $bookId. LocalTS: ${local.lastModifiedTimestamp}, RemoteTS: ${remote.lastModifiedTimestamp}, RemoteHasAnn: ${remote.hasAnnotations}"
-                        )
+                        "Checking $bookId. LocalTS: ${local.lastModifiedTimestamp}, RemoteTS: ${remote.lastModifiedTimestamp}, RemoteHasAnn: ${remote.hasAnnotations}"
+                    )
                 }
 
                 when {
@@ -3035,76 +3060,92 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteContextualItemsPermanently() {
         val itemsToRemove = _internalState.value.contextualActionItems
         if (itemsToRemove.isNotEmpty()) {
-            val canSync = uiState.value.isSyncEnabled && googleDriveRepository.hasDrivePermissions(appContext)
-
             _internalState.update { it.copy(contextualActionItems = emptySet()) }
 
             viewModelScope.launch {
-                val currentUser = uiState.value.currentUser
+                val canSync = uiState.value.isSyncEnabled && googleDriveRepository.hasDrivePermissions(appContext)
 
-                if (canSync && currentUser != null) {
-                    _internalState.update {
-                        it.copy(
-                            isLoading = true,
-                            bannerMessage = BannerMessage("Deleting from all devices...")
-                        )
-                    }
-                    try {
-                        val accessToken = googleDriveRepository.getAccessToken(appContext) ?: throw Exception("No token")
-                        val deviceId = getInstallationId()
-                        val remoteFiles = withContext(Dispatchers.IO) {
-                            googleDriveRepository.getFiles(accessToken)?.files.orEmpty()
-                                .associateBy { it.name }
-                        }
+                val (folderBooks, managedBooks) = itemsToRemove.partition { it.sourceFolderUri != null }
 
-                        for (item in itemsToRemove) {
-                            recentFilesRepository.markAsDeleted(listOf(item.bookId))
-                            pdfTextRepository.clearBookText(item.bookId)
-                            val deletedItem =
-                                recentFilesRepository.getFileByBookId(item.bookId) ?: continue
+                if (folderBooks.isNotEmpty()) {
+                    Timber.d("Marking ${folderBooks.size} folder books as deleted (preventing re-import).")
+                    val bookIds = folderBooks.map { it.bookId }
 
-                            firestoreRepository.syncBookMetadata(
-                                currentUser.uid, deletedItem.toBookMetadata(), deviceId
+                    recentFilesRepository.markAsDeleted(bookIds)
+
+                    folderBooks.forEach { item -> pdfTextRepository.clearBookText(item.bookId) }
+                }
+
+                if (managedBooks.isNotEmpty()) {
+                    val currentUser = uiState.value.currentUser
+
+                    if (canSync && currentUser != null) {
+                        _internalState.update {
+                            it.copy(
+                                isLoading = true,
+                                bannerMessage = BannerMessage("Deleting from all devices...")
                             )
+                        }
+                        try {
+                            val accessToken = googleDriveRepository.getAccessToken(appContext)
+                                ?: throw Exception("No token")
+                            val deviceId = getInstallationId()
 
-                            val fileExtension = item.type.name.lowercase()
-                            val fileName = "${item.bookId}.$fileExtension"
-                            remoteFiles[fileName]?.id?.let { fileId ->
-                                Timber.d("Deleting from Drive: $fileName")
-                                googleDriveRepository.deleteDriveFile(accessToken, fileId)
+                            val remoteFiles = withContext(Dispatchers.IO) {
+                                googleDriveRepository.getFiles(accessToken)?.files.orEmpty()
+                                    .associateBy { it.name }
                             }
 
-                            recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
-                        }
-                        _internalState.update {
-                            it.copy(
-                                isLoading = false,
-                                bannerMessage = BannerMessage("Deletion complete.")
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error during permanent deletion")
+                            for (item in managedBooks) {
+                                recentFilesRepository.markAsDeleted(listOf(item.bookId))
+                                pdfTextRepository.clearBookText(item.bookId)
 
-                        recentFilesRepository.deleteFilePermanently(itemsToRemove.map { it.bookId })
-                        itemsToRemove.forEach { item ->
-                            pdfTextRepository.clearBookText(item.bookId)
-                        }
+                                firestoreRepository.syncBookMetadata(
+                                    currentUser.uid, item.toBookMetadata().copy(isDeleted = true), deviceId
+                                )
 
-                        _internalState.update {
-                            it.copy(
-                                isLoading = false,
-                                errorMessage = "Cloud sync failed, deleted locally."
-                            )
+                                val fileExtension = item.type.name.lowercase()
+                                val fileName = "${item.bookId}.$fileExtension"
+                                remoteFiles[fileName]?.id?.let { fileId ->
+                                    Timber.d("Deleting from Drive: $fileName")
+                                    googleDriveRepository.deleteDriveFile(accessToken, fileId)
+                                }
+
+                                recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
+                            }
+
+                            _internalState.update {
+                                it.copy(isLoading = false, bannerMessage = BannerMessage("Deletion complete."))
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error during permanent deletion")
+                            recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
+                            managedBooks.forEach { item ->
+                                pdfTextRepository.clearBookText(item.bookId)
+                            }
+                            _internalState.update {
+                                it.copy(isLoading = false, errorMessage = "Cloud sync failed, deleted locally.")
+                            }
                         }
+                    } else {
+                        recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
+                        managedBooks.forEach { item -> pdfTextRepository.clearBookText(item.bookId) }
                     }
-                } else {
-                    recentFilesRepository.deleteFilePermanently(itemsToRemove.map { it.bookId })
-                    itemsToRemove.forEach { item -> pdfTextRepository.clearBookText(item.bookId) }
                 }
+
+                val totalRemoved = folderBooks.size + managedBooks.size
+                _internalState.update { it.copy(isLoading = false, bannerMessage = BannerMessage("$totalRemoved books removed from library.")) }
             }
         } else {
             Timber.w("Attempted to remove contextual items, but none were selected.")
         }
+    }
+
+    fun navigateToFolderSync() {
+        // 1. Switch MainScreen to Library Tab (Index 1)
+        setMainScreenPage(1)
+        // 2. Switch LibraryScreen to Folder Tab (Index 2)
+        setLibraryScreenPage(2)
     }
 
     override fun onCleared() {

@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// MainScreen.kt
 package com.aryan.reader
 
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +67,12 @@ fun MainScreen(
             pageCount = { bottomBarItems.size }
         )
         val scope = rememberCoroutineScope()
+
+        LaunchedEffect(uiState.mainScreenStartPage) {
+            if (pagerState.currentPage != uiState.mainScreenStartPage) {
+                pagerState.animateScrollToPage(uiState.mainScreenStartPage)
+            }
+        }
 
         LaunchedEffect(pagerState.currentPage) {
             viewModel.setMainScreenPage(pagerState.currentPage)
