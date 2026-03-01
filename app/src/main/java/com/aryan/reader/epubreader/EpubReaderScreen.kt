@@ -31,7 +31,6 @@ import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
-import timber.log.Timber
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -77,10 +76,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -103,6 +100,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -117,6 +115,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
@@ -131,7 +130,6 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
-import com.aryan.reader.SyncUpdateInfo
 import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
@@ -165,14 +163,13 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import java.io.File
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import androidx.compose.ui.BiasAlignment
-import androidx.core.content.edit
 
 private const val AUTO_SCROLL_LOCKED_KEY = "auto_scroll_locked"
 private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
@@ -263,6 +260,7 @@ fun EpubReaderHost(
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }
     val containerFocusRequester = remember { FocusRequester() }
+    var isNavigatingToBookmark by remember { mutableStateOf(false) }
 
     var isPageSliderVisible by remember { mutableStateOf(false) }
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
@@ -1199,32 +1197,95 @@ fun EpubReaderHost(
 
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
+                                Timber.tag("BookmarkDiagnosis").d("Navigating to ${bookmark.cfi}")
                                 cfiToLoad = bookmark.cfi
-                                val locator = locatorConverter.getLocatorFromCfi(epubBook, bookmark.chapterIndex, bookmark.cfi)
-                                val targetChunk = locator?.let { it.blockIndex / 20 }
+
+                                // FIX: Try to extract chunk index directly from CFI for Vertical Mode
+                                // Vertical Mode CFIs are relative to content-container, so the first number
+                                // usually represents the chunk (2->Chunk0, 4->Chunk1, 6->Chunk2...)
+                                val directChunkIndex = try {
+                                    val parts = bookmark.cfi.split('/').mapNotNull { it.toIntOrNull() }
+                                    if (parts.isNotEmpty()) {
+                                        val firstIndex = parts[0]
+                                        // Standard EPUB CFI: indices are 1-based steps (2, 4, 6...)
+                                        (firstIndex - 2) / 2
+                                    } else null
+                                } catch (e: Exception) {
+                                    null
+                                }
+
+                                val locator = if (directChunkIndex == null) {
+                                    locatorConverter.getLocatorFromCfi(epubBook, bookmark.chapterIndex, bookmark.cfi)
+                                } else {
+                                    null
+                                }
+
+                                val targetChunk = directChunkIndex ?: locator?.let { it.blockIndex / 20 }
 
                                 if (bookmark.chapterIndex != currentChapterIndex) {
-                                    if (targetChunk != null) {
-                                        chunkTargetOverride = targetChunk
+                                    chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) {
+                                        targetChunk
                                     } else {
-                                        chunkTargetOverride = 0
-                                        Timber.w("Could not get locator for bookmark CFI, will navigate to start of chapter.")
+                                        0
                                     }
                                     currentChapterIndex = bookmark.chapterIndex
-                                } else {
-                                    if (targetChunk != null) {
+                                }
+                                else {
+                                    if (targetChunk != null && targetChunk >= 0) {
+                                        isNavigatingToBookmark = true
+
+                                        // FIX: Ensure we don't reload if we already have it,
+                                        // but do ensure the WebView has the content injected.
                                         if (targetChunk >= loadedChunkCount) {
+                                            Timber.tag("BookmarkDiagnosis").d("Manual Chunk Injection: Loading from $loadedChunkCount to $targetChunk")
+
+                                            val chunksToInject = (loadedChunkCount..targetChunk)
+                                            chunksToInject.forEach { idx ->
+                                                val content = chapterChunks.getOrNull(idx)
+                                                if (content != null) {
+                                                    val escaped = escapeJsString(content)
+                                                    webViewRefForTts?.evaluateJavascript(
+                                                        "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                                                        null
+                                                    )
+                                                }
+                                            }
                                             loadUpToChunkIndex = targetChunk
+                                            loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
                                         } else {
-                                            webViewRefForTts?.evaluateJavascript("javascript:window.scrollToCfi('${escapeJsString(bookmark.cfi)}');", null)
+                                            // Even if loadedChunkCount is high enough in Kotlin state,
+                                            // ensure the specific chunk for the bookmark is actually in the DOM.
+                                            // (Sometimes rapid jumps might leave gaps if logic was loose)
+                                            val content = chapterChunks.getOrNull(targetChunk)
+                                            if (content != null) {
+                                                val escaped = escapeJsString(content)
+                                                webViewRefForTts?.evaluateJavascript(
+                                                    "javascript:window.virtualization.appendChunk($targetChunk, '$escaped');",
+                                                    null
+                                                )
+                                            }
+                                        }
+
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "javascript:window.scrollToCfi('${escapeJsString(bookmark.cfi)}');",
+                                            null
+                                        )
+
+                                        scope.launch {
+                                            delay(3000)
+                                            if (isNavigatingToBookmark) {
+                                                isNavigatingToBookmark = false
+                                            }
                                         }
                                     } else {
-                                        Timber.w("Could not get locator for bookmark CFI in current chapter, loading all chunks as fallback.")
-                                        loadUpToChunkIndex = if (chapterChunks.isNotEmpty()) chapterChunks.size - 1 else 0
+                                        // Fallback if we couldn't determine chunk
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "javascript:window.scrollToCfi('${escapeJsString(bookmark.cfi)}');",
+                                            null
+                                        )
                                     }
                                 }
                             }
-
                             RenderMode.PAGINATED -> {
                                 Timber.d("P-Mode Click: Navigating to bookmark. Chapter: ${bookmark.chapterIndex}, CFI: '${bookmark.cfi}'")
                                 val locator = locatorConverter.getLocatorFromCfi(
@@ -1526,7 +1587,7 @@ fun EpubReaderHost(
                                             "ControlFlowWithEmptyBody"
                                         )
                                         ChapterWebView(
-                                            key = "$chapterKeyForWebView-$loadUpToChunkIndex",
+                                            key = "$chapterKeyForWebView",
                                             chapterTitle = chapterToRender.title,
                                             isDarkTheme = isDarkTheme,
                                             initialScrollTarget = initialScrollTargetForChapter,
@@ -1732,6 +1793,10 @@ fun EpubReaderHost(
                                                     "javascript:window.setViewportPadding(${topPaddingPx}, 0);",
                                                     null
                                                 )
+                                            },
+                                            onScrollFinished = { success ->
+                                                Timber.tag("BookmarkDiagnosis").d("Scroll finished callback. Success: $success")
+                                                isNavigatingToBookmark = false
                                             },
                                             ttsScope = scope,
                                             onTtsTextReady = { jsonString ->
@@ -2896,6 +2961,26 @@ fun EpubReaderHost(
                     onNavigateToPro = onNavigateToPro,
                     isTtsSessionActive = isTtsSessionActive
                 )
+
+                if (isNavigatingToBookmark) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.6f))
+                            .clickable(enabled = true) {},
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "Navigating to bookmark...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+                }
 
                 if (showPermissionRationaleDialog) {
                     AlertDialog(
