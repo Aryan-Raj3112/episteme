@@ -90,7 +90,6 @@ class MetadataExtractionWorker(
                         }
                     }
 
-                    // Only update if we actually found something useful
                     if (coverPath != null || title != null || author != null) {
                         val updatedItem = item.copy(
                             coverImagePath = coverPath ?: item.coverImagePath,
@@ -99,6 +98,13 @@ class MetadataExtractionWorker(
                         )
                         recentFilesRepository.addRecentFile(updatedItem)
                         Timber.tag("MetadataWorker").d("Updated metadata for: ${item.displayName}")
+
+                        try {
+                            recentFilesRepository.syncLocalMetadataToFolder(updatedItem.bookId)
+                            Timber.tag("MetadataWorker").d("Created/Updated JSON for: ${item.displayName}")
+                        } catch (_: Exception) {
+                            Timber.tag("MetadataWorker").w("Failed to save JSON during extraction for ${item.displayName}")
+                        }
                     }
 
                 } catch (e: Exception) {

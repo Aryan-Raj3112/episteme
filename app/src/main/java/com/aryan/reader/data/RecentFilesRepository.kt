@@ -172,6 +172,11 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
     }
 
+    suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
+        recentFileDao.detachAllFolderBooks()
+        Timber.d("Detached all folder books. They are now standard local files.")
+    }
+
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateBookmarks(bookId, bookmarksJson, currentTime)

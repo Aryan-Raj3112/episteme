@@ -87,4 +87,7 @@ interface RecentFileDao {
 
     @Query("SELECT * FROM recent_files WHERE sourceFolderUri IS NOT NULL AND coverImagePath IS NULL AND isDeleted = 0")
     suspend fun getFolderBooksWithoutCovers(): List<RecentFileEntity>
+
+    @Query("UPDATE recent_files SET sourceFolderUri = NULL WHERE sourceFolderUri IS NOT NULL")
+    suspend fun detachAllFolderBooks()
 }

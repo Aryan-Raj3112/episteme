@@ -1140,17 +1140,17 @@ fun FpsMonitor(modifier: Modifier = Modifier) {
 @Composable
 private fun FolderMigrationDialog(onConfirm: () -> Unit) {
     AlertDialog(
-        onDismissRequest = { }, // Force acknowledgment
+        onDismissRequest = { },
         icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
-        title = { Text("Folder Sync Refactored") },
+        title = { Text("Folder Sync Update") },
         text = {
             Column {
                 Text(
-                    "We've completely rebuilt how Folder Sync works! Books from the folder are now read directly from your folder instead of being copied to app storage."
+                    "We've improved Folder Sync! Books are now read directly from your folder without duplicating files."
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    "We'll now perform a one-time scan to migrate your existing progress and bookmarks. This will also free up internal storage space on your device.",
+                    "To keep your reading progress safe, your previously synced books have been converted to standard local books. You may see duplicates once the folder resyncs; you can safely delete the old copies at your convenience.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1158,7 +1158,7 @@ private fun FolderMigrationDialog(onConfirm: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("Start Migration")
+                Text("Got it")
             }
         }
     )

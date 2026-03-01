@@ -529,9 +529,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         remoteConfigRepository.init()
 
+        val isMigrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
+
         if (_internalState.value.syncedFolderUri != null) {
-            Timber.d("App Start: Triggering local folder metadata-only sync.")
-            syncFolderMetadata()
+            if (isMigrationCompleted) {
+                Timber.d("App Start: Triggering local folder metadata-only sync.")
+                syncFolderMetadata()
+            } else {
+                Timber.d("App Start: Skipping sync. Waiting for migration/detachment logic.")
+            }
         }
 
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
@@ -593,11 +599,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun completeFolderMigration() {
-        Timber.tag("FolderSync").d("User accepted migration. Marking completed and starting scan.")
-        prefs.edit { putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true) }
-        _internalState.update { it.copy(showFolderMigrationDialog = false) }
+        Timber.tag("FolderSync").d("User acknowledged update. Detaching old books and starting fresh scan.")
 
-        scanSyncedFolder()
+        viewModelScope.launch {
+            recentFilesRepository.detachAllFolderBooks()
+
+            prefs.edit { putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true) }
+            _internalState.update { it.copy(showFolderMigrationDialog = false) }
+
+            scanSyncedFolder()
+        }
     }
 
     private val fontsRepository = FontsRepository(appContext)
@@ -1330,8 +1341,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (workInfo != null) {
                     when (workInfo.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                            val msg = if (metadataOnly) "Folder Sync: Updating metadata..." else "Folder Sync: Scanning files..."
-                            _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage(msg)) }
+                            val msg = if (metadataOnly) "Folder Sync: Updating metadata..." else "Scanning folder for new books..."
+                            _internalState.update { it.copy(
+                                isLoading = false,
+                                isRefreshing = true,
+                                bannerMessage = BannerMessage(msg)
+                            ) }
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             _internalState.update { it.copy(
@@ -1342,7 +1357,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             ) }
                         }
                         WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
-                            _internalState.update { it.copy(isLoading = false, isRefreshing = false, errorMessage = "Sync failed.") } // ADD isRefreshing = false
+                            _internalState.update { it.copy(
+                                isLoading = false,
+                                isRefreshing = false,
+                                errorMessage = "Sync failed."
+                            ) }
                         }
                         else -> Unit
                     }
@@ -2255,9 +2274,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         if (type == FileType.PDF) {
             viewModelScope.launch {
                 val recentItem = recentFilesRepository.getFileByBookId(bookId)
-                Timber.d(
-                    "openBook: Loading PDF. bookId=$bookId, initialBookmarksJson from DB: ${recentItem?.bookmarksJson}"
-                )
+
+                if (recentItem?.sourceFolderUri != null) {
+                    launch(Dispatchers.IO) {
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                    }
+                }
+
+                Timber.d("openBook: Loading PDF. bookId=$bookId ...")
                 _internalState.update {
                     it.copy(
                         selectedPdfUri = uri,
@@ -2278,6 +2302,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
             viewModelScope.launch {
                 val recentItem = recentFilesRepository.getFileByBookId(bookId)
+                if (recentItem?.sourceFolderUri != null) {
+                    launch(Dispatchers.IO) {
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                    }
+                }
                 val locator =
                     if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
                         Locator(
