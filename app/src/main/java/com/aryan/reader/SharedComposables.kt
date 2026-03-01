@@ -454,8 +454,8 @@ fun EmptyState(
     title: String,
     message: String,
     onSelectFileClick: () -> Unit,
-    primaryButtonText: String = "Select a File",
     modifier: Modifier = Modifier,
+    primaryButtonText: String = "Select a File",
     secondaryButtonText: String? = null,
     onSecondaryClick: (() -> Unit)? = null
 ) {
