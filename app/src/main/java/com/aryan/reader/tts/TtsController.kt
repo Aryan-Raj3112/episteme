@@ -236,7 +236,7 @@ class TtsController(context: Context) : Player.Listener {
                 isPlaying = controller.isPlaying,
                 isLoading = isLoading,
                 currentText = if (isPlaybackActive) {
-                    currentTextFromMediaItem ?: customState.getString("currentText")
+                    currentTextFromMediaItem
                 } else {
                     if (isLoading) currentState.currentText else null
                 },

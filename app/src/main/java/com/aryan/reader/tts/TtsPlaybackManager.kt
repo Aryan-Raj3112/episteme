@@ -615,7 +615,6 @@ class TtsPlaybackManager(
     private fun createStateButton(state: TtsState): CommandButton {
         val bundle = Bundle().apply {
             putBoolean("isLoading", state.isLoading)
-            putString("currentText", state.currentText)
             putString("errorMessage", state.errorMessage)
             putString("speakerId", state.speakerId)
             putBoolean("sessionEndedByStop", state.sessionEndedByStop)
