@@ -109,8 +109,6 @@ class MobiParser(private val context: Context) {
     private external fun parseMobiFile(filePath: String): ParsedMobiData?
 
     companion object {
-        private const val TAG = "MobiParser"
-        private const val AZW3_TAG = "AZW3_DEBUG"
         const val EXTRACTED_EPUB_DIR_NAME = "extracted_epubs"
 
         init {
@@ -135,7 +133,7 @@ class MobiParser(private val context: Context) {
             }
             Timber.d("MOBI stream saved to temporary file: ${tempFile.absolutePath}")
         } catch (e: Exception) {
-            Timber.e("Failed to write InputStream to temporary file.", e)
+            Timber.e(e, "Failed to write InputStream to temporary file.")
             tempFile.delete()
             return@withContext null
         }
@@ -143,7 +141,7 @@ class MobiParser(private val context: Context) {
         val parsedData = try {
             parseMobiFile(tempFile.absolutePath)
         } catch (e: UnsatisfiedLinkError) {
-            Timber.e("JNI call failed. Is the native library loaded correctly?", e)
+            Timber.e(e, "JNI call failed. Is the native library loaded correctly?")
             null
         } finally {
             tempFile.delete()
@@ -177,7 +175,7 @@ class MobiParser(private val context: Context) {
                 file.writeBytes(resource.data)
                 Timber.d("Wrote resource to disk -> Path: ${file.absolutePath}, Type: ${resource.mediaType}, Size: ${resource.data.size}")
             } catch (e: Exception) {
-                Timber.e("Parser: FAILED to write resource to disk: ${resource.path}", e)
+                Timber.e(e, "Parser: FAILED to write resource to disk: ${resource.path}")
             }
         }
 
@@ -229,7 +227,7 @@ class MobiParser(private val context: Context) {
         val chapterHtmlParts = mutableListOf<Pair<String, String>>()
 
         val sortedToc = parsedData.toc?.sorted()
-        if (sortedToc != null && sortedToc.isNotEmpty()) {
+        if (!sortedToc.isNullOrEmpty()) {
             Timber.d("Splitting content using TOC (${sortedToc.size} entries).")
             for (i in sortedToc.indices) {
                 val tocEntry = sortedToc[i]
@@ -268,14 +266,14 @@ class MobiParser(private val context: Context) {
                     plainTextContent = doc.text()
                 )
             } catch (e: Exception) {
-                Timber.e("Failed to process split chapter $index", e)
+                Timber.e(e, "Failed to process split chapter $index")
                 null
             }
         }
 
         val images = parsedData.resources
             .filter { it.mediaType.startsWith("image/") }
-            .map { EpubImage(absPath = it.path, image = it.data) }
+            .map { EpubImage(absPath = it.path) }
 
         val cssContent = parsedData.resources
             .filter { it.mediaType == "text/css" }

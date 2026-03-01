@@ -577,30 +577,29 @@ class EpubParser(private val context: Context) {
     private fun parseEpubImages(
         manifestItems: Map<String, EpubManifestItem>,
         filesContentMap: Map<String, EpubFile>,
-        extractionRoot: File // Add this param
+        @Suppress("UNUSED_PARAMETER") extractionRoot: File
     ): List<EpubImage> {
-        val imageExtensions = listOf("png", "gif", "jpg", "jpeg", "webp", "svg").map { ".$it" }
+        val imageExtensions = setOf(".png", ".gif", ".jpg", ".jpeg", ".webp", ".svg")
 
         val listedImages = manifestItems.values
             .filter { it.mediaType.startsWith("image/") }
-            .mapNotNull { manifestItem ->
-                val bytes = filesContentMap[manifestItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, manifestItem.absPath).takeIf { it.exists() }?.readBytes()
-
-                bytes?.let { EpubImage(absPath = manifestItem.absPath, image = it) }
+            .map { manifestItem ->
+                EpubImage(absPath = manifestItem.absPath)
             }
 
-        val unlistedImages = filesContentMap.asSequence()
-            .filter { (path, _) -> imageExtensions.any { path.endsWith(it, ignoreCase = true) } }
-            .filterNot { (path, _) -> listedImages.any { it.absPath == path } }
-            .mapNotNull { (path, file) ->
-                val bytes = file.data.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, path).takeIf { it.exists() }?.readBytes()
+        val listedPaths = listedImages.map { it.absPath }.toSet()
 
-                bytes?.let { EpubImage(absPath = path, image = it) }
+        val unlistedImages = filesContentMap.keys
+            .filter { path ->
+                val lowerPath = path.lowercase()
+                imageExtensions.any { lowerPath.endsWith(it) } && !listedPaths.contains(path)
+            }
+            .map { path ->
+                EpubImage(absPath = path)
             }
 
-        return (listedImages + unlistedImages).distinctBy { it.absPath }.toList()
+        Timber.d("Identified ${listedImages.size + unlistedImages.size} images (content not loaded into memory).")
+        return (listedImages + unlistedImages).distinctBy { it.absPath }
     }
 
     private fun parseCoverImage(
