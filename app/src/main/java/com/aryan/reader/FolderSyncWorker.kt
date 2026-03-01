@@ -33,8 +33,8 @@ import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.pdf.PdfCoverGenerator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex // Added import
-import kotlinx.coroutines.sync.withLock // Added import
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.aryan.reader.data.LocalSyncUtils
@@ -48,6 +48,7 @@ class FolderSyncWorker(
     private val epubParser = EpubParser(appContext)
     private val mobiParser = MobiParser(appContext)
     private val pdfCoverGenerator = PdfCoverGenerator(appContext)
+    private val bookImporter = BookImporter(appContext)
 
     companion object {
         const val WORK_NAME = "FolderSyncWorker"
@@ -110,41 +111,52 @@ class FolderSyncWorker(
                     }
                 }
 
+                val activeDbBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+
+                val legacyLookup = activeDbBooks.associateBy { it.displayName }
+
                 val foundBookIds = mutableSetOf<String>()
 
                 for (file in currentDiskFiles) {
                     val stableId = "local_${file.name}_${file.length()}"
-                    foundBookIds.add(stableId)
 
-                    val existingItem = recentFilesRepository.getFileByBookId(stableId)
+                    var existingItem = recentFilesRepository.getFileByBookId(stableId)
+                    var bookIdToUse = stableId
+                    var isMigration = false
+
+                    if (existingItem == null) {
+                        val legacyMatch = legacyLookup[file.name]
+                        if (legacyMatch != null) {
+                            Timber.tag("FolderSync").i("Migration: Found legacy match for ${file.name}. ID: ${legacyMatch.bookId}")
+
+                            existingItem = legacyMatch
+                            bookIdToUse = legacyMatch.bookId
+                            isMigration = true
+                        }
+                    }
+
+                    foundBookIds.add(bookIdToUse)
 
                     if (existingItem == null) {
                         val remoteMeta = folderMetadataMap[stableId]
                         val type = getFileType(file.name ?: "", file.type) ?: FileType.EPUB
-
-                        // FIX: Always extract basic info (Cover/Title/Author) from the file
-                        // regardless of whether we have remote metadata or not.
                         val fileInfo = extractFileInfo(file.uri, type, file.name ?: "Unknown")
 
                         if (remoteMeta != null) {
                             Timber.tag("FolderSync").d("Worker: Importing existing book from Metadata + File: ${file.name}")
-
                             val tempItem = RecentFileItem(
                                 bookId = stableId,
                                 uriString = file.uri.toString(),
                                 type = type,
                                 displayName = file.name ?: "Unknown",
-                                // Use Remote Metadata for progress & timestamps
                                 timestamp = remoteMeta.lastModifiedTimestamp,
                                 lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                                // Use Extracted Info for Cover/Title/Author
                                 coverImagePath = fileInfo.coverPath,
                                 title = fileInfo.title ?: remoteMeta.title,
                                 author = fileInfo.author ?: remoteMeta.author,
-
                                 isAvailable = true,
                                 isDeleted = false,
-                                isRecent = false, // FIX: Ensure it doesn't clutter Recents
+                                isRecent = false,
                                 sourceFolderUri = folderUriString,
                                 lastChapterIndex = remoteMeta.lastChapterIndex,
                                 lastPage = remoteMeta.lastPage,
@@ -154,7 +166,6 @@ class FolderSyncWorker(
                             )
                             recentFilesRepository.addRecentFile(tempItem)
                         } else {
-                            // Fresh Import
                             val newItem = RecentFileItem(
                                 bookId = stableId,
                                 uriString = file.uri.toString(),
@@ -172,46 +183,82 @@ class FolderSyncWorker(
                             )
                             recentFilesRepository.addRecentFile(newItem)
                         }
-                    } else if (existingItem.isDeleted) {
-                        val resurrected = existingItem.copy(isDeleted = false, isAvailable = true)
-                        recentFilesRepository.addRecentFile(resurrected)
+                    } else {
+                        if (isMigration) {
+                            val oldUriString = existingItem.uriString
+                            val newUriString = file.uri.toString()
+
+                            if (oldUriString != newUriString) {
+                                Timber.tag("FolderSync").i("Migration: Updating URI and cleaning up internal storage for $bookIdToUse")
+
+                                if (oldUriString != null) {
+                                    bookImporter.deleteBookByUriString(oldUriString)
+                                }
+
+                                existingItem = existingItem.copy(
+                                    uriString = newUriString,
+                                    isAvailable = true
+                                )
+                                recentFilesRepository.addRecentFile(existingItem)
+                            }
+                        } else if (existingItem.isDeleted) {
+                            val resurrected = existingItem.copy(isDeleted = false, isAvailable = true)
+                            recentFilesRepository.addRecentFile(resurrected)
+                        }
+
+                        val remoteMeta = folderMetadataMap[bookIdToUse]
+
+                        if (remoteMeta == null) {
+                            recentFilesRepository.syncLocalMetadataToFolder(bookIdToUse)
+                        } else {
+                            if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
+                                Timber.tag("FolderSync").d("Worker: Remote metadata newer for ${file.name}")
+                                val updatedItem = existingItem.copy(
+                                    lastChapterIndex = remoteMeta.lastChapterIndex,
+                                    lastPage = remoteMeta.lastPage,
+                                    lastPositionCfi = remoteMeta.lastPositionCfi,
+                                    progressPercentage = remoteMeta.progressPercentage,
+                                    bookmarksJson = remoteMeta.bookmarksJson,
+                                    locatorBlockIndex = remoteMeta.locatorBlockIndex,
+                                    locatorCharOffset = remoteMeta.locatorCharOffset,
+                                    lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
+                                    timestamp = remoteMeta.lastModifiedTimestamp
+                                )
+                                recentFilesRepository.addRecentFile(updatedItem)
+                            } else if (existingItem.lastModifiedTimestamp > remoteMeta.lastModifiedTimestamp) {
+                                recentFilesRepository.syncLocalMetadataToFolder(bookIdToUse)
+                            }
+                        }
                     }
                 }
 
-                // Cleanup missing files
                 val dbFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
                 val idsToRemove = dbFolderBooks.filter { !foundBookIds.contains(it.bookId) }.map { it.bookId }
+
                 if (idsToRemove.isNotEmpty()) {
+                    Timber.tag("FolderSync").i("Cleaning up ${idsToRemove.size} missing folder books.")
                     recentFilesRepository.deleteFilePermanently(idsToRemove)
                 }
 
-                // --- 2. Cleanup Orphaned Metadata Files (JSONs with no Book) ---
-                // folderMetadataMap contains keys for ALL JSON files found in the folder.
-                // foundBookIds contains keys for ALL actual Books found in the folder.
-                // If a JSON exists (in map) but the Book does not (not in foundBookIds), delete the JSON.
                 val orphanedMetadataIds = folderMetadataMap.keys.filter { !foundBookIds.contains(it) }
 
                 if (orphanedMetadataIds.isNotEmpty()) {
                     Timber.tag("FolderSync").i("Cleaning up ${orphanedMetadataIds.size} orphaned metadata files.")
 
                     try {
-                        val documentTree = DocumentFile.fromTreeUri(appContext, folderUri)
-                        val syncDir = documentTree?.findFile("episteme")
+                        val docTree = DocumentFile.fromTreeUri(appContext, folderUri)
+                        val syncDir = docTree?.findFile("episteme")
 
                         if (syncDir != null) {
                             val allFiles = syncDir.listFiles()
                             orphanedMetadataIds.forEach { orphanId ->
-                                // Find and delete matching files (hidden, legacy, conflicts)
                                 allFiles.filter {
                                     val name = it.name ?: ""
                                     name.contains(orphanId) && (name.endsWith(".json") || name.contains(".sync-conflict"))
                                 }.forEach { fileToDelete ->
                                     try {
                                         fileToDelete.delete()
-                                        Timber.tag("FolderSync").d("Deleted orphan file: ${fileToDelete.name}")
-                                    } catch (_: Exception) {
-                                        Timber.tag("FolderSync").w("Failed to delete orphan: ${fileToDelete.name}")
-                                    }
+                                    } catch (_: Exception) { }
                                 }
                             }
                         }
@@ -263,7 +310,6 @@ class FolderSyncWorker(
         val coverPath: String? = null
     )
 
-    // ... rest of the file stays the same (extractFileInfo, isValidExtension, getFileType)
     private suspend fun extractFileInfo(uri: Uri, type: FileType, displayName: String): ExtractedInfo {
         var coverPath: String? = null
         var title: String? = null
@@ -295,8 +341,6 @@ class FolderSyncWorker(
                     }
                 }
             } else if (type == FileType.PDF) {
-                // PDF Title extraction is hard without parsing, stick to displayName for now or implement PdfBox metadata reading
-                // For now, we focus on cover.
                 pdfCoverGenerator.generateCover(uri)?.let {
                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                 }

@@ -395,6 +395,11 @@ fun HomeScreen(
                 )
             }
         }
+        if (uiState.showFolderMigrationDialog) {
+            FolderMigrationDialog(
+                onConfirm = { viewModel.completeFolderMigration() }
+            )
+        }
     }
 }
 
@@ -1102,5 +1107,32 @@ fun FpsMonitor(modifier: Modifier = Modifier) {
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.5f))
             .padding(4.dp)
+    )
+}
+
+@Composable
+private fun FolderMigrationDialog(onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { }, // Force acknowledgment
+        icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
+        title = { Text("Folder Sync Refactored") },
+        text = {
+            Column {
+                Text(
+                    "We've completely rebuilt how Folder Sync works! Books from the folder are now read directly from your folder instead of being copied to app storage."
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "We'll now perform a one-time scan to migrate your existing progress and bookmarks. This will also free up internal storage space on your device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Start Migration")
+            }
+        }
     )
 }

@@ -105,6 +105,7 @@ import java.util.concurrent.TimeUnit
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
+private const val KEY_FOLDER_MIGRATION_COMPLETED = "folder_migration_completed_v2"
 
 data class BannerMessage(val message: String, val isError: Boolean = false)
 
@@ -193,6 +194,7 @@ data class ReaderScreenState(
     val lastFolderScanTime: Long? = null,
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
+    val showFolderMigrationDialog: Boolean = false,
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -581,6 +583,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         }
+        val folderUri = _internalState.value.syncedFolderUri
+        val migrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
+
+        if (folderUri != null && !migrationCompleted) {
+            Timber.tag("FolderSync").d("First time after refactor: Showing migration dialog.")
+            _internalState.update { it.copy(showFolderMigrationDialog = true) }
+        }
+    }
+
+    fun completeFolderMigration() {
+        Timber.tag("FolderSync").d("User accepted migration. Marking completed and starting scan.")
+        prefs.edit { putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true) }
+        _internalState.update { it.copy(showFolderMigrationDialog = false) }
+
+        scanSyncedFolder()
     }
 
     private val fontsRepository = FontsRepository(appContext)
@@ -1248,13 +1265,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     folderUri, Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
                 Timber.d("Persistable URI permission taken for folder: $folderUri")
-                prefs.edit { putString(KEY_SYNCED_FOLDER_URI, folderUri.toString()) }
-                _internalState.update { it.copy(syncedFolderUri = folderUri.toString()) }
+                prefs.edit {
+                    putString(KEY_SYNCED_FOLDER_URI, folderUri.toString())
+                    putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true)
+                }
 
-                // Trigger an initial scan via WorkManager (Serialized)
+                _internalState.update { it.copy(
+                    syncedFolderUri = folderUri.toString(),
+                    showFolderMigrationDialog = false
+                ) }
+
                 scanSyncedFolder()
 
-                // Schedule periodic sync
                 val workManager = WorkManager.getInstance(appContext)
                 val constraints = Constraints.Builder().setRequiresBatteryNotLow(true).build()
 
