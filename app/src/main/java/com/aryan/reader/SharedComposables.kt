@@ -86,6 +86,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -453,7 +454,10 @@ fun EmptyState(
     title: String,
     message: String,
     onSelectFileClick: () -> Unit,
-    modifier: Modifier = Modifier
+    primaryButtonText: String = "Select a File",
+    modifier: Modifier = Modifier,
+    secondaryButtonText: String? = null,
+    onSecondaryClick: (() -> Unit)? = null
 ) {
     Column(
         modifier = modifier
@@ -472,7 +476,8 @@ fun EmptyState(
         Text(
             text = title,
             style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
@@ -482,7 +487,15 @@ fun EmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(32.dp))
-        SelectFileButton(onClick = onSelectFileClick, text = "Select a File")
+
+        SelectFileButton(onClick = onSelectFileClick, text = primaryButtonText)
+
+        if (secondaryButtonText != null && onSecondaryClick != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedButton(onClick = onSecondaryClick) {
+                Text(secondaryButtonText)
+            }
+        }
     }
 }
 

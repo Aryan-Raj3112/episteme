@@ -297,14 +297,16 @@ fun HomeScreen(
                                 if (uiState.recentFiles.isEmpty()) {
                                     EmptyState(
                                         title = "Your Library is Empty",
-                                        message = "Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.",
+                                        message = "Select a file to read, or sync a local folder to automatically import books.",
                                         onSelectFileClick = onSelectFileClick,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.weight(1f),
+                                        secondaryButtonText = "Setup Folder Sync",
+                                        onSecondaryClick = { viewModel.navigateToFolderSync() }
                                     )
                                 } else {
                                     EmptyState(
                                         title = "No Recent Files",
-                                        message = "Open a file from your library to see it here, or select a new file to add.",
+                                        message = "Open a file from your library to see it here.",
                                         onSelectFileClick = onSelectFileClick,
                                         modifier = Modifier.weight(1f)
                                     )

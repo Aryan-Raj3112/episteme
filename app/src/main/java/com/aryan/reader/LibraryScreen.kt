@@ -1363,9 +1363,10 @@ private fun FolderSyncScreen(
 
     if (syncedFolderUri == null) {
         EmptyState(
-            title = "Import files from a Folder",
-            message = "Select a folder on your device. Episteme will automatically find and import any new books you add to it.",
+            title = "Sync Local Folder",
+            message = "Connect a folder to create a live library. Episteme will automatically monitor your files for new additions and keep your reading progress and other book metadata in sync with your folder.",
             onSelectFileClick = onSelectFolderClick,
+            primaryButtonText = "Select Folder",
             modifier = Modifier.fillMaxSize()
         )
     } else {

@@ -1325,20 +1325,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             request
         )
 
-        // Observe the work to update UI state
         viewModelScope.launch {
             workManager.getWorkInfoByIdFlow(request.id).collect { workInfo ->
                 if (workInfo != null) {
                     when (workInfo.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                            val msg = if (metadataOnly) "Syncing progress..." else "Scanning folder..."
+                            val msg = if (metadataOnly) "Folder Sync: Updating metadata..." else "Folder Sync: Scanning files..."
                             _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage(msg)) }
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             _internalState.update { it.copy(
                                 isLoading = false,
                                 isRefreshing = false,
-                                bannerMessage = BannerMessage("Sync complete."),
+                                bannerMessage = BannerMessage("Folder Sync: Scan complete."),
                                 lastFolderScanTime = System.currentTimeMillis()
                             ) }
                         }
@@ -1723,7 +1722,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (showBanner) {
             _internalState.update {
-                it.copy(bannerMessage = BannerMessage("Syncing library and fonts..."))
+                it.copy(bannerMessage = BannerMessage("Cloud Sync: Checking for updates..."))
             }
         }
 
@@ -1931,7 +1930,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (showBanner) {
                 _internalState.update {
                     it.copy(
-                        isLoading = false, bannerMessage = BannerMessage("Sync complete.")
+                        isLoading = false, bannerMessage = BannerMessage("Cloud Sync: Complete.")
                     )
                 }
             }

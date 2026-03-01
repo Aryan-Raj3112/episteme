@@ -25,6 +25,9 @@ import android.net.Uri
 import timber.log.Timber
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkManager
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.RecentFileItem
@@ -140,10 +143,16 @@ class FolderSyncWorker(
                     if (existingItem == null) {
                         val remoteMeta = folderMetadataMap[stableId]
                         val type = getFileType(file.name ?: "", file.type) ?: FileType.EPUB
-                        val fileInfo = extractFileInfo(file.uri, type, file.name ?: "Unknown")
+
+                        // --- CHANGED: Removed extractFileInfo() call ---
+                        // We use placeholders. The MetadataExtractionWorker will fix this later.
+                        val placeholderTitle = file.name ?: "Unknown"
+                        val placeholderAuthor = null
+                        val placeholderCover = null
 
                         if (remoteMeta != null) {
                             Timber.tag("FolderSync").d("Worker: Importing existing book from Metadata + File: ${file.name}")
+                            // We prefer remoteMeta if available because it might have the correct title/author from a previous sync
                             val tempItem = RecentFileItem(
                                 bookId = stableId,
                                 uriString = file.uri.toString(),
@@ -151,9 +160,9 @@ class FolderSyncWorker(
                                 displayName = file.name ?: "Unknown",
                                 timestamp = remoteMeta.lastModifiedTimestamp,
                                 lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                                coverImagePath = fileInfo.coverPath,
-                                title = fileInfo.title ?: remoteMeta.title,
-                                author = fileInfo.author ?: remoteMeta.author,
+                                coverImagePath = null, // Will be fetched by MetadataWorker if needed
+                                title = remoteMeta.title ?: placeholderTitle,
+                                author = remoteMeta.author,
                                 isAvailable = true,
                                 isDeleted = false,
                                 isRecent = false,
@@ -166,15 +175,16 @@ class FolderSyncWorker(
                             )
                             recentFilesRepository.addRecentFile(tempItem)
                         } else {
+                            // FAST PATH: Insert barebones item
                             val newItem = RecentFileItem(
                                 bookId = stableId,
                                 uriString = file.uri.toString(),
                                 type = type,
                                 displayName = file.name ?: "Unknown",
                                 timestamp = System.currentTimeMillis(),
-                                coverImagePath = fileInfo.coverPath,
-                                title = fileInfo.title ?: file.name,
-                                author = fileInfo.author,
+                                coverImagePath = null, // Background worker will fill this
+                                title = placeholderTitle,
+                                author = null,
                                 isAvailable = true,
                                 lastModifiedTimestamp = System.currentTimeMillis(),
                                 isDeleted = false,
@@ -315,6 +325,15 @@ class FolderSyncWorker(
             }
 
             prefs.edit { putLong(MainViewModel.KEY_LAST_FOLDER_SCAN_TIME, System.currentTimeMillis()) }
+
+            Timber.tag("FolderSync").i("Folder scan complete. Enqueuing metadata extraction.")
+            val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>().build()
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
+                MetadataExtractionWorker.WORK_NAME,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                metaRequest
+            )
+
             return Result.success()
         } catch (e: Exception) {
             Timber.tag("FolderSync").e(e, "Error during folder sync worker execution.")

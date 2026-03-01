@@ -168,6 +168,10 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
+    suspend fun getFolderBooksWithoutCovers(): List<RecentFileItem> = withContext(Dispatchers.IO) {
+        return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
+    }
+
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateBookmarks(bookId, bookmarksJson, currentTime)

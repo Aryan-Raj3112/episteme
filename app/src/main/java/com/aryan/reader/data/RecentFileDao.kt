@@ -84,4 +84,7 @@ interface RecentFileDao {
 
     @Query("UPDATE recent_files SET isRecent = 0, lastModifiedTimestamp = :timestamp WHERE bookId IN (:bookIds)")
     suspend fun markAsNotRecent(bookIds: List<String>, timestamp: Long)
+
+    @Query("SELECT * FROM recent_files WHERE sourceFolderUri IS NOT NULL AND coverImagePath IS NULL AND isDeleted = 0")
+    suspend fun getFolderBooksWithoutCovers(): List<RecentFileEntity>
 }
