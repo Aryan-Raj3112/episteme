@@ -288,6 +288,28 @@ private const val DOCK_OFFSET_Y_KEY = "dock_offset_y"
 private const val PDF_AUTO_SCROLL_SPEED_KEY = "pdf_auto_scroll_speed"
 private const val PDF_AUTO_SCROLL_LOCKED_KEY = "pdf_auto_scroll_locked"
 private const val PDF_AUTO_SCROLL_USE_SLIDER_KEY = "pdf_auto_scroll_use_slider"
+private const val PDF_AUTO_SCROLL_MIN_SPEED_KEY = "pdf_auto_scroll_min_speed"
+private const val PDF_AUTO_SCROLL_MAX_SPEED_KEY = "pdf_auto_scroll_max_speed"
+
+private fun savePdfAutoScrollMinSpeed(context: Context, speed: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PDF_AUTO_SCROLL_MIN_SPEED_KEY, speed) }
+}
+
+private fun loadPdfAutoScrollMinSpeed(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(PDF_AUTO_SCROLL_MIN_SPEED_KEY, 0.1f)
+}
+
+private fun savePdfAutoScrollMaxSpeed(context: Context, speed: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PDF_AUTO_SCROLL_MAX_SPEED_KEY, speed) }
+}
+
+private fun loadPdfAutoScrollMaxSpeed(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(PDF_AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
+}
 
 private fun savePdfAutoScrollLocked(context: Context, isLocked: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -630,6 +652,8 @@ fun PdfViewerScreen(
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var autoScrollSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollSpeed(context)) }
+    var autoScrollMinSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollMinSpeed(context)) }
+    var autoScrollMaxSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollMaxSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
     var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
@@ -3650,7 +3674,7 @@ fun PdfViewerScreen(
                                             },
                                             isAutoScrollPlaying = isAutoScrollPlaying,
                                             isAutoScrollTempPaused = isAutoScrollTempPaused,
-                                            autoScrollSpeed = autoScrollSpeed,
+                                            autoScrollSpeed = autoScrollSpeed * 0.5f,
                                             onInteractionListener = onAutoScrollInteraction
                                         )
                                     }
@@ -5569,10 +5593,41 @@ fun PdfViewerScreen(
                         isTempPaused = isAutoScrollTempPaused,
                         onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
                         speed = autoScrollSpeed,
-                        maxSpeed = 20f,
+                        minSpeed = autoScrollMinSpeed,
+                        maxSpeed = autoScrollMaxSpeed,
                         onSpeedChange = {
                             autoScrollSpeed = it
                             savePdfAutoScrollSpeed(context, it)
+                        },
+                        onMinSpeedChange = { newMin ->
+                            autoScrollMinSpeed = newMin
+                            savePdfAutoScrollMinSpeed(context, newMin)
+                            if (autoScrollMaxSpeed < newMin) {
+                                autoScrollMaxSpeed = newMin
+                                savePdfAutoScrollMaxSpeed(context, newMin)
+                            }
+                            if (autoScrollSpeed < newMin) {
+                                autoScrollSpeed = newMin
+                                savePdfAutoScrollSpeed(context, newMin)
+                            } else if (autoScrollSpeed > autoScrollMaxSpeed) {
+                                autoScrollSpeed = autoScrollMaxSpeed
+                                savePdfAutoScrollSpeed(context, autoScrollMaxSpeed)
+                            }
+                        },
+                        onMaxSpeedChange = { newMax ->
+                            autoScrollMaxSpeed = newMax
+                            savePdfAutoScrollMaxSpeed(context, newMax)
+                            if (autoScrollMinSpeed > newMax) {
+                                autoScrollMinSpeed = newMax
+                                savePdfAutoScrollMinSpeed(context, newMax)
+                            }
+                            if (autoScrollSpeed > newMax) {
+                                autoScrollSpeed = newMax
+                                savePdfAutoScrollSpeed(context, newMax)
+                            } else if (autoScrollSpeed < autoScrollMinSpeed) {
+                                autoScrollSpeed = autoScrollMinSpeed
+                                savePdfAutoScrollSpeed(context, autoScrollMinSpeed)
+                            }
                         },
                         onClose = {
                             isAutoScrollModeActive = false

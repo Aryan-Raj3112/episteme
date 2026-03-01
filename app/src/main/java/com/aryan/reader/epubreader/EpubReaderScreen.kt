@@ -173,6 +173,29 @@ import kotlin.math.roundToInt
 
 private const val AUTO_SCROLL_LOCKED_KEY = "auto_scroll_locked"
 private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
+private const val AUTO_SCROLL_MIN_SPEED_KEY = "auto_scroll_min_speed"
+private const val AUTO_SCROLL_MAX_SPEED_KEY = "auto_scroll_max_speed"
+
+private fun saveAutoScrollMinSpeed(context: Context, speed: Float) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putFloat(AUTO_SCROLL_MIN_SPEED_KEY, speed) }
+}
+
+private fun loadAutoScrollMinSpeed(context: Context): Float {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getFloat(AUTO_SCROLL_MIN_SPEED_KEY, 0.1f)
+}
+
+private fun saveAutoScrollMaxSpeed(context: Context, speed: Float) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putFloat(AUTO_SCROLL_MAX_SPEED_KEY, speed) }
+}
+
+private fun loadAutoScrollMaxSpeed(context: Context): Float {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getFloat(AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
+}
+
 
 private fun saveAutoScrollLocked(context: Context, isLocked: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -299,6 +322,11 @@ fun EpubReaderHost(
             addAll(loadHighlightsFromPrefs(context, epubBook.title))
         }
     }
+
+    var autoScrollSpeed by remember { mutableFloatStateOf(loadAutoScrollSpeed(context)) }
+    var autoScrollMinSpeed by remember { mutableFloatStateOf(loadAutoScrollMinSpeed(context)) }
+    var autoScrollMaxSpeed by remember { mutableFloatStateOf(loadAutoScrollMaxSpeed(context)) }
+    var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
     var currentHighlightPalette by remember {
         mutableStateOf(loadHighlightPalette(context))
@@ -570,8 +598,6 @@ fun EpubReaderHost(
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
-    var autoScrollSpeed by remember { mutableFloatStateOf(loadAutoScrollSpeed(context)) }
-    var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
     var isAutoScrollLocked by remember { mutableStateOf(loadAutoScrollLocked(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadAutoScrollUseSlider(context)) }
@@ -585,7 +611,7 @@ fun EpubReaderHost(
 
     fun updateAutoScrollState(playing: Boolean, speed: Float) {
         val effectivePlaying = playing && !isAutoScrollTempPaused
-        updateAutoScrollJs(webViewRefForTts, effectivePlaying, speed)
+        updateAutoScrollJs(webViewRefForTts, effectivePlaying, speed * 0.5f)
     }
 
     fun triggerAutoScrollTempPause(durationMs: Long) {
@@ -1200,17 +1226,13 @@ fun EpubReaderHost(
                                 Timber.tag("BookmarkDiagnosis").d("Navigating to ${bookmark.cfi}")
                                 cfiToLoad = bookmark.cfi
 
-                                // FIX: Try to extract chunk index directly from CFI for Vertical Mode
-                                // Vertical Mode CFIs are relative to content-container, so the first number
-                                // usually represents the chunk (2->Chunk0, 4->Chunk1, 6->Chunk2...)
                                 val directChunkIndex = try {
                                     val parts = bookmark.cfi.split('/').mapNotNull { it.toIntOrNull() }
                                     if (parts.isNotEmpty()) {
                                         val firstIndex = parts[0]
-                                        // Standard EPUB CFI: indices are 1-based steps (2, 4, 6...)
                                         (firstIndex - 2) / 2
                                     } else null
-                                } catch (e: Exception) {
+                                } catch (_: Exception) {
                                     null
                                 }
 
@@ -1234,8 +1256,6 @@ fun EpubReaderHost(
                                     if (targetChunk != null && targetChunk >= 0) {
                                         isNavigatingToBookmark = true
 
-                                        // FIX: Ensure we don't reload if we already have it,
-                                        // but do ensure the WebView has the content injected.
                                         if (targetChunk >= loadedChunkCount) {
                                             Timber.tag("BookmarkDiagnosis").d("Manual Chunk Injection: Loading from $loadedChunkCount to $targetChunk")
 
@@ -1587,7 +1607,7 @@ fun EpubReaderHost(
                                             "ControlFlowWithEmptyBody"
                                         )
                                         ChapterWebView(
-                                            key = "$chapterKeyForWebView",
+                                            key = chapterKeyForWebView,
                                             chapterTitle = chapterToRender.title,
                                             isDarkTheme = isDarkTheme,
                                             initialScrollTarget = initialScrollTargetForChapter,
@@ -2704,10 +2724,41 @@ fun EpubReaderHost(
                             }
                         },
                         speed = autoScrollSpeed,
-                        maxSpeed = 10f,
+                        minSpeed = autoScrollMinSpeed,
+                        maxSpeed = autoScrollMaxSpeed,
                         onSpeedChange = {
                             autoScrollSpeed = it
                             saveAutoScrollSpeed(context, it)
+                        },
+                        onMinSpeedChange = { newMin ->
+                            autoScrollMinSpeed = newMin
+                            saveAutoScrollMinSpeed(context, newMin)
+                            if (autoScrollMaxSpeed < newMin) {
+                                autoScrollMaxSpeed = newMin
+                                saveAutoScrollMaxSpeed(context, newMin)
+                            }
+                            if (autoScrollSpeed < newMin) {
+                                autoScrollSpeed = newMin
+                                saveAutoScrollSpeed(context, newMin)
+                            } else if (autoScrollSpeed > autoScrollMaxSpeed) {
+                                autoScrollSpeed = autoScrollMaxSpeed
+                                saveAutoScrollSpeed(context, autoScrollMaxSpeed)
+                            }
+                        },
+                        onMaxSpeedChange = { newMax ->
+                            autoScrollMaxSpeed = newMax
+                            saveAutoScrollMaxSpeed(context, newMax)
+                            if (autoScrollMinSpeed > newMax) {
+                                autoScrollMinSpeed = newMax
+                                saveAutoScrollMinSpeed(context, newMax)
+                            }
+                            if (autoScrollSpeed > newMax) {
+                                autoScrollSpeed = newMax
+                                saveAutoScrollSpeed(context, newMax)
+                            } else if (autoScrollSpeed < autoScrollMinSpeed) {
+                                autoScrollSpeed = autoScrollMinSpeed
+                                saveAutoScrollSpeed(context, autoScrollMinSpeed)
+                            }
                         },
                         onClose = {
                             isAutoScrollModeActive = false

@@ -660,13 +660,49 @@ suspend fun captureWebViewVisibleArea(webView: WebView): Bitmap? {
     }
 }
 
+@Composable
+fun SpeedDropdown(
+    label: String,
+    currentValue: Float,
+    options: List<Float>,
+    onValueChange: (Float) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Text(
+            text = "$label: ${currentValue}x",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .clickable { expanded = true }
+                .padding(4.dp)
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { opt ->
+                DropdownMenuItem(
+                    text = { Text("${opt}x") },
+                    onClick = {
+                        onValueChange(opt)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AutoScrollControls(
     isPlaying: Boolean,
     onPlayPauseToggle: () -> Unit,
     speed: Float,
+    minSpeed: Float,
+    maxSpeed: Float,
     onSpeedChange: (Float) -> Unit,
+    onMinSpeedChange: (Float) -> Unit,
+    onMaxSpeedChange: (Float) -> Unit,
     onClose: () -> Unit,
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
@@ -675,7 +711,6 @@ fun AutoScrollControls(
     useSlider: Boolean,
     onInputModeToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    maxSpeed: Float = 10f,
     isTempPaused: Boolean = false,
 ) {
     Surface(
@@ -849,67 +884,91 @@ fun AutoScrollControls(
                             modifier = Modifier.weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (useSlider) {
-                                // Slider Mode: Text + Slider
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                val speedOptions = listOf(0.1f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
+                                // Min/Max Dropdowns
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(
-                                        text = "%.1fx".format(speed),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                        modifier = Modifier.width(45.dp),
-                                        textAlign = TextAlign.End
+                                    SpeedDropdown(
+                                        label = "Min",
+                                        currentValue = minSpeed,
+                                        options = speedOptions,
+                                        onValueChange = onMinSpeedChange
                                     )
-                                    val minSpeed = 0.1f
-                                    val steps = ((maxSpeed - minSpeed) / 0.1f).roundToInt() - 1
-
-                                    Slider(
-                                        value = speed,
-                                        onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
-                                        valueRange = minSpeed..maxSpeed,
-                                        steps = if (steps > 0) steps else 0,
-                                        modifier = Modifier.weight(1f),
-                                        thumb = {
-                                            Surface(
-                                                modifier = Modifier.size(20.dp),
-                                                shape = CircleShape,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                shadowElevation = 2.dp
-                                            ) {}
-                                        }
+                                    SpeedDropdown(
+                                        label = "Max",
+                                        currentValue = maxSpeed,
+                                        options = speedOptions,
+                                        onValueChange = onMaxSpeedChange
                                     )
                                 }
-                            } else {
-                                // Stepper Mode: Segmented Pill
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.height(48.dp).fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        IconButton(
-                                            onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(0.1f)) },
-                                            modifier = Modifier.size(48.dp)
-                                        ) {
-                                            Icon(Icons.Default.Remove, "Slower")
-                                        }
+                                Spacer(Modifier.height(4.dp))
 
+                                val safeMax = maxSpeed.coerceAtLeast(minSpeed + 0.1f)
+
+                                if (useSlider) {
+                                    // Slider Mode: Text + Slider
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
                                         Text(
                                             text = "%.1fx".format(speed),
                                             style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                            textAlign = TextAlign.Center
+                                            modifier = Modifier.width(45.dp),
+                                            textAlign = TextAlign.End
                                         )
+                                        val steps = ((safeMax - minSpeed) / 0.1f).roundToInt() - 1
 
-                                        IconButton(
-                                            onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(10f)) },
-                                            modifier = Modifier.size(48.dp)
+                                        Slider(
+                                            value = speed,
+                                            onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
+                                            valueRange = minSpeed..safeMax,
+                                            steps = if (steps > 0) steps else 0,
+                                            modifier = Modifier.weight(1f),
+                                            thumb = {
+                                                Surface(
+                                                    modifier = Modifier.size(20.dp),
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    shadowElevation = 2.dp
+                                                ) {}
+                                            }
+                                        )
+                                    }
+                                } else {
+                                    // Stepper Mode: Segmented Pill
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier.height(48.dp).fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxSize(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Icon(Icons.Default.Add, "Faster")
+                                            IconButton(
+                                                onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(minSpeed)) },
+                                                modifier = Modifier.size(48.dp)
+                                            ) {
+                                                Icon(Icons.Default.Remove, "Slower")
+                                            }
+
+                                            Text(
+                                                text = "%.1fx".format(speed),
+                                                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                                                textAlign = TextAlign.Center
+                                            )
+
+                                            IconButton(
+                                                onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(safeMax)) },
+                                                modifier = Modifier.size(48.dp)
+                                            ) {
+                                                Icon(Icons.Default.Add, "Faster")
+                                            }
                                         }
                                     }
                                 }
