@@ -128,8 +128,6 @@ fun AppNavigation(
                     initialPage = initialPage,
                     initialBookmarksJson = initialBookmarksJson,
                     isProUser = uiState.isProUser,
-                    pendingSyncUpdate = uiState.pendingSyncUpdate?.takeIf { it.bookId == bookId },
-                    onClearPendingSyncUpdate = viewModel::clearPendingSyncUpdate,
                     onNavigateBack = {
                         Timber.d("Back action triggered from PDF Viewer.")
                         viewModel.clearSelectedFile()
@@ -182,8 +180,6 @@ fun AppNavigation(
                         initialBookmarksJson = initialBookmarksJson,
                         isProUser = uiState.isProUser,
                         coverImagePath = coverPath,
-                        pendingSyncUpdate = uiState.pendingSyncUpdate?.takeIf { it.bookId == bookId },
-                        onClearPendingSyncUpdate = viewModel::clearPendingSyncUpdate,
                         onNavigateBack = {
                             Timber.d("Back action from EPUB Reader. Clearing selected file to navigate home.")
                             viewModel.clearSelectedFile()

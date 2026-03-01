@@ -206,8 +206,6 @@ fun EpubReaderScreen(
     initialCfi: String?,
     initialBookmarksJson: String?,
     isProUser: Boolean,
-    pendingSyncUpdate: SyncUpdateInfo?,
-    onClearPendingSyncUpdate: () -> Unit,
     onNavigateBack: () -> Unit,
     onSavePosition: (locator: Locator, cfiForWebView: String?, progress: Float) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
@@ -230,8 +228,6 @@ fun EpubReaderScreen(
         onNavigateToPro = onNavigateToPro,
         coverImagePath = coverImagePath,
         onRenderModeChange = onRenderModeChange,
-        pendingSyncUpdate = pendingSyncUpdate,
-        onClearPendingSyncUpdate = onClearPendingSyncUpdate,
         customFonts = customFonts,
         onImportFont = onImportFont
     )
@@ -249,8 +245,6 @@ fun EpubReaderHost(
     initialCfi: String?,
     initialBookmarksJson: String?,
     isProUser: Boolean,
-    pendingSyncUpdate: SyncUpdateInfo?,
-    onClearPendingSyncUpdate: () -> Unit,
     onNavigateBack: () -> Unit,
     onSavePosition: (locator: Locator, cfiForWebView: String?, progress: Float) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
@@ -556,62 +550,6 @@ fun EpubReaderHost(
     LaunchedEffect(ttsState.errorMessage) {
         ttsState.errorMessage?.let { message ->
             bannerMessage = BannerMessage(message, isError = true)
-        }
-    }
-
-    LaunchedEffect(pendingSyncUpdate) {
-        if (pendingSyncUpdate != null) {
-            val locator = pendingSyncUpdate.locator
-            val message = if (locator != null) {
-                val chapterTitle = chapters.getOrNull(locator.chapterIndex)?.title ?: "another location"
-                "Newer reading position found in '$chapterTitle'. Sync now?"
-            } else {
-                "Bookmarks updated on another device. Sync now?"
-            }
-
-            val result = withTimeoutOrNull(10_000L) {
-                snackbarHostState.showSnackbar(
-                    message = message,
-                    actionLabel = "Sync",
-                    withDismissAction = true,
-                    duration = SnackbarDuration.Indefinite
-                )
-            }
-
-            if (result == SnackbarResult.ActionPerformed) {
-                if (locator != null) {
-                    when (currentRenderMode) {
-                        RenderMode.VERTICAL_SCROLL -> {
-                            val cfi = locatorConverter.getCfiFromLocator(epubBook.title, locator)
-                            if (cfi != null) {
-                                val targetChunk = locator.blockIndex / 20
-                                if (currentChapterIndex != locator.chapterIndex) {
-                                    chunkTargetOverride = targetChunk
-                                    currentChapterIndex = locator.chapterIndex
-                                } else {
-                                    if (targetChunk >= loadedChunkCount) {
-                                        loadUpToChunkIndex = targetChunk
-                                    }
-                                }
-                                cfiToLoad = cfi
-                            } else {
-                                Timber.w("Could not get CFI from locator for sync.")
-                            }
-                        }
-                        RenderMode.PAGINATED -> {
-                            (paginator as? BookPaginator)?.findPageForLocator(locator)?.let { page ->
-                                scope.launch {
-                                    paginatedPagerState.scrollToPage(page)
-                                }
-                            }
-                        }
-                    }
-                }
-                pendingSyncUpdate.bookmarksJson?.let { newBookmarksJson ->
-                    bookmarks = loadBookmarks(context, epubBook.title, chapters, newBookmarksJson)
-                }
-            }
-            onClearPendingSyncUpdate()
         }
     }
 

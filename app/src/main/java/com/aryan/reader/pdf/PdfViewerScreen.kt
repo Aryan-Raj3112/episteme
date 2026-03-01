@@ -565,8 +565,6 @@ fun PdfViewerScreen(
     initialPage: Int?,
     initialBookmarksJson: String?,
     isProUser: Boolean,
-    pendingSyncUpdate: SyncUpdateInfo?,
-    onClearPendingSyncUpdate: () -> Unit,
     onNavigateBack: () -> Unit,
     onSavePosition: (page: Int, totalPages: Int) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
@@ -1552,39 +1550,6 @@ fun PdfViewerScreen(
     ttsState.currentText
 
     var showRenameBookmarkDialog by remember { mutableStateOf<PdfBookmark?>(null) }
-
-    LaunchedEffect(pendingSyncUpdate) {
-        if (pendingSyncUpdate != null) {
-            val newPage = pendingSyncUpdate.page
-            val message = if (newPage != null) {
-                "Newer reading position found. Sync to page ${newPage + 1}?"
-            } else {
-                "Bookmarks updated on another device. Sync now?"
-            }
-
-            val result = withTimeoutOrNull(10_000L) {
-                snackbarHostState.showSnackbar(
-                    message = message,
-                    actionLabel = "Sync",
-                    withDismissAction = true,
-                    duration = SnackbarDuration.Indefinite
-                )
-            }
-
-            if (result == SnackbarResult.ActionPerformed) {
-                if (newPage != null) {
-                    when (displayMode) {
-                        DisplayMode.PAGINATION -> pagerState.scrollToPage(newPage)
-                        DisplayMode.VERTICAL_SCROLL -> verticalReaderState.scrollToPage(newPage)
-                    }
-                }
-                pendingSyncUpdate.bookmarksJson?.let { newBookmarksJson ->
-                    bookmarks = loadPdfBookmarksFromJson(newBookmarksJson)
-                }
-            }
-            onClearPendingSyncUpdate()
-        }
-    }
 
     var isOcrModelDownloading by remember { mutableStateOf(false) }
 

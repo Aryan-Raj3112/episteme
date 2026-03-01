@@ -226,6 +226,7 @@ fun LibraryScreen(
             onNewShelfClick = viewModel::showCreateShelfDialog,
             onSelectFileClick = onSelectFileClick,
             onScanNowClick = viewModel::scanSyncedFolder,
+            onSyncMetadataClick = viewModel::syncFolderMetadata,
             onSelectSyncFolderClick = onSelectSyncFolderClick,
             onDisconnectSyncFolderClick = viewModel::disconnectSyncedFolder,
             downloadingBookIds = uiState.downloadingBookIds,
@@ -418,6 +419,7 @@ fun LibraryScreenContent(
     onNewShelfClick: () -> Unit,
     onSelectFileClick: () -> Unit,
     onScanNowClick: () -> Unit,
+    onSyncMetadataClick: () -> Unit,
     onSelectSyncFolderClick: () -> Unit,
     onDisconnectSyncFolderClick: () -> Unit,
     downloadingBookIds: Set<String>,
@@ -630,6 +632,7 @@ fun LibraryScreenContent(
                         lastScanTime = lastFolderScanTime,
                         onSelectFolderClick = onSelectSyncFolderClick,
                         onScanNowClick = onScanNowClick,
+                        onSyncMetadataClick = onSyncMetadataClick,
                         onChangeFolderClick = onSelectSyncFolderClick,
                         onDisconnectClick = onDisconnectSyncFolderClick,
                         isLoading = isLoading
@@ -1345,6 +1348,7 @@ private fun FolderSyncScreen(
     lastScanTime: Long?,
     onSelectFolderClick: () -> Unit,
     onScanNowClick: () -> Unit,
+    onSyncMetadataClick: () -> Unit,
     onChangeFolderClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     isLoading: Boolean
@@ -1433,6 +1437,10 @@ private fun FolderSyncScreen(
             }
             Spacer(modifier = Modifier.height(32.dp))
 
+            Button(onClick = onSyncMetadataClick, enabled = !isLoading) {
+                Text("Sync Metadata")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
             Button(onClick = onScanNowClick, enabled = !isLoading) {
                 Text("Scan for New Books")
             }

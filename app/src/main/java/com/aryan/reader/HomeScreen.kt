@@ -802,9 +802,9 @@ private fun AppDrawerContent(
                         },
                         label = {
                             Column {
-                                Text("Backup Local Folders")
+                                Text("Cloud sync for Local Folders")
                                 Text(
-                                    "Upload & sync books from local folders",
+                                    "Upload books from your synced folders to Google Drive).",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

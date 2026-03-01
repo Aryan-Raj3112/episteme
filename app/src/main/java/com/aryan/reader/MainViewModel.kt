@@ -189,7 +189,6 @@ data class ReaderScreenState(
     val isRequestingDrivePermission: Boolean = false,
     val downloadingBookIds: Set<String> = emptySet(),
     val uploadingBookIds: Set<String> = emptySet(),
-    val pendingSyncUpdate: SyncUpdateInfo? = null,
     val syncedFolderUri: String? = null,
     val lastFolderScanTime: Long? = null,
     val hasUnreadFeedback: Boolean = false,
@@ -527,6 +526,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
         remoteConfigRepository.init()
+
+        if (_internalState.value.syncedFolderUri != null) {
+            Timber.d("App Start: Triggering local folder metadata-only sync.")
+            syncFolderMetadata()
+        }
 
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
 
@@ -1194,8 +1198,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 isLoading = false,
                 errorMessage = null,
                 initialLocator = null,
-                initialPageInBook = null,
-                pendingSyncUpdate = null
+                initialPageInBook = null
             )
         }
 
@@ -1213,144 +1216,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 viewModelScope.launch {
                     recentFilesRepository.syncLocalMetadataToFolder(it.bookId)
                 }
-            }
-        }
-    }
-
-    private fun syncSingleBookMetadataOnOpen(bookId: String) {
-        val currentUser = uiState.value.currentUser
-
-        viewModelScope.launch {
-            val localBook = recentFilesRepository.getFileByBookId(bookId)
-
-            if (localBook?.sourceFolderUri != null) {
-                Timber.d("OpenSync: Checking folder for $bookId. Local TS=${localBook.lastModifiedTimestamp}")
-                try {
-                    val folderUri = localBook.sourceFolderUri.toUri()
-                    val remoteMeta = LocalSyncUtils.getBookMetadata(appContext, folderUri, bookId)
-
-                    if (remoteMeta != null) {
-                        val diff = remoteMeta.lastModifiedTimestamp - localBook.lastModifiedTimestamp
-                        Timber.d("OpenSync: Folder Meta found. TS=${remoteMeta.lastModifiedTimestamp}, Diff=$diff ms")
-
-                        if (remoteMeta.lastModifiedTimestamp > localBook.lastModifiedTimestamp) {
-                            Timber.d("OpenSync: Folder is NEWER. Updating DB and UI.")
-
-                            val updatedItem = localBook.copy(
-                                lastChapterIndex = remoteMeta.lastChapterIndex,
-                                lastPage = remoteMeta.lastPage,
-                                lastPositionCfi = remoteMeta.lastPositionCfi,
-                                progressPercentage = remoteMeta.progressPercentage,
-                                bookmarksJson = remoteMeta.bookmarksJson,
-                                locatorBlockIndex = remoteMeta.locatorBlockIndex,
-                                locatorCharOffset = remoteMeta.locatorCharOffset,
-                                lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                                timestamp = remoteMeta.lastModifiedTimestamp
-                            )
-
-                            recentFilesRepository.addRecentFile(updatedItem)
-
-                            _internalState.update {
-                                it.copy(
-                                    pendingSyncUpdate = SyncUpdateInfo(
-                                        bookId = bookId,
-                                        locator = if (remoteMeta.lastChapterIndex != null && remoteMeta.locatorBlockIndex != null && remoteMeta.locatorCharOffset != null) {
-                                            Locator(
-                                                remoteMeta.lastChapterIndex,
-                                                remoteMeta.locatorBlockIndex,
-                                                remoteMeta.locatorCharOffset
-                                            )
-                                        } else null,
-                                        page = remoteMeta.lastPage,
-                                        cfi = remoteMeta.lastPositionCfi,
-                                        bookmarksJson = remoteMeta.bookmarksJson
-                                    )
-                                )
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to sync folder metadata on open")
-                }
-            }
-
-            // 2. Cloud Sync Check (Pro)
-            if (!uiState.value.isSyncEnabled || currentUser == null) return@launch
-
-            try {
-                val remoteBookMetadata =
-                    firestoreRepository.getBookMetadata(currentUser.uid, bookId) ?: return@launch
-                val localBook = recentFilesRepository.getFileByBookId(bookId)
-
-                val showUpdatePrompt = if (localBook == null) {
-                    true
-                } else if (remoteBookMetadata.lastModifiedTimestamp > localBook.lastModifiedTimestamp) {
-                    val remoteLocator =
-                        if (remoteBookMetadata.lastChapterIndex != null && remoteBookMetadata.locatorBlockIndex != null && remoteBookMetadata.locatorCharOffset != null) {
-                            Locator(
-                                remoteBookMetadata.lastChapterIndex,
-                                remoteBookMetadata.locatorBlockIndex,
-                                remoteBookMetadata.locatorCharOffset
-                            )
-                        } else null
-
-                    val localLocator =
-                        if (localBook.lastChapterIndex != null && localBook.locatorBlockIndex != null && localBook.locatorCharOffset != null) {
-                            Locator(
-                                localBook.lastChapterIndex,
-                                localBook.locatorBlockIndex,
-                                localBook.locatorCharOffset
-                            )
-                        } else null
-
-                    val positionChanged = when (localBook.type) {
-                        FileType.PDF -> remoteBookMetadata.lastPage != localBook.lastPage
-                        FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> remoteLocator != localLocator
-                    }
-
-                    val bookmarksChanged =
-                        remoteBookMetadata.bookmarksJson != localBook.bookmarksJson
-
-                    positionChanged || bookmarksChanged
-                } else {
-                    false
-                }
-
-                if (showUpdatePrompt) {
-                    Timber.d("Remote metadata is newer for $bookId. Proposing update to user.")
-
-                    recentFilesRepository.addRecentFile(remoteBookMetadata.toRecentFileItem())
-
-                    val locator =
-                        if (remoteBookMetadata.lastChapterIndex != null && remoteBookMetadata.locatorBlockIndex != null && remoteBookMetadata.locatorCharOffset != null) {
-                            Locator(
-                                remoteBookMetadata.lastChapterIndex,
-                                remoteBookMetadata.locatorBlockIndex,
-                                remoteBookMetadata.locatorCharOffset
-                            )
-                        } else null
-
-                    _internalState.update {
-                        it.copy(
-                            pendingSyncUpdate = SyncUpdateInfo(
-                                bookId = bookId,
-                                locator = locator,
-                                page = remoteBookMetadata.lastPage,
-                                cfi = remoteBookMetadata.lastPositionCfi,
-                                bookmarksJson = remoteBookMetadata.bookmarksJson
-                            )
-                        )
-                    }
-                } else {
-                    Timber.d(
-                        "Local metadata is up-to-date for $bookId or remote data is identical. No prompt."
-                    )
-                    if (localBook != null && remoteBookMetadata.lastModifiedTimestamp > localBook.lastModifiedTimestamp) {
-                        recentFilesRepository.addRecentFile(remoteBookMetadata.toRecentFileItem())
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to sync single book metadata on open for bookId: $bookId")
             }
         }
     }
@@ -1411,12 +1276,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun syncFolderMetadata() {
+        triggerFolderSyncWorker(metadataOnly = true)
+    }
+
     fun scanSyncedFolder() {
-        val folderUriString = _internalState.value.syncedFolderUri ?: return
-        Timber.tag("FolderSync").d("Requesting manual folder scan via WorkManager.")
+        triggerFolderSyncWorker(metadataOnly = false)
+    }
+
+    private fun triggerFolderSyncWorker(metadataOnly: Boolean) {
+        @Suppress("UnusedVariable", "Unused") val folderUriString = _internalState.value.syncedFolderUri ?: return
+        Timber.tag("FolderSync").d("Requesting folder sync (metadataOnly=$metadataOnly)")
 
         val workManager = WorkManager.getInstance(appContext)
+        val data = androidx.work.Data.Builder()
+            .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, metadataOnly)
+            .build()
+
         val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
+            .setInputData(data)
             .build()
 
         workManager.enqueueUniqueWork(
@@ -1431,24 +1309,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (workInfo != null) {
                     when (workInfo.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                            _internalState.update {
-                                it.copy(isLoading = true, bannerMessage = BannerMessage("Scanning folder..."))
-                            }
+                            val msg = if (metadataOnly) "Syncing progress..." else "Scanning folder..."
+                            _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage(msg)) }
                         }
                         WorkInfo.State.SUCCEEDED -> {
-                            val lastScan = System.currentTimeMillis()
-                            _internalState.update {
-                                it.copy(
-                                    isLoading = false,
-                                    bannerMessage = BannerMessage("Scan complete."),
-                                    lastFolderScanTime = lastScan
-                                )
-                            }
+                            _internalState.update { it.copy(isLoading = false, bannerMessage = BannerMessage("Sync complete."), lastFolderScanTime = System.currentTimeMillis()) }
                         }
-                        WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
-                            _internalState.update {
-                                it.copy(isLoading = false, errorMessage = "Folder scan failed.")
-                            }
+                        WorkInfo.State.FAILED -> {
+                            _internalState.update { it.copy(isLoading = false, errorMessage = "Sync failed.") }
                         }
                         else -> Unit
                     }
@@ -1579,10 +1447,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         }
-    }
-
-    fun clearPendingSyncUpdate() {
-        _internalState.update { it.copy(pendingSyncUpdate = null) }
     }
 
     fun deleteAllCloudAndLocalData() {
@@ -2605,7 +2469,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         Timber.d("Saving EPUB position locally: URI=$uri, Locator=$locator")
         viewModelScope.launch {
-            recentFilesRepository.getFileByUri(uri.toString())?.let { foundItem ->
+            recentFilesRepository.getFileByUri(uri.toString())?.let { _ ->
                 recentFilesRepository.updateEpubReadingPosition(
                     uriString = uri.toString(),
                     locator = locator,
@@ -2653,7 +2517,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
             Timber.d("Saving PDF position locally: URI=$currentPdfUri, Page=$page")
             viewModelScope.launch {
-                recentFilesRepository.getFileByUri(currentPdfUri.toString())?.let { foundItem ->
+                recentFilesRepository.getFileByUri(currentPdfUri.toString())?.let { _ ->
                     recentFilesRepository.updatePdfReadingPosition(
                         uriString = currentPdfUri.toString(),
                         page = page,
@@ -2690,18 +2554,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 item.getUri()?.let { uri ->
                     openBook(uri, item.bookId, item.type, item.displayName)
                 } ?: run {
-                    _internalState.update {
-                        it.copy(
-                            errorMessage = "Could not find file location for ${item.displayName}."
-                        )
-                    }
+                    _internalState.update { it.copy(errorMessage = "Could not find file location.") }
                     return
                 }
-                syncSingleBookMetadataOnOpen(item.bookId)
             } else {
-                Timber.w(
-                    "Clicked on a book that is not available locally: ${item.displayName}, starting download."
-                )
                 downloadBook(item, openWhenComplete = true)
             }
         }

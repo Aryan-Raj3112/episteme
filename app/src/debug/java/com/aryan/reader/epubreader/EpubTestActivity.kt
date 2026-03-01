@@ -24,8 +24,6 @@ class EpubTestActivity : ComponentActivity() {
                 initialCfi = null,
                 initialBookmarksJson = null,
                 isProUser = false,
-                pendingSyncUpdate = null,
-                onClearPendingSyncUpdate = {},
                 onNavigateBack = {},
                 onSavePosition = { _, _, _ -> },
                 onBookmarksChanged = {},
