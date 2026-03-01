@@ -271,10 +271,24 @@ class FolderSyncWorker(
             // Reconcile Metadata (Write-back)
             val activeDbBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
 
+            val booksToDelete = mutableListOf<String>()
+
             for (localBook in activeDbBooks) {
                 val remoteMeta = folderMetadataMap[localBook.bookId]
                 if (remoteMeta == null) {
-                    recentFilesRepository.syncLocalMetadataToFolder(localBook.bookId)
+                    val exists = try {
+                        val uri = localBook.uriString?.toUri()
+                        if (uri != null) {
+                            DocumentFile.fromSingleUri(appContext, uri)?.exists() == true
+                        } else false
+                    } catch (e: Exception) { false }
+
+                    if (exists) {
+                        recentFilesRepository.syncLocalMetadataToFolder(localBook.bookId)
+                    } else {
+                        Timber.tag("FolderSync").i("Metadata Sync: Book ${localBook.displayName} missing from disk. Scheduling removal.")
+                        booksToDelete.add(localBook.bookId)
+                    }
                 } else {
                     if (remoteMeta.lastModifiedTimestamp > localBook.lastModifiedTimestamp) {
                         Timber.tag("FolderSync").d("SyncDecision: Remote NEWER for ${localBook.displayName}. Updating local DB.")
@@ -294,6 +308,10 @@ class FolderSyncWorker(
                         recentFilesRepository.syncLocalMetadataToFolder(localBook.bookId)
                     }
                 }
+            }
+
+            if (booksToDelete.isNotEmpty()) {
+                recentFilesRepository.deleteFilePermanently(booksToDelete)
             }
 
             prefs.edit { putLong(MainViewModel.KEY_LAST_FOLDER_SCAN_TIME, System.currentTimeMillis()) }

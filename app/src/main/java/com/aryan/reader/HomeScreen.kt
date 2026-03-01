@@ -86,6 +86,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
@@ -317,7 +318,11 @@ fun HomeScreen(
                                     onSelectFileClick = onSelectFileClick,
                                     onNavigateToFolderSync = { viewModel.navigateToFolderSync() },
                                     windowSizeClass = windowSizeClass,
-                                    downloadingBookIds = uiState.downloadingBookIds
+                                    downloadingBookIds = uiState.downloadingBookIds,
+                                    onRefresh = { viewModel.refreshLibrary() },
+                                    isRefreshing = uiState.isRefreshing,
+                                    isSyncEnabled = uiState.isSyncEnabled,
+                                    hasSyncedFolder = uiState.syncedFolderUri != null
                                 )
                             }
                         }
@@ -403,6 +408,7 @@ fun HomeScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RecentFilesContent(
     recentFiles: List<RecentFileItem>,
@@ -413,27 +419,34 @@ private fun RecentFilesContent(
     onNavigateToFolderSync: () -> Unit,
     windowSizeClass: WindowSizeClass,
     downloadingBookIds: Set<String>,
+    onRefresh: () -> Unit,
+    isRefreshing: Boolean,
+    isSyncEnabled: Boolean,
+    hasSyncedFolder: Boolean
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        RecentFilesGrid(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            recentFiles = recentFiles,
-            selectedItemUris = selectedContextItems.mapNotNull { it.uriString }.toSet(),
-            onItemClick = onItemClick,
-            onItemLongClick = onItemLongClick,
-            windowSizeClass = windowSizeClass,
-            contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp),
-            downloadingBookIds = downloadingBookIds
-        )
+    val canRefresh = isSyncEnabled || hasSyncedFolder
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(vertical = 24.dp), contentAlignment = Alignment.Center
-        ) {
+    val content = @Composable {
+        Box(modifier = Modifier.fillMaxSize()) {
+            RecentFilesGrid(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                recentFiles = recentFiles,
+                selectedItemUris = selectedContextItems.mapNotNull { it.uriString }.toSet(),
+                onItemClick = onItemClick,
+                onItemLongClick = onItemLongClick,
+                windowSizeClass = windowSizeClass,
+                contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+                downloadingBookIds = downloadingBookIds
+            )
+
             Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 androidx.compose.material3.Button(onClick = onSelectFileClick) {
@@ -444,6 +457,18 @@ private fun RecentFilesContent(
                 }
             }
         }
+    }
+
+    if (canRefresh) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            content()
+        }
+    } else {
+        content()
     }
 }
 

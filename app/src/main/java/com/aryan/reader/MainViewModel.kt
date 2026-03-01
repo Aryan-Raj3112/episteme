@@ -35,24 +35,23 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.ExistingWorkPolicy
-import androidx.work.WorkInfo
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
 import com.aryan.reader.data.FirestoreRepository
-import com.aryan.reader.data.FolderBookMetadata
 import com.aryan.reader.data.FontMetadata
 import com.aryan.reader.data.FontsRepository
 import com.aryan.reader.data.GoogleDriveRepository
-import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.PurchaseEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
@@ -195,6 +194,7 @@ data class ReaderScreenState(
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
     val showFolderMigrationDialog: Boolean = false,
+    val isRefreshing: Boolean = false,
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -1335,10 +1335,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage(msg)) }
                         }
                         WorkInfo.State.SUCCEEDED -> {
-                            _internalState.update { it.copy(isLoading = false, bannerMessage = BannerMessage("Sync complete."), lastFolderScanTime = System.currentTimeMillis()) }
+                            _internalState.update { it.copy(
+                                isLoading = false,
+                                isRefreshing = false,
+                                bannerMessage = BannerMessage("Sync complete."),
+                                lastFolderScanTime = System.currentTimeMillis()
+                            ) }
                         }
-                        WorkInfo.State.FAILED -> {
-                            _internalState.update { it.copy(isLoading = false, errorMessage = "Sync failed.") }
+                        WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                            _internalState.update { it.copy(isLoading = false, isRefreshing = false, errorMessage = "Sync failed.") } // ADD isRefreshing = false
                         }
                         else -> Unit
                     }
@@ -2550,6 +2555,40 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun refreshLibrary() {
+        val syncEnabled = _internalState.value.isSyncEnabled
+        val hasFolder = _internalState.value.syncedFolderUri != null // Check for URI instead of toggle
+
+        if (!syncEnabled && !hasFolder) {
+            Timber.d("Refresh skipped: No sync methods active.")
+            _internalState.update { it.copy(isRefreshing = false) } // Ensure indicator retracts immediately
+            return
+        }
+
+        viewModelScope.launch {
+            _internalState.update { it.copy(isRefreshing = true) }
+
+            try {
+                if (syncEnabled) {
+                    syncWithCloud(showBanner = false).join()
+                }
+
+                if (hasFolder) {
+                    // This triggers the worker which we observe above to clear isRefreshing
+                    syncFolderMetadata()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Refresh failed")
+                _internalState.update { it.copy(isRefreshing = false) }
+            } finally {
+                // If folder sync isn't running, we must close the indicator here
+                if (!hasFolder) {
+                    _internalState.update { it.copy(isRefreshing = false) }
+                }
+            }
+        }
+    }
+
     fun clearBookCache() {
         viewModelScope.launch {
             bookCacheDao.clearAllCache()
@@ -2571,6 +2610,34 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update { it.copy(contextualActionItems = newSelection) }
             Timber.d("New selection size: ${newSelection.size}")
         } else {
+            if (item.sourceFolderUri != null && item.uriString != null) {
+                viewModelScope.launch {
+                    val exists = try {
+                        val uri = item.uriString.toUri()
+                        DocumentFile.fromSingleUri(appContext, uri)?.exists() == true
+                    } catch (_: Exception) { false }
+
+                    if (!exists) {
+                        Timber.tag("FolderSync").i("LazyCleanup: File ${item.displayName} missing. Removing.")
+                        recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
+                        showBanner("File deleted from folder. Removed from library.")
+                        return@launch
+                    }
+
+                    Timber.d("Recent file clicked (opening): ${item.displayName}")
+                    if (item.isAvailable) {
+                        item.getUri()?.let { uri ->
+                            openBook(uri, item.bookId, item.type, item.displayName)
+                        } ?: run {
+                            _internalState.update { it.copy(errorMessage = "Could not find file location.") }
+                        }
+                    } else {
+                        downloadBook(item, openWhenComplete = true)
+                    }
+                }
+                return
+            }
+
             Timber.d("Recent file clicked (opening): ${item.displayName}")
             if (item.isAvailable) {
                 item.getUri()?.let { uri ->
@@ -2976,33 +3043,51 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val (folderBooks, managedBooks) = itemsToRemove.partition { it.sourceFolderUri != null }
 
                 if (folderBooks.isNotEmpty()) {
-                    Timber.d("Marking ${folderBooks.size} folder books as deleted.")
-                    val bookIds = folderBooks.map { it.bookId }
-                    recentFilesRepository.markAsDeleted(bookIds)
+                    Timber.d("Processing ${folderBooks.size} folder books for deletion.")
+
+                    val idsToDeleteLocally = mutableListOf<String>()
 
                     folderBooks.forEach { item ->
+                        idsToDeleteLocally.add(item.bookId)
                         pdfTextRepository.clearBookText(item.bookId)
-                               val deletedMeta = FolderBookMetadata(
-                                   bookId = item.bookId,
-                                   title = item.title,
-                                   author = item.author,
-                                   displayName = item.displayName,
-                                   type = item.type.name,
-                                   lastChapterIndex = null,
-                                   lastPage = null,
-                                   lastPositionCfi = null,
-                                   progressPercentage = 0f,
-                                   isRecent = false,
-                                   lastModifiedTimestamp = System.currentTimeMillis(),
-                                   bookmarksJson = null,
-                                   locatorBlockIndex = null,
-                                   locatorCharOffset = null
-                               )
 
-                                if (item.sourceFolderUri != null) {
-                                    LocalSyncUtils.saveMetadataToFolder(appContext, item.sourceFolderUri.toUri(), deletedMeta)
+                        if (item.uriString != null) {
+                            try {
+                                val fileUri = item.uriString.toUri()
+                                val fileDoc = DocumentFile.fromSingleUri(appContext, fileUri)
+                                if (fileDoc != null && fileDoc.exists()) {
+                                    if (fileDoc.delete()) {
+                                        Timber.i("Physically deleted folder file: ${item.displayName}")
+                                    } else {
+                                        Timber.e("Failed to delete folder file via SAF: ${item.displayName}")
+                                    }
                                 }
+                            } catch (e: Exception) {
+                                Timber.e(e, "Error deleting physical file for ${item.bookId}")
                             }
+                        }
+
+                        // 2. Try to delete the metadata JSON (.bookId.json)
+                        if (item.sourceFolderUri != null) {
+                            try {
+                                val rootUri = item.sourceFolderUri.toUri()
+                                val rootDoc = DocumentFile.fromTreeUri(appContext, rootUri)
+                                val syncDir = rootDoc?.findFile("episteme") ?: rootDoc?.findFile(".episteme")
+
+                                if (syncDir != null) {
+                                    // Try hidden first, then legacy
+                                    val metaFile = syncDir.findFile(".${item.bookId}.json")
+                                        ?: syncDir.findFile("${item.bookId}.json")
+
+                                    metaFile?.delete()
+                                }
+                            } catch (e: Exception) {
+                                Timber.e(e, "Error deleting metadata file for ${item.bookId}")
+                            }
+                        }
+                    }
+
+                    recentFilesRepository.deleteFilePermanently(idsToDeleteLocally)
                 }
 
                 if (managedBooks.isNotEmpty()) {

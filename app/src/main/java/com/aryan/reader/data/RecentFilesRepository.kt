@@ -151,10 +151,6 @@ class RecentFilesRepository(private val context: Context) {
         recentFileDao.deleteFilesBySourceFolder(folderUriString)
     }
 
-    suspend fun findLegacyBooks(stableIdPrefix: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
-        return@withContext recentFileDao.getFilesWithIdPrefix(stableIdPrefix).map { it.toRecentFileItem() }
-    }
-
     suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
@@ -217,7 +213,11 @@ class RecentFilesRepository(private val context: Context) {
             Timber.d("DeleteDebug: DAO - Permanently deleting ${itemsToRemove.size} files.")
             itemsToRemove.forEach { item ->
                 item.coverImagePath?.let { deleteCachedCover(it) }
-                item.uriString?.let { bookImporter.deleteBookByUriString(it) }
+                try {
+                    item.uriString?.let { bookImporter.deleteBookByUriString(it) }
+                } catch (e: Exception) {
+                    Timber.w("DeleteDebug: Physical file deletion failed (likely already gone) for ${item.bookId}: ${e.message}")
+                }
             }
             recentFileDao.deleteFilePermanently(itemsToRemove.map { it.bookId })
             Timber.d("Permanently removed recent files from DB.")

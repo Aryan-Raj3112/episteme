@@ -133,6 +133,10 @@ fun LibraryScreen(
         pageCount = { 3 }
     )
 
+    val containsFolderItems = remember(selectedItems) {
+        selectedItems.any { it.sourceFolderUri != null }
+    }
+
     LaunchedEffect(uiState.libraryScreenStartPage) {
         if (pagerState.currentPage != uiState.libraryScreenStartPage) {
             pagerState.animateScrollToPage(uiState.libraryScreenStartPage)
@@ -251,9 +255,11 @@ fun LibraryScreen(
                     showDeleteConfirmDialog = false
                 },
                 onDismiss = { showDeleteConfirmDialog = false },
-                isPermanentDelete = true
+                isPermanentDelete = true,
+                containsFolderItems = containsFolderItems
             )
         }
+
         if (showDeleteShelvesDialog) {
             DeleteShelvesConfirmationDialog(
                 count = selectedShelves.size,
