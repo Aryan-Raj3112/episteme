@@ -21,7 +21,6 @@
 package com.aryan.reader
 
 import android.content.Context
-import android.net.Uri
 import timber.log.Timber
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
@@ -32,9 +31,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
-import com.aryan.reader.epub.EpubParser
-import com.aryan.reader.epub.MobiParser
-import com.aryan.reader.pdf.PdfCoverGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -48,10 +44,6 @@ class FolderSyncWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     private val recentFilesRepository = RecentFilesRepository(appContext)
-    private val epubParser = EpubParser(appContext)
-    private val mobiParser = MobiParser(appContext)
-    private val pdfCoverGenerator = PdfCoverGenerator(appContext)
-    private val bookImporter = BookImporter(appContext)
 
     companion object {
         const val WORK_NAME = "FolderSyncWorker"
@@ -62,6 +54,13 @@ class FolderSyncWorker(
 
     override suspend fun doWork(): Result {
         val isMetadataOnly = inputData.getBoolean(KEY_METADATA_ONLY, false)
+        // Check if folder is still linked before starting
+        val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        if (!prefs.contains(MainViewModel.KEY_SYNCED_FOLDER_URI)) {
+            Timber.tag("FolderSync").w("Worker: Folder unlinked. Aborting work.")
+            return Result.success()
+        }
+
         Timber.tag("FolderSync").d("Worker: Request received (MetadataOnly=$isMetadataOnly). Waiting for lock...")
 
         return withContext(Dispatchers.IO) {
@@ -80,6 +79,7 @@ class FolderSyncWorker(
         val folderUri = folderUriString.toUri()
 
         try {
+            // Permission checks ...
             try {
                 appContext.contentResolver.takePersistableUriPermission(
                     folderUri,
@@ -94,14 +94,47 @@ class FolderSyncWorker(
                 return Result.failure()
             }
 
+            // PHASE 1: IMPORT METADATA (Always run this to catch updates from other devices)
+            Timber.tag("FolderSync").d("Phase 1: Importing JSON metadata from folder...")
             val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri)
 
+            // Apply updates to local DB
+            folderMetadataMap.forEach { (bookId, remoteMeta) ->
+                val existingItem = recentFilesRepository.getFileByBookId(bookId)
+
+                if (existingItem != null) {
+                    // Update local if remote is newer
+                    if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
+                        Timber.tag("FolderSync").d("Applying remote update for $bookId (Progress: ${remoteMeta.progressPercentage}%)")
+                        val itemToUpdate = existingItem.copy(
+                            lastChapterIndex = remoteMeta.lastChapterIndex,
+                            lastPage = remoteMeta.lastPage,
+                            lastPositionCfi = remoteMeta.lastPositionCfi,
+                            progressPercentage = remoteMeta.progressPercentage,
+                            bookmarksJson = remoteMeta.bookmarksJson,
+                            locatorBlockIndex = remoteMeta.locatorBlockIndex,
+                            locatorCharOffset = remoteMeta.locatorCharOffset,
+                            lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
+                            // Crucial: If remote says it's recent, we make it recent locally
+                            isRecent = remoteMeta.isRecent || existingItem.isRecent,
+                            timestamp = if (remoteMeta.isRecent) remoteMeta.lastModifiedTimestamp else existingItem.timestamp
+                        )
+                        recentFilesRepository.addRecentFile(itemToUpdate)
+                    }
+                }
+                // We do NOT create new items from JSON alone. We wait for Phase 2 to find the file.
+            }
+
+            // PHASE 2: SCAN PHYSICAL FILES (Only if !metadataOnly)
             if (!metadataOnly) {
+                Timber.tag("FolderSync").d("Phase 2: Scanning physical files...")
                 val currentDiskFiles = mutableListOf<DocumentFile>()
                 val fileQueue = ArrayDeque<DocumentFile>()
                 documentTree.listFiles().let { fileQueue.addAll(it) }
 
                 while (fileQueue.isNotEmpty()) {
+                    if (isStopped) break
+
                     val file = fileQueue.removeAt(0)
                     if (file.isDirectory) {
                         if (file.name == ".episteme") continue
@@ -117,12 +150,15 @@ class FolderSyncWorker(
                 val foundBookIds = mutableSetOf<String>()
 
                 for (file in currentDiskFiles) {
+                    if (isStopped) break
+
                     val stableId = "local_${file.name}_${file.length()}"
                     foundBookIds.add(stableId)
 
                     val existingItem = recentFilesRepository.getFileByBookId(stableId)
 
                     if (existingItem == null) {
+                        // NEW FILE DISCOVERED
                         val remoteMeta = folderMetadataMap[stableId]
                         val type = getFileType(file.name ?: "", file.type) ?: FileType.EPUB
                         val placeholderTitle = file.name ?: "Unknown"
@@ -132,6 +168,7 @@ class FolderSyncWorker(
                             uriString = file.uri.toString(),
                             type = type,
                             displayName = file.name ?: "Unknown",
+                            // Use remote timestamp if available, else NOW
                             timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                             lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                             coverImagePath = null,
@@ -139,7 +176,8 @@ class FolderSyncWorker(
                             author = remoteMeta?.author,
                             isAvailable = true,
                             isDeleted = false,
-                            isRecent = false,
+                            // If remote says recent, mark it. If new and no remote data, it is NOT recent.
+                            isRecent = remoteMeta?.isRecent ?: false,
                             sourceFolderUri = folderUriString,
                             lastChapterIndex = remoteMeta?.lastChapterIndex,
                             lastPage = remoteMeta?.lastPage,
@@ -149,55 +187,43 @@ class FolderSyncWorker(
                             locatorBlockIndex = remoteMeta?.locatorBlockIndex,
                             locatorCharOffset = remoteMeta?.locatorCharOffset
                         )
+
+                        // Insert. Note: We do NOT call syncLocalMetadataToFolder here.
+                        // It is "Clean" until the user opens it.
                         recentFilesRepository.addRecentFile(newItem)
                     } else {
-                        var itemToUpdate = existingItem
-
-                        if (existingItem.isDeleted) {
-                            itemToUpdate = itemToUpdate.copy(isDeleted = false, isAvailable = true)
+                        // EXISTING FILE - Just ensure it is marked available
+                        if (existingItem.isDeleted || !existingItem.isAvailable) {
+                            val revived = existingItem.copy(isDeleted = false, isAvailable = true)
+                            recentFilesRepository.addRecentFile(revived)
                         }
-
-                        val remoteMeta = folderMetadataMap[stableId]
-                        if (remoteMeta != null && remoteMeta.lastModifiedTimestamp > itemToUpdate.lastModifiedTimestamp) {
-                            itemToUpdate = itemToUpdate.copy(
-                                lastChapterIndex = remoteMeta.lastChapterIndex,
-                                lastPage = remoteMeta.lastPage,
-                                lastPositionCfi = remoteMeta.lastPositionCfi,
-                                progressPercentage = remoteMeta.progressPercentage,
-                                bookmarksJson = remoteMeta.bookmarksJson,
-                                locatorBlockIndex = remoteMeta.locatorBlockIndex,
-                                locatorCharOffset = remoteMeta.locatorCharOffset,
-                                lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                                timestamp = remoteMeta.lastModifiedTimestamp
-                            )
-                        }
-
-                        recentFilesRepository.addRecentFile(itemToUpdate)
-
-                        if (remoteMeta == null || itemToUpdate.lastModifiedTimestamp > remoteMeta.lastModifiedTimestamp) {
-                            recentFilesRepository.syncLocalMetadataToFolder(stableId)
-                        }
+                        // Metadata updates were already handled in Phase 1
                     }
                 }
 
-                val dbFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
-                val idsToRemove = dbFolderBooks.filter { !foundBookIds.contains(it.bookId) }.map { it.bookId }
+                // Cleanup removed files
+                if (!isStopped) {
+                    val dbFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+                    val idsToRemove = dbFolderBooks.filter { !foundBookIds.contains(it.bookId) }.map { it.bookId }
 
-                if (idsToRemove.isNotEmpty()) {
-                    Timber.tag("FolderSync").i("Cleaning up ${idsToRemove.size} missing folder books.")
-                    recentFilesRepository.deleteFilePermanently(idsToRemove)
+                    if (idsToRemove.isNotEmpty()) {
+                        Timber.tag("FolderSync").i("Cleaning up ${idsToRemove.size} missing folder books.")
+                        recentFilesRepository.deleteFilePermanently(idsToRemove)
+                    }
                 }
             }
 
             prefs.edit { putLong(MainViewModel.KEY_LAST_FOLDER_SCAN_TIME, System.currentTimeMillis()) }
 
-            Timber.tag("FolderSync").i("Folder scan complete. Enqueuing metadata extraction.")
-            val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>().build()
-            WorkManager.getInstance(appContext).enqueueUniqueWork(
-                MetadataExtractionWorker.WORK_NAME,
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
-                metaRequest
-            )
+            if (!isStopped) {
+                Timber.tag("FolderSync").i("Folder scan complete. Enqueuing metadata extraction.")
+                val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>().build()
+                WorkManager.getInstance(appContext).enqueueUniqueWork(
+                    MetadataExtractionWorker.WORK_NAME,
+                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    metaRequest
+                )
+            }
 
             return Result.success()
 
@@ -205,53 +231,6 @@ class FolderSyncWorker(
             Timber.tag("FolderSync").e(e, "Error during folder sync worker execution.")
             return Result.failure()
         }
-    }
-
-    private data class ExtractedInfo(
-        val title: String? = null,
-        val author: String? = null,
-        val coverPath: String? = null
-    )
-
-    private suspend fun extractFileInfo(uri: Uri, type: FileType, displayName: String): ExtractedInfo {
-        var coverPath: String? = null
-        var title: String? = null
-        var author: String? = null
-
-        try {
-            if (type == FileType.EPUB || type == FileType.MOBI) {
-                val book = withContext(Dispatchers.IO) {
-                    appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
-                        if (type == FileType.EPUB) {
-                            epubParser.createEpubBook(
-                                inputStream = inputStream,
-                                originalBookNameHint = displayName,
-                                parseContent = false
-                            )
-                        } else {
-                            mobiParser.createMobiBook(
-                                inputStream = inputStream,
-                                originalBookNameHint = displayName
-                            )
-                        }
-                    }
-                }
-                if (book != null) {
-                    title = book.title.takeIf { it.isNotBlank() }
-                    author = book.author.takeIf { it.isNotBlank() }
-                    book.coverImage?.let {
-                        coverPath = recentFilesRepository.saveCoverToCache(it, uri)
-                    }
-                }
-            } else if (type == FileType.PDF) {
-                pdfCoverGenerator.generateCover(uri)?.let {
-                    coverPath = recentFilesRepository.saveCoverToCache(it, uri)
-                }
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to extract info for file: $displayName")
-        }
-        return ExtractedInfo(title, author, coverPath)
     }
 
     private fun isValidExtension(name: String): Boolean {

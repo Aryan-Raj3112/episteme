@@ -28,8 +28,13 @@ class MetadataExtractionWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        if (!prefs.contains(MainViewModel.KEY_SYNCED_FOLDER_URI)) {
+            Timber.tag("MetadataWorker").w("Folder disconnected. Stopping extraction worker.")
+            return@withContext Result.success()
+        }
+
         try {
-            // Fetch all books that are from a folder but don't have a cover yet (implies metadata likely missing/basic)
             val filesToProcess = recentFilesRepository.getFolderBooksWithoutCovers()
 
             if (filesToProcess.isEmpty()) {
@@ -41,6 +46,8 @@ class MetadataExtractionWorker(
             filesToProcess.forEach { item ->
                 if (isStopped) return@forEach
 
+                if (!prefs.contains(MainViewModel.KEY_SYNCED_FOLDER_URI)) return@forEach
+
                 try {
                     val uri = item.uriString?.toUri() ?: return@forEach
                     val type = item.type
@@ -49,7 +56,6 @@ class MetadataExtractionWorker(
                     var title: String? = null
                     var author: String? = null
 
-                    // We open the stream briefly to extract metadata
                     appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
                         when (type) {
                             FileType.EPUB -> {
@@ -58,35 +64,25 @@ class MetadataExtractionWorker(
                                     originalBookNameHint = item.displayName,
                                     parseContent = false
                                 )
-                                book.let {
-                                    title = it.title.takeIf { t -> t.isNotBlank() }
-                                    author = it.author.takeIf { a -> a.isNotBlank() }
-                                    it.coverImage?.let { img ->
-                                        coverPath = recentFilesRepository.saveCoverToCache(img, uri)
-                                    }
-                                }
+                                title = book.title.takeIf { it.isNotBlank() }
+                                author = book.author.takeIf { it.isNotBlank() }
+                                book.coverImage?.let { coverPath = recentFilesRepository.saveCoverToCache(it, uri) }
                             }
                             FileType.MOBI -> {
-                                val book = mobiParser.createMobiBook(
-                                    inputStream = inputStream,
-                                    originalBookNameHint = item.displayName
-                                )
+                                val book = mobiParser.createMobiBook(inputStream, item.displayName)
                                 book?.let {
                                     title = it.title.takeIf { t -> t.isNotBlank() }
                                     author = it.author.takeIf { a -> a.isNotBlank() }
-                                    it.coverImage?.let { img ->
-                                        coverPath = recentFilesRepository.saveCoverToCache(img, uri)
-                                    }
+                                    it.coverImage?.let { img -> coverPath = recentFilesRepository.saveCoverToCache(img, uri) }
                                 }
                             }
                             FileType.PDF -> {
-                                // PDF cover generation is heavy, but necessary
                                 pdfCoverGenerator.generateCover(uri)?.let {
                                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                                 }
-                                title = item.displayName.substringBeforeLast(".") // Clean filename
+                                title = item.displayName.substringBeforeLast(".")
                             }
-                            else -> { /* Text/MD files usually don't have covers */ }
+                            else -> {}
                         }
                     }
 
@@ -97,14 +93,8 @@ class MetadataExtractionWorker(
                             author = author ?: item.author
                         )
                         recentFilesRepository.addRecentFile(updatedItem)
-                        Timber.tag("MetadataWorker").d("Updated metadata for: ${item.displayName}")
+                        Timber.tag("MetadataWorker").d("Updated local metadata for: ${item.displayName}")
 
-                        try {
-                            recentFilesRepository.syncLocalMetadataToFolder(updatedItem.bookId)
-                            Timber.tag("MetadataWorker").d("Created/Updated JSON for: ${item.displayName}")
-                        } catch (_: Exception) {
-                            Timber.tag("MetadataWorker").w("Failed to save JSON during extraction for ${item.displayName}")
-                        }
                     }
 
                 } catch (e: Exception) {

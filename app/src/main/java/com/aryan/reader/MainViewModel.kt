@@ -1373,9 +1373,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun disconnectSyncedFolder() {
         viewModelScope.launch {
             val folderUriString = _internalState.value.syncedFolderUri
+
+            Timber.tag("FolderSync").d("Cancelling all folder sync workers...")
+            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
+            WorkManager.getInstance(appContext).cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+
+            prefs.edit {
+                remove(KEY_SYNCED_FOLDER_URI)
+                remove(KEY_LAST_FOLDER_SCAN_TIME)
+            }
+            _internalState.update { it.copy(syncedFolderUri = null, lastFolderScanTime = null) }
+
             if (folderUriString != null) {
                 Timber.tag("FolderSync").d("Disconnecting folder. Removing all associated books from DB.")
-                recentFilesRepository.deleteFilesBySourceFolder(folderUriString) // New DAO method call
+                recentFilesRepository.deleteFilesBySourceFolder(folderUriString)
 
                 try {
                     val uri = folderUriString.toUri()
@@ -1387,14 +1399,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.e(e, "Failed to release permission")
                 }
             }
-
-            prefs.edit {
-                remove(KEY_SYNCED_FOLDER_URI)
-                remove(KEY_LAST_FOLDER_SCAN_TIME)
-            }
-            _internalState.update { it.copy(syncedFolderUri = null, lastFolderScanTime = null) }
-
-            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
         }
     }
 

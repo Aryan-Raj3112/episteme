@@ -120,6 +120,15 @@ class RecentFilesRepository(private val context: Context) {
         val folderUriString = entity.sourceFolderUri
 
         if (folderUriString != null) {
+            val hasProgress = (entity.progressPercentage != null && entity.progressPercentage > 0f)
+            val hasBookmarks = !entity.bookmarks.isNullOrEmpty() && entity.bookmarks != "[]"
+            val isDirty = entity.isRecent || hasProgress || hasBookmarks
+
+            if (!isDirty) {
+                Timber.d("SyncDebug: Book $bookId is 'Clean' (Unread/Not Recent). Skipping JSON creation.")
+                return@withContext
+            }
+
             Timber.d("Syncing metadata to local folder for book: $bookId")
 
             val metadata = FolderBookMetadata(
@@ -140,7 +149,7 @@ class RecentFilesRepository(private val context: Context) {
             )
 
             LocalSyncUtils.saveMetadataToFolder(
-                context = context, // Now correctly references the property
+                context = context,
                 sourceFolderUri = folderUriString.toUri(),
                 metadata = metadata
             )
