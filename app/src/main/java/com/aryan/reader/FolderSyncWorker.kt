@@ -137,11 +137,12 @@ class FolderSyncWorker(
 
                     val file = fileQueue.removeAt(0)
                     if (file.isDirectory) {
-                        if (file.name == ".episteme") continue
+                        // REMOVED: if (file.name == ".episteme") continue
                         file.listFiles().let { fileQueue.addAll(it) }
                     } else if (file.isFile) {
                         val name = file.name ?: ""
-                        if (isValidExtension(name)) {
+                        // UPDATED: Ensure we ignore .json files and hidden files during book scan
+                        if (isValidExtension(name) && !name.endsWith(".json") && !name.startsWith(".")) {
                             currentDiskFiles.add(file)
                         }
                     }

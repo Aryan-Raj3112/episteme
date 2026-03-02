@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 object LocalSyncUtils {
-    private const val SYNC_DIR_NAME = "episteme"
+    // REMOVED: private const val SYNC_DIR_NAME = "episteme"
     private const val TAG = "FolderSync"
 
     suspend fun saveMetadataToFolder(
@@ -21,17 +21,15 @@ object LocalSyncUtils {
     ) = withContext(Dispatchers.IO) {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
-            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
 
-            ensureNoMedia(syncDir)
+            // CHANGED: Primary filename now starts with a dot
+            val syncFileName = ".${metadata.bookId}.json"
+            val legacyVisibleName = "${metadata.bookId}.json"
 
-            val syncFileName = "${metadata.bookId}.json"
-            val legacyHiddenName = ".${metadata.bookId}.json"
+            val existingHidden = rootTree.findFile(syncFileName)
+            val existingVisible = rootTree.findFile(legacyVisibleName)
 
-            val existingVisible = syncDir.findFile(syncFileName)
-            val existingHidden = syncDir.findFile(legacyHiddenName)
-
-            val fileToCheck = existingVisible ?: existingHidden
+            val fileToCheck = existingHidden ?: existingVisible
 
             if (fileToCheck != null && fileToCheck.exists()) {
                 try {
@@ -48,13 +46,14 @@ object LocalSyncUtils {
                 } catch (_: Exception) {}
             }
 
-            var targetFile = existingVisible
+            var targetFile = existingHidden
 
             if (targetFile == null) {
-                if (existingHidden != null && existingHidden.exists()) {
-                    try { existingHidden.delete() } catch (_: Exception) {}
+                // Migrate: If a visible one existed, we'll replace it with hidden
+                if (existingVisible != null && existingVisible.exists()) {
+                    try { existingVisible.delete() } catch (_: Exception) {}
                 }
-                targetFile = syncDir.createFile("application/json", syncFileName)
+                targetFile = rootTree.createFile("application/json", syncFileName)
             }
 
             if (targetFile == null) {
@@ -77,24 +76,6 @@ object LocalSyncUtils {
                     }
                 }
 
-                val anchorName = ".sync_anchor"
-                val anchorFile = syncDir.findFile(anchorName) ?: syncDir.createFile("text/plain", anchorName)
-
-                if (anchorFile != null) {
-                    try {
-                        context.contentResolver.openFileDescriptor(anchorFile.uri, "rwt")?.use { pfd ->
-                            val timestampMsg = "${System.currentTimeMillis()}"
-                            java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
-                                fos.write(timestampMsg.toByteArray())
-                                fos.flush()
-                                pfd.fileDescriptor.sync()
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Timber.tag(TAG).w("Failed to kick anchor file: ${e.message}")
-                    }
-                }
-
                 val absolutePath = getPathFromUri(context, targetFile.uri)
                 if (absolutePath != null) {
                     android.media.MediaScannerConnection.scanFile(
@@ -103,17 +84,9 @@ object LocalSyncUtils {
                         arrayOf("application/json"),
                         null
                     )
-                    Timber.tag(TAG).d("Triggered MediaScanner on absolute path: $absolutePath")
-                } else {
-                    android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(targetFile.uri.path),
-                        arrayOf("application/json"),
-                        null
-                    )
                 }
 
-                Timber.tag(TAG).d("Saved and synced metadata for ${metadata.bookId}")
+                Timber.tag(TAG).d("Saved hidden metadata for ${metadata.bookId}")
 
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "Failed to write metadata for ${metadata.bookId}")
@@ -211,30 +184,16 @@ object LocalSyncUtils {
 
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext finalResults
-            val syncDir = findSyncDir(rootTree) ?: return@withContext finalResults
 
-            // Ensure .nomedia exists while scanning
-            ensureNoMedia(syncDir)
+            // CHANGED: Scanning rootTree directly
+            val allFiles = rootTree.listFiles()
 
-            val allFiles = syncDir.listFiles()
-
-            // Group files by bookId.
-            // Filename formats:
-            // 1. hidden: .[bookId].json
-            // 2. legacy: [bookId].json
-            // 3. conflict: .[bookId].sync-conflict... or [bookId].sync-conflict...
             val groupedFiles = allFiles
                 .filter { it.name?.endsWith(".json") == true || it.name?.contains(".sync-conflict") == true }
                 .groupBy { file ->
                     var name = file.name ?: ""
-
-                    // Remove leading dot
                     if (name.startsWith(".")) name = name.substring(1)
-
-                    // Remove conflict suffix
                     name = name.substringBefore(".sync-conflict")
-
-                    // Remove extension
                     name.substringBefore(".json")
                 }
 
@@ -245,39 +204,11 @@ object LocalSyncUtils {
                 }
             }
 
-            Timber.tag(TAG).d("getAllFolderMetadata: Consolidated ${groupedFiles.size} book records.")
+            Timber.tag(TAG).d("getAllFolderMetadata: Consolidated ${groupedFiles.size} book records from root.")
 
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error scanning .episteme folder")
+            Timber.tag(TAG).e(e, "Error scanning root folder for metadata")
         }
         return@withContext finalResults
-    }
-
-    private fun findSyncDir(root: DocumentFile): DocumentFile? {
-        // Look for exact match first
-        val standardDir = root.findFile(SYNC_DIR_NAME)
-        if (standardDir != null && standardDir.isDirectory) return standardDir
-
-        // Fallback search
-        val files = root.listFiles()
-        return files.firstOrNull {
-            it.isDirectory && (it.name == SYNC_DIR_NAME)
-        }
-    }
-
-    private fun getOrCreateSyncDir(root: DocumentFile): DocumentFile? {
-        val existing = findSyncDir(root)
-        if (existing != null) return existing
-        return root.createDirectory(SYNC_DIR_NAME)
-    }
-
-    private fun ensureNoMedia(dir: DocumentFile) {
-        if (dir.findFile(".nomedia") == null) {
-            try {
-                dir.createFile("application/octet-stream", ".nomedia")
-            } catch (_: Exception) {
-                Timber.tag(TAG).w("Failed to create .nomedia file")
-            }
-        }
     }
 }

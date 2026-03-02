@@ -3104,14 +3104,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             try {
                                 val rootUri = item.sourceFolderUri.toUri()
                                 val rootDoc = DocumentFile.fromTreeUri(appContext, rootUri)
-                                val syncDir = rootDoc?.findFile("episteme") ?: rootDoc?.findFile(".episteme")
 
-                                if (syncDir != null) {
-                                    // Try hidden first, then legacy
-                                    val metaFile = syncDir.findFile(".${item.bookId}.json")
-                                        ?: syncDir.findFile("${item.bookId}.json")
+                                if (rootDoc != null) {
+                                    val hiddenMeta = rootDoc.findFile(".${item.bookId}.json")
+                                    val legacyVisibleMeta = rootDoc.findFile("${item.bookId}.json")
 
-                                    metaFile?.delete()
+                                    hiddenMeta?.delete()
+                                    legacyVisibleMeta?.delete()
+
+                                    Timber.tag("FolderSync").d("Deleted metadata for ${item.bookId} from root.")
                                 }
                             } catch (e: Exception) {
                                 Timber.e(e, "Error deleting metadata file for ${item.bookId}")
