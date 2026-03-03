@@ -84,16 +84,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -138,6 +145,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -478,6 +486,7 @@ fun PaginatedReaderScreen(
     book: EpubBook,
     isDarkTheme: Boolean,
     pagerState: PagerState,
+    isPageTurnAnimationEnabled: Boolean,
     searchQuery: String,
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
@@ -736,6 +745,7 @@ fun PaginatedReaderScreen(
         PaginatedReaderContent(
             uiState = uiState,
             pagerState = pagerState,
+            isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
             searchQuery = searchQuery,
             ttsHighlightInfo = ttsHighlightInfo,
             textStyle = textStyle,
@@ -1292,6 +1302,7 @@ private fun TextWithEmphasis(
 internal fun PaginatedReaderContent(
     uiState: PaginatedReaderUiState,
     pagerState: PagerState,
+    isPageTurnAnimationEnabled: Boolean,
     searchQuery: String,
     ttsHighlightInfo: TtsHighlightInfo?,
     textStyle: TextStyle,
@@ -1380,13 +1391,15 @@ internal fun PaginatedReaderContent(
         }, onHide = { menuState = null })
     }
 
+    var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
+
     if (uiState.isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
     } else {
         if (uiState.totalPageCount > 0) {
-            val generation = uiState.generation
+            uiState.generation
 
             val realClipboard: Clipboard = LocalClipboard.current
             var isForDictionary by remember { mutableStateOf(false) }
@@ -1430,443 +1443,174 @@ internal fun PaginatedReaderContent(
                 LocalTextToolbar provides textToolbar, LocalClipboard provides dictionaryClipboard
             ) {
                 HorizontalPager(
-                    state = pagerState, modifier = Modifier.fillMaxSize()
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val down = event.changes.firstOrNull { it.pressed }
+                                    if (down != null) {
+                                        pageTurnTouchY = down.position.y
+                                    }
+                                }
+                            }
+                        },
+                    beyondViewportPageCount = 1
                 ) { pageIndex ->
+                    val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+                    val zIndex = -pageOffset
+
+                    val pageModifier = if (isPageTurnAnimationEnabled) {
+                        Modifier
+                            .zIndex(zIndex)
+                            .realisticBookPage(pagerState, pageIndex, isDarkTheme, pageTurnTouchY) // UPDATED
+                    } else {
+                        Modifier
+                    }
+
                     var pageContent by remember { mutableStateOf<Page?>(null) }
                     var currentChapterPath by remember { mutableStateOf<String?>(null) }
 
-                    LaunchedEffect(pageIndex, generation) {
+                    LaunchedEffect(pageIndex, uiState.generation) {
                         pageContent = onGetPage(pageIndex)
                         onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
                     }
 
-                    // SelectionContainer will now use our custom dictionaryClipboardManager
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = { offset ->
-                                        Timber.d(
-                                            "Tap detected on empty page area."
-                                        )
+                    Box(modifier = Modifier.fillMaxSize().then(pageModifier)) {
+                        SelectionContainer(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = { offset ->
+                                            Timber.d(
+                                                "Tap detected on empty page area."
+                                            )
+                                            menuState?.onHide?.invoke()
+                                            onTap(offset)
+                                        })
+                                }
+                                .padding(
+                                    horizontal = horizontalPadding, vertical = verticalPadding
+                                ), contentAlignment = Alignment.TopStart) {
+                                if (pageContent != null) {
+                                    val onGeneralTapCallback: (Offset) -> Unit = { offset ->
                                         menuState?.onHide?.invoke()
                                         onTap(offset)
-                                    })
-                            }
-                            .padding(
-                                horizontal = horizontalPadding, vertical = verticalPadding
-                            ), contentAlignment = Alignment.TopStart) {
-                            if (pageContent != null) {
-                                val onGeneralTapCallback: (Offset) -> Unit = { offset ->
-                                    menuState?.onHide?.invoke()
-                                    onTap(offset)
-                                }
-                                val onLinkClickCallback: (String) -> Unit = { href ->
-                                    Timber.d("Link clicked: $href")
-                                    if (href.startsWith("http://") || href.startsWith("https://")) {
-                                        showExternalLinkDialog = href
-                                    } else {
-                                        currentChapterPath?.let { path ->
-                                            onLinkClick(path, href) { targetPageIndex ->
-                                                coroutineScope.launch {
-                                                    pagerState.scrollToPage(targetPageIndex)
+                                    }
+                                    val onLinkClickCallback: (String) -> Unit = { href ->
+                                        Timber.d("Link clicked: $href")
+                                        if (href.startsWith("http://") || href.startsWith("https://")) {
+                                            showExternalLinkDialog = href
+                                        } else {
+                                            currentChapterPath?.let { path ->
+                                                onLinkClick(path, href) { targetPageIndex ->
+                                                    coroutineScope.launch {
+                                                        pagerState.scrollToPage(targetPageIndex)
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    val searchHighlightColor =
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                    val ttsHighlightColor =
-                                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-                                    pageContent!!.content.forEach { block ->
-                                        val marginModifier = Modifier.padding(
-                                            top = block.style.margin.top.coerceAtLeast(0.dp),
-                                            bottom = block.style.margin.bottom.coerceAtLeast(0.dp)
-                                        )
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        val searchHighlightColor =
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                        val ttsHighlightColor =
+                                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+                                        pageContent!!.content.forEach { block ->
+                                            val marginModifier = Modifier.padding(
+                                                top = block.style.margin.top.coerceAtLeast(0.dp),
+                                                bottom = block.style.margin.bottom.coerceAtLeast(0.dp)
+                                            )
 
-                                        val alignModifier =
-                                            if (block.style.horizontalAlign == "center") {
-                                                Modifier.align(Alignment.CenterHorizontally)
-                                            } else {
-                                                Modifier.padding(
-                                                    start = block.style.margin.left.coerceAtLeast(0.dp),
-                                                    end = block.style.margin.right.coerceAtLeast(0.dp)
+                                            val alignModifier =
+                                                if (block.style.horizontalAlign == "center") {
+                                                    Modifier.align(Alignment.CenterHorizontally)
+                                                } else {
+                                                    Modifier.padding(
+                                                        start = block.style.margin.left.coerceAtLeast(0.dp),
+                                                        end = block.style.margin.right.coerceAtLeast(0.dp)
+                                                    )
+                                                }
+
+                                            val widthModifier =
+                                                if (block.style.width != Dp.Unspecified) {
+                                                    Modifier.width(block.style.width)
+                                                } else {
+                                                    Modifier.fillMaxWidth()
+                                                }
+
+                                            val boxModifier = marginModifier
+                                                .then(alignModifier)
+                                                .then(
+                                                    if (block.style.horizontalAlign == "center") widthModifier
+                                                    else Modifier
                                                 )
-                                            }
-
-                                        val widthModifier =
-                                            if (block.style.width != Dp.Unspecified) {
-                                                Modifier.width(block.style.width)
-                                            } else {
-                                                Modifier.fillMaxWidth()
-                                            }
-
-                                        val boxModifier = marginModifier
-                                            .then(alignModifier)
-                                            .then(
-                                                if (block.style.horizontalAlign == "center") widthModifier
-                                                else Modifier
-                                            )
-                                            .then(
-                                                if (block.style.borderRadius > 0.dp) {
-                                                    Modifier.clip(RoundedCornerShape(block.style.borderRadius))
-                                                } else Modifier
-                                            )
-                                            .then(
-                                                if (block.style.backgroundColor.isSpecified) {
-                                                    Modifier.background(
-                                                        block.style.backgroundColor,
+                                                .then(
+                                                    if (block.style.borderRadius > 0.dp) {
+                                                        Modifier.clip(RoundedCornerShape(block.style.borderRadius))
+                                                    } else Modifier
+                                                )
+                                                .then(
+                                                    if (block.style.backgroundColor.isSpecified) {
+                                                        Modifier.background(
+                                                            block.style.backgroundColor,
+                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
+                                                                block.style.borderRadius
+                                                            ) else androidx.compose.ui.graphics.RectangleShape
+                                                        )
+                                                    } else {
+                                                        Modifier
+                                                    }
+                                                )
+                                                .then(block.style.border?.let { border ->
+                                                    Modifier.border(
+                                                        BorderStroke(
+                                                            border.width, border.color
+                                                        ),
                                                         shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
                                                             block.style.borderRadius
                                                         ) else androidx.compose.ui.graphics.RectangleShape
                                                     )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .then(block.style.border?.let { border ->
-                                                Modifier.border(
-                                                    BorderStroke(
-                                                        border.width, border.color
-                                                    ),
-                                                    shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
-                                                        block.style.borderRadius
-                                                    ) else androidx.compose.ui.graphics.RectangleShape
-                                                )
-                                            } ?: Modifier)
+                                                } ?: Modifier)
 
-                                        Box(modifier = boxModifier) {
-                                            val paddingModifier = Modifier
-                                                .padding(
-                                                    start = block.style.padding.left.coerceAtLeast(
-                                                        0.dp
-                                                    ),
-                                                    top = block.style.padding.top.coerceAtLeast(
-                                                        0.dp
-                                                    ),
-                                                    end = block.style.padding.right.coerceAtLeast(
-                                                        0.dp
-                                                    ),
-                                                    bottom = block.style.padding.bottom.coerceAtLeast(
-                                                        0.dp
-                                                    )
-                                                )
-                                                .then(
-                                                    if (block.style.horizontalAlign != "center") widthModifier
-                                                    else Modifier.fillMaxWidth()
-                                                )
-
-                                            @Suppress("DEPRECATION") when (block) {
-                                                is ParagraphBlock -> {
-                                                    val searchHighlighted = highlightQueryInText(
-                                                        block.content,
-                                                        searchQuery,
-                                                        searchHighlightColor
-                                                    )
-                                                    val finalContent =
-                                                        if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                            buildAnnotatedString {
-                                                                append(searchHighlighted)
-
-                                                                // Define absolute ranges
-                                                                val blockStartAbs =
-                                                                    block.startCharOffsetInSource
-                                                                val blockEndAbs =
-                                                                    block.startCharOffsetInSource + searchHighlighted.length
-                                                                val highlightStartAbs =
-                                                                    ttsHighlightInfo.offset
-                                                                val highlightEndAbs =
-                                                                    ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                // Calculate intersection
-                                                                val intersectionStartAbs = maxOf(
-                                                                    blockStartAbs, highlightStartAbs
-                                                                )
-                                                                val intersectionEndAbs = minOf(
-                                                                    blockEndAbs, highlightEndAbs
-                                                                )
-
-                                                                // Check for overlap and apply
-                                                                // style
-                                                                if (intersectionStartAbs < intersectionEndAbs) {
-                                                                    val highlightStartRelative =
-                                                                        intersectionStartAbs - blockStartAbs
-                                                                    val highlightEndRelative =
-                                                                        intersectionEndAbs - blockStartAbs
-                                                                    addStyle(
-                                                                        style = SpanStyle(
-                                                                            background = ttsHighlightColor
-                                                                        ),
-                                                                        start = highlightStartRelative,
-                                                                        end = highlightEndRelative
-                                                                    )
-                                                                }
-                                                            }
-                                                        } else {
-                                                            searchHighlighted
-                                                        }
-
-                                                    val diagnosticModifier =
-                                                        if (block.textAlign == TextAlign.Justify) {
-                                                            Modifier.onGloballyPositioned { coordinates ->
-                                                                val width = coordinates.size.width
-                                                                Timber.d(
-                                                                    """
-                                                                [UI Render]
-                                                                Block Index: ${block.blockIndex}
-                                                                Text Start: ${
-                                                                        block.content.text.take(
-                                                                            20
-                                                                        )
-                                                                    }...
-                                                                Actual Render Width Px: $width
-                                                                ------------------------------------------------
-                                                            """.trimIndent()
-                                                                )
-                                                            }
-                                                        } else {
-                                                            Modifier
-                                                        }
-
-                                                    TextWithEmphasis(
-                                                        text = finalContent,
-                                                        style = textStyle,
-                                                        modifier = paddingModifier.then(
-                                                            diagnosticModifier
+                                            Box(modifier = boxModifier) {
+                                                val paddingModifier = Modifier
+                                                    .padding(
+                                                        start = block.style.padding.left.coerceAtLeast(
+                                                            0.dp
                                                         ),
-                                                        textMeasurer = textMeasurer,
-                                                        onLinkClick = onLinkClickCallback,
-                                                        onGeneralTap = onGeneralTapCallback,
-                                                        block = block,
-                                                        userHighlights = userHighlights,
-                                                        activeSelection = activeSelection,
-                                                        onSelectionChange = { sel ->
-                                                            activeSelection = sel
-                                                        },
-                                                        onHighlightClick = { highlight, rect ->
-                                                            activeHighlightForMenu =
-                                                                highlight to rect
-                                                            activeSelection = null
-                                                            menuState = null
-                                                        },
-                                                        isDarkTheme = isDarkTheme,
-                                                        onRegisterLayout = { layout, coords ->
-                                                            if (block.cfi != null) blockLayoutMap[block.cfi] =
-                                                                Triple(
-                                                                    layout,
-                                                                    coords,
-                                                                    block.startCharOffsetInSource
-                                                                )
-                                                        })
-                                                }
-
-                                                is HeaderBlock -> {
-                                                    val style = textStyle.copy(
-                                                        fontWeight = FontWeight.Bold
+                                                        top = block.style.padding.top.coerceAtLeast(
+                                                            0.dp
+                                                        ),
+                                                        end = block.style.padding.right.coerceAtLeast(
+                                                            0.dp
+                                                        ),
+                                                        bottom = block.style.padding.bottom.coerceAtLeast(
+                                                            0.dp
+                                                        )
                                                     )
-                                                    val searchHighlighted = highlightQueryInText(
-                                                        block.content,
-                                                        searchQuery,
-                                                        searchHighlightColor
+                                                    .then(
+                                                        if (block.style.horizontalAlign != "center") widthModifier
+                                                        else Modifier.fillMaxWidth()
                                                     )
-                                                    val finalContent =
-                                                        if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                            buildAnnotatedString {
-                                                                append(searchHighlighted)
 
-                                                                val blockStartAbs =
-                                                                    block.startCharOffsetInSource
-                                                                val blockEndAbs =
-                                                                    block.startCharOffsetInSource + searchHighlighted.length
-                                                                val highlightStartAbs =
-                                                                    ttsHighlightInfo.offset
-                                                                val highlightEndAbs =
-                                                                    ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                val intersectionStartAbs = maxOf(
-                                                                    blockStartAbs, highlightStartAbs
-                                                                )
-                                                                val intersectionEndAbs = minOf(
-                                                                    blockEndAbs, highlightEndAbs
-                                                                )
-
-                                                                if (intersectionStartAbs < intersectionEndAbs) {
-                                                                    val highlightStartRelative =
-                                                                        intersectionStartAbs - blockStartAbs
-                                                                    val highlightEndRelative =
-                                                                        intersectionEndAbs - blockStartAbs
-                                                                    addStyle(
-                                                                        style = SpanStyle(
-                                                                            background = ttsHighlightColor
-                                                                        ),
-                                                                        start = highlightStartRelative,
-                                                                        end = highlightEndRelative
-                                                                    )
-                                                                }
-                                                            }
-                                                        } else {
-                                                            searchHighlighted
-                                                        }
-                                                    TextWithEmphasis(
-                                                        text = finalContent,
-                                                        style = style,
-                                                        modifier = paddingModifier,
-                                                        textMeasurer = textMeasurer,
-                                                        onLinkClick = onLinkClickCallback,
-                                                        onGeneralTap = onGeneralTapCallback,
-                                                        block = block,
-                                                        userHighlights = userHighlights,
-                                                        activeSelection = activeSelection,
-                                                        onSelectionChange = { sel ->
-                                                            activeSelection = sel
-                                                        },
-                                                        onHighlightClick = { highlight, rect ->
-                                                            activeHighlightForMenu =
-                                                                highlight to rect
-                                                            activeSelection = null
-                                                            menuState = null
-                                                        },
-                                                        isDarkTheme = isDarkTheme,
-                                                        onRegisterLayout = { layout, coords ->
-                                                            if (block.cfi != null) blockLayoutMap[block.cfi] =
-                                                                Triple(
-                                                                    layout,
-                                                                    coords,
-                                                                    block.startCharOffsetInSource
-                                                                )
-                                                        })
-                                                }
-
-                                                is QuoteBlock -> {
-                                                    val quoteModifier =
-                                                        paddingModifier.padding(start = 16.dp)
-                                                    val searchHighlighted = highlightQueryInText(
-                                                        block.content,
-                                                        searchQuery,
-                                                        searchHighlightColor
-                                                    )
-                                                    val finalContent =
-                                                        if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                            buildAnnotatedString {
-                                                                append(searchHighlighted)
-
-                                                                val blockStartAbs =
-                                                                    block.startCharOffsetInSource
-                                                                val blockEndAbs =
-                                                                    block.startCharOffsetInSource + searchHighlighted.length
-                                                                val highlightStartAbs =
-                                                                    ttsHighlightInfo.offset
-                                                                val highlightEndAbs =
-                                                                    ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                val intersectionStartAbs = maxOf(
-                                                                    blockStartAbs, highlightStartAbs
-                                                                )
-                                                                val intersectionEndAbs = minOf(
-                                                                    blockEndAbs, highlightEndAbs
-                                                                )
-
-                                                                if (intersectionStartAbs < intersectionEndAbs) {
-                                                                    val highlightStartRelative =
-                                                                        intersectionStartAbs - blockStartAbs
-                                                                    val highlightEndRelative =
-                                                                        intersectionEndAbs - blockStartAbs
-                                                                    addStyle(
-                                                                        style = SpanStyle(
-                                                                            background = ttsHighlightColor
-                                                                        ),
-                                                                        start = highlightStartRelative,
-                                                                        end = highlightEndRelative
-                                                                    )
-                                                                }
-                                                            }
-                                                        } else {
-                                                            searchHighlighted
-                                                        }
-                                                    TextWithEmphasis(
-                                                        text = finalContent,
-                                                        style = textStyle,
-                                                        modifier = quoteModifier,
-                                                        textMeasurer = textMeasurer,
-                                                        onLinkClick = onLinkClickCallback,
-                                                        onGeneralTap = onGeneralTapCallback,
-                                                        block = block,
-                                                        userHighlights = userHighlights,
-                                                        activeSelection = activeSelection,
-                                                        onSelectionChange = { sel ->
-                                                            activeSelection = sel
-                                                        },
-                                                        onHighlightClick = { highlight, rect ->
-                                                            activeHighlightForMenu =
-                                                                highlight to rect
-                                                            activeSelection = null
-                                                            menuState = null
-                                                        },
-                                                        isDarkTheme = isDarkTheme,
-                                                        onRegisterLayout = { layout, coords ->
-                                                            if (block.cfi != null) blockLayoutMap[block.cfi] =
-                                                                Triple(
-                                                                    layout,
-                                                                    coords,
-                                                                    block.startCharOffsetInSource
-                                                                )
-                                                        })
-                                                }
-
-                                                is ListItemBlock -> {
-                                                    Row(
-                                                        modifier = paddingModifier,
-                                                        verticalAlignment = Alignment.Top
-                                                    ) {
-                                                        val markerAreaModifier =
-                                                            Modifier
-                                                                .width(32.dp)
-                                                                .padding(end = 8.dp)
-
-                                                        if (block.itemMarkerImage != null) {
-                                                            val imageRequest =
-                                                                Builder(LocalContext.current).data(
-                                                                    File(
-                                                                        block.itemMarkerImage
-                                                                    )
-                                                                ).crossfade(true).build()
-                                                            val imageSize = with(density) {
-                                                                (textStyle.fontSize.value * 0.8f).sp.toDp()
-                                                            }
-
-                                                            AsyncImage(
-                                                                model = imageRequest,
-                                                                contentDescription = "List item marker",
-                                                                modifier = markerAreaModifier.height(
-                                                                    imageSize
-                                                                ),
-                                                                alignment = Alignment.CenterEnd,
-                                                                contentScale = ContentScale.FillHeight
-                                                            )
-                                                        } else if (block.itemMarker != null) {
-                                                            Text(
-                                                                text = block.itemMarker,
-                                                                style = textStyle.copy(
-                                                                    textAlign = TextAlign.End
-                                                                ),
-                                                                modifier = markerAreaModifier
-                                                            )
-                                                        }
-                                                        val searchHighlighted =
-                                                            highlightQueryInText(
-                                                                block.content,
-                                                                searchQuery,
-                                                                searchHighlightColor
-                                                            )
+                                                @Suppress("DEPRECATION") when (block) {
+                                                    is ParagraphBlock -> {
+                                                        val searchHighlighted = highlightQueryInText(
+                                                            block.content,
+                                                            searchQuery,
+                                                            searchHighlightColor
+                                                        )
                                                         val finalContent =
                                                             if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
                                                                 buildAnnotatedString {
                                                                     append(searchHighlighted)
 
+                                                                    // Define absolute ranges
                                                                     val blockStartAbs =
                                                                         block.startCharOffsetInSource
                                                                     val blockEndAbs =
@@ -1876,15 +1620,16 @@ internal fun PaginatedReaderContent(
                                                                     val highlightEndAbs =
                                                                         ttsHighlightInfo.offset + ttsHighlightInfo.text.length
 
-                                                                    val intersectionStartAbs =
-                                                                        maxOf(
-                                                                            blockStartAbs,
-                                                                            highlightStartAbs
-                                                                        )
+                                                                    // Calculate intersection
+                                                                    val intersectionStartAbs = maxOf(
+                                                                        blockStartAbs, highlightStartAbs
+                                                                    )
                                                                     val intersectionEndAbs = minOf(
                                                                         blockEndAbs, highlightEndAbs
                                                                     )
 
+                                                                    // Check for overlap and apply
+                                                                    // style
                                                                     if (intersectionStartAbs < intersectionEndAbs) {
                                                                         val highlightStartRelative =
                                                                             intersectionStartAbs - blockStartAbs
@@ -1902,10 +1647,35 @@ internal fun PaginatedReaderContent(
                                                             } else {
                                                                 searchHighlighted
                                                             }
+
+                                                        val diagnosticModifier =
+                                                            if (block.textAlign == TextAlign.Justify) {
+                                                                Modifier.onGloballyPositioned { coordinates ->
+                                                                    val width = coordinates.size.width
+                                                                    Timber.d(
+                                                                        """
+                                                                [UI Render]
+                                                                Block Index: ${block.blockIndex}
+                                                                Text Start: ${
+                                                                            block.content.text.take(
+                                                                                20
+                                                                            )
+                                                                        }...
+                                                                Actual Render Width Px: $width
+                                                                ------------------------------------------------
+                                                            """.trimIndent()
+                                                                    )
+                                                                }
+                                                            } else {
+                                                                Modifier
+                                                            }
+
                                                         TextWithEmphasis(
                                                             text = finalContent,
                                                             style = textStyle,
-                                                            modifier = Modifier.weight(1f),
+                                                            modifier = paddingModifier.then(
+                                                                diagnosticModifier
+                                                            ),
                                                             textMeasurer = textMeasurer,
                                                             onLinkClick = onLinkClickCallback,
                                                             onGeneralTap = onGeneralTapCallback,
@@ -1931,512 +1701,781 @@ internal fun PaginatedReaderContent(
                                                                     )
                                                             })
                                                     }
-                                                }
 
-                                                is WrappingContentBlock -> {
-                                                    WrappingContentLayout(
-                                                        block = block,
-                                                        textStyle = textStyle,
-                                                        modifier = paddingModifier,
-                                                        searchQuery = searchQuery,
-                                                        ttsHighlightInfo = ttsHighlightInfo,
-                                                        searchHighlightColor = searchHighlightColor,
-                                                        ttsHighlightColor = ttsHighlightColor
-                                                    )
-                                                }
+                                                    is HeaderBlock -> {
+                                                        val style = textStyle.copy(
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        val searchHighlighted = highlightQueryInText(
+                                                            block.content,
+                                                            searchQuery,
+                                                            searchHighlightColor
+                                                        )
+                                                        val finalContent =
+                                                            if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                                buildAnnotatedString {
+                                                                    append(searchHighlighted)
 
-                                                is FlexContainerBlock -> {
-                                                    // Background, border, and padding are
-                                                    // already applied by the outer Box wrapper.
-                                                    // Only apply padding + width here.
-                                                    val containerModifier = paddingModifier
+                                                                    val blockStartAbs =
+                                                                        block.startCharOffsetInSource
+                                                                    val blockEndAbs =
+                                                                        block.startCharOffsetInSource + searchHighlighted.length
+                                                                    val highlightStartAbs =
+                                                                        ttsHighlightInfo.offset
+                                                                    val highlightEndAbs =
+                                                                        ttsHighlightInfo.offset + ttsHighlightInfo.text.length
 
-                                                    if (block.style.flexDirection == "row") {
-                                                        val horizontalArrangement =
-                                                            when (block.style.justifyContent) {
-                                                                "center" -> Arrangement.Center
-                                                                "flex-end" -> Arrangement.End
-                                                                "space-between" -> Arrangement.SpaceBetween
-                                                                "space-around" -> Arrangement.SpaceAround
-                                                                else -> Arrangement.Start
-                                                            }
-                                                        val verticalAlignment =
-                                                            when (block.style.alignItems) {
-                                                                "center" -> Alignment.CenterVertically
-                                                                "flex-end" -> Alignment.Bottom
-                                                                else -> Alignment.Top
-                                                            }
-                                                        Row(
-                                                            modifier = containerModifier.fillMaxWidth(),
-                                                            horizontalArrangement = horizontalArrangement,
-                                                            verticalAlignment = verticalAlignment
-                                                        ) {
-                                                            block.children.forEach { childBlock ->
-                                                                RenderFlexChildBlock(
-                                                                    childBlock = childBlock,
-                                                                    textStyle = textStyle,
-                                                                    searchQuery = searchQuery,
-                                                                    searchHighlightColor = searchHighlightColor,
-                                                                    ttsHighlightInfo = ttsHighlightInfo,
-                                                                    ttsHighlightColor = ttsHighlightColor,
-                                                                    textMeasurer = textMeasurer,
-                                                                    onLinkClickCallback = onLinkClickCallback,
-                                                                    onGeneralTapCallback = onGeneralTapCallback,
-                                                                    userHighlights = userHighlights,
-                                                                    activeSelection = activeSelection,
-                                                                    onSelectionChange = { sel ->
-                                                                        activeSelection = sel
-                                                                    },
-                                                                    onHighlightClick = { highlight, rect ->
-                                                                        activeHighlightForMenu =
-                                                                            highlight to rect
-                                                                        activeSelection = null
-                                                                        menuState = null
-                                                                    },
-                                                                    isDarkTheme = isDarkTheme,
-                                                                    blockLayoutMap = blockLayoutMap,
-                                                                    density = density,
-                                                                    imageLoader = imageLoader
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        val verticalArrangement =
-                                                            when (block.style.justifyContent) {
-                                                                "center" -> Arrangement.Center
-                                                                "flex-end" -> Arrangement.Bottom
-                                                                "space-between" -> Arrangement.SpaceBetween
-                                                                "space-around" -> Arrangement.SpaceAround
-                                                                else -> Arrangement.Top
-                                                            }
-                                                        val horizontalAlignment =
-                                                            when (block.style.alignItems) {
-                                                                "center" -> Alignment.CenterHorizontally
-                                                                "flex-end" -> Alignment.End
-                                                                else -> Alignment.Start
-                                                            }
-                                                        Column(
-                                                            modifier = containerModifier.fillMaxWidth(),
-                                                            verticalArrangement = verticalArrangement,
-                                                            horizontalAlignment = horizontalAlignment
-                                                        ) {
-                                                            block.children.forEach { childBlock ->
-                                                                RenderFlexChildBlock(
-                                                                    childBlock = childBlock,
-                                                                    textStyle = textStyle,
-                                                                    searchQuery = searchQuery,
-                                                                    searchHighlightColor = searchHighlightColor,
-                                                                    ttsHighlightInfo = ttsHighlightInfo,
-                                                                    ttsHighlightColor = ttsHighlightColor,
-                                                                    textMeasurer = textMeasurer,
-                                                                    onLinkClickCallback = onLinkClickCallback,
-                                                                    onGeneralTapCallback = onGeneralTapCallback,
-                                                                    userHighlights = userHighlights,
-                                                                    activeSelection = activeSelection,
-                                                                    onSelectionChange = { sel ->
-                                                                        activeSelection = sel
-                                                                    },
-                                                                    onHighlightClick = { highlight, rect ->
-                                                                        activeHighlightForMenu =
-                                                                            highlight to rect
-                                                                        activeSelection = null
-                                                                        menuState = null
-                                                                    },
-                                                                    isDarkTheme = isDarkTheme,
-                                                                    blockLayoutMap = blockLayoutMap,
-                                                                    density = density,
-                                                                    imageLoader = imageLoader
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                is MathBlock -> {
-                                                    Timber.d(
-                                                        "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${!block.svgContent.isNullOrBlank()}"
-                                                    )
-                                                    if (!block.svgContent.isNullOrBlank()) {
-                                                        BoxWithConstraints(
-                                                            modifier = paddingModifier
-                                                        ) {
-                                                            val localDensity = LocalDensity.current
-                                                            val fontSizePx = with(localDensity) {
-                                                                textStyle.fontSize.toPx()
-                                                            }
-                                                            val containerWidthPx =
-                                                                with(localDensity) {
-                                                                    maxWidth.roundToPx()
-                                                                }
-                                                            val widthPx = parseSvgDimension(
-                                                                block.svgWidth,
-                                                                fontSizePx,
-                                                                containerWidthPx,
-                                                                localDensity
-                                                            )
-                                                            val imageModifier =
-                                                                if (widthPx != null) {
-                                                                    val finalWidthDp =
-                                                                        with(localDensity) {
-                                                                            widthPx.toDp()
-                                                                        }
-                                                                    Timber.d(
-                                                                        "Applying calculated width to MathBlock image: $finalWidthDp"
+                                                                    val intersectionStartAbs = maxOf(
+                                                                        blockStartAbs, highlightStartAbs
                                                                     )
-                                                                    Modifier.width(finalWidthDp)
-                                                                } else {
-                                                                    Timber.w(
-                                                                        "Could not calculate a specific width for MathBlock. It will fill available space."
+                                                                    val intersectionEndAbs = minOf(
+                                                                        blockEndAbs, highlightEndAbs
                                                                     )
-                                                                    Modifier
-                                                                }
 
-                                                            val imageRequest =
-                                                                Builder(LocalContext.current).data(
-                                                                    SvgData(
-                                                                        block.svgContent
-                                                                    )
-                                                                ).listener(
-                                                                    onError = { _, result ->
-                                                                        Timber.e(
-                                                                            result.throwable,
-                                                                            "Coil failed to load SVG for MathBlock."
+                                                                    if (intersectionStartAbs < intersectionEndAbs) {
+                                                                        val highlightStartRelative =
+                                                                            intersectionStartAbs - blockStartAbs
+                                                                        val highlightEndRelative =
+                                                                            intersectionEndAbs - blockStartAbs
+                                                                        addStyle(
+                                                                            style = SpanStyle(
+                                                                                background = ttsHighlightColor
+                                                                            ),
+                                                                            start = highlightStartRelative,
+                                                                            end = highlightEndRelative
                                                                         )
-                                                                    }).build()
-
-                                                            val colorFilter =
-                                                                if (block.isFromMathJax) ColorFilter.tint(
-                                                                    textStyle.color
-                                                                )
-                                                                else null
-
-                                                            AsyncImage(
-                                                                model = imageRequest,
-                                                                contentDescription = block.altText
-                                                                    ?: "Equation",
-                                                                modifier = imageModifier,
-                                                                contentScale = ContentScale.Fit,
-                                                                colorFilter = colorFilter,
-                                                                imageLoader = imageLoader
-                                                            )
-                                                        }
-                                                    } else {
-                                                        Timber.w(
-                                                            "PaginatedReader: MathBlock has no SVG content, rendering alt text."
-                                                        )
-                                                        Text(
-                                                            text = block.altText
-                                                                ?: "[Equation not available]",
-                                                            style = textStyle,
-                                                            modifier = paddingModifier
-                                                        )
-                                                    }
-                                                }
-
-                                                is ImageBlock -> {
-                                                    val style = block.style
-                                                    val finalImageModifier = Modifier
-                                                        .then(
-                                                            if (style.width != Dp.Unspecified) Modifier.width(
-                                                                style.width
-                                                            )
-                                                            else Modifier
-                                                        )
-                                                        .then(
-                                                            if (style.maxWidth != Dp.Unspecified) Modifier.widthIn(
-                                                                max = style.maxWidth
-                                                            )
-                                                            else Modifier
-                                                        )
-                                                        .then(paddingModifier)
-
-                                                    val colorFilter =
-                                                        if (block.style.filter == "invert(100%)") {
-                                                            val matrix = floatArrayOf(
-                                                                -1f,
-                                                                0f,
-                                                                0f,
-                                                                0f,
-                                                                255f,
-                                                                0f,
-                                                                -1f,
-                                                                0f,
-                                                                0f,
-                                                                255f,
-                                                                0f,
-                                                                0f,
-                                                                -1f,
-                                                                0f,
-                                                                255f,
-                                                                0f,
-                                                                0f,
-                                                                0f,
-                                                                1f,
-                                                                0f
-                                                            )
-                                                            ColorFilter.colorMatrix(
-                                                                ColorMatrix(matrix)
-                                                            )
-                                                        } else {
-                                                            null
-                                                        }
-                                                    val context = LocalContext.current
-                                                    val imageRequest =
-                                                        Builder(context).data(File(block.path))
-                                                            .listener(onSuccess = { _, _ ->
-                                                                Timber.d(
-                                                                    "Coil successfully loaded image: ${block.path}"
-                                                                )
-                                                            }, onError = { _, result ->
-                                                                Timber.e(
-                                                                    result.throwable,
-                                                                    "Coil FAILED to load image: ${block.path}"
-                                                                )
-                                                            }).crossfade(true).build()
-
-                                                    AsyncImage(
-                                                        model = imageRequest,
-                                                        contentDescription = block.altText
-                                                            ?: "Image from EPUB",
-                                                        modifier = finalImageModifier,
-                                                        contentScale = ContentScale.Fit,
-                                                        colorFilter = colorFilter
-                                                    )
-                                                }
-
-                                                is SpacerBlock -> {
-                                                    val border = block.style.border
-                                                    if (border != null && border.width > 0.dp) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .height(
-                                                                    border.width
-                                                                )
-                                                                .drawBehind {
-                                                                    val strokeWidth =
-                                                                        border.width.toPx()
-                                                                    val pathEffect =
-                                                                        when (border.style) {
-                                                                            "dotted" -> PathEffect.dashPathEffect(
-                                                                                floatArrayOf(
-                                                                                    strokeWidth,
-                                                                                    strokeWidth * 2f
-                                                                                ), 0f
-                                                                            )
-
-                                                                            "dashed" -> PathEffect.dashPathEffect(
-                                                                                floatArrayOf(
-                                                                                    strokeWidth * 3f,
-                                                                                    strokeWidth * 2f
-                                                                                ), 0f
-                                                                            )
-
-                                                                            else -> null
-                                                                        }
-                                                                    drawLine(
-                                                                        color = border.color,
-                                                                        start = Offset(
-                                                                            0f, strokeWidth / 2f
-                                                                        ),
-                                                                        end = Offset(
-                                                                            size.width,
-                                                                            strokeWidth / 2f
-                                                                        ),
-                                                                        strokeWidth = strokeWidth,
-                                                                        pathEffect = pathEffect
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                searchHighlighted
+                                                            }
+                                                        TextWithEmphasis(
+                                                            text = finalContent,
+                                                            style = style,
+                                                            modifier = paddingModifier,
+                                                            textMeasurer = textMeasurer,
+                                                            onLinkClick = onLinkClickCallback,
+                                                            onGeneralTap = onGeneralTapCallback,
+                                                            block = block,
+                                                            userHighlights = userHighlights,
+                                                            activeSelection = activeSelection,
+                                                            onSelectionChange = { sel ->
+                                                                activeSelection = sel
+                                                            },
+                                                            onHighlightClick = { highlight, rect ->
+                                                                activeHighlightForMenu =
+                                                                    highlight to rect
+                                                                activeSelection = null
+                                                                menuState = null
+                                                            },
+                                                            isDarkTheme = isDarkTheme,
+                                                            onRegisterLayout = { layout, coords ->
+                                                                if (block.cfi != null) blockLayoutMap[block.cfi] =
+                                                                    Triple(
+                                                                        layout,
+                                                                        coords,
+                                                                        block.startCharOffsetInSource
                                                                     )
-                                                                })
-                                                    } else {
-                                                        Spacer(Modifier.height(block.height))
+                                                            })
                                                     }
-                                                }
 
-                                                is TableBlock -> {
-                                                    // Table-level margin/background/border/padding
-                                                    // are already
-                                                    // applied by the outer Box wrapper. Only set
-                                                    // width here.
-                                                    val tableModifier = paddingModifier
+                                                    is QuoteBlock -> {
+                                                        val quoteModifier =
+                                                            paddingModifier.padding(start = 16.dp)
+                                                        val searchHighlighted = highlightQueryInText(
+                                                            block.content,
+                                                            searchQuery,
+                                                            searchHighlightColor
+                                                        )
+                                                        val finalContent =
+                                                            if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                                buildAnnotatedString {
+                                                                    append(searchHighlighted)
 
-                                                    Column(modifier = tableModifier) {
-                                                        block.rows.forEach { tableRow ->
-                                                            Row(
+                                                                    val blockStartAbs =
+                                                                        block.startCharOffsetInSource
+                                                                    val blockEndAbs =
+                                                                        block.startCharOffsetInSource + searchHighlighted.length
+                                                                    val highlightStartAbs =
+                                                                        ttsHighlightInfo.offset
+                                                                    val highlightEndAbs =
+                                                                        ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                                    val intersectionStartAbs = maxOf(
+                                                                        blockStartAbs, highlightStartAbs
+                                                                    )
+                                                                    val intersectionEndAbs = minOf(
+                                                                        blockEndAbs, highlightEndAbs
+                                                                    )
+
+                                                                    if (intersectionStartAbs < intersectionEndAbs) {
+                                                                        val highlightStartRelative =
+                                                                            intersectionStartAbs - blockStartAbs
+                                                                        val highlightEndRelative =
+                                                                            intersectionEndAbs - blockStartAbs
+                                                                        addStyle(
+                                                                            style = SpanStyle(
+                                                                                background = ttsHighlightColor
+                                                                            ),
+                                                                            start = highlightStartRelative,
+                                                                            end = highlightEndRelative
+                                                                        )
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                searchHighlighted
+                                                            }
+                                                        TextWithEmphasis(
+                                                            text = finalContent,
+                                                            style = textStyle,
+                                                            modifier = quoteModifier,
+                                                            textMeasurer = textMeasurer,
+                                                            onLinkClick = onLinkClickCallback,
+                                                            onGeneralTap = onGeneralTapCallback,
+                                                            block = block,
+                                                            userHighlights = userHighlights,
+                                                            activeSelection = activeSelection,
+                                                            onSelectionChange = { sel ->
+                                                                activeSelection = sel
+                                                            },
+                                                            onHighlightClick = { highlight, rect ->
+                                                                activeHighlightForMenu =
+                                                                    highlight to rect
+                                                                activeSelection = null
+                                                                menuState = null
+                                                            },
+                                                            isDarkTheme = isDarkTheme,
+                                                            onRegisterLayout = { layout, coords ->
+                                                                if (block.cfi != null) blockLayoutMap[block.cfi] =
+                                                                    Triple(
+                                                                        layout,
+                                                                        coords,
+                                                                        block.startCharOffsetInSource
+                                                                    )
+                                                            })
+                                                    }
+
+                                                    is ListItemBlock -> {
+                                                        Row(
+                                                            modifier = paddingModifier,
+                                                            verticalAlignment = Alignment.Top
+                                                        ) {
+                                                            val markerAreaModifier =
                                                                 Modifier
+                                                                    .width(32.dp)
+                                                                    .padding(end = 8.dp)
+
+                                                            if (block.itemMarkerImage != null) {
+                                                                val imageRequest =
+                                                                    Builder(LocalContext.current).data(
+                                                                        File(
+                                                                            block.itemMarkerImage
+                                                                        )
+                                                                    ).crossfade(true).build()
+                                                                val imageSize = with(density) {
+                                                                    (textStyle.fontSize.value * 0.8f).sp.toDp()
+                                                                }
+
+                                                                AsyncImage(
+                                                                    model = imageRequest,
+                                                                    contentDescription = "List item marker",
+                                                                    modifier = markerAreaModifier.height(
+                                                                        imageSize
+                                                                    ),
+                                                                    alignment = Alignment.CenterEnd,
+                                                                    contentScale = ContentScale.FillHeight
+                                                                )
+                                                            } else if (block.itemMarker != null) {
+                                                                Text(
+                                                                    text = block.itemMarker,
+                                                                    style = textStyle.copy(
+                                                                        textAlign = TextAlign.End
+                                                                    ),
+                                                                    modifier = markerAreaModifier
+                                                                )
+                                                            }
+                                                            val searchHighlighted =
+                                                                highlightQueryInText(
+                                                                    block.content,
+                                                                    searchQuery,
+                                                                    searchHighlightColor
+                                                                )
+                                                            val finalContent =
+                                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                                    buildAnnotatedString {
+                                                                        append(searchHighlighted)
+
+                                                                        val blockStartAbs =
+                                                                            block.startCharOffsetInSource
+                                                                        val blockEndAbs =
+                                                                            block.startCharOffsetInSource + searchHighlighted.length
+                                                                        val highlightStartAbs =
+                                                                            ttsHighlightInfo.offset
+                                                                        val highlightEndAbs =
+                                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                                        val intersectionStartAbs =
+                                                                            maxOf(
+                                                                                blockStartAbs,
+                                                                                highlightStartAbs
+                                                                            )
+                                                                        val intersectionEndAbs = minOf(
+                                                                            blockEndAbs, highlightEndAbs
+                                                                        )
+
+                                                                        if (intersectionStartAbs < intersectionEndAbs) {
+                                                                            val highlightStartRelative =
+                                                                                intersectionStartAbs - blockStartAbs
+                                                                            val highlightEndRelative =
+                                                                                intersectionEndAbs - blockStartAbs
+                                                                            addStyle(
+                                                                                style = SpanStyle(
+                                                                                    background = ttsHighlightColor
+                                                                                ),
+                                                                                start = highlightStartRelative,
+                                                                                end = highlightEndRelative
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    searchHighlighted
+                                                                }
+                                                            TextWithEmphasis(
+                                                                text = finalContent,
+                                                                style = textStyle,
+                                                                modifier = Modifier.weight(1f),
+                                                                textMeasurer = textMeasurer,
+                                                                onLinkClick = onLinkClickCallback,
+                                                                onGeneralTap = onGeneralTapCallback,
+                                                                block = block,
+                                                                userHighlights = userHighlights,
+                                                                activeSelection = activeSelection,
+                                                                onSelectionChange = { sel ->
+                                                                    activeSelection = sel
+                                                                },
+                                                                onHighlightClick = { highlight, rect ->
+                                                                    activeHighlightForMenu =
+                                                                        highlight to rect
+                                                                    activeSelection = null
+                                                                    menuState = null
+                                                                },
+                                                                isDarkTheme = isDarkTheme,
+                                                                onRegisterLayout = { layout, coords ->
+                                                                    if (block.cfi != null) blockLayoutMap[block.cfi] =
+                                                                        Triple(
+                                                                            layout,
+                                                                            coords,
+                                                                            block.startCharOffsetInSource
+                                                                        )
+                                                                })
+                                                        }
+                                                    }
+
+                                                    is WrappingContentBlock -> {
+                                                        WrappingContentLayout(
+                                                            block = block,
+                                                            textStyle = textStyle,
+                                                            modifier = paddingModifier,
+                                                            searchQuery = searchQuery,
+                                                            ttsHighlightInfo = ttsHighlightInfo,
+                                                            searchHighlightColor = searchHighlightColor,
+                                                            ttsHighlightColor = ttsHighlightColor
+                                                        )
+                                                    }
+
+                                                    is FlexContainerBlock -> {
+                                                        // Background, border, and padding are
+                                                        // already applied by the outer Box wrapper.
+                                                        // Only apply padding + width here.
+                                                        val containerModifier = paddingModifier
+
+                                                        if (block.style.flexDirection == "row") {
+                                                            val horizontalArrangement =
+                                                                when (block.style.justifyContent) {
+                                                                    "center" -> Arrangement.Center
+                                                                    "flex-end" -> Arrangement.End
+                                                                    "space-between" -> Arrangement.SpaceBetween
+                                                                    "space-around" -> Arrangement.SpaceAround
+                                                                    else -> Arrangement.Start
+                                                                }
+                                                            val verticalAlignment =
+                                                                when (block.style.alignItems) {
+                                                                    "center" -> Alignment.CenterVertically
+                                                                    "flex-end" -> Alignment.Bottom
+                                                                    else -> Alignment.Top
+                                                                }
+                                                            Row(
+                                                                modifier = containerModifier.fillMaxWidth(),
+                                                                horizontalArrangement = horizontalArrangement,
+                                                                verticalAlignment = verticalAlignment
+                                                            ) {
+                                                                block.children.forEach { childBlock ->
+                                                                    RenderFlexChildBlock(
+                                                                        childBlock = childBlock,
+                                                                        textStyle = textStyle,
+                                                                        searchQuery = searchQuery,
+                                                                        searchHighlightColor = searchHighlightColor,
+                                                                        ttsHighlightInfo = ttsHighlightInfo,
+                                                                        ttsHighlightColor = ttsHighlightColor,
+                                                                        textMeasurer = textMeasurer,
+                                                                        onLinkClickCallback = onLinkClickCallback,
+                                                                        onGeneralTapCallback = onGeneralTapCallback,
+                                                                        userHighlights = userHighlights,
+                                                                        activeSelection = activeSelection,
+                                                                        onSelectionChange = { sel ->
+                                                                            activeSelection = sel
+                                                                        },
+                                                                        onHighlightClick = { highlight, rect ->
+                                                                            activeHighlightForMenu =
+                                                                                highlight to rect
+                                                                            activeSelection = null
+                                                                            menuState = null
+                                                                        },
+                                                                        isDarkTheme = isDarkTheme,
+                                                                        blockLayoutMap = blockLayoutMap,
+                                                                        density = density,
+                                                                        imageLoader = imageLoader
+                                                                    )
+                                                                }
+                                                            }
+                                                        } else {
+                                                            val verticalArrangement =
+                                                                when (block.style.justifyContent) {
+                                                                    "center" -> Arrangement.Center
+                                                                    "flex-end" -> Arrangement.Bottom
+                                                                    "space-between" -> Arrangement.SpaceBetween
+                                                                    "space-around" -> Arrangement.SpaceAround
+                                                                    else -> Arrangement.Top
+                                                                }
+                                                            val horizontalAlignment =
+                                                                when (block.style.alignItems) {
+                                                                    "center" -> Alignment.CenterHorizontally
+                                                                    "flex-end" -> Alignment.End
+                                                                    else -> Alignment.Start
+                                                                }
+                                                            Column(
+                                                                modifier = containerModifier.fillMaxWidth(),
+                                                                verticalArrangement = verticalArrangement,
+                                                                horizontalAlignment = horizontalAlignment
+                                                            ) {
+                                                                block.children.forEach { childBlock ->
+                                                                    RenderFlexChildBlock(
+                                                                        childBlock = childBlock,
+                                                                        textStyle = textStyle,
+                                                                        searchQuery = searchQuery,
+                                                                        searchHighlightColor = searchHighlightColor,
+                                                                        ttsHighlightInfo = ttsHighlightInfo,
+                                                                        ttsHighlightColor = ttsHighlightColor,
+                                                                        textMeasurer = textMeasurer,
+                                                                        onLinkClickCallback = onLinkClickCallback,
+                                                                        onGeneralTapCallback = onGeneralTapCallback,
+                                                                        userHighlights = userHighlights,
+                                                                        activeSelection = activeSelection,
+                                                                        onSelectionChange = { sel ->
+                                                                            activeSelection = sel
+                                                                        },
+                                                                        onHighlightClick = { highlight, rect ->
+                                                                            activeHighlightForMenu =
+                                                                                highlight to rect
+                                                                            activeSelection = null
+                                                                            menuState = null
+                                                                        },
+                                                                        isDarkTheme = isDarkTheme,
+                                                                        blockLayoutMap = blockLayoutMap,
+                                                                        density = density,
+                                                                        imageLoader = imageLoader
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    is MathBlock -> {
+                                                        Timber.d(
+                                                            "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${!block.svgContent.isNullOrBlank()}"
+                                                        )
+                                                        if (!block.svgContent.isNullOrBlank()) {
+                                                            BoxWithConstraints(
+                                                                modifier = paddingModifier
+                                                            ) {
+                                                                val localDensity = LocalDensity.current
+                                                                val fontSizePx = with(localDensity) {
+                                                                    textStyle.fontSize.toPx()
+                                                                }
+                                                                val containerWidthPx =
+                                                                    with(localDensity) {
+                                                                        maxWidth.roundToPx()
+                                                                    }
+                                                                val widthPx = parseSvgDimension(
+                                                                    block.svgWidth,
+                                                                    fontSizePx,
+                                                                    containerWidthPx,
+                                                                    localDensity
+                                                                )
+                                                                val imageModifier =
+                                                                    if (widthPx != null) {
+                                                                        val finalWidthDp =
+                                                                            with(localDensity) {
+                                                                                widthPx.toDp()
+                                                                            }
+                                                                        Timber.d(
+                                                                            "Applying calculated width to MathBlock image: $finalWidthDp"
+                                                                        )
+                                                                        Modifier.width(finalWidthDp)
+                                                                    } else {
+                                                                        Timber.w(
+                                                                            "Could not calculate a specific width for MathBlock. It will fill available space."
+                                                                        )
+                                                                        Modifier
+                                                                    }
+
+                                                                val imageRequest =
+                                                                    Builder(LocalContext.current).data(
+                                                                        SvgData(
+                                                                            block.svgContent
+                                                                        )
+                                                                    ).listener(
+                                                                        onError = { _, result ->
+                                                                            Timber.e(
+                                                                                result.throwable,
+                                                                                "Coil failed to load SVG for MathBlock."
+                                                                            )
+                                                                        }).build()
+
+                                                                val colorFilter =
+                                                                    if (block.isFromMathJax) ColorFilter.tint(
+                                                                        textStyle.color
+                                                                    )
+                                                                    else null
+
+                                                                AsyncImage(
+                                                                    model = imageRequest,
+                                                                    contentDescription = block.altText
+                                                                        ?: "Equation",
+                                                                    modifier = imageModifier,
+                                                                    contentScale = ContentScale.Fit,
+                                                                    colorFilter = colorFilter,
+                                                                    imageLoader = imageLoader
+                                                                )
+                                                            }
+                                                        } else {
+                                                            Timber.w(
+                                                                "PaginatedReader: MathBlock has no SVG content, rendering alt text."
+                                                            )
+                                                            Text(
+                                                                text = block.altText
+                                                                    ?: "[Equation not available]",
+                                                                style = textStyle,
+                                                                modifier = paddingModifier
+                                                            )
+                                                        }
+                                                    }
+
+                                                    is ImageBlock -> {
+                                                        val style = block.style
+                                                        val finalImageModifier = Modifier
+                                                            .then(
+                                                                if (style.width != Dp.Unspecified) Modifier.width(
+                                                                    style.width
+                                                                )
+                                                                else Modifier
+                                                            )
+                                                            .then(
+                                                                if (style.maxWidth != Dp.Unspecified) Modifier.widthIn(
+                                                                    max = style.maxWidth
+                                                                )
+                                                                else Modifier
+                                                            )
+                                                            .then(paddingModifier)
+
+                                                        val colorFilter =
+                                                            if (block.style.filter == "invert(100%)") {
+                                                                val matrix = floatArrayOf(
+                                                                    -1f,
+                                                                    0f,
+                                                                    0f,
+                                                                    0f,
+                                                                    255f,
+                                                                    0f,
+                                                                    -1f,
+                                                                    0f,
+                                                                    0f,
+                                                                    255f,
+                                                                    0f,
+                                                                    0f,
+                                                                    -1f,
+                                                                    0f,
+                                                                    255f,
+                                                                    0f,
+                                                                    0f,
+                                                                    0f,
+                                                                    1f,
+                                                                    0f
+                                                                )
+                                                                ColorFilter.colorMatrix(
+                                                                    ColorMatrix(matrix)
+                                                                )
+                                                            } else {
+                                                                null
+                                                            }
+                                                        val context = LocalContext.current
+                                                        val imageRequest =
+                                                            Builder(context).data(File(block.path))
+                                                                .listener(onSuccess = { _, _ ->
+                                                                    Timber.d(
+                                                                        "Coil successfully loaded image: ${block.path}"
+                                                                    )
+                                                                }, onError = { _, result ->
+                                                                    Timber.e(
+                                                                        result.throwable,
+                                                                        "Coil FAILED to load image: ${block.path}"
+                                                                    )
+                                                                }).crossfade(true).build()
+
+                                                        AsyncImage(
+                                                            model = imageRequest,
+                                                            contentDescription = block.altText
+                                                                ?: "Image from EPUB",
+                                                            modifier = finalImageModifier,
+                                                            contentScale = ContentScale.Fit,
+                                                            colorFilter = colorFilter
+                                                        )
+                                                    }
+
+                                                    is SpacerBlock -> {
+                                                        val border = block.style.border
+                                                        if (border != null && border.width > 0.dp) {
+                                                            Box(
+                                                                modifier = Modifier
                                                                     .fillMaxWidth()
                                                                     .height(
-                                                                        IntrinsicSize.Min
+                                                                        border.width
                                                                     )
-                                                            ) {
-                                                                val hasFixedWidths = tableRow.any {
-                                                                    it.style.blockStyle.width != Dp.Unspecified
-                                                                }
-
-                                                                tableRow.forEach { cell ->
-                                                                    val cellStyle =
-                                                                        cell.style.blockStyle
-
-                                                                    val cellContainerModifier =
-                                                                        if (hasFixedWidths) {
-                                                                            if (cellStyle.width != Dp.Unspecified) Modifier.width(
-                                                                                cellStyle.width
-                                                                            )
-                                                                            else Modifier.weight(
-                                                                                cell.colspan.toFloat(),
-                                                                                fill = true
-                                                                            )
-                                                                        } else {
-                                                                            Modifier.weight(
-                                                                                cell.colspan.toFloat(),
-                                                                                fill = true
-                                                                            )
-                                                                        }
-
-                                                                    val alignment =
-                                                                        when (cell.style.paragraphStyle.textAlign) {
-                                                                            TextAlign.Center -> Alignment.CenterHorizontally
-                                                                            TextAlign.End -> Alignment.End
-                                                                            else -> Alignment.Start
-                                                                        }
-
-                                                                    val cellModifier =
-                                                                        cellContainerModifier
-                                                                            .fillMaxHeight()
-                                                                            .then(
-                                                                                if (cellStyle.backgroundColor.isSpecified) {
-                                                                                    Modifier.background(
-                                                                                        cellStyle.backgroundColor
-                                                                                    )
-                                                                                } else {
-                                                                                    Modifier
-                                                                                }
-                                                                            )
-                                                                            .then(cellStyle.border?.let { border ->
-                                                                                Modifier.border(
-                                                                                    BorderStroke(
-                                                                                        border.width,
-                                                                                        border.color
-                                                                                    )
+                                                                    .drawBehind {
+                                                                        val strokeWidth =
+                                                                            border.width.toPx()
+                                                                        val pathEffect =
+                                                                            when (border.style) {
+                                                                                "dotted" -> PathEffect.dashPathEffect(
+                                                                                    floatArrayOf(
+                                                                                        strokeWidth,
+                                                                                        strokeWidth * 2f
+                                                                                    ), 0f
                                                                                 )
-                                                                            } ?: Modifier)
-                                                                            .padding(
-                                                                                start = cellStyle.padding.left.coerceAtLeast(
-                                                                                    0.dp
-                                                                                ),
-                                                                                top = cellStyle.padding.top.coerceAtLeast(
-                                                                                    0.dp
-                                                                                ),
-                                                                                end = cellStyle.padding.right.coerceAtLeast(
-                                                                                    0.dp
-                                                                                ),
-                                                                                bottom = cellStyle.padding.bottom.coerceAtLeast(
-                                                                                    0.dp
-                                                                                )
-                                                                            )
 
-                                                                    Column(
-                                                                        modifier = cellModifier,
-                                                                        horizontalAlignment = alignment
-                                                                    ) {
-                                                                        val cellTextStyle =
-                                                                            if (cell.isHeader) {
-                                                                                textStyle.copy(
-                                                                                    fontWeight = FontWeight.Bold
+                                                                                "dashed" -> PathEffect.dashPathEffect(
+                                                                                    floatArrayOf(
+                                                                                        strokeWidth * 3f,
+                                                                                        strokeWidth * 2f
+                                                                                    ), 0f
+                                                                                )
+
+                                                                                else -> null
+                                                                            }
+                                                                        drawLine(
+                                                                            color = border.color,
+                                                                            start = Offset(
+                                                                                0f, strokeWidth / 2f
+                                                                            ),
+                                                                            end = Offset(
+                                                                                size.width,
+                                                                                strokeWidth / 2f
+                                                                            ),
+                                                                            strokeWidth = strokeWidth,
+                                                                            pathEffect = pathEffect
+                                                                        )
+                                                                    })
+                                                        } else {
+                                                            Spacer(Modifier.height(block.height))
+                                                        }
+                                                    }
+
+                                                    is TableBlock -> {
+                                                        // Table-level margin/background/border/padding
+                                                        // are already
+                                                        // applied by the outer Box wrapper. Only set
+                                                        // width here.
+                                                        val tableModifier = paddingModifier
+
+                                                        Column(modifier = tableModifier) {
+                                                            block.rows.forEach { tableRow ->
+                                                                Row(
+                                                                    Modifier
+                                                                        .fillMaxWidth()
+                                                                        .height(
+                                                                            IntrinsicSize.Min
+                                                                        )
+                                                                ) {
+                                                                    val hasFixedWidths = tableRow.any {
+                                                                        it.style.blockStyle.width != Dp.Unspecified
+                                                                    }
+
+                                                                    tableRow.forEach { cell ->
+                                                                        val cellStyle =
+                                                                            cell.style.blockStyle
+
+                                                                        val cellContainerModifier =
+                                                                            if (hasFixedWidths) {
+                                                                                if (cellStyle.width != Dp.Unspecified) Modifier.width(
+                                                                                    cellStyle.width
+                                                                                )
+                                                                                else Modifier.weight(
+                                                                                    cell.colspan.toFloat(),
+                                                                                    fill = true
                                                                                 )
                                                                             } else {
-                                                                                textStyle
+                                                                                Modifier.weight(
+                                                                                    cell.colspan.toFloat(),
+                                                                                    fill = true
+                                                                                )
                                                                             }
 
-                                                                        cell.content.forEach { blockInCell ->
-                                                                            when (blockInCell) {
-                                                                                is ParagraphBlock -> {
-                                                                                    Text(
-                                                                                        text = blockInCell.content,
-                                                                                        style = cellTextStyle,
-                                                                                        modifier = Modifier.fillMaxWidth()
+                                                                        val alignment =
+                                                                            when (cell.style.paragraphStyle.textAlign) {
+                                                                                TextAlign.Center -> Alignment.CenterHorizontally
+                                                                                TextAlign.End -> Alignment.End
+                                                                                else -> Alignment.Start
+                                                                            }
+
+                                                                        val cellModifier =
+                                                                            cellContainerModifier
+                                                                                .fillMaxHeight()
+                                                                                .then(
+                                                                                    if (cellStyle.backgroundColor.isSpecified) {
+                                                                                        Modifier.background(
+                                                                                            cellStyle.backgroundColor
+                                                                                        )
+                                                                                    } else {
+                                                                                        Modifier
+                                                                                    }
+                                                                                )
+                                                                                .then(cellStyle.border?.let { border ->
+                                                                                    Modifier.border(
+                                                                                        BorderStroke(
+                                                                                            border.width,
+                                                                                            border.color
+                                                                                        )
                                                                                     )
+                                                                                } ?: Modifier)
+                                                                                .padding(
+                                                                                    start = cellStyle.padding.left.coerceAtLeast(
+                                                                                        0.dp
+                                                                                    ),
+                                                                                    top = cellStyle.padding.top.coerceAtLeast(
+                                                                                        0.dp
+                                                                                    ),
+                                                                                    end = cellStyle.padding.right.coerceAtLeast(
+                                                                                        0.dp
+                                                                                    ),
+                                                                                    bottom = cellStyle.padding.bottom.coerceAtLeast(
+                                                                                        0.dp
+                                                                                    )
+                                                                                )
+
+                                                                        Column(
+                                                                            modifier = cellModifier,
+                                                                            horizontalAlignment = alignment
+                                                                        ) {
+                                                                            val cellTextStyle =
+                                                                                if (cell.isHeader) {
+                                                                                    textStyle.copy(
+                                                                                        fontWeight = FontWeight.Bold
+                                                                                    )
+                                                                                } else {
+                                                                                    textStyle
                                                                                 }
 
-                                                                                is HeaderBlock -> {
-                                                                                    Text(
-                                                                                        text = blockInCell.content,
-                                                                                        style = cellTextStyle.copy(
-                                                                                            fontWeight = FontWeight.Bold
-                                                                                        ),
-                                                                                        modifier = Modifier.fillMaxWidth()
-                                                                                    )
-                                                                                }
-
-                                                                                is ListItemBlock -> {
-                                                                                    Row(
-                                                                                        verticalAlignment = Alignment.Top
-                                                                                    ) {
-                                                                                        if (blockInCell.itemMarker != null) {
-                                                                                            Text(
-                                                                                                text = blockInCell.itemMarker,
-                                                                                                style = cellTextStyle,
-                                                                                                modifier = Modifier.padding(
-                                                                                                    end = 4.dp
-                                                                                                )
-                                                                                            )
-                                                                                        }
+                                                                            cell.content.forEach { blockInCell ->
+                                                                                when (blockInCell) {
+                                                                                    is ParagraphBlock -> {
                                                                                         Text(
                                                                                             text = blockInCell.content,
                                                                                             style = cellTextStyle,
-                                                                                            modifier = Modifier.weight(
-                                                                                                1f
-                                                                                            )
+                                                                                            modifier = Modifier.fillMaxWidth()
                                                                                         )
                                                                                     }
-                                                                                }
 
-                                                                                is SpacerBlock -> {
-                                                                                    val spacerModifier =
-                                                                                        if (blockInCell.style.border != null) {
-                                                                                            Modifier
-                                                                                                .fillMaxWidth()
-                                                                                                .height(
-                                                                                                    blockInCell.style.border.width
+                                                                                    is HeaderBlock -> {
+                                                                                        Text(
+                                                                                            text = blockInCell.content,
+                                                                                            style = cellTextStyle.copy(
+                                                                                                fontWeight = FontWeight.Bold
+                                                                                            ),
+                                                                                            modifier = Modifier.fillMaxWidth()
+                                                                                        )
+                                                                                    }
+
+                                                                                    is ListItemBlock -> {
+                                                                                        Row(
+                                                                                            verticalAlignment = Alignment.Top
+                                                                                        ) {
+                                                                                            if (blockInCell.itemMarker != null) {
+                                                                                                Text(
+                                                                                                    text = blockInCell.itemMarker,
+                                                                                                    style = cellTextStyle,
+                                                                                                    modifier = Modifier.padding(
+                                                                                                        end = 4.dp
+                                                                                                    )
                                                                                                 )
-                                                                                                .background(
-                                                                                                    blockInCell.style.border.color
+                                                                                            }
+                                                                                            Text(
+                                                                                                text = blockInCell.content,
+                                                                                                style = cellTextStyle,
+                                                                                                modifier = Modifier.weight(
+                                                                                                    1f
                                                                                                 )
-                                                                                        } else {
-                                                                                            Modifier.height(
-                                                                                                blockInCell.height
                                                                                             )
                                                                                         }
-                                                                                    Spacer(
-                                                                                        modifier = spacerModifier
-                                                                                    )
-                                                                                }
+                                                                                    }
 
-                                                                                is ImageBlock -> {
-                                                                                    AsyncImage(
-                                                                                        model = Builder(
-                                                                                            LocalContext.current
-                                                                                        ).data(
-                                                                                            File(
-                                                                                                blockInCell.path
-                                                                                            )
-                                                                                        ).build(),
-                                                                                        contentDescription = blockInCell.altText,
-                                                                                        contentScale = ContentScale.Fit,
-                                                                                        modifier = Modifier.fillMaxWidth()
-                                                                                    )
-                                                                                }
-                                                                                // Catch-all for any
-                                                                                // other text-based
-                                                                                // content
-                                                                                is TextContentBlock -> {
-                                                                                    Text(
-                                                                                        text = blockInCell.content,
-                                                                                        style = cellTextStyle,
-                                                                                        modifier = Modifier.fillMaxWidth()
-                                                                                    )
-                                                                                }
+                                                                                    is SpacerBlock -> {
+                                                                                        val spacerModifier =
+                                                                                            if (blockInCell.style.border != null) {
+                                                                                                Modifier
+                                                                                                    .fillMaxWidth()
+                                                                                                    .height(
+                                                                                                        blockInCell.style.border.width
+                                                                                                    )
+                                                                                                    .background(
+                                                                                                        blockInCell.style.border.color
+                                                                                                    )
+                                                                                            } else {
+                                                                                                Modifier.height(
+                                                                                                    blockInCell.height
+                                                                                                )
+                                                                                            }
+                                                                                        Spacer(
+                                                                                            modifier = spacerModifier
+                                                                                        )
+                                                                                    }
 
-                                                                                else -> {}
+                                                                                    is ImageBlock -> {
+                                                                                        AsyncImage(
+                                                                                            model = Builder(
+                                                                                                LocalContext.current
+                                                                                            ).data(
+                                                                                                File(
+                                                                                                    blockInCell.path
+                                                                                                )
+                                                                                            ).build(),
+                                                                                            contentDescription = blockInCell.altText,
+                                                                                            contentScale = ContentScale.Fit,
+                                                                                            modifier = Modifier.fillMaxWidth()
+                                                                                        )
+                                                                                    }
+                                                                                    // Catch-all for any
+                                                                                    // other text-based
+                                                                                    // content
+                                                                                    is TextContentBlock -> {
+                                                                                        Text(
+                                                                                            text = blockInCell.content,
+                                                                                            style = cellTextStyle,
+                                                                                            modifier = Modifier.fillMaxWidth()
+                                                                                        )
+                                                                                    }
+
+                                                                                    else -> {}
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
@@ -2448,16 +2487,16 @@ internal fun PaginatedReaderContent(
                                             }
                                         }
                                     }
-                                }
-                            } else {
-                                var chapterInfo by remember {
-                                    mutableStateOf<Pair<String, Int?>?>(null)
-                                }
-                                LaunchedEffect(pageIndex) {
-                                    chapterInfo = onGetChapterInfo(pageIndex)
-                                }
+                                } else {
+                                    var chapterInfo by remember {
+                                        mutableStateOf<Pair<String, Int?>?>(null)
+                                    }
+                                    LaunchedEffect(pageIndex) {
+                                        chapterInfo = onGetChapterInfo(pageIndex)
+                                    }
 
-                                ChapterLoadingPlaceholder(title = chapterInfo?.first)
+                                    ChapterLoadingPlaceholder(title = chapterInfo?.first)
+                                }
                             }
                         }
                     }
@@ -3281,4 +3320,167 @@ private fun RenderFlexChildBlock(
             )
         }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.realisticBookPage(
+    pagerState: PagerState,
+    pageIndex: Int,
+    isDarkTheme: Boolean,
+    touchY: Float?
+): Modifier = composed {
+    val frontPath = remember { Path() }
+    val backPath = remember { Path() }
+    val reflectedScreenPath = remember { Path() }
+
+    this
+        .graphicsLayer {
+            val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+
+            if (pageOffset <= 1f && pageOffset > -1f) {
+                translationX = -pageOffset * size.width
+            }
+
+            if (pageOffset != 0f) {
+                shadowElevation = 10f
+                shape = androidx.compose.ui.graphics.RectangleShape
+                clip = false
+            }
+        }
+        .drawWithContent {
+            val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+            val paperColor = if (isDarkTheme) Color(0xFF121212) else Color(0xFFFFFFFF)
+
+            if (abs(pageOffset) < 0.001f) {
+                drawRect(color = paperColor)
+                drawContent()
+            }
+            else if (pageOffset < 0f && pageOffset > -1f) {
+                val progress = -pageOffset
+                val w = size.width
+                val h = size.height
+
+                val startY = touchY ?: (h / 2f)
+                val centerDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+
+                val cornerY = if (centerDist >= 0) h else 0f
+
+                val dragX = w - w * 2.2f * progress
+                val dragY = cornerY - h * 0.5f * progress * centerDist
+
+                val midX = (w + dragX) / 2f
+                val midY = (cornerY + dragY) / 2f
+
+                val dx = w - dragX
+                val dy = cornerY - dragY
+                val nLen = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                if (nLen > 0f) {
+                    val nx = dx / nLen
+                    val ny = dy / nLen
+
+                    val huge = w * 3f
+                    val vx = -ny
+
+                    val p1X = midX + vx * huge
+                    val p1Y = midY + nx * huge
+                    val p2X = midX - vx * huge
+                    val p2Y = midY - nx * huge
+
+                    frontPath.rewind()
+                    frontPath.moveTo(p1X, p1Y)
+                    frontPath.lineTo(p2X, p2Y)
+                    frontPath.lineTo(p2X - nx * huge, p2Y - ny * huge)
+                    frontPath.lineTo(p1X - nx * huge, p1Y - ny * huge)
+                    frontPath.close()
+
+                    clipPath(frontPath) {
+                        drawRect(color = paperColor)
+                        this@drawWithContent.drawContent()
+                    }
+
+                    val shadowWidth = (40.dp.toPx() * (1f - progress)).coerceAtLeast(10.dp.toPx())
+                    backPath.rewind()
+                    backPath.moveTo(p1X, p1Y)
+                    backPath.lineTo(p2X, p2Y)
+                    backPath.lineTo(p2X + nx * huge, p2Y + ny * huge)
+                    backPath.lineTo(p1X + nx * huge, p1Y + ny * huge)
+                    backPath.close()
+
+                    val dropShadowBrush = Brush.linearGradient(
+                        colors = listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent),
+                        start = Offset(midX, midY),
+                        end = Offset(midX + nx * shadowWidth, midY + ny * shadowWidth)
+                    )
+                    clipRect(0f, 0f, w, h) {
+                        drawPath(backPath, dropShadowBrush)
+                    }
+
+                    fun reflect(px: Float, py: Float): Offset {
+                        val vX = px - midX
+                        val vY = py - midY
+                        val dist = vX * nx + vY * ny
+                        return Offset(px - 2 * dist * nx, py - 2 * dist * ny)
+                    }
+
+                    val rTL = reflect(0f, 0f)
+                    val rTR = reflect(w, 0f)
+                    val rBR = reflect(w, h)
+                    val rBL = reflect(0f, h)
+
+                    reflectedScreenPath.rewind()
+                    reflectedScreenPath.moveTo(rTL.x, rTL.y)
+                    reflectedScreenPath.lineTo(rTR.x, rTR.y)
+                    reflectedScreenPath.lineTo(rBR.x, rBR.y)
+                    reflectedScreenPath.lineTo(rBL.x, rBL.y)
+                    reflectedScreenPath.close()
+
+                    clipRect(0f, 0f, w, h) {
+                        clipPath(frontPath) {
+                            val flapColor = if (isDarkTheme) Color(0xFF2A2A2A) else Color(0xFFF0F0F0)
+                            drawPath(reflectedScreenPath, color = flapColor)
+
+                            val innerShadowWidth = shadowWidth * 0.7f
+                            val innerShadowBrush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.25f),
+                                    Color.Black.copy(alpha = 0.05f),
+                                    Color.Transparent
+                                ),
+                                start = Offset(midX, midY),
+                                end = Offset(midX - nx * innerShadowWidth, midY - ny * innerShadowWidth)
+                            )
+                            drawPath(reflectedScreenPath, innerShadowBrush)
+
+                            drawPath(
+                                path = reflectedScreenPath,
+                                color = if (isDarkTheme) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f),
+                                style = Stroke(width = 1.dp.toPx())
+                            )
+                        }
+
+                        drawLine(
+                            color = if (isDarkTheme) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f),
+                            start = Offset(p1X, p1Y),
+                            end = Offset(p2X, p2Y),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+
+                } else {
+                    drawRect(color = paperColor)
+                    drawContent()
+                }
+            }
+            else if (pageOffset > 0f && pageOffset <= 1f) {
+                drawRect(color = paperColor)
+                drawContent()
+                val dimAlpha = (0.25f * pageOffset).coerceIn(0f, 0.4f)
+                drawRect(color = Color.Black.copy(alpha = dimAlpha))
+            }
+            else {
+                drawRect(color = paperColor)
+                drawContent()
+            }
+        }
 }

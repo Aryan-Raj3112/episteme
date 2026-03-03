@@ -175,6 +175,17 @@ private const val AUTO_SCROLL_LOCKED_KEY = "auto_scroll_locked"
 private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
 private const val AUTO_SCROLL_MIN_SPEED_KEY = "auto_scroll_min_speed"
 private const val AUTO_SCROLL_MAX_SPEED_KEY = "auto_scroll_max_speed"
+private const val PAGE_TURN_ANIMATION_KEY = "page_turn_animation_enabled"
+
+private fun savePageTurnAnimationSetting(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PAGE_TURN_ANIMATION_KEY, isEnabled) }
+}
+
+private fun loadPageTurnAnimationSetting(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(PAGE_TURN_ANIMATION_KEY, false)
+}
 
 private fun saveAutoScrollMinSpeed(context: Context, speed: Float) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -307,6 +318,10 @@ fun EpubReaderHost(
 
     var tapToNavigateEnabled by remember {
         mutableStateOf(loadTapToNavigateSetting(context))
+    }
+
+    var isPageTurnAnimationEnabled by remember {
+        mutableStateOf(loadPageTurnAnimationSetting(context))
     }
 
     val locatorConverter = remember(context) {
@@ -2170,6 +2185,7 @@ fun EpubReaderHost(
                                 textAlign = currentTextAlign,
                                 activeHighlightPalette = currentHighlightPalette,
                                 onUpdatePalette = onUpdateHighlightPalette,
+                                isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
                                 ttsHighlightInfo = TtsHighlightInfo(
                                     text = ttsState.currentText ?: "",
                                     cfi = ttsState.sourceCfi ?: "",
@@ -2635,6 +2651,7 @@ fun EpubReaderHost(
                     isTtsActive = isTtsSessionActive,
                     tapToNavigateEnabled = tapToNavigateEnabled,
                     volumeScrollEnabled = volumeScrollEnabled,
+                    isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
                     onNavigateBack = { triggerSaveAndExit() },
                     onCloseSearch = {
                         searchState.isSearchActive = false
@@ -2674,6 +2691,10 @@ fun EpubReaderHost(
                     onToggleTapToNavigate = { enabled ->
                         tapToNavigateEnabled = enabled
                         saveTapToNavigateSetting(context, enabled)
+                    },
+                    onTogglePageTurnAnimation = { enabled ->
+                        isPageTurnAnimationEnabled = enabled
+                        savePageTurnAnimationSetting(context, enabled)
                     },
                     onToggleVolumeScroll = { enabled ->
                         volumeScrollEnabled = enabled
