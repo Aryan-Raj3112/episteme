@@ -100,10 +100,11 @@ fun Modifier.volumeScrollHandler(
     currentChapterIndex: Int,
     totalChapters: Int,
     onScrollBy: (Int) -> Unit,
-    onNavigateChapter: (offset: Int, scrollTarget: ChapterScrollPosition) -> Unit
+    onNavigateChapter: (offset: Int, scrollTarget: ChapterScrollPosition) -> Unit,
+    onNextPage: () -> Unit = {},
+    onPrevPage: () -> Unit = {}
 ): Modifier = this.onPreviewKeyEvent { keyEvent ->
     val shouldHandle = volumeScrollEnabled &&
-            renderMode == RenderMode.VERTICAL_SCROLL &&
             !isTtsActive &&
             !isMusicActive
 
@@ -115,25 +116,22 @@ fun Modifier.volumeScrollHandler(
     if (!isVolumeKey) return@onPreviewKeyEvent false
 
     if (keyEvent.type == KeyEventType.KeyDown) {
-        val direction = if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) 1 else -1
-        val isAtBottom = (currentScrollY + currentClientHeight) >= (currentScrollHeight - 2)
+        val isNext = keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
 
-        Timber.d("Dir: $direction, AtBottom: $isAtBottom, Y: $currentScrollY")
+        if (renderMode == RenderMode.VERTICAL_SCROLL) {
+            val direction = if (isNext) 1 else -1
+            val isAtBottom = (currentScrollY + currentClientHeight) >= (currentScrollHeight - 2)
 
-        if (direction == -1 && currentScrollY == 0) {
-            // Top -> Prev Chapter
-            if (currentChapterIndex > 0) {
-                onNavigateChapter(-1, ChapterScrollPosition.END)
-            }
-        } else if (direction == 1 && isAtBottom) {
-            // Bottom -> Next Chapter
-            if (currentChapterIndex < totalChapters - 1) {
-                onNavigateChapter(1, ChapterScrollPosition.START)
+            if (direction == -1 && currentScrollY == 0) {
+                if (currentChapterIndex > 0) onNavigateChapter(-1, ChapterScrollPosition.END)
+            } else if (direction == 1 && isAtBottom) {
+                if (currentChapterIndex < totalChapters - 1) onNavigateChapter(1, ChapterScrollPosition.START)
+            } else {
+                val scrollAmount = (currentClientHeight * 0.25).toInt() * direction
+                onScrollBy(scrollAmount)
             }
         } else {
-            // Scroll
-            val scrollAmount = (currentClientHeight * 0.25).toInt() * direction
-            onScrollBy(scrollAmount)
+            if (isNext) onNextPage() else onPrevPage()
         }
     }
     true

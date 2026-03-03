@@ -39,6 +39,7 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -1124,6 +1125,14 @@ fun EpubReaderHost(
         )
     }
 
+    LaunchedEffect(paginatedPagerState.currentPage, currentRenderMode) {
+        if (currentRenderMode == RenderMode.PAGINATED && volumeScrollEnabled) {
+            delay(200)
+            containerFocusRequester.requestFocus()
+            Timber.d("Paginated: Page changed to ${paginatedPagerState.currentPage}, re-requesting focus for volume keys.")
+        }
+    }
+
     BackHandler(enabled = true) {
         if (isPageSliderVisible) {
             isPageSliderVisible = false
@@ -1482,8 +1491,30 @@ fun EpubReaderHost(
                             scope.launch {
                                 initialScrollTargetForChapter = target
                                 if (target == ChapterScrollPosition.START) currentScrollYPosition = 0
-
                                 currentChapterIndex += offset
+                            }
+                        },
+                        onNextPage = {
+                            scope.launch {
+                                val pageCount = paginatedPagerState.pageCount
+                                if (pageCount > 0) {
+                                    val targetPage = (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
+                                    if (targetPage != paginatedPagerState.currentPage) {
+                                        if (isPageTurnAnimationEnabled) {
+                                            paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
+                                        } else paginatedPagerState.scrollToPage(targetPage)
+                                    }
+                                }
+                            }
+                        },
+                        onPrevPage = {
+                            scope.launch {
+                                val targetPage = (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
+                                if (targetPage != paginatedPagerState.currentPage) {
+                                    if (isPageTurnAnimationEnabled) {
+                                        paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
+                                    } else paginatedPagerState.scrollToPage(targetPage)
+                                }
                             }
                         }
                     )
@@ -2198,9 +2229,15 @@ fun EpubReaderHost(
                                 },
                                 onTap = { tapOffset ->
                                     Timber.d("PaginatedReaderScreen onTap called with offset: $tapOffset")
+
+                                    if (volumeScrollEnabled) {
+                                        containerFocusRequester.requestFocus()
+                                    }
+
                                     if (tapOffset == null || !tapToNavigateEnabled) {
-                                        Timber.d("Condition met: Toggling bars. tapOffset is null: ${tapOffset == null}, tapToNavigateEnabled: $tapToNavigateEnabled")
                                         focusManager.clearFocus()
+                                        if (volumeScrollEnabled) containerFocusRequester.requestFocus()
+
                                         if (showBars || showFormatAdjustmentBars) {
                                             showBars = false
                                             showFormatAdjustmentBars = false
@@ -2208,37 +2245,34 @@ fun EpubReaderHost(
                                             showBars = true
                                         }
                                     } else {
-                                        // Handle zoned navigation since tapOffset is not null and the feature is enabled.
-                                        Timber.d("Condition met: Handling zoned navigation.")
                                         val oneQuarterWidthPx = constraints.maxWidth / 4f
                                         when {
                                             tapOffset.x < oneQuarterWidthPx -> {
-                                                // Left 25%: go to previous page
-                                                Timber.d("Tapped left zone. Navigating to previous page.")
                                                 scope.launch {
                                                     val targetPage = (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
                                                     if (targetPage != paginatedPagerState.currentPage) {
-                                                        paginatedPagerState.scrollToPage(targetPage)
+                                                        if (isPageTurnAnimationEnabled) {
+                                                            paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
+                                                        } else paginatedPagerState.scrollToPage(targetPage)
                                                     }
                                                 }
                                             }
                                             tapOffset.x > (constraints.maxWidth - oneQuarterWidthPx) -> {
-                                                // Right 25%: go to next page
-                                                Timber.d("Tapped right zone. Navigating to next page.")
                                                 scope.launch {
                                                     val pageCount = paginatedPagerState.pageCount
                                                     if (pageCount > 0) {
                                                         val targetPage = (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
                                                         if (targetPage != paginatedPagerState.currentPage) {
-                                                            paginatedPagerState.scrollToPage(targetPage)
+                                                            if (isPageTurnAnimationEnabled) {
+                                                                paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
+                                                            } else paginatedPagerState.scrollToPage(targetPage)
                                                         }
                                                     }
                                                 }
                                             }
                                             else -> {
-                                                // Middle 50%: toggle bars
-                                                Timber.d("Tapped middle zone. Toggling bars.")
                                                 focusManager.clearFocus()
+                                                if (volumeScrollEnabled) containerFocusRequester.requestFocus()
                                                 if (showBars || showFormatAdjustmentBars) {
                                                     showBars = false
                                                     showFormatAdjustmentBars = false

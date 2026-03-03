@@ -3360,7 +3360,7 @@ private fun Modifier.realisticBookPage(
                 val w = size.width
                 val h = size.height
 
-                val startY = touchY ?: (h / 2f)
+                val startY = touchY ?: h
                 val centerDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
 
                 val cornerY = if (centerDist >= 0) h else 0f

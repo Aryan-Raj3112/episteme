@@ -234,8 +234,13 @@ fun EpubReaderTopBar(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("Volume Button Scrolling") },
-                                enabled = currentRenderMode == RenderMode.VERTICAL_SCROLL,
+                                text = {
+                                    Text(
+                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) "Volume Button Scrolling"
+                                        else "Volume Button Page Turn"
+                                    )
+                                },
+                                enabled = true,
                                 onClick = {
                                     onToggleVolumeScroll(!volumeScrollEnabled)
                                     showMoreMenu = false
