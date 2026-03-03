@@ -103,7 +103,6 @@ class BaseTtsSynthesizer(private val context: Context) {
         if (isInitialized) return
         return suspendCancellableCoroutine { continuation ->
             Timber.d("BaseTts: Initializing TextToSpeech engine...")
-            // Use Application Context to prevent memory leaks and detachment issues
             tts = TextToSpeech(context.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     isInitialized = true
@@ -138,7 +137,6 @@ class BaseTtsSynthesizer(private val context: Context) {
         } finally {
             tts = null
             isInitialized = false
-            // COOL-DOWN: Critical delay to allow OS Service to unbind/reset before we try to init again.
             delay(350)
         }
     }
@@ -157,6 +155,11 @@ class BaseTtsSynthesizer(private val context: Context) {
                 if (targetVoice != null) {
                     Timber.d("BaseTts: Setting preferred voice to ${targetVoice.name} (${targetVoice.locale})")
                     tts?.voice = targetVoice
+                    try {
+                        tts?.language = targetVoice.locale
+                    } catch (e: Exception) {
+                        Timber.e(e, "BaseTts: Failed to set language for voice")
+                    }
                 } else {
                     Timber.w("BaseTts: Preferred voice '$preferredVoiceName' not found in current engine.")
                 }
@@ -178,7 +181,6 @@ class BaseTtsSynthesizer(private val context: Context) {
                 val utteranceId = UUID.randomUUID().toString()
                 val tempFile = File.createTempFile("base_tts_", ".wav", context.cacheDir)
 
-                // Prepare signals
                 val resultDeferred = CompletableDeferred<Pair<File?, String?>>()
                 val startSignal = CompletableDeferred<Unit>()
 
@@ -199,8 +201,6 @@ class BaseTtsSynthesizer(private val context: Context) {
                     Timber.d("BaseTts: Requesting synthesis (Attempt $attempt). ID: $utteranceId")
 
                     requests[utteranceId] = RequestContext(resultDeferred, startSignal, tempFile, text)
-
-                    // Prevention: No tts?.stop() here.
 
                     val ttsResult = tts?.synthesizeToFile(text, Bundle.EMPTY, tempFile, utteranceId)
 
@@ -228,7 +228,7 @@ class BaseTtsSynthesizer(private val context: Context) {
 
                         if (finalResult.first != null) {
                             result = finalResult
-                            break // Success!
+                            break
                         } else {
                             Timber.w("BaseTts: onError received during processing.")
                             throw IllegalStateException("TTS Engine reported onError")
