@@ -36,6 +36,38 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.aryan.reader.tts.GOOGLE_TTS_SPEAKERS
+import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsPlaybackManager
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -91,6 +123,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PlayArrow
@@ -123,6 +156,7 @@ import org.commonmark.node.Text
 import org.commonmark.parser.Parser
 import java.io.File
 import androidx.compose.runtime.DisposableEffect
+import com.aryan.reader.tts.loadTtsMode
 
 const val aiServerBasePath = BuildConfig.AI_WORKER_URL
 const val summarizeEndpoint = "/summarize"
@@ -340,6 +374,7 @@ fun SummarizationPopup(
 ) {
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
+    val context = LocalContext.current
     LocalContext.current
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -419,7 +454,7 @@ fun SummarizationPopup(
                                                 bookTitle = title,
                                                 chapterTitle = "Summary",
                                                 coverImageUri = null,
-                                                ttsMode = "BASE",
+                                                ttsMode = loadTtsMode(context),
                                                 playbackSource = "POPUP"
                                             )
                                         }
@@ -508,7 +543,7 @@ fun AiDefinitionPopup(
 ) {
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
-    LocalContext.current
+    val context = LocalContext.current
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
@@ -593,7 +628,7 @@ fun AiDefinitionPopup(
                                                 bookTitle = "AI Definition",
                                                 chapterTitle = word,
                                                 coverImageUri = null,
-                                                ttsMode = "BASE",
+                                                ttsMode = loadTtsMode(context),
                                                 playbackSource = "POPUP"
                                             )
                                         }
@@ -979,6 +1014,191 @@ suspend fun fetchRecap(
         } finally {
             connection?.disconnect()
             onFinish()
+        }
+    }
+}
+
+@OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TtsSettingsSheet(
+    isVisible: Boolean,
+    onDismiss: () -> Unit,
+    currentMode: TtsPlaybackManager.TtsMode,
+    onModeChange: (TtsPlaybackManager.TtsMode) -> Unit,
+    currentSpeakerId: String,
+    onSpeakerChange: (String) -> Unit,
+    isTtsActive: Boolean
+) {
+    if (isVisible) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+
+        // Local player for this sheet
+        val samplePlayer = remember(context, scope) { SpeakerSamplePlayer(context, scope) }
+
+        DisposableEffect(Unit) {
+            onDispose { samplePlayer.release() }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentWindowInsets = { WindowInsets.navigationBars }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp)
+            ) {
+                Text(
+                    text = "Text-to-Speech Settings",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                if (isTtsActive) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "Please stop playback to change settings.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Synthesis Mode",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // Mode Selector
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(25.dp))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    TtsPlaybackManager.TtsMode.entries.forEach { mode ->
+                        val isSelected = currentMode == mode
+                        val label = if (mode == TtsPlaybackManager.TtsMode.BASE) "On-Device" else "Cloud (HQ)"
+                        val icon = if (mode == TtsPlaybackManager.TtsMode.BASE) Icons.Default.Smartphone else Icons.Default.Cloud
+
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable(enabled = !isTtsActive) { onModeChange(mode) },
+                            shape = RoundedCornerShape(25.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                if (currentMode == TtsPlaybackManager.TtsMode.CLOUD) {
+                    Text(
+                        text = "Voice Selection",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 300.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                    ) {
+                        items(GOOGLE_TTS_SPEAKERS) { (name, id) ->
+                            val isSelected = currentSpeakerId == id
+                            val isPlaying = samplePlayer.playingSpeakerId == id
+                            val isLoading = samplePlayer.loadingSpeakerId == id
+
+                            ListItem(
+                                headlineContent = { Text(name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                leadingContent = {
+                                    if (isSelected) {
+                                        Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                    } else {
+                                        Icon(Icons.Default.GraphicEq, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                                    }
+                                },
+                                trailingContent = {
+                                    if (!isTtsActive) {
+                                        IconButton(onClick = { samplePlayer.playOrStop(id) }) {
+                                            if (isLoading) {
+                                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                            } else {
+                                                Icon(
+                                                    imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                                    contentDescription = "Play Sample",
+                                                    tint = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                colors = ListItemDefaults.colors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent
+                                ),
+                                modifier = Modifier.clickable(enabled = !isTtsActive) {
+                                    onSpeakerChange(id)
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Using system default engine settings.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }

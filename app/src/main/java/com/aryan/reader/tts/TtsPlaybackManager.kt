@@ -80,7 +80,6 @@ class TtsPlaybackManager(
     private val prefetchingJobs = mutableMapOf<Int, Job>()
     private var wordTrackingJob: Job? = null
     private var preparationJob: Job? = null
-    private var isChangingConfig = false
 
     enum class TtsMode {
         CLOUD, BASE
@@ -98,7 +97,6 @@ class TtsPlaybackManager(
         val sessionEndedByStop: Boolean = false,
         val currentWordSourceCfi: String? = null,
         val currentWordStartOffset: Int = -1,
-        val isChangingConfig: Boolean = false,
         val sessionFinished: Boolean = false,
         val playbackSource: String? = null
     )
@@ -211,29 +209,8 @@ class TtsPlaybackManager(
 
     private fun handleChangeTtsMode(newMode: TtsMode) {
         if (currentTtsMode == newMode) return
-        preparationJob?.cancel()
-        isChangingConfig = true
-        val wasPlaying = player.isPlaying
-        val currentChunkIndex = player.currentMediaItem?.mediaId?.toIntOrNull()
-        val currentPosition = player.currentPosition
         currentTtsMode = newMode
-        if (textChunks.isEmpty()) {
-            _ttsState.value = _ttsState.value.copy(isPlaying = false)
-            isChangingConfig = false
-            return
-        }
-        _ttsState.value = _ttsState.value.copy(isLoading = true, isPlaying = false, isChangingConfig = true)
-        player.stop()
-        player.clearMediaItems()
-        prefetchingJobs.values.forEach { it.cancel() }
-        prefetchingJobs.clear()
-        scope.launch {
-            clearAudioFiles()
-        }
-        preparationJob = scope.launch {
-            val startIndex = currentChunkIndex ?: 0
-            prepareAndPlayFirstChunk(startAtIndex = startIndex, playWhenReady = wasPlaying, startAtPosition = currentPosition)
-        }
+        Timber.d("TTS Mode changed to $newMode (pending next start)")
     }
 
     private fun handleStartTts(
@@ -245,10 +222,6 @@ class TtsPlaybackManager(
         ttsMode: TtsMode,
         playbackSource: String?
     ) {
-        if (isChangingConfig) {
-            Timber.w("Ignoring START command because a config change is already in progress.")
-            return
-        }
         if (chunks.isEmpty()) {
             _ttsState.value = _ttsState.value.copy(errorMessage = "No text to read.")
             return
@@ -269,36 +242,15 @@ class TtsPlaybackManager(
 
     private fun handleChangeSpeaker(newSpeakerId: String) {
         if (currentSpeakerId == newSpeakerId) return
-        preparationJob?.cancel()
-        isChangingConfig = true
-        val wasPlaying = player.isPlaying
-        val currentChunkIndex = player.currentMediaItem?.mediaId?.toIntOrNull()
-        val currentPosition = player.currentPosition
         currentSpeakerId = newSpeakerId
-        if (textChunks.isEmpty()) {
-            _ttsState.value = _ttsState.value.copy(speakerId = newSpeakerId)
-            isChangingConfig = false
-            return
-        }
-        _ttsState.value = _ttsState.value.copy(speakerId = newSpeakerId, isLoading = true, isPlaying = false, isChangingConfig = true)
-        player.stop()
-        player.clearMediaItems()
-        prefetchingJobs.values.forEach { it.cancel() }
-        prefetchingJobs.clear()
-        scope.launch {
-            clearAudioFiles()
-        }
-        preparationJob = scope.launch {
-            val startIndex = currentChunkIndex ?: 0
-            prepareAndPlayFirstChunk(startAtIndex = startIndex, playWhenReady = wasPlaying, startAtPosition = currentPosition)
-        }
+        _ttsState.value = _ttsState.value.copy(speakerId = newSpeakerId)
+        Timber.d("Speaker changed to $newSpeakerId (pending next start)")
     }
 
     private suspend fun prepareAndPlayFirstChunk(startAtIndex: Int = 0, playWhenReady: Boolean = true, startAtPosition: Long = 0L) {
         val firstChunk = textChunks.getOrNull(startAtIndex)
         if (firstChunk == null) {
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Error starting playback.", isChangingConfig = false)
-            withContext(Dispatchers.Main) { isChangingConfig = false }
+            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Error starting playback.")
             return
         }
 
@@ -323,20 +275,17 @@ class TtsPlaybackManager(
                     player.seekTo(startAtPosition)
                 }
                 player.playWhenReady = playWhenReady
-                isChangingConfig = false
                 _ttsState.value = _ttsState.value.copy(
                     isLoading = false,
                     isPlaying = playWhenReady,
                     currentText = serverText,
                     sourceCfi = updatedChunk.sourceCfi,
-                    startOffsetInSource = updatedChunk.startOffsetInSource,
-                    isChangingConfig = false
+                    startOffsetInSource = updatedChunk.startOffsetInSource
                 )
             }
             prefetchNextChunkAudio(startAtIndex)
         } else {
-            withContext(Dispatchers.Main) { isChangingConfig = false }
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Failed to load audio.", isChangingConfig = false)
+            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Failed to load audio.")
         }
     }
 
@@ -456,7 +405,6 @@ class TtsPlaybackManager(
                 if (isLastChunkInSession || textChunks.isEmpty()) {
                     nextState = nextState.copy(sessionFinished = true)
                 } else {
-                    // Check if prefetch is active for the next chunk
                     val nextIdx = currentChunkIndex + 1
                     val isPrefetching = prefetchingJobs.containsKey(nextIdx)
 
@@ -472,9 +420,6 @@ class TtsPlaybackManager(
         _ttsState.value = nextState
 
         if (!isPlaying && player.playbackState == Player.STATE_IDLE) {
-            if (isChangingConfig) {
-                return
-            }
             if (!nextState.sessionEndedByStop) {
                 handleStopTts(userInitiated = true)
             }
@@ -620,7 +565,6 @@ class TtsPlaybackManager(
             putBoolean("sessionEndedByStop", state.sessionEndedByStop)
             putString("currentWordSourceCfi", state.currentWordSourceCfi)
             putInt("currentWordStartOffset", state.currentWordStartOffset)
-            putBoolean("isChangingConfig", state.isChangingConfig)
             putBoolean("sessionFinished", state.sessionFinished)
             putString("playbackSource", state.playbackSource)
         }

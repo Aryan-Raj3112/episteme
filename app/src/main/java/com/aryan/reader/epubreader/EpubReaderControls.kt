@@ -145,6 +145,7 @@ fun EpubReaderTopBar(
     onToggleVolumeScroll: (Boolean) -> Unit,
     onTogglePageTurnAnimation: (Boolean) -> Unit,
     onStartAutoScroll: () -> Unit,
+    onOpenTtsSettings: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier
 ) {
@@ -268,6 +269,20 @@ fun EpubReaderTopBar(
                                     onStartAutoScroll()
                                 }
                             )
+
+                            if (BuildConfig.DEBUG) {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("TTS Settings (Debug)") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onOpenTtsSettings()
+                                    },
+                                    leadingIcon = {
+                                        Icon(painter = painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp))
+                                    }
+                                )
+                            }
                         }
                     }
                 }

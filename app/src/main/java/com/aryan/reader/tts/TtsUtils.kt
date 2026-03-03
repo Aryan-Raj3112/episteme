@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
+import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,7 +35,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val googleCloudWorkerTtsUrl = ""
+const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
 const val TTS_SAMPLE_TEXT = "The greater danger for most of us lies not in setting our aim too high and falling short; but in setting our aim too low, and achieving our mark."
 

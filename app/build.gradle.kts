@@ -47,6 +47,7 @@ android {
             buildConfigField("String", "VERIFIER_WORKER_URL", "\"\"")
             buildConfigField("String", "FEEDBACK_WORKER_URL", "\"\"")
             buildConfigField("boolean", "IS_PRO", "false")
+            buildConfigField("String", "TTS_WORKER_URL", "\"\"")
         }
     }
 
