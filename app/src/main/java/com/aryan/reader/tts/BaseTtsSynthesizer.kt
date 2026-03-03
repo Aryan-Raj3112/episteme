@@ -23,6 +23,7 @@ import android.content.Context
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.aryan.reader.loadNativeVoice
 import timber.log.Timber
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -142,6 +143,29 @@ class BaseTtsSynthesizer(private val context: Context) {
         }
     }
 
+    private fun applyPreferredVoice() {
+        if (tts == null) return
+
+        try {
+            val preferredVoiceName = loadNativeVoice(context) ?: return
+
+            if (tts?.voice?.name == preferredVoiceName) return
+
+            val availableVoices = tts?.voices
+            if (availableVoices != null) {
+                val targetVoice = availableVoices.find { it.name == preferredVoiceName }
+                if (targetVoice != null) {
+                    Timber.d("BaseTts: Setting preferred voice to ${targetVoice.name} (${targetVoice.locale})")
+                    tts?.voice = targetVoice
+                } else {
+                    Timber.w("BaseTts: Preferred voice '$preferredVoiceName' not found in current engine.")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "BaseTts: Failed to apply preferred voice")
+        }
+    }
+
     suspend fun synthesizeToFile(text: String): Pair<File?, String?> {
         if (text.isBlank()) {
             return Pair(null, text)
@@ -169,6 +193,8 @@ class BaseTtsSynthesizer(private val context: Context) {
                             continue
                         }
                     }
+
+                    applyPreferredVoice()
 
                     Timber.d("BaseTts: Requesting synthesis (Attempt $attempt). ID: $utteranceId")
 

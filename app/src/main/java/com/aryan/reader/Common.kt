@@ -20,14 +20,21 @@
 package com.aryan.reader
 
 import android.content.Context
-import timber.log.Timber
+import androidx.annotation.OptIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
+import java.util.Locale
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,41 +42,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
-import com.aryan.reader.tts.GOOGLE_TTS_SPEAKERS
-import com.aryan.reader.tts.SpeakerSamplePlayer
-import com.aryan.reader.tts.TtsPlaybackManager
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -77,72 +56,80 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.media3.common.util.UnstableApi
+import com.aryan.reader.paginatedreader.TtsChunk
+import com.aryan.reader.tts.GOOGLE_TTS_SPEAKERS
+import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.loadTtsMode
+import com.aryan.reader.tts.rememberTtsController
+import com.aryan.reader.tts.splitTextIntoChunks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import androidx.annotation.OptIn
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.media3.common.util.UnstableApi
-import com.aryan.reader.paginatedreader.TtsChunk
-import com.aryan.reader.tts.rememberTtsController
-import com.aryan.reader.tts.splitTextIntoChunks
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
 import org.commonmark.node.Emphasis
@@ -154,9 +141,12 @@ import org.commonmark.node.SoftLineBreak
 import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.Text
 import org.commonmark.parser.Parser
+import org.json.JSONObject
+import timber.log.Timber
 import java.io.File
-import androidx.compose.runtime.DisposableEffect
-import com.aryan.reader.tts.loadTtsMode
+import java.net.HttpURLConnection
+import java.net.URL
+import androidx.core.content.edit
 
 const val aiServerBasePath = BuildConfig.AI_WORKER_URL
 const val summarizeEndpoint = "/summarize"
@@ -165,6 +155,8 @@ const val defineEndpoint = "/define"
 const val aiDefinitionUrl = aiServerBasePath + defineEndpoint
 const val recapEndpoint = "/recap"
 const val recapUrl = aiServerBasePath + recapEndpoint
+
+const val PREF_NATIVE_TTS_VOICE = "native_tts_voice_name"
 
 data class SearchResult(
     val locationInSource: Int,
@@ -1196,6 +1188,235 @@ fun TtsSettingsSheet(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun saveNativeVoice(context: Context, voiceName: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_NATIVE_TTS_VOICE, voiceName) }
+}
+
+fun loadNativeVoice(context: Context): String? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(PREF_NATIVE_TTS_VOICE, null)
+}
+
+@Composable
+fun DeviceVoiceSettingsSheet(
+    isVisible: Boolean,
+    onDismiss: () -> Unit
+) {
+    if (isVisible) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val context = LocalContext.current
+        var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
+        var isTtsReady by remember { mutableStateOf(false) }
+        var voices by remember { mutableStateOf<List<Voice>>(emptyList()) }
+
+        val groupedVoices = remember(voices) {
+            voices.groupBy { it.locale.displayLanguage }.toSortedMap()
+        }
+
+        DisposableEffect(Unit) {
+            val tts = TextToSpeech(context) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    isTtsReady = true
+                }
+            }
+            ttsEngine = tts
+            onDispose {
+                tts.shutdown()
+            }
+        }
+
+        LaunchedEffect(isTtsReady, ttsEngine) {
+            if (isTtsReady) {
+                ttsEngine?.let { tts ->
+                    try {
+                        val engineVoices = tts.voices
+                        if (engineVoices != null) {
+                            voices = engineVoices.toList().sortedBy { it.locale.toLanguageTag() }
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to load voices from UI TTS instance")
+                    }
+                }
+            }
+        }
+
+        // State for selection
+        var selectedVoiceName by remember { mutableStateOf(loadNativeVoice(context)) }
+        var selectedLanguage by remember { mutableStateOf<String?>(null) }
+
+        // Determine initial language from saved voice
+        LaunchedEffect(voices, selectedVoiceName) {
+            if (selectedLanguage == null && selectedVoiceName != null && voices.isNotEmpty()) {
+                val savedVoice = voices.find { it.name == selectedVoiceName }
+                if (savedVoice != null) {
+                    selectedLanguage = savedVoice.locale.displayLanguage
+                }
+            }
+            // Default to English if nothing selected
+            if (selectedLanguage == null && voices.isNotEmpty()) {
+                selectedLanguage = "English"
+            }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentWindowInsets = { WindowInsets.navigationBars }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp)
+                    .heightIn(max = 600.dp)
+            ) {
+                Text(
+                    text = "On-Device Voice Settings",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    text = "Select a voice provided by your system's TTS engine (e.g., Google, Samsung).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 24.dp)
+                )
+
+                if (!isTtsReady) {
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (voices.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                        Text("No voices available on this device.", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    // Language Selector
+                    var expandedLanguageMenu by remember { mutableStateOf(false) }
+
+                    Text(
+                        text = "Language",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .clickable { expandedLanguageMenu = true },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = selectedLanguage ?: "Select Language",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = expandedLanguageMenu,
+                            onDismissRequest = { expandedLanguageMenu = false },
+                            modifier = Modifier.heightIn(max = 300.dp)
+                        ) {
+                            groupedVoices.keys.forEach { language ->
+                                DropdownMenuItem(
+                                    text = { Text(language) },
+                                    onClick = {
+                                        selectedLanguage = language
+                                        expandedLanguageMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Voice List for Selected Language
+                    val voicesForLanguage = remember(selectedLanguage, voices) {
+                        if (selectedLanguage != null) groupedVoices[selectedLanguage] ?: emptyList() else emptyList()
+                    }
+
+                    if (voicesForLanguage.isNotEmpty()) {
+                        Text(
+                            text = "Voice Selection",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            items(voicesForLanguage.size) { index ->
+                                val voice = voicesForLanguage[index]
+                                val isSelected = voice.name == selectedVoiceName
+
+                                // Create a friendly name if features not available
+                                val displayName = "Voice ${index + 1}"
+                                val localeVariant = voice.locale.variant
+                                val subtitle = if (localeVariant.isNotEmpty()) "Variant: $localeVariant" else null
+
+                                ListItem(
+                                    headlineContent = {
+                                        Text(displayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                                    },
+                                    supportingContent = subtitle?.let { { Text(it) } },
+                                    leadingContent = {
+                                        if (isSelected) {
+                                            Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                        } else {
+                                            Icon(Icons.Default.GraphicEq, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                                        }
+                                    },
+                                    trailingContent = {
+                                        IconButton(onClick = {
+                                            val params = android.os.Bundle()
+                                            ttsEngine?.voice = voice
+                                            ttsEngine?.speak("This is a sample of the selected voice.", TextToSpeech.QUEUE_FLUSH, params, "SAMPLE_ID")
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Play Sample",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .clickable {
+                                            selectedVoiceName = voice.name
+                                            saveNativeVoice(context, voice.name)
+                                        }
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent
+                                        )
+                                )
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            }
+                        }
+                    } else if (selectedLanguage != null) {
+                        Text("No voices found for this language.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

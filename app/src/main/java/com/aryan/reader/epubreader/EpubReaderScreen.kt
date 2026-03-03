@@ -127,6 +127,7 @@ import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.CustomTopBanner
+import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -718,6 +719,7 @@ fun EpubReaderHost(
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     val isDarkTheme = isSystemInDarkTheme()
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
     TtsSessionObserver(
         ttsState = ttsState,
@@ -2753,7 +2755,8 @@ fun EpubReaderHost(
                     },
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
-                    onOpenTtsSettings = { showTtsSettingsSheet = true }
+                    onOpenTtsSettings = { showTtsSettingsSheet = true },
+                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true }
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(
@@ -3233,6 +3236,13 @@ fun EpubReaderHost(
                     ttsController.changeSpeaker(newSpeaker)
                 },
                 isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+            )
+        }
+
+        if (showDeviceVoiceSettingsSheet) {
+            DeviceVoiceSettingsSheet(
+                isVisible = true,
+                onDismiss = { showDeviceVoiceSettingsSheet = false }
             )
         }
 

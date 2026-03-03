@@ -93,6 +93,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -222,6 +223,7 @@ import androidx.paging.compose.itemKey
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
@@ -649,6 +651,8 @@ fun PdfViewerScreen(
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+
+    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
     fun triggerAutoScrollTempPause(durationMs: Long) {
         if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
@@ -4130,9 +4134,24 @@ fun PdfViewerScreen(
                                                 showBars = true
                                             }
                                         )
+
+                                        HorizontalDivider()
+                                        DropdownMenuItem(
+                                            text = { Text("TTS Voice Settings") },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                showDeviceVoiceSettingsSheet = true
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.GraphicEq,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                         
                                         if (BuildConfig.DEBUG) {
-                                            HorizontalDivider()
                                             DropdownMenuItem(
                                                 text = { Text("TTS Settings (Debug)") },
                                                 onClick = {
@@ -5433,6 +5452,13 @@ fun PdfViewerScreen(
                             ttsController.changeSpeaker(newSpeaker)
                         },
                         isTtsActive = isTtsSessionActive
+                    )
+                }
+
+                if (showDeviceVoiceSettingsSheet) {
+                    DeviceVoiceSettingsSheet(
+                        isVisible = true,
+                        onDismiss = { showDeviceVoiceSettingsSheet = false }
                     )
                 }
 
