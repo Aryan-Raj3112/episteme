@@ -45,7 +45,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
-const val TAG_TTS_DIAGNOSIS = "TTS_DIAGNOSIS"
 private const val TTS_MODE_KEY = "tts_mode"
 
 data class TtsHighlightInfo(
@@ -59,13 +58,6 @@ data class TtsHighlightInfo(
 fun saveTtsMode(context: Context, mode: TtsMode) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putString(TTS_MODE_KEY, mode.name) }
-}
-
-@Suppress("unused")
-@OptIn(UnstableApi::class)
-fun loadTtsMode(): TtsMode {
-    // For this release, Cloud TTS is disabled. Force BASE mode.
-    return TtsMode.BASE
 }
 
 /**
@@ -121,20 +113,20 @@ fun TtsSessionObserver(
     onNavigateToChapter: (Int) -> Unit,
     onToggleTtsStartOnLoad: (Boolean) -> Unit,
     userStoppedTts: Boolean,
-    scope: CoroutineScope
+    scope: CoroutineScope,
+    currentTtsMode: TtsMode
 ) {
     val prevTtsState = remember { mutableStateOf(ttsState) }
 
     LaunchedEffect(ttsState) {
         val wasPlaying = prevTtsState.value.isPlaying
         val isPlaying = ttsState.isPlaying
-        val isChangingConfig = ttsState.isChangingConfig
         val sessionFinished = ttsState.sessionFinished
         val wasSessionFinished = prevTtsState.value.sessionFinished
         val sessionEndedByStop = ttsState.sessionEndedByStop
         val isReaderSource = ttsState.playbackSource == "READER"
 
-        if (!isChangingConfig && isReaderSource) {
+        if (isReaderSource) {
             if (sessionFinished && !wasSessionFinished) {
                 Timber.d("TTS finished naturally. Checking for next content.")
 
@@ -161,7 +153,8 @@ fun TtsSessionObserver(
                         epubBookTitle = epubBookTitle,
                         coverImagePath = coverImagePath,
                         onUpdateTtsChapter = onTtsChapterIndexChange,
-                        scope = scope
+                        scope = scope,
+                        ttsMode = currentTtsMode
                     )
                 }
             } else if (wasPlaying && !isPlaying && !sessionFinished) {
@@ -271,14 +264,14 @@ private fun handlePaginatedAutoAdvance(
     epubBookTitle: String,
     coverImagePath: String?,
     onUpdateTtsChapter: (Int?) -> Unit,
-    scope: CoroutineScope
+    scope: CoroutineScope,
+    ttsMode: TtsMode
 ) {
-    val lastPlayedChapter = currentTtsChapterIndex
-    if (lastPlayedChapter != null && lastPlayedChapter < chapters.size - 1) {
+    if (currentTtsChapterIndex != null && currentTtsChapterIndex < chapters.size - 1) {
         Timber.d("Paginated: Searching for next TTS content...")
 
         scope.launch {
-            var chapterToTry = lastPlayedChapter + 1
+            var chapterToTry = currentTtsChapterIndex + 1
             var foundContent = false
             val bookPaginator = paginator as? BookPaginator
 
@@ -288,7 +281,6 @@ private fun handlePaginatedAutoAdvance(
             }
 
             while (chapterToTry < chapters.size) {
-                // Visually scroll to start of chapter
                 val targetPage = bookPaginator.chapterStartPageIndices[chapterToTry]
                 if (targetPage != null && pagerState.currentPage != targetPage) {
                     pagerState.animateScrollToPage(targetPage)
@@ -309,13 +301,12 @@ private fun handlePaginatedAutoAdvance(
                         bookTitle = epubBookTitle,
                         chapterTitle = chapterTitle,
                         coverImageUri = coverUriString,
-                        ttsMode = "BASE" // Defaulting to Base for safety
+                        ttsMode = ttsMode
                     )
                     foundContent = true
                     break
                 } else {
                     Timber.d("Paginated: Chapter $chapterToTry is empty. Skipping.")
-                    // Visually flip through empty pages if needed
                     val pageCount = bookPaginator.chapterPageCounts[chapterToTry] ?: 0
                     if (pageCount > 1) {
                         for (i in 1 until pageCount) {

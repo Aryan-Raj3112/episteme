@@ -36,6 +36,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.aryan.reader.BuildConfig
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -61,6 +62,28 @@ private fun saveSpeaker(context: Context, speakerId: String) {
 private fun loadSpeaker(context: Context): String {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getString(TTS_SPEAKER_KEY, DEFAULT_SPEAKER_ID) ?: DEFAULT_SPEAKER_ID
+}
+
+@OptIn(UnstableApi::class)
+@Suppress("KotlinConstantConditions")
+fun loadTtsMode(context: Context): TtsPlaybackManager.TtsMode {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    val savedModeName = prefs.getString("tts_mode", TtsPlaybackManager.TtsMode.BASE.name)
+        ?: TtsPlaybackManager.TtsMode.BASE.name
+
+    val isCloudAllowed = BuildConfig.DEBUG &&
+            BuildConfig.IS_PRO &&
+            BuildConfig.TTS_WORKER_URL.isNotBlank()
+
+    return if (isCloudAllowed) {
+        try {
+            TtsPlaybackManager.TtsMode.valueOf(savedModeName)
+        } catch (_: Exception) {
+            TtsPlaybackManager.TtsMode.BASE
+        }
+    } else {
+        TtsPlaybackManager.TtsMode.BASE
+    }
 }
 
 @UnstableApi
@@ -135,7 +158,7 @@ class TtsController(context: Context) : Player.Listener {
         bookTitle: String,
         chapterTitle: String?,
         coverImageUri: String?,
-        ttsMode: String,
+        ttsMode: TtsPlaybackManager.TtsMode,
         playbackSource: String = "READER"
     ) {
         if (chunks.isEmpty()) {
@@ -143,7 +166,6 @@ class TtsController(context: Context) : Player.Listener {
             return
         }
         Timber.d("UI sending START command with mode: $ttsMode")
-        Timber.d("TtsController: Sending START command. Chunk count: ${chunks.size}. Mode: $ttsMode. First chunk len: ${chunks.first().text.length}")
 
         val textList = ArrayList(chunks.map { it.text })
         val cfiList = ArrayList(chunks.map { it.sourceCfi })
@@ -157,7 +179,7 @@ class TtsController(context: Context) : Player.Listener {
             putString(KEY_BOOK_TITLE, bookTitle)
             putString(KEY_CHAPTER_TITLE, chapterTitle)
             putString(KEY_COVER_IMAGE_URI, coverImageUri)
-            putString(KEY_TTS_MODE, ttsMode)
+            putString(KEY_TTS_MODE, ttsMode.name)
             putString(KEY_PLAYBACK_SOURCE, playbackSource)
         }
         mediaController?.sendCustomCommand(START_TTS_COMMAND, args)
@@ -221,7 +243,6 @@ class TtsController(context: Context) : Player.Listener {
             val serviceSpeaker = customState.getString("speakerId", _ttsState.value.speakerId)
             val sessionEndedByStop = customState.getBoolean("sessionEndedByStop", false)
             val isLoading = customState.getBoolean("isLoading", false)
-            val isChangingConfig = customState.getBoolean("isChangingConfig", false)
             val sessionFinished = customState.getBoolean("sessionFinished", false)
             val playbackSource = customState.getString("playbackSource")
 
@@ -256,7 +277,6 @@ class TtsController(context: Context) : Player.Listener {
                 sessionEndedByStop = sessionEndedByStop,
                 currentWordSourceCfi = if (isPlaybackActive) currentWordSourceCfi else null,
                 currentWordStartOffset = if (isPlaybackActive) currentWordStartOffset else -1,
-                isChangingConfig = isChangingConfig,
                 sessionFinished = sessionFinished,
                 playbackSource = playbackSource
             )

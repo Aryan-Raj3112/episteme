@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
@@ -145,6 +146,8 @@ fun EpubReaderTopBar(
     onToggleVolumeScroll: (Boolean) -> Unit,
     onTogglePageTurnAnimation: (Boolean) -> Unit,
     onStartAutoScroll: () -> Unit,
+    onOpenTtsSettings: () -> Unit,
+    onOpenDeviceVoiceSettings: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier
 ) {
@@ -268,6 +271,33 @@ fun EpubReaderTopBar(
                                     onStartAutoScroll()
                                 }
                             )
+
+                            HorizontalDivider()
+
+                            // *** ADDITION START ***
+                            DropdownMenuItem(
+                                text = { Text("TTS Voice Settings") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onOpenDeviceVoiceSettings()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp))
+                                }
+                            )
+
+                            if (BuildConfig.DEBUG) {
+                                DropdownMenuItem(
+                                    text = { Text("TTS Settings (Debug)") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onOpenTtsSettings()
+                                    },
+                                    leadingIcon = {
+                                        Icon(painter = painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp))
+                                    }
+                                )
+                            }
                         }
                     }
                 }

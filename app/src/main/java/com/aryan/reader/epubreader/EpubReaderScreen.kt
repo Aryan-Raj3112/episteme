@@ -127,10 +127,12 @@ import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.CustomTopBanner
+import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
+import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
@@ -150,7 +152,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.tts.SpeakerSamplePlayer
-import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import kotlinx.coroutines.Job
@@ -177,6 +179,7 @@ private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
 private const val AUTO_SCROLL_MIN_SPEED_KEY = "auto_scroll_min_speed"
 private const val AUTO_SCROLL_MAX_SPEED_KEY = "auto_scroll_max_speed"
 private const val PAGE_TURN_ANIMATION_KEY = "page_turn_animation_enabled"
+private const val TTS_MODE_KEY = "tts_mode"
 
 private fun savePageTurnAnimationSetting(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -227,6 +230,11 @@ private fun saveAutoScrollUseSlider(context: Context, useSlider: Boolean) {
 private fun loadAutoScrollUseSlider(context: Context): Boolean {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getBoolean(AUTO_SCROLL_USE_SLIDER_KEY, false)
+}
+
+private fun saveTtsMode(context: Context, modeName: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(TTS_MODE_KEY, modeName) }
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -324,6 +332,8 @@ fun EpubReaderHost(
     var isPageTurnAnimationEnabled by remember {
         mutableStateOf(loadPageTurnAnimationSetting(context))
     }
+
+    var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
 
     val locatorConverter = remember(context) {
         LocatorConverter(
@@ -689,7 +699,7 @@ fun EpubReaderHost(
                                 bookTitle = epubBook.title,
                                 chapterTitle = chapterTitle,
                                 coverImageUri = coverUriString,
-                                ttsMode = TtsMode.BASE.name,
+                                ttsMode = currentTtsMode,
                                 playbackSource = "READER"
                             )
                         }
@@ -708,6 +718,8 @@ fun EpubReaderHost(
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     val isDarkTheme = isSystemInDarkTheme()
+    var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
     TtsSessionObserver(
         ttsState = ttsState,
@@ -731,7 +743,8 @@ fun EpubReaderHost(
         },
         onToggleTtsStartOnLoad = { shouldStart -> ttsShouldStartOnChapterLoad = shouldStart },
         userStoppedTts = userStoppedTts,
-        scope = scope
+        scope = scope,
+        currentTtsMode = currentTtsMode
     )
 
     TtsHighlightHandler(
@@ -1917,7 +1930,7 @@ fun EpubReaderHost(
                                                             bookTitle = epubBook.title,
                                                             chapterTitle = chapterTitle,
                                                             coverImageUri = coverUriString,
-                                                            ttsMode = TtsMode.BASE.name,
+                                                            ttsMode = currentTtsMode,
                                                             playbackSource = "READER"
                                                         )
                                                     } else {
@@ -2741,7 +2754,9 @@ fun EpubReaderHost(
                         showBars = true
                     },
                     searchFocusRequester = searchFocusRequester,
-                    modifier = Modifier.align(Alignment.TopCenter)
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    onOpenTtsSettings = { showTtsSettingsSheet = true },
+                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true }
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(
@@ -3204,6 +3219,31 @@ fun EpubReaderHost(
         if (isPageSliderVisible && isFastScrubbing) {
             val total = if (currentRenderMode == RenderMode.VERTICAL_SCROLL) totalPagesInCurrentChapter else paginatedPagerState.pageCount
             PageScrubbingAnimation(currentPage = sliderCurrentPage.roundToInt(), totalPages = total)
+        }
+
+        if (showTtsSettingsSheet) {
+            TtsSettingsSheet(
+                isVisible = true,
+                onDismiss = { showTtsSettingsSheet = false },
+                currentMode = currentTtsMode,
+                onModeChange = { newMode ->
+                    currentTtsMode = newMode
+                    saveTtsMode(context, newMode.name)
+                    ttsController.changeTtsMode(newMode.name)
+                },
+                currentSpeakerId = ttsState.speakerId,
+                onSpeakerChange = { newSpeaker ->
+                    ttsController.changeSpeaker(newSpeaker)
+                },
+                isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+            )
+        }
+
+        if (showDeviceVoiceSettingsSheet) {
+            DeviceVoiceSettingsSheet(
+                isVisible = true,
+                onDismiss = { showDeviceVoiceSettingsSheet = false }
+            )
         }
 
         if (showFontSelectionSheet) {

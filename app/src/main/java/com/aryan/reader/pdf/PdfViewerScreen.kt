@@ -26,12 +26,6 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.geometry.lerp
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
@@ -99,6 +93,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -134,10 +129,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -174,13 +167,18 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -194,6 +192,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -224,13 +223,14 @@ import androidx.paging.compose.itemKey
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
-import com.aryan.reader.SyncUpdateInfo
+import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -246,6 +246,8 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import io.legere.pdfiumandroid.PdfDocument
@@ -263,7 +265,6 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -473,11 +474,6 @@ private fun loadPdfDarkMode(context: Context): Boolean {
     return prefs.getBoolean(PDF_DARK_MODE_KEY, false)
 }
 
-@Suppress("unused")
-private enum class TtsMode {
-    CLOUD, BASE
-}
-
 private data class TtsPageData(
     val pageIndex: Int, val processedText: ProcessedText, val fromOcr: Boolean
 )
@@ -501,16 +497,11 @@ private fun flattenToc(bookmarks: List<PdfDocument.Bookmark>, level: Int = 0): L
     return entries
 }
 
+@OptIn(UnstableApi::class)
 @Suppress("unused")
-private fun saveTtsMode(context: Context, mode: TtsMode) {
+private fun saveTtsMode(context: Context, mode: TtsPlaybackManager.TtsMode) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putString(TTS_MODE_KEY, mode.name) }
-}
-
-@Suppress("unused")
-private fun loadTtsMode(): TtsMode {
-    // For this release, Cloud TTS is disabled. Force BASE mode.
-    return TtsMode.BASE
 }
 
 private suspend fun renderPageToBitmap(doc: PdfDocumentKt, pageIndex: Int): Bitmap? {
@@ -658,6 +649,10 @@ fun PdfViewerScreen(
 
     var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
+    var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
+    var showTtsSettingsSheet by remember { mutableStateOf(false) }
+
+    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
     fun triggerAutoScrollTempPause(durationMs: Long) {
         if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
@@ -1981,7 +1976,7 @@ fun PdfViewerScreen(
                     bookTitle = bookTitle,
                     chapterTitle = pageTitle,
                     coverImageUri = null,
-                    ttsMode = TtsMode.BASE.name,
+                    ttsMode = currentTtsMode,
                     playbackSource = "READER"
                 )
 
@@ -2687,6 +2682,8 @@ fun PdfViewerScreen(
                 searchState.isSearchActive = false
                 searchState.onQueryChange("")
             }
+
+            showTtsSettingsSheet -> showTtsSettingsSheet = false
 
             else -> {
                 saveStateAndExit()
@@ -4137,6 +4134,36 @@ fun PdfViewerScreen(
                                                 showBars = true
                                             }
                                         )
+
+                                        HorizontalDivider()
+                                        DropdownMenuItem(
+                                            text = { Text("TTS Voice Settings") },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                showDeviceVoiceSettingsSheet = true
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.GraphicEq,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
+                                        
+                                        if (BuildConfig.DEBUG) {
+                                            DropdownMenuItem(
+                                                text = { Text("TTS Settings (Debug)") },
+                                                onClick = {
+                                                    showMoreMenu = false
+                                                    showTtsSettingsSheet = true
+                                                },
+                                                leadingIcon = {
+                                                    Icon(painter = painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
+                                            )
+                                        }
+
                                         HorizontalDivider()
                                         DropdownMenuItem(text = {
                                             Text(
@@ -5408,6 +5435,31 @@ fun PdfViewerScreen(
                                 }
                             }
                         })
+                }
+
+                if (showTtsSettingsSheet) {
+                    TtsSettingsSheet(
+                        isVisible = true,
+                        onDismiss = { showTtsSettingsSheet = false },
+                        currentMode = currentTtsMode,
+                        onModeChange = { newMode ->
+                            currentTtsMode = newMode
+                            saveTtsMode(context, newMode)
+                            ttsController.changeTtsMode(newMode.name)
+                        },
+                        currentSpeakerId = ttsState.speakerId,
+                        onSpeakerChange = { newSpeaker ->
+                            ttsController.changeSpeaker(newSpeaker)
+                        },
+                        isTtsActive = isTtsSessionActive
+                    )
+                }
+
+                if (showDeviceVoiceSettingsSheet) {
+                    DeviceVoiceSettingsSheet(
+                        isVisible = true,
+                        onDismiss = { showDeviceVoiceSettingsSheet = false }
+                    )
                 }
 
                 if (clickedLinkUrl != null) {
