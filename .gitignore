@@ -18,6 +18,3 @@ local.properties
 google-services.json
 .kotlin/
 .idea/
-CLA.md
-CONTRIBUTING.md
-cla.yml
