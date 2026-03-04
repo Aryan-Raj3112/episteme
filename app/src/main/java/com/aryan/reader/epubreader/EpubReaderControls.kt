@@ -68,6 +68,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -102,6 +103,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -740,7 +742,6 @@ fun SpeedDropdown(
     }
 }
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AutoScrollControls(
@@ -759,15 +760,19 @@ fun AutoScrollControls(
     onLockToggle: () -> Unit,
     useSlider: Boolean,
     onInputModeToggle: () -> Unit,
+    isLocalMode: Boolean,
+    onLocalModeToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isTempPaused: Boolean = false,
 ) {
+    val backgroundAlpha = 0.6f
+
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 8.dp,
-        shadowElevation = 6.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = backgroundAlpha),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
         modifier = modifier
             .widthIn(max = 400.dp)
             .animateContentSize()
@@ -780,14 +785,12 @@ fun AutoScrollControls(
             label = "AutoScrollUnified"
         ) { collapsed ->
             if (collapsed) {
-                // COLLAPSED STATE: Ultra-Compact Pill
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Expand Button
                     IconButton(
                         onClick = { onCollapseChange(false) },
                         modifier = Modifier.size(36.dp)
@@ -799,7 +802,6 @@ fun AutoScrollControls(
                         )
                     }
 
-                    // Play/Pause Mini
                     Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                         FilledIconButton(
                             onClick = onPlayPauseToggle,
@@ -815,7 +817,7 @@ fun AutoScrollControls(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        if (isTempPaused) {
+                        if (isTempPaused && isPlaying) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(36.dp),
                                 color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
@@ -825,26 +827,76 @@ fun AutoScrollControls(
                     }
                 }
             } else {
-                // EXPANDED STATE: Card-like Layout
                 Column(
                     modifier = Modifier.padding(16.dp)
                 ) {
-                    // Top Row: Utility Actions (Right aligned)
+                    // Top Row: Label & Tools
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Label
-                        Text(
-                            text = "Auto Scroll",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Box {
+                            var showModeMenu by remember { mutableStateOf(false) }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { showModeMenu = true }
+                                    .padding(4.dp)
+                            ) {
+                                Text(
+                                    text = if (isLocalMode) "Local Speed" else "Global Speed",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Mode",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
 
-                        // Tools Row
+                            DropdownMenu(
+                                expanded = showModeMenu,
+                                onDismissRequest = { showModeMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("Global Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text("Applies to all files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        onLocalModeToggle(false)
+                                        showModeMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (!isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
+                                    }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("Local Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text("Saved for this file only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        onLocalModeToggle(true)
+                                        showModeMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
+                                    }
+                                )
+                            }
+                        }
+
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            // Lock
                             IconButton(
                                 onClick = onLockToggle,
                                 modifier = Modifier.size(32.dp)
@@ -856,7 +908,6 @@ fun AutoScrollControls(
                                     tint = if (isLocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            // Swap Input
                             IconButton(
                                 onClick = onInputModeToggle,
                                 modifier = Modifier.size(32.dp)
@@ -868,7 +919,6 @@ fun AutoScrollControls(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            // Collapse
                             IconButton(
                                 onClick = { onCollapseChange(true) },
                                 modifier = Modifier.size(32.dp)
@@ -880,7 +930,6 @@ fun AutoScrollControls(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            // Close
                             IconButton(
                                 onClick = onClose,
                                 modifier = Modifier.size(32.dp)
@@ -897,13 +946,13 @@ fun AutoScrollControls(
 
                     Spacer(Modifier.height(16.dp))
 
-                    // Bottom Row: Primary Controls
+                    // Bottom Row: Controls
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // 1. Play/Pause Button
+                        // Play/Pause
                         Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                             FilledIconButton(
                                 onClick = onPlayPauseToggle,
@@ -919,7 +968,7 @@ fun AutoScrollControls(
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
-                            if (isTempPaused) {
+                            if (isTempPaused && isPlaying) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(48.dp),
                                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
@@ -928,14 +977,13 @@ fun AutoScrollControls(
                             }
                         }
 
-                        // 2. Speed Controls (Weight to fill space)
+                        // Speed Controls
                         Box(
                             modifier = Modifier.weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 val speedOptions = listOf(0.1f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
-                                // Min/Max Dropdowns
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -958,7 +1006,6 @@ fun AutoScrollControls(
                                 val safeMax = maxSpeed.coerceAtLeast(minSpeed + 0.1f)
 
                                 if (useSlider) {
-                                    // Slider Mode: Text + Slider
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -978,20 +1025,42 @@ fun AutoScrollControls(
                                             steps = if (steps > 0) steps else 0,
                                             modifier = Modifier.weight(1f),
                                             thumb = {
-                                                Surface(
-                                                    modifier = Modifier.size(20.dp),
-                                                    shape = CircleShape,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    shadowElevation = 2.dp
-                                                ) {}
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                                )
+                                            },
+                                            track = { sliderState ->
+                                                val fraction = (sliderState.value - sliderState.valueRange.start) /
+                                                        (sliderState.valueRange.endInclusive - sliderState.valueRange.start)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(4.dp)
+                                                        .background(
+                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                                                            RoundedCornerShape(2.dp)
+                                                        ),
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth(fraction)
+                                                            .height(4.dp)
+                                                            .background(
+                                                                MaterialTheme.colorScheme.primary,
+                                                                RoundedCornerShape(2.dp)
+                                                            )
+                                                    )
+                                                }
                                             }
                                         )
                                     }
                                 } else {
-                                    // Stepper Mode: Segmented Pill
                                     Surface(
                                         shape = RoundedCornerShape(50),
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                         modifier = Modifier.height(48.dp).fillMaxWidth()
                                     ) {
                                         Row(
@@ -1005,13 +1074,11 @@ fun AutoScrollControls(
                                             ) {
                                                 Icon(Icons.Default.Remove, "Slower")
                                             }
-
                                             Text(
                                                 text = "%.1fx".format(speed),
                                                 style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
                                                 textAlign = TextAlign.Center
                                             )
-
                                             IconButton(
                                                 onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(safeMax)) },
                                                 modifier = Modifier.size(48.dp)
