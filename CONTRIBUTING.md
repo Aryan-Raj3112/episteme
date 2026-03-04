@@ -21,10 +21,10 @@ This allows the open-source version to thrive while keeping the project sustaina
 
 ## How to Submit a Pull Request
 
-1. Fork the repository and create your branch from `main`.
+1. Fork the repository.
 2. Make your changes and commit them with clear, descriptive messages.
 3. Open a Pull Request!
-4. **Sign the CLA:** When you open your first PR, the [CLA Assistant](https://cla-assistant.io/) bot will automatically comment with a link. Simply click the link, sign in with GitHub, and click "I agree." **This is a one-time process** — once signed, it covers all your future contributions to Episteme.
+4. **Sign the CLA:** When you open your first PR, the [CLA Assistant](https://cla-assistant.io/) bot will automatically comment with a link. Simply click the link, sign in with GitHub, and click "I agree." **This is a one-time process**, once signed, it covers all your future contributions to Episteme.
 
 ## Questions?
 

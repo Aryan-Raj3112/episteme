@@ -291,10 +291,21 @@ private const val PDF_AUTO_SCROLL_LOCKED_KEY = "pdf_auto_scroll_locked"
 private const val PDF_AUTO_SCROLL_USE_SLIDER_KEY = "pdf_auto_scroll_use_slider"
 private const val PDF_AUTO_SCROLL_MIN_SPEED_KEY = "pdf_auto_scroll_min_speed"
 private const val PDF_AUTO_SCROLL_MAX_SPEED_KEY = "pdf_auto_scroll_max_speed"
+private const val STYLUS_ONLY_MODE_KEY = "stylus_only_mode"
 
 private fun savePdfAutoScrollMinSpeed(context: Context, speed: Float) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putFloat(PDF_AUTO_SCROLL_MIN_SPEED_KEY, speed) }
+}
+
+private fun saveStylusOnlyMode(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(STYLUS_ONLY_MODE_KEY, isEnabled) }
+}
+
+private fun loadStylusOnlyMode(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(STYLUS_ONLY_MODE_KEY, false)
 }
 
 private fun loadPdfAutoScrollMinSpeed(context: Context): Float {
@@ -649,6 +660,7 @@ fun PdfViewerScreen(
 
     var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
+    var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
 
@@ -3298,6 +3310,7 @@ fun PdfViewerScreen(
                                                     }
                                                 },
                                                 richTextController = richTextController,
+                                                isStylusOnlyMode = isStylusOnlyMode,
                                                 isEditMode = isDrawingActive,
                                                 textBoxes = textBoxes.filter { it.pageIndex == pageIndex },
                                                 selectedTextBoxId = selectedTextBoxId,
@@ -3649,6 +3662,7 @@ fun PdfViewerScreen(
                                             },
                                             selectedTool = selectedTool,
                                             richTextController = richTextController,
+                                            isStylusOnlyMode = isStylusOnlyMode,
                                             isEditMode = isDrawingActive,
                                             textBoxes = textBoxes,
                                             selectedTextBoxId = selectedTextBoxId,
@@ -4894,6 +4908,11 @@ fun PdfViewerScreen(
                                     activePenColor = dockPenColor,
                                     activeHighlighterColor = dockHighlighterColor,
                                     lastPenTool = lastPenTool,
+                                    isStylusOnlyMode = isStylusOnlyMode,
+                                    onToggleStylusOnlyMode = {
+                                        isStylusOnlyMode = !isStylusOnlyMode
+                                        saveStylusOnlyMode(context, isStylusOnlyMode)
+                                    },
                                     onToolClick = { clickedTool ->
                                         if (clickedTool == InkType.ERASER) {
                                             annotationSettingsRepo.updateSelectedTool(

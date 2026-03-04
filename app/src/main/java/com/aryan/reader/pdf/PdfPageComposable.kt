@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -416,6 +417,7 @@ internal fun PdfPageComposable(
     draggingBoxId: String? = null,
     isScrollLocked: Boolean = false,
     isVisible: Boolean = true,
+    isStylusOnlyMode: Boolean = false
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
     val pdfDocumentItem = pdfDocument.item
@@ -2237,9 +2239,14 @@ internal fun PdfPageComposable(
                 isZoomEnabled,
                 isVerticalScroll,
                 isEditMode,
-                selectedTool
+                selectedTool,
+                isStylusOnlyMode
             ) {
-                if (isEditMode && selectedTool != InkType.TEXT) return@pointerInput
+                val isTapDetectionAllowed = !isEditMode ||
+                        selectedTool == InkType.TEXT ||
+                        isStylusOnlyMode
+
+                if (!isTapDetectionAllowed) return@pointerInput
 
                 detectTapGestures(onTap = { tapOffset ->
                     Timber.d(
@@ -2600,7 +2607,8 @@ internal fun PdfPageComposable(
                 offset,
                 isScrolling,
                 isVerticalScroll,
-                selectedTool
+                selectedTool,
+                isStylusOnlyMode
             ) {
                 val canDraw = isEditMode && selectedTool != InkType.TEXT && !isScrolling && !isVerticalScroll && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0
 
@@ -2611,6 +2619,13 @@ internal fun PdfPageComposable(
                 try {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+
+                        Timber.tag("PointerTypeDebug").d("Page $pageIndex: Input Type detected: ${down.type}")
+
+                        if (isStylusOnlyMode && down.type == PointerType.Touch) {
+                            return@awaitEachGesture
+                        }
+
                         val dragPointerId = down.id
                         val startPos = down.position
                         var dragStarted = false

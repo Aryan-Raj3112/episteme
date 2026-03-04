@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -216,7 +217,8 @@ internal fun PdfVerticalReader(
     isAutoScrollTempPaused: Boolean = false,
     isScrollLocked: Boolean = false,
     autoScrollSpeed: Float = 1.0f,
-    onInteractionListener: () -> Unit = {}
+    onInteractionListener: () -> Unit = {},
+    isStylusOnlyMode: Boolean = false
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -726,12 +728,16 @@ internal fun PdfVerticalReader(
             }
         }
 
-        val globalDrawingModifier = Modifier.pointerInput(isEditMode, layoutInfo, selectedTool) {
+        val globalDrawingModifier = Modifier.pointerInput(isEditMode, layoutInfo, selectedTool, isStylusOnlyMode) {
             if (!isEditMode) return@pointerInput
             if (selectedTool == InkType.TEXT) return@pointerInput
 
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+
+                if (isStylusOnlyMode && down.type == PointerType.Touch) {
+                    return@awaitEachGesture
+                }
 
                 fun getPageAndPoint(screenOffset: Offset): Pair<Int, PdfPoint>? {
                     val zoom = zoomAnimatable.value
@@ -814,31 +820,31 @@ internal fun PdfVerticalReader(
             modifier = Modifier
                 .fillMaxSize()
                 .then(globalDrawingModifier)
-                .pointerInput(isEditMode, selectedTool) {
+                .pointerInput(isEditMode, selectedTool, isStylusOnlyMode) {
                     Timber.tag("PdfTouchDebug").v(
                         "VerticalReader: TapPointerInput init. isEditMode=$isEditMode"
                     )
-                    if (isEditMode && selectedTool != InkType.TEXT) return@pointerInput
+
+                    val isTapDetectionAllowed = !isEditMode ||
+                            selectedTool == InkType.TEXT ||
+                            isStylusOnlyMode
+
+                    if (!isTapDetectionAllowed) return@pointerInput
 
                     detectTapGestures(onTap = {
                         if (!isEditMode) {
-                            Timber.tag("PdfTouchDebug").d(
-                                "VerticalReader: Tap detected (Toggling bars)"
-                            )
+                            Timber.tag("PdfTouchDebug").d("VerticalReader: Tap detected")
                             selectionClearTrigger++
                             onPageClick()
                         } else if (selectedTool == InkType.TEXT) {
                             onPageClick()
                         }
                     }, onDoubleTap = { offset ->
-                        if (!isEditMode) {
-                            Timber.tag("PdfTouchDebug").d("VerticalReader: DoubleTap detected")
-                            onDoubleTapToZoom(offset)
-                        }
+                        Timber.tag("PdfTouchDebug").d("VerticalReader: DoubleTap detected")
+                        onDoubleTapToZoom(offset)
                     })
                 }
-
-                .pointerInput(totalDocHeight, isEditMode, selectedTool, isScrollLocked) {
+                .pointerInput(totalDocHeight, isEditMode, selectedTool, isScrollLocked, isStylusOnlyMode) {
                     val tracker = VelocityTracker()
                     val decay = exponentialDecay<Float>()
                     val touchSlop = viewConfiguration.touchSlop
@@ -849,11 +855,14 @@ internal fun PdfVerticalReader(
                         )
 
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        Timber.tag("PdfTouchDebug").v(
-                            "VerticalReader: DOWN received. Pressed=${down.pressed}, Consumed=${down.isConsumed}"
-                        )
 
-                        if (isEditMode && selectedTool != InkType.TEXT && down.pressed) {
+                        Timber.tag("PointerTypeDebug").d("VerticalReader: Input Type detected: ${down.type}")
+
+                        val isDrawingGesture = isEditMode &&
+                                selectedTool != InkType.TEXT &&
+                                (!isStylusOnlyMode || down.type != PointerType.Touch)
+
+                        if (isDrawingGesture && down.pressed) {
                             val event = awaitPointerEvent()
                             Timber.tag("PdfTouchDebug").v(
                                 "VerticalReader: EditMode check. Event changes: ${event.changes.size}"
@@ -959,8 +968,9 @@ internal fun PdfVerticalReader(
                                     }
                                 }
 
-                                val shouldScroll =
-                                    (panLocked || gestureDisambiguationMode != 0) && (!isEditMode || selectedTool == InkType.TEXT || isMultiTouch)
+                                val isTouchInput = event.changes.all { it.type == PointerType.Touch }
+                                val shouldScroll = (panLocked || gestureDisambiguationMode != 0) &&
+                                        (!isEditMode || selectedTool == InkType.TEXT || isMultiTouch || (isStylusOnlyMode && isTouchInput))
 
                                 if (shouldScroll) {
                                     if (!isInteracting) {
@@ -1432,6 +1442,7 @@ internal fun PdfVerticalReader(
                                     onOcrModelDownloading = onOcrModelDownloading,
                                     selectedTool = selectedTool,
                                     richTextController = richTextController,
+                                    isStylusOnlyMode = isStylusOnlyMode,
                                     textBoxes = textBoxes.filter { it.pageIndex == page.index },
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,

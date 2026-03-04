@@ -35,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DoNotTouch
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
@@ -68,7 +70,9 @@ fun AnnotationDock(
     modifier: Modifier = Modifier,
     isSticky: Boolean = false,
     isMinimized: Boolean,
-    onToggleMinimize: () -> Unit
+    onToggleMinimize: () -> Unit,
+    isStylusOnlyMode: Boolean,
+    onToggleStylusOnlyMode: () -> Unit
 ) {
     val showFullDock = isSticky || !isMinimized
 
@@ -141,6 +145,29 @@ fun AnnotationDock(
                     horizontalArrangement = Arrangement.spacedBy(spacing),
                     modifier = Modifier.alpha(toolsAlpha)
                 ) {
+
+                    // Stylus Only Toggle
+                    if (!isMinimized) {
+                        val iconVector = if (isStylusOnlyMode) Icons.Default.DoNotTouch else Icons.Default.TouchApp
+                        val iconTint = if (isStylusOnlyMode) Color(0xFFE57373) else Color.White
+
+                        Box(
+                            modifier = Modifier
+                                .size(buttonSize)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = if (isStylusOnlyMode) 0.15f else 0f))
+                                .clickable(onClick = onToggleStylusOnlyMode),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = iconVector,
+                                contentDescription = "Stylus Only Mode",
+                                tint = iconTint,
+                                modifier = Modifier.size(iconSize)
+                            )
+                        }
+                    }
+
                     // Pen Group
                     val isPenActive = !isMinimized && (selectedTool == InkType.PEN ||
                             selectedTool == InkType.FOUNTAIN_PEN ||
