@@ -293,6 +293,40 @@ private const val PDF_AUTO_SCROLL_MIN_SPEED_KEY = "pdf_auto_scroll_min_speed"
 private const val PDF_AUTO_SCROLL_MAX_SPEED_KEY = "pdf_auto_scroll_max_speed"
 private const val STYLUS_ONLY_MODE_KEY = "stylus_only_mode"
 
+private const val PDF_AUTO_SCROLL_IS_LOCAL_PREFIX = "pdf_as_local_"
+private const val PDF_AUTO_SCROLL_LOCAL_SPEED_PREFIX = "pdf_as_local_speed_"
+private const val PDF_AUTO_SCROLL_LOCAL_MIN_PREFIX = "pdf_as_local_min_"
+private const val PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX = "pdf_as_local_max_"
+
+private fun savePdfAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+private fun loadPdfAutoScrollLocalMode(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, false)
+}
+
+private fun savePdfAutoScrollLocalSettings(context: Context, bookId: String, speed: Float, min: Float, max: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putFloat(PDF_AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, speed)
+        putFloat(PDF_AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, min)
+        putFloat(PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, max)
+    }
+}
+
+private fun loadPdfAutoScrollLocalSettings(context: Context, bookId: String): Triple<Float, Float, Float>? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    if (!prefs.contains(PDF_AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId)) return null
+
+    val speed = prefs.getFloat(PDF_AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, 3.0f)
+    val min = prefs.getFloat(PDF_AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, 0.1f)
+    val max = prefs.getFloat(PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, 10.0f)
+    return Triple(speed, min, max)
+}
+
 private fun savePdfAutoScrollMinSpeed(context: Context, speed: Float) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putFloat(PDF_AUTO_SCROLL_MIN_SPEED_KEY, speed) }
@@ -653,9 +687,6 @@ fun PdfViewerScreen(
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
-    var autoScrollSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollSpeed(context)) }
-    var autoScrollMinSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollMinSpeed(context)) }
-    var autoScrollMaxSpeed by remember { mutableFloatStateOf(loadPdfAutoScrollMaxSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
     var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
@@ -704,6 +735,98 @@ fun PdfViewerScreen(
 
     val isDrawingActive by remember(isEditMode, isDockMinimized) {
         derivedStateOf { isEditMode && !isDockMinimized }
+    }
+
+    var currentBookId by remember { mutableStateOf<String?>(null) }
+    val bookId = currentBookId ?: pdfUri.toString().hashCode().toString()
+
+    var isAutoScrollLocal by remember { mutableStateOf(loadPdfAutoScrollLocalMode(context, bookId)) }
+
+    LaunchedEffect(bookId) {
+        isAutoScrollLocal = loadPdfAutoScrollLocalMode(context, bookId)
+    }
+
+    val initialSettings = remember(isAutoScrollLocal, bookId) {
+        if (isAutoScrollLocal) {
+            loadPdfAutoScrollLocalSettings(context, bookId) ?: Triple(
+                loadPdfAutoScrollSpeed(context),
+                loadPdfAutoScrollMinSpeed(context),
+                loadPdfAutoScrollMaxSpeed(context)
+            )
+        } else {
+            Triple(
+                loadPdfAutoScrollSpeed(context),
+                loadPdfAutoScrollMinSpeed(context),
+                loadPdfAutoScrollMaxSpeed(context)
+            )
+        }
+    }
+
+    var autoScrollSpeed by remember { mutableFloatStateOf(initialSettings.first) }
+    var autoScrollMinSpeed by remember { mutableFloatStateOf(initialSettings.second) }
+    var autoScrollMaxSpeed by remember { mutableFloatStateOf(initialSettings.third) }
+
+    LaunchedEffect(initialSettings) {
+        autoScrollSpeed = initialSettings.first
+        autoScrollMinSpeed = initialSettings.second
+        autoScrollMaxSpeed = initialSettings.third
+    }
+
+    val onToggleAutoScrollMode = { newIsLocal: Boolean ->
+        isAutoScrollLocal = newIsLocal
+        savePdfAutoScrollLocalMode(context, bookId, newIsLocal)
+
+        if (newIsLocal) {
+            val existingLocal = loadPdfAutoScrollLocalSettings(context, bookId)
+            if (existingLocal == null) {
+                savePdfAutoScrollLocalSettings(context, bookId, autoScrollSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+            } else {
+                autoScrollSpeed = existingLocal.first
+                autoScrollMinSpeed = existingLocal.second
+                autoScrollMaxSpeed = existingLocal.third
+            }
+        } else {
+            autoScrollSpeed = loadPdfAutoScrollSpeed(context)
+            autoScrollMinSpeed = loadPdfAutoScrollMinSpeed(context)
+            autoScrollMaxSpeed = loadPdfAutoScrollMaxSpeed(context)
+        }
+    }
+
+    val updateSpeed = { newSpeed: Float ->
+        autoScrollSpeed = newSpeed
+        if (isAutoScrollLocal) {
+            savePdfAutoScrollLocalSettings(context, bookId, newSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+        } else {
+            savePdfAutoScrollSpeed(context, newSpeed)
+        }
+    }
+
+    val updateMinSpeed = { newMin: Float ->
+        autoScrollMinSpeed = newMin
+        if (isAutoScrollLocal) {
+            var currentMax = autoScrollMaxSpeed
+            var currentSpeed = autoScrollSpeed
+            if (currentMax < newMin) { currentMax = newMin; autoScrollMaxSpeed = newMin }
+            if (currentSpeed < newMin) { currentSpeed = newMin; autoScrollSpeed = newMin }
+            else if (currentSpeed > currentMax) { currentSpeed = currentMax; autoScrollSpeed = currentMax }
+            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, newMin, currentMax)
+        } else {
+            savePdfAutoScrollMinSpeed(context, newMin)
+        }
+    }
+
+    val updateMaxSpeed = { newMax: Float ->
+        autoScrollMaxSpeed = newMax
+        if (isAutoScrollLocal) {
+            var currentMin = autoScrollMinSpeed
+            var currentSpeed = autoScrollSpeed
+            if (currentMin > newMax) { currentMin = newMax; autoScrollMinSpeed = newMax }
+            if (currentSpeed > newMax) { currentSpeed = newMax; autoScrollSpeed = newMax }
+            else if (currentSpeed < currentMin) { currentSpeed = currentMin; autoScrollSpeed = currentMin }
+            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, currentMin, newMax)
+        } else {
+            savePdfAutoScrollMaxSpeed(context, newMax)
+        }
     }
 
     val (initialDockLocation, initialDockOffset) = remember(context) { loadDockState(context) }
@@ -816,7 +939,6 @@ fun PdfViewerScreen(
     val pdfTextRepository = remember(context) { PdfTextRepository(context) }
     val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
     val textBoxRepository = remember(context) { PdfTextBoxRepository(context) }
-    var currentBookId by remember { mutableStateOf<String?>(null) }
 
     var allAnnotations by remember { mutableStateOf<Map<Int, List<PdfAnnotation>>>(emptyMap()) }
 
@@ -5675,38 +5797,37 @@ fun PdfViewerScreen(
                         speed = autoScrollSpeed,
                         minSpeed = autoScrollMinSpeed,
                         maxSpeed = autoScrollMaxSpeed,
-                        onSpeedChange = {
-                            autoScrollSpeed = it
-                            savePdfAutoScrollSpeed(context, it)
-                        },
+                        onSpeedChange = { updateSpeed(it) },
                         onMinSpeedChange = { newMin ->
-                            autoScrollMinSpeed = newMin
-                            savePdfAutoScrollMinSpeed(context, newMin)
-                            if (autoScrollMaxSpeed < newMin) {
-                                autoScrollMaxSpeed = newMin
-                                savePdfAutoScrollMaxSpeed(context, newMin)
-                            }
-                            if (autoScrollSpeed < newMin) {
-                                autoScrollSpeed = newMin
-                                savePdfAutoScrollSpeed(context, newMin)
-                            } else if (autoScrollSpeed > autoScrollMaxSpeed) {
-                                autoScrollSpeed = autoScrollMaxSpeed
-                                savePdfAutoScrollSpeed(context, autoScrollMaxSpeed)
+                            updateMinSpeed(newMin)
+                            if (!isAutoScrollLocal) {
+                                if (autoScrollMaxSpeed < newMin) {
+                                    autoScrollMaxSpeed = newMin
+                                    savePdfAutoScrollMaxSpeed(context, newMin)
+                                }
+                                if (autoScrollSpeed < newMin) {
+                                    autoScrollSpeed = newMin
+                                    savePdfAutoScrollSpeed(context, newMin)
+                                } else if (autoScrollSpeed > autoScrollMaxSpeed) {
+                                    autoScrollSpeed = autoScrollMaxSpeed
+                                    savePdfAutoScrollSpeed(context, autoScrollMaxSpeed)
+                                }
                             }
                         },
                         onMaxSpeedChange = { newMax ->
-                            autoScrollMaxSpeed = newMax
-                            savePdfAutoScrollMaxSpeed(context, newMax)
-                            if (autoScrollMinSpeed > newMax) {
-                                autoScrollMinSpeed = newMax
-                                savePdfAutoScrollMinSpeed(context, newMax)
-                            }
-                            if (autoScrollSpeed > newMax) {
-                                autoScrollSpeed = newMax
-                                savePdfAutoScrollSpeed(context, newMax)
-                            } else if (autoScrollSpeed < autoScrollMinSpeed) {
-                                autoScrollSpeed = autoScrollMinSpeed
-                                savePdfAutoScrollSpeed(context, autoScrollMinSpeed)
+                            updateMaxSpeed(newMax)
+                            if (!isAutoScrollLocal) {
+                                if (autoScrollMinSpeed > newMax) {
+                                    autoScrollMinSpeed = newMax
+                                    savePdfAutoScrollMinSpeed(context, newMax)
+                                }
+                                if (autoScrollSpeed > newMax) {
+                                    autoScrollSpeed = newMax
+                                    savePdfAutoScrollSpeed(context, newMax)
+                                } else if (autoScrollSpeed < autoScrollMinSpeed) {
+                                    autoScrollSpeed = autoScrollMinSpeed
+                                    savePdfAutoScrollSpeed(context, autoScrollMinSpeed)
+                                }
                             }
                         },
                         onClose = {
@@ -5725,7 +5846,9 @@ fun PdfViewerScreen(
                         onInputModeToggle = {
                             autoScrollUseSlider = !autoScrollUseSlider
                             savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
-                        }
+                        },
+                        isLocalMode = isAutoScrollLocal,
+                        onLocalModeToggle = onToggleAutoScrollMode
                     )
                 }
             }

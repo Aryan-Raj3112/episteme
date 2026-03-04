@@ -181,6 +181,44 @@ private const val AUTO_SCROLL_MAX_SPEED_KEY = "auto_scroll_max_speed"
 private const val PAGE_TURN_ANIMATION_KEY = "page_turn_animation_enabled"
 private const val TTS_MODE_KEY = "tts_mode"
 
+private const val AUTO_SCROLL_IS_LOCAL_PREFIX = "auto_scroll_is_local_"
+private const val AUTO_SCROLL_LOCAL_SPEED_PREFIX = "auto_scroll_local_speed_"
+private const val AUTO_SCROLL_LOCAL_MIN_PREFIX = "auto_scroll_local_min_"
+private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
+
+private fun getBookIdForPrefs(title: String): String {
+    return title.hashCode().toString()
+}
+
+private fun saveAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+private fun loadAutoScrollLocalMode(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, false)
+}
+
+private fun saveAutoScrollLocalSettings(context: Context, bookId: String, speed: Float, min: Float, max: Float) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit {
+        putFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, speed)
+        putFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, min)
+        putFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, max)
+    }
+}
+
+private fun loadAutoScrollLocalSettings(context: Context, bookId: String): Triple<Float, Float, Float>? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    if (!prefs.contains(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId)) return null
+
+    val speed = prefs.getFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, 3.0f)
+    val min = prefs.getFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, 0.1f)
+    val max = prefs.getFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, 10.0f)
+    return Triple(speed, min, max)
+}
+
 private fun savePageTurnAnimationSetting(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     prefs.edit { putBoolean(PAGE_TURN_ANIMATION_KEY, isEnabled) }
@@ -349,10 +387,91 @@ fun EpubReaderHost(
         }
     }
 
-    var autoScrollSpeed by remember { mutableFloatStateOf(loadAutoScrollSpeed(context)) }
-    var autoScrollMinSpeed by remember { mutableFloatStateOf(loadAutoScrollMinSpeed(context)) }
-    var autoScrollMaxSpeed by remember { mutableFloatStateOf(loadAutoScrollMaxSpeed(context)) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+
+    val bookId = remember(epubBook.title) { getBookIdForPrefs(epubBook.title) }
+    var isAutoScrollLocal by remember { mutableStateOf(loadAutoScrollLocalMode(context, bookId)) }
+
+    val initialSettings = remember(isAutoScrollLocal) {
+        if (isAutoScrollLocal) {
+            loadAutoScrollLocalSettings(context, bookId) ?: Triple(
+                loadAutoScrollSpeed(context),
+                loadAutoScrollMinSpeed(context),
+                loadAutoScrollMaxSpeed(context)
+            )
+        } else {
+            Triple(
+                loadAutoScrollSpeed(context),
+                loadAutoScrollMinSpeed(context),
+                loadAutoScrollMaxSpeed(context)
+            )
+        }
+    }
+
+    var autoScrollSpeed by remember { mutableFloatStateOf(initialSettings.first) }
+    var autoScrollMinSpeed by remember { mutableFloatStateOf(initialSettings.second) }
+    var autoScrollMaxSpeed by remember { mutableFloatStateOf(initialSettings.third) }
+
+    val onToggleAutoScrollMode = { newIsLocal: Boolean ->
+        isAutoScrollLocal = newIsLocal
+        saveAutoScrollLocalMode(context, bookId, newIsLocal)
+
+        if (newIsLocal) {
+            val existingLocal = loadAutoScrollLocalSettings(context, bookId)
+            if (existingLocal == null) {
+                saveAutoScrollLocalSettings(context, bookId, autoScrollSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+            } else {
+                autoScrollSpeed = existingLocal.first
+                autoScrollMinSpeed = existingLocal.second
+                autoScrollMaxSpeed = existingLocal.third
+            }
+        } else {
+            autoScrollSpeed = loadAutoScrollSpeed(context)
+            autoScrollMinSpeed = loadAutoScrollMinSpeed(context)
+            autoScrollMaxSpeed = loadAutoScrollMaxSpeed(context)
+        }
+    }
+
+    val updateSpeed = { newSpeed: Float ->
+        autoScrollSpeed = newSpeed
+        if (isAutoScrollLocal) {
+            saveAutoScrollLocalSettings(context, bookId, newSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+        } else {
+            saveAutoScrollSpeed(context, newSpeed)
+        }
+    }
+
+    val updateMinSpeed = { newMin: Float ->
+        autoScrollMinSpeed = newMin
+        if (isAutoScrollLocal) {
+            var currentMax = autoScrollMaxSpeed
+            var currentSpeed = autoScrollSpeed
+
+            if (currentMax < newMin) { currentMax = newMin; autoScrollMaxSpeed = newMin }
+            if (currentSpeed < newMin) { currentSpeed = newMin; autoScrollSpeed = newMin }
+            else if (currentSpeed > currentMax) { currentSpeed = currentMax; autoScrollSpeed = currentMax }
+
+            saveAutoScrollLocalSettings(context, bookId, currentSpeed, newMin, currentMax)
+        } else {
+            saveAutoScrollMinSpeed(context, newMin)
+        }
+    }
+
+    val updateMaxSpeed = { newMax: Float ->
+        autoScrollMaxSpeed = newMax
+        if (isAutoScrollLocal) {
+            var currentMin = autoScrollMinSpeed
+            var currentSpeed = autoScrollSpeed
+
+            if (currentMin > newMax) { currentMin = newMax; autoScrollMinSpeed = newMax }
+            if (currentSpeed > newMax) { currentSpeed = newMax; autoScrollSpeed = newMax }
+            else if (currentSpeed < currentMin) { currentSpeed = currentMin; autoScrollSpeed = currentMin }
+
+            saveAutoScrollLocalSettings(context, bookId, currentSpeed, currentMin, newMax)
+        } else {
+            saveAutoScrollMaxSpeed(context, newMax)
+        }
+    }
 
     var currentHighlightPalette by remember {
         mutableStateOf(loadHighlightPalette(context))
@@ -2796,38 +2915,37 @@ fun EpubReaderHost(
                         speed = autoScrollSpeed,
                         minSpeed = autoScrollMinSpeed,
                         maxSpeed = autoScrollMaxSpeed,
-                        onSpeedChange = {
-                            autoScrollSpeed = it
-                            saveAutoScrollSpeed(context, it)
-                        },
+                        onSpeedChange = { updateSpeed(it) },
                         onMinSpeedChange = { newMin ->
-                            autoScrollMinSpeed = newMin
-                            saveAutoScrollMinSpeed(context, newMin)
-                            if (autoScrollMaxSpeed < newMin) {
-                                autoScrollMaxSpeed = newMin
-                                saveAutoScrollMaxSpeed(context, newMin)
-                            }
-                            if (autoScrollSpeed < newMin) {
-                                autoScrollSpeed = newMin
-                                saveAutoScrollSpeed(context, newMin)
-                            } else if (autoScrollSpeed > autoScrollMaxSpeed) {
-                                autoScrollSpeed = autoScrollMaxSpeed
-                                saveAutoScrollSpeed(context, autoScrollMaxSpeed)
+                            updateMinSpeed(newMin)
+                            if (!isAutoScrollLocal) {
+                                if (autoScrollMaxSpeed < newMin) {
+                                    autoScrollMaxSpeed = newMin
+                                    saveAutoScrollMaxSpeed(context, newMin)
+                                }
+                                if (autoScrollSpeed < newMin) {
+                                    autoScrollSpeed = newMin
+                                    saveAutoScrollSpeed(context, newMin)
+                                } else if (autoScrollSpeed > autoScrollMaxSpeed) {
+                                    autoScrollSpeed = autoScrollMaxSpeed
+                                    saveAutoScrollSpeed(context, autoScrollMaxSpeed)
+                                }
                             }
                         },
                         onMaxSpeedChange = { newMax ->
-                            autoScrollMaxSpeed = newMax
-                            saveAutoScrollMaxSpeed(context, newMax)
-                            if (autoScrollMinSpeed > newMax) {
-                                autoScrollMinSpeed = newMax
-                                saveAutoScrollMinSpeed(context, newMax)
-                            }
-                            if (autoScrollSpeed > newMax) {
-                                autoScrollSpeed = newMax
-                                saveAutoScrollSpeed(context, newMax)
-                            } else if (autoScrollSpeed < autoScrollMinSpeed) {
-                                autoScrollSpeed = autoScrollMinSpeed
-                                saveAutoScrollSpeed(context, autoScrollMinSpeed)
+                            updateMaxSpeed(newMax)
+                            if (!isAutoScrollLocal) {
+                                if (autoScrollMinSpeed > newMax) {
+                                    autoScrollMinSpeed = newMax
+                                    saveAutoScrollMinSpeed(context, newMax)
+                                }
+                                if (autoScrollSpeed > newMax) {
+                                    autoScrollSpeed = newMax
+                                    saveAutoScrollSpeed(context, newMax)
+                                } else if (autoScrollSpeed < autoScrollMinSpeed) {
+                                    autoScrollSpeed = autoScrollMinSpeed
+                                    saveAutoScrollSpeed(context, autoScrollMinSpeed)
+                                }
                             }
                         },
                         onClose = {
@@ -2846,7 +2964,9 @@ fun EpubReaderHost(
                         onInputModeToggle = {
                             autoScrollUseSlider = !autoScrollUseSlider
                             saveAutoScrollUseSlider(context, autoScrollUseSlider)
-                        }
+                        },
+                        isLocalMode = isAutoScrollLocal,
+                        onLocalModeToggle = onToggleAutoScrollMode
                     )
                 }
 

@@ -68,6 +68,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -102,6 +103,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -758,6 +760,8 @@ fun AutoScrollControls(
     onLockToggle: () -> Unit,
     useSlider: Boolean,
     onInputModeToggle: () -> Unit,
+    isLocalMode: Boolean,
+    onLocalModeToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isTempPaused: Boolean = false,
 ) {
@@ -832,11 +836,65 @@ fun AutoScrollControls(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Auto Scroll",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Box {
+                            var showModeMenu by remember { mutableStateOf(false) }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { showModeMenu = true }
+                                    .padding(4.dp)
+                            ) {
+                                Text(
+                                    text = if (isLocalMode) "Local Speed" else "Global Speed",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Mode",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showModeMenu,
+                                onDismissRequest = { showModeMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("Global Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text("Applies to all files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        onLocalModeToggle(false)
+                                        showModeMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (!isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
+                                    }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("Local Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text("Saved for this file only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        onLocalModeToggle(true)
+                                        showModeMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
+                                    }
+                                )
+                            }
+                        }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             IconButton(
