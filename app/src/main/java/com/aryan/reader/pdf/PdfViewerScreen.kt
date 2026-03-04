@@ -1295,11 +1295,15 @@ fun PdfViewerScreen(
 
     val onSingleTapStable = remember {
         {
+            if (isAutoScrollModeActive) {
+                isAutoScrollPlaying = !isAutoScrollPlaying
+                Timber.d("PDF Auto-scroll toggled via tap: $isAutoScrollPlaying")
+            }
+
             if (selectedTextBoxId != null) {
                 val box = textBoxes.find { it.id == selectedTextBoxId }
                 if (box != null && box.text.trim().isEmpty()) {
                     textBoxes.remove(box)
-                    Timber.tag("PdfTextBoxDebug").i("Removed empty text box: ${box.id}")
                 }
                 selectedTextBoxId = null
             } else {
