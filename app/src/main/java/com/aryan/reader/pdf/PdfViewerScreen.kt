@@ -681,7 +681,7 @@ fun PdfViewerScreen(
     val onAutoScrollInteraction = remember {
         {
             if (isAutoScrollPlaying) {
-                triggerAutoScrollTempPause(1000L)
+                triggerAutoScrollTempPause(300L)
             }
         }
     }
@@ -5662,7 +5662,16 @@ fun PdfViewerScreen(
                     AutoScrollControls(
                         isPlaying = isAutoScrollPlaying,
                         isTempPaused = isAutoScrollTempPaused,
-                        onPlayPauseToggle = { isAutoScrollPlaying = !isAutoScrollPlaying },
+                        onPlayPauseToggle = {
+                            if (isAutoScrollPlaying) {
+                                isAutoScrollPlaying = false
+                                isAutoScrollTempPaused = false
+                                autoScrollResumeJob.value?.cancel()
+                            } else {
+                                isAutoScrollPlaying = true
+                                isAutoScrollTempPaused = false
+                            }
+                        },
                         speed = autoScrollSpeed,
                         minSpeed = autoScrollMinSpeed,
                         maxSpeed = autoScrollMaxSpeed,

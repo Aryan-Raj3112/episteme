@@ -1762,7 +1762,7 @@ fun EpubReaderHost(
                                                     Timber.d("Scroll/Drag detected, hiding bars.")
                                                 }
                                                 if (isAutoScrollModeActive && isAutoScrollPlaying) {
-                                                    triggerAutoScrollTempPause(1000L)
+                                                    triggerAutoScrollTempPause(300L)
                                                 }
                                             },
                                             onAutoScrollChapterEnd = {
