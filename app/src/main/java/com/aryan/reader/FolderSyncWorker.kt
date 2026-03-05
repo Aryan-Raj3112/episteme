@@ -37,6 +37,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.aryan.reader.data.LocalSyncUtils
+import java.io.File
 
 class FolderSyncWorker(
     private val appContext: Context,
@@ -79,7 +80,6 @@ class FolderSyncWorker(
         val folderUri = folderUriString.toUri()
 
         try {
-            // Permission checks ...
             try {
                 appContext.contentResolver.takePersistableUriPermission(
                     folderUri,
@@ -94,16 +94,13 @@ class FolderSyncWorker(
                 return Result.failure()
             }
 
-            // PHASE 1: IMPORT METADATA (Always run this to catch updates from other devices)
             Timber.tag("FolderSync").d("Phase 1: Importing JSON metadata from folder...")
             val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri)
 
-            // Apply updates to local DB
             folderMetadataMap.forEach { (bookId, remoteMeta) ->
                 val existingItem = recentFilesRepository.getFileByBookId(bookId)
 
                 if (existingItem != null) {
-                    // Update local if remote is newer
                     if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
                         Timber.tag("FolderSync").d("Applying remote update for $bookId (Progress: ${remoteMeta.progressPercentage}%)")
                         val itemToUpdate = existingItem.copy(
@@ -115,17 +112,44 @@ class FolderSyncWorker(
                             locatorBlockIndex = remoteMeta.locatorBlockIndex,
                             locatorCharOffset = remoteMeta.locatorCharOffset,
                             lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                            // Crucial: If remote says it's recent, we make it recent locally
                             isRecent = remoteMeta.isRecent || existingItem.isRecent,
                             timestamp = if (remoteMeta.isRecent) remoteMeta.lastModifiedTimestamp else existingItem.timestamp
                         )
                         recentFilesRepository.addRecentFile(itemToUpdate)
                     }
                 }
-                // We do NOT create new items from JSON alone. We wait for Phase 2 to find the file.
             }
 
-            // PHASE 2: SCAN PHYSICAL FILES (Only if !metadataOnly)
+            // Phase 1.5: Sync Annotations for existing books (Runs in both Metadata-Only and Full modes)
+            Timber.tag("FolderAnnotationSync").d("Phase 1.5: Checking annotation sidecars for existing local books...")
+            val processedBookIds = mutableSetOf<String>()
+            val existingFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+
+            for (book in existingFolderBooks) {
+                processedBookIds.add(book.bookId)
+                val sidecarData = LocalSyncUtils.getAnnotationSidecar(appContext, folderUri, book.bookId)
+
+                if (sidecarData != null) {
+                    val (remoteTs, jsonPayload) = sidecarData
+
+                    // Check timestamps of ALL potential local annotation files
+                    val localFiles = listOf(
+                        File(appContext.filesDir, "annotations/annotation_${book.bookId}.json"),
+                        File(appContext.filesDir, "pdf_rich_text/text_${book.bookId}.json"),
+                        File(appContext.filesDir, "page_layouts/layout_${book.bookId}.json"),
+                        File(appContext.filesDir, "pdf_text_boxes/boxes_${book.bookId}.json")
+                    )
+                    val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
+
+                    if (remoteTs > (localTs + 1000)) { // 1s buffer
+                        Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
+                        recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
+                    } else {
+                        Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
+                    }
+                }
+            }
+
             if (!metadataOnly) {
                 Timber.tag("FolderSync").d("Phase 2: Scanning physical files...")
                 val currentDiskFiles = mutableListOf<DocumentFile>()
@@ -137,11 +161,9 @@ class FolderSyncWorker(
 
                     val file = fileQueue.removeAt(0)
                     if (file.isDirectory) {
-                        // REMOVED: if (file.name == ".episteme") continue
                         file.listFiles().let { fileQueue.addAll(it) }
                     } else if (file.isFile) {
                         val name = file.name ?: ""
-                        // UPDATED: Ensure we ignore .json files and hidden files during book scan
                         if (isValidExtension(name) && !name.endsWith(".json") && !name.startsWith(".")) {
                             currentDiskFiles.add(file)
                         }
@@ -159,7 +181,6 @@ class FolderSyncWorker(
                     val existingItem = recentFilesRepository.getFileByBookId(stableId)
 
                     if (existingItem == null) {
-                        // NEW FILE DISCOVERED
                         val remoteMeta = folderMetadataMap[stableId]
                         val type = getFileType(file.name ?: "", file.type) ?: FileType.EPUB
                         val placeholderTitle = file.name ?: "Unknown"
@@ -169,7 +190,6 @@ class FolderSyncWorker(
                             uriString = file.uri.toString(),
                             type = type,
                             displayName = file.name ?: "Unknown",
-                            // Use remote timestamp if available, else NOW
                             timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                             lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                             coverImagePath = null,
@@ -177,7 +197,6 @@ class FolderSyncWorker(
                             author = remoteMeta?.author,
                             isAvailable = true,
                             isDeleted = false,
-                            // If remote says recent, mark it. If new and no remote data, it is NOT recent.
                             isRecent = remoteMeta?.isRecent ?: false,
                             sourceFolderUri = folderUriString,
                             lastChapterIndex = remoteMeta?.lastChapterIndex,
@@ -189,16 +208,33 @@ class FolderSyncWorker(
                             locatorCharOffset = remoteMeta?.locatorCharOffset
                         )
 
-                        // Insert. Note: We do NOT call syncLocalMetadataToFolder here.
-                        // It is "Clean" until the user opens it.
                         recentFilesRepository.addRecentFile(newItem)
                     } else {
-                        // EXISTING FILE - Just ensure it is marked available
                         if (existingItem.isDeleted || !existingItem.isAvailable) {
                             val revived = existingItem.copy(isDeleted = false, isAvailable = true)
                             recentFilesRepository.addRecentFile(revived)
                         }
-                        // Metadata updates were already handled in Phase 1
+                    }
+
+                    if (!processedBookIds.contains(stableId)) {
+                        val sidecarData = LocalSyncUtils.getAnnotationSidecar(appContext, folderUri, stableId)
+
+                        if (sidecarData != null) {
+                            val (remoteTs, jsonPayload) = sidecarData
+
+                            val localFiles = listOf(
+                                File(appContext.filesDir, "annotations/annotation_$stableId.json"),
+                                File(appContext.filesDir, "pdf_rich_text/text_$stableId.json"),
+                                File(appContext.filesDir, "page_layouts/layout_$stableId.json"),
+                                File(appContext.filesDir, "pdf_text_boxes/boxes_$stableId.json")
+                            )
+                            val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
+
+                            if (remoteTs > (localTs + 1000)) {
+                                Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for new book $stableId. Importing.")
+                                recentFilesRepository.importAnnotationBundle(stableId, jsonPayload)
+                            }
+                        }
                     }
                 }
 

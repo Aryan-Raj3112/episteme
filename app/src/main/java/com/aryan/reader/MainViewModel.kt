@@ -143,16 +143,9 @@ enum class SortOrder(val displayName: String) {
     )
 }
 
-data class SyncUpdateInfo(
-    val bookId: String,
-    val locator: Locator?,
-    val page: Int?,
-    val cfi: String?,
-    val bookmarksJson: String?
-)
-
 data class ReaderScreenState(
     val selectedPdfUri: Uri? = null,
+    val selectedBookId: String? = null,
     val selectedEpubBook: EpubBook? = null,
     val selectedEpubUri: Uri? = null,
     val selectedFileType: FileType? = null,
@@ -1221,6 +1214,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 selectedPdfUri = null,
                 selectedEpubUri = null,
+                selectedBookId = null,
                 selectedEpubBook = null,
                 selectedFileType = null,
                 isLoading = false,
@@ -1240,9 +1234,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             if (it.sourceFolderUri != null) {
-                Timber.d("Book closed (Folder Linked), syncing metadata to folder: ${it.bookId}")
+                Timber.tag("FolderAnnotationSync").d("Book closed (Folder Linked), syncing metadata and annotations to folder: ${it.bookId}")
                 viewModelScope.launch {
                     recentFilesRepository.syncLocalMetadataToFolder(it.bookId)
+                    recentFilesRepository.syncLocalAnnotationsToFolder(it.bookId)
                 }
             }
         }
@@ -2266,6 +2261,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 selectedPdfUri = null,
                 selectedEpubUri = null,
+                selectedBookId = bookId,
                 selectedEpubBook = null,
                 selectedFileType = type,
                 isLoading = true,
@@ -3200,6 +3196,60 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         firestoreRepository.removeListener(feedbackListener)
         Timber.d("ViewModel instance cleared (onCleared).")
+    }
+
+    suspend fun checkAndMigrateLegacyBookId(legacyId: String, newId: String) = withContext(Dispatchers.IO) {
+        if (legacyId == newId) return@withContext
+        Timber.tag("FolderAnnotationSync").d("Checking migration from legacyId=$legacyId to newId=$newId")
+
+        try {
+            // Helper to safely migrate files
+            fun safeMigrate(legacyFile: File?, newFile: File?, tag: String) {
+                if (legacyFile != null && legacyFile.exists()) {
+                    if (newFile != null) {
+                        if (newFile.exists()) newFile.delete()
+                        if (legacyFile.renameTo(newFile)) {
+                            Timber.tag("FolderAnnotationSync").i("Migrated $tag successfully.")
+                        } else {
+                            Timber.tag("FolderAnnotationSync").w("Failed to rename $tag file.")
+                        }
+                    } else {
+                        Timber.tag("FolderAnnotationSync").w("Destination file for $tag is null. Skipping.")
+                    }
+                }
+            }
+
+            // 1. Annotations
+            safeMigrate(
+                pdfAnnotationRepository.getAnnotationFileForSync(legacyId),
+                pdfAnnotationRepository.getAnnotationFileForSync(newId),
+                "annotations"
+            )
+
+            // 2. Rich Text
+            safeMigrate(
+                pdfRichTextRepository.getFileForSync(legacyId),
+                pdfRichTextRepository.getFileForSync(newId),
+                "rich text"
+            )
+
+            // 3. Layout
+            safeMigrate(
+                pageLayoutRepository.getLayoutFile(legacyId),
+                pageLayoutRepository.getLayoutFile(newId),
+                "layout"
+            )
+
+            // 4. Text Boxes
+            safeMigrate(
+                pdfTextBoxRepository.getFileForSync(legacyId),
+                pdfTextBoxRepository.getFileForSync(newId),
+                "text boxes"
+            )
+
+        } catch (e: Exception) {
+            Timber.tag("FolderAnnotationSync").e(e, "Error migrating legacy book data")
+        }
     }
 
     companion object {

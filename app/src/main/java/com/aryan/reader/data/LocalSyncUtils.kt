@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import timber.log.Timber
 
 object LocalSyncUtils {
@@ -95,6 +96,98 @@ object LocalSyncUtils {
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to save local metadata to folder.")
         }
+    }
+
+    suspend fun saveAnnotationSidecar(
+        context: Context,
+        sourceFolderUri: Uri,
+        bookId: String,
+        jsonPayload: String,
+        timestamp: Long
+    ) = withContext(Dispatchers.IO) {
+        Timber.tag("FolderAnnotationSync").d("saveAnnotationSidecar called for bookId: $bookId, timestamp: $timestamp")
+        try {
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: run {
+                Timber.tag("FolderAnnotationSync").w("Could not get DocumentFile from sourceFolderUri")
+                return@withContext
+            }
+            val sidecarName = ".${bookId}_annotations.json"
+            Timber.tag("FolderAnnotationSync").d("sidecarName: $sidecarName")
+
+            val existingFile = rootTree.findFile(sidecarName)
+            if (existingFile != null && existingFile.exists()) {
+                Timber.tag("FolderAnnotationSync").d("Existing sidecar found at ${existingFile.uri}")
+                try {
+                    val content = context.contentResolver.openInputStream(existingFile.uri)?.use {
+                        it.bufferedReader().readText()
+                    }
+                    if (content != null) {
+                        val json = JSONObject(content)
+                        val remoteTs = json.optLong("timestamp", 0L)
+                        Timber.tag("FolderAnnotationSync").d("remoteTs: $remoteTs, new timestamp: $timestamp")
+                        if (remoteTs >= timestamp) {
+                            Timber.tag("FolderAnnotationSync").d("AnnotationSync: Remote sidecar is newer or same. Skipping write.")
+                            return@withContext
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.tag("FolderAnnotationSync").w(e, "AnnotationSync: Failed to check existing sidecar timestamp. Overwriting.")
+                }
+            } else {
+                Timber.tag("FolderAnnotationSync").d("No existing sidecar found, will attempt to create a new one.")
+            }
+
+            val wrapper = JSONObject()
+            wrapper.put("version", 1)
+            wrapper.put("timestamp", timestamp)
+            wrapper.put("data", JSONObject(jsonPayload))
+
+            val targetFile = existingFile ?: rootTree.createFile("application/json", sidecarName)
+
+            if (targetFile != null) {
+                Timber.tag("FolderAnnotationSync").d("Writing data to targetFile: ${targetFile.uri}")
+                context.contentResolver.openFileDescriptor(targetFile.uri, "rwt")?.use { pfd ->
+                    java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
+                        fos.write(wrapper.toString().toByteArray())
+                        fos.flush()
+                        try { pfd.fileDescriptor.sync() } catch (_: Exception) {}
+                    }
+                }
+                Timber.tag("FolderAnnotationSync").d("AnnotationSync: Saved sidecar for $bookId (ts=$timestamp)")
+            } else {
+                Timber.tag("FolderAnnotationSync").e("targetFile is null, failed to create new file in SAF rootTree")
+            }
+
+        } catch (e: Exception) {
+            Timber.tag("FolderAnnotationSync").e(e, "Failed to save annotation sidecar for $bookId")
+        }
+    }
+
+    suspend fun getAnnotationSidecar(
+        context: Context,
+        sourceFolderUri: Uri,
+        bookId: String
+    ): Pair<Long, String>? = withContext(Dispatchers.IO) {
+        try {
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext null
+            val sidecarName = ".${bookId}_annotations.json"
+            val file = rootTree.findFile(sidecarName)
+
+            if (file != null && file.exists()) {
+                val content = context.contentResolver.openInputStream(file.uri)?.use {
+                    it.bufferedReader().readText()
+                } ?: return@withContext null
+
+                val json = JSONObject(content)
+                val ts = json.optLong("timestamp", 0L)
+                val data = json.optJSONObject("data")?.toString() ?: return@withContext null
+
+                return@withContext Pair(ts, data)
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to read annotation sidecar for $bookId")
+        }
+        return@withContext null
     }
 
     /**

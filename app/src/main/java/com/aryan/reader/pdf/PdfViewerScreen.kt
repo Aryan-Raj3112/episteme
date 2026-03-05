@@ -2255,7 +2255,15 @@ fun PdfViewerScreen(
         flatTableOfContents = emptyList()
 
         val fastId = getFastFileId(context, pdfUri)
-        currentBookId = fastId
+        val selectedId = uiState.selectedBookId
+
+        if (selectedId != null && selectedId != fastId) {
+            Timber.tag("FolderAnnotationSync").i("Detected ID mismatch. Legacy: $fastId, Selected: $selectedId. Initiating migration.")
+            viewModel.checkAndMigrateLegacyBookId(fastId, selectedId)
+            currentBookId = selectedId
+        } else {
+            currentBookId = fastId
+        }
 
         val oldDoc = pdfDocument
         val oldPfd = pfdState
