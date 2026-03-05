@@ -3203,11 +3203,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.tag("FolderAnnotationSync").d("Checking migration from legacyId=$legacyId to newId=$newId")
 
         try {
-            // Helper to safely migrate files
             fun safeMigrate(legacyFile: File?, newFile: File?, tag: String) {
                 if (legacyFile != null && legacyFile.exists()) {
                     if (newFile != null) {
-                        if (newFile.exists()) newFile.delete()
+                        if (newFile.exists()) {
+                            val legacyTs = legacyFile.lastModified()
+                            val newTs = newFile.lastModified()
+
+                            if (newTs > legacyTs) {
+                                Timber.tag("FolderAnnotationSync").i("Skipping migration for $tag: Destination ($newId) is newer than Legacy ($legacyId). Deleting legacy.")
+                                legacyFile.delete()
+                                return
+                            } else {
+                                newFile.delete()
+                            }
+                        }
+
                         if (legacyFile.renameTo(newFile)) {
                             Timber.tag("FolderAnnotationSync").i("Migrated $tag successfully.")
                         } else {

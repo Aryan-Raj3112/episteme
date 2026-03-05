@@ -12,8 +12,8 @@ import org.json.JSONObject
 import timber.log.Timber
 
 object LocalSyncUtils {
-    // REMOVED: private const val SYNC_DIR_NAME = "episteme"
     private const val TAG = "FolderSync"
+    private const val ANNOTATION_SUFFIX = "_annotations"
 
     suspend fun saveMetadataToFolder(
         context: Context,
@@ -23,13 +23,11 @@ object LocalSyncUtils {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
 
-            // CHANGED: Primary filename now starts with a dot
             val syncFileName = ".${metadata.bookId}.json"
             val legacyVisibleName = "${metadata.bookId}.json"
 
             val existingHidden = rootTree.findFile(syncFileName)
             val existingVisible = rootTree.findFile(legacyVisibleName)
-
             val fileToCheck = existingHidden ?: existingVisible
 
             if (fileToCheck != null && fileToCheck.exists()) {
@@ -40,57 +38,68 @@ object LocalSyncUtils {
                     if (existingContent != null) {
                         val existingMeta = FolderBookMetadata.fromJsonString(existingContent)
                         if (existingMeta.lastModifiedTimestamp > metadata.lastModifiedTimestamp) {
-                            Timber.tag(TAG).w("ClobberCheck: ABORTING save. Folder has newer data.")
+                            Timber.tag(TAG).w("ClobberCheck: ABORTING save. Folder has newer data for ${metadata.bookId}.")
                             return@withContext
                         }
                     }
                 } catch (_: Exception) {}
             }
 
-            var targetFile = existingHidden
-
-            if (targetFile == null) {
-                // Migrate: If a visible one existed, we'll replace it with hidden
-                if (existingVisible != null && existingVisible.exists()) {
-                    try { existingVisible.delete() } catch (_: Exception) {}
-                }
-                targetFile = rootTree.createFile("application/json", syncFileName)
+            if (existingVisible != null && existingVisible.exists()) {
+                try { existingVisible.delete() } catch (_: Exception) {}
             }
 
-            if (targetFile == null) {
-                Timber.tag(TAG).e("Could not create metadata file for ${metadata.bookId}")
+            val tempFileName = ".${metadata.bookId}.tmp"
+            rootTree.findFile(tempFileName)?.delete()
+
+            val tempFile = rootTree.createFile("application/json", tempFileName)
+            if (tempFile == null) {
+                Timber.tag(TAG).e("Could not create temp metadata file for ${metadata.bookId}")
                 return@withContext
             }
 
             val jsonString = metadata.toJsonString()
+            var writeSuccess = false
 
             try {
-                context.contentResolver.openFileDescriptor(targetFile.uri, "rwt")?.use { pfd ->
+                context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")?.use { pfd ->
                     java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
                         fos.write(jsonString.toByteArray())
                         fos.flush()
                         try {
                             pfd.fileDescriptor.sync()
                         } catch (_: Exception) {
-                            Timber.tag(TAG).w("FileDescriptor sync not supported on this device/filesystem")
                         }
                     }
                 }
+                writeSuccess = true
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to write temp metadata for ${metadata.bookId}")
+                try { tempFile.delete() } catch (_: Exception) {}
+                return@withContext
+            }
 
-                val absolutePath = getPathFromUri(context, targetFile.uri)
-                if (absolutePath != null) {
-                    android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(absolutePath),
-                        arrayOf("application/json"),
-                        null
-                    )
+            @Suppress("KotlinConstantConditions") if (writeSuccess) {
+                val targetFile = rootTree.findFile(syncFileName)
+                if (targetFile != null && targetFile.exists()) {
+                    targetFile.delete()
                 }
 
-                Timber.tag(TAG).d("Saved hidden metadata for ${metadata.bookId}")
+                if (tempFile.renameTo(syncFileName)) {
+                    Timber.tag(TAG).d("Atomic save successful: $syncFileName")
 
-            } catch (e: Exception) {
-                Timber.tag(TAG).e(e, "Failed to write metadata for ${metadata.bookId}")
+                    val absolutePath = getPathFromUri(context, tempFile.uri)
+                    if (absolutePath != null) {
+                        android.media.MediaScannerConnection.scanFile(
+                            context,
+                            arrayOf(absolutePath),
+                            arrayOf("application/json"),
+                            null
+                        )
+                    }
+                } else {
+                    Timber.tag(TAG).e("Failed to rename temp file to $syncFileName")
+                }
             }
 
         } catch (e: Exception) {
@@ -111,51 +120,63 @@ object LocalSyncUtils {
                 Timber.tag("FolderAnnotationSync").w("Could not get DocumentFile from sourceFolderUri")
                 return@withContext
             }
-            val sidecarName = ".${bookId}_annotations.json"
-            Timber.tag("FolderAnnotationSync").d("sidecarName: $sidecarName")
 
-            val existingFile = rootTree.findFile(sidecarName)
-            if (existingFile != null && existingFile.exists()) {
-                Timber.tag("FolderAnnotationSync").d("Existing sidecar found at ${existingFile.uri}")
-                try {
-                    val content = context.contentResolver.openInputStream(existingFile.uri)?.use {
-                        it.bufferedReader().readText()
-                    }
-                    if (content != null) {
-                        val json = JSONObject(content)
-                        val remoteTs = json.optLong("timestamp", 0L)
-                        Timber.tag("FolderAnnotationSync").d("remoteTs: $remoteTs, new timestamp: $timestamp")
-                        if (remoteTs >= timestamp) {
-                            Timber.tag("FolderAnnotationSync").d("AnnotationSync: Remote sidecar is newer or same. Skipping write.")
-                            return@withContext
-                        }
-                    }
-                } catch (e: Exception) {
-                    Timber.tag("FolderAnnotationSync").w(e, "AnnotationSync: Failed to check existing sidecar timestamp. Overwriting.")
+            val currentBest = resolveAndCleanAnnotationConflicts(context, rootTree, bookId)
+
+            if (currentBest != null) {
+                val (remoteTs, _) = currentBest
+                if (remoteTs >= timestamp) {
+                    Timber.tag("FolderAnnotationSync").d("AnnotationSync: Remote sidecar (ts=$remoteTs) is newer or same as local (ts=$timestamp). Aborting write.")
+                    return@withContext
                 }
-            } else {
-                Timber.tag("FolderAnnotationSync").d("No existing sidecar found, will attempt to create a new one.")
             }
 
             val wrapper = JSONObject()
             wrapper.put("version", 1)
             wrapper.put("timestamp", timestamp)
             wrapper.put("data", JSONObject(jsonPayload))
+            val contentBytes = wrapper.toString().toByteArray()
 
-            val targetFile = existingFile ?: rootTree.createFile("application/json", sidecarName)
+            val targetName = ".${bookId}${ANNOTATION_SUFFIX}.json"
+            val tempName = ".${bookId}${ANNOTATION_SUFFIX}.tmp"
 
-            if (targetFile != null) {
-                Timber.tag("FolderAnnotationSync").d("Writing data to targetFile: ${targetFile.uri}")
-                context.contentResolver.openFileDescriptor(targetFile.uri, "rwt")?.use { pfd ->
+            rootTree.findFile(tempName)?.delete()
+
+            val tempFile = rootTree.createFile("application/json", tempName)
+            if (tempFile == null) {
+                Timber.tag("FolderAnnotationSync").e("Failed to create temp sidecar file.")
+                return@withContext
+            }
+
+            var writeSuccess = false
+            try {
+                context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")?.use { pfd ->
                     java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
-                        fos.write(wrapper.toString().toByteArray())
+                        fos.write(contentBytes)
                         fos.flush()
                         try { pfd.fileDescriptor.sync() } catch (_: Exception) {}
                     }
                 }
-                Timber.tag("FolderAnnotationSync").d("AnnotationSync: Saved sidecar for $bookId (ts=$timestamp)")
-            } else {
-                Timber.tag("FolderAnnotationSync").e("targetFile is null, failed to create new file in SAF rootTree")
+                writeSuccess = true
+            } catch (e: Exception) {
+                Timber.tag("FolderAnnotationSync").e(e, "Error writing to temp sidecar.")
+                try { tempFile.delete() } catch (_: Exception) {}
+                return@withContext
+            }
+
+            @Suppress("KotlinConstantConditions") if (writeSuccess) {
+                val existingMain = rootTree.findFile(targetName)
+                if (existingMain != null) {
+                    if (!existingMain.delete()) {
+                        Timber.tag("FolderAnnotationSync").w("Failed to delete existing sidecar before rename. Attempting rename anyway (might fail on some SAF providers).")
+                    }
+                }
+
+                if (tempFile.renameTo(targetName)) {
+                    Timber.tag("FolderAnnotationSync").d("AnnotationSync: Atomic save successful for $targetName")
+                } else {
+                    Timber.tag("FolderAnnotationSync").e("AnnotationSync: Failed to rename temp sidecar to $targetName")
+                }
             }
 
         } catch (e: Exception) {
@@ -170,24 +191,92 @@ object LocalSyncUtils {
     ): Pair<Long, String>? = withContext(Dispatchers.IO) {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext null
-            val sidecarName = ".${bookId}_annotations.json"
-            val file = rootTree.findFile(sidecarName)
 
-            if (file != null && file.exists()) {
-                val content = context.contentResolver.openInputStream(file.uri)?.use {
-                    it.bufferedReader().readText()
-                } ?: return@withContext null
+            val bestFile = resolveAndCleanAnnotationConflicts(context, rootTree, bookId)
+            return@withContext bestFile
 
-                val json = JSONObject(content)
-                val ts = json.optLong("timestamp", 0L)
-                val data = json.optJSONObject("data")?.toString() ?: return@withContext null
-
-                return@withContext Pair(ts, data)
-            }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to read annotation sidecar for $bookId")
         }
         return@withContext null
+    }
+
+    private fun resolveAndCleanAnnotationConflicts(
+        context: Context,
+        rootTree: DocumentFile,
+        bookId: String
+    ): Pair<Long, String>? {
+        val basePattern = ".${bookId}${ANNOTATION_SUFFIX}"
+
+        val allFiles = rootTree.listFiles()
+
+        val candidates = allFiles.filter { file ->
+            val name = file.name ?: ""
+            name.startsWith(basePattern) &&
+                    name.endsWith(".json") &&
+                    !name.endsWith(".tmp") &&
+                    !name.contains(".syncthing.")
+        }
+
+        if (candidates.isEmpty()) return null
+
+        var bestTs = -1L
+        var bestData: String? = null
+        var bestFile: DocumentFile? = null
+        val filesToDelete = mutableListOf<DocumentFile>()
+
+        for (file in candidates) {
+            try {
+                val content = context.contentResolver.openInputStream(file.uri)?.use {
+                    it.bufferedReader().readText()
+                } ?: continue
+
+                val json = JSONObject(content)
+                val ts = json.optLong("timestamp", 0L)
+                val data = json.optJSONObject("data")?.toString()
+
+                if (data != null) {
+                    if (ts > bestTs) {
+                        if (bestFile != null) filesToDelete.add(bestFile)
+
+                        bestTs = ts
+                        bestData = data
+                        bestFile = file
+                    } else {
+                        filesToDelete.add(file)
+                    }
+                } else {
+                    filesToDelete.add(file)
+                }
+            } catch (e: Exception) {
+                Timber.tag("FolderAnnotationSync").e(e, "Error parsing candidate file: ${file.name}")
+            }
+        }
+
+        if (filesToDelete.isNotEmpty()) {
+            Timber.tag("FolderAnnotationSync").i("Resolving conflicts for $bookId. Found ${filesToDelete.size} obsolete/conflict files.")
+            for (toDelete in filesToDelete) {
+                try {
+                    Timber.tag("FolderAnnotationSync").v("Deleting loser: ${toDelete.name}")
+                    toDelete.delete()
+                } catch (_: Exception) {}
+            }
+        }
+
+        if (bestFile != null) {
+            val correctName = "${basePattern}.json"
+            if (bestFile.name != correctName) {
+                Timber.tag("FolderAnnotationSync").i("Renaming winner ${bestFile.name} to $correctName")
+                val existingTarget = rootTree.findFile(correctName)
+                if (existingTarget != null && existingTarget.uri != bestFile.uri) {
+                    existingTarget.delete()
+                }
+                bestFile.renameTo(correctName)
+            }
+            return Pair(bestTs, bestData!!)
+        }
+
+        return null
     }
 
     /**
@@ -278,16 +367,23 @@ object LocalSyncUtils {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext finalResults
 
-            // CHANGED: Scanning rootTree directly
             val allFiles = rootTree.listFiles()
 
             val groupedFiles = allFiles
-                .filter { it.name?.endsWith(".json") == true || it.name?.contains(".sync-conflict") == true }
+                .filter {
+                    val name = it.name ?: ""
+                    (name.endsWith(".json") || name.contains(".sync-conflict")) &&
+                            !name.endsWith(".tmp") &&
+                            !name.contains(".syncthing.")
+                }
                 .groupBy { file ->
                     var name = file.name ?: ""
                     if (name.startsWith(".")) name = name.substring(1)
-                    name = name.substringBefore(".sync-conflict")
-                    name.substringBefore(".json")
+                    if (name.contains(".sync-conflict")) {
+                        name.substringBefore(".sync-conflict")
+                    } else {
+                        name.substringBefore(".json")
+                    }
                 }
 
             groupedFiles.forEach { (bookId, files) ->
