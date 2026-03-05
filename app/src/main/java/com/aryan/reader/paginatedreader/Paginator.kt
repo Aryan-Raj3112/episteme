@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 interface BlockMeasurementProvider {
     suspend fun measure(block: ContentBlock): Int
@@ -286,14 +287,13 @@ class SuspendingAndroidBlockMeasurementProvider(
         var currentHeight = 0
         var splitRowIndex = -1
 
-        // Account for top and bottom decorations (padding + border)
         val decorationTop = with(density) {
             block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-        }.toInt()
+        }.roundToInt()
 
         val decorationBottom = with(density) {
             block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-        }.toInt()
+        }.roundToInt()
 
         Timber.tag("PAGINATION_DEBUG").d("SplitTable: avail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom")
         currentHeight += decorationTop
@@ -304,8 +304,8 @@ class SuspendingAndroidBlockMeasurementProvider(
             val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
 
             row.forEach { cell ->
-                val cellMaxWidth = ((constraints.maxWidth) * (cell.colspan.toFloat() / totalColspan)).toInt()
-                constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
+                val cellMaxWidth = ((constraints.maxWidth) * (cell.colspan.toFloat() / totalColspan)).roundToInt()
+                @Suppress("UnusedVariable", "Unused") val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
 
                 var cellHeight = 0
                 cell.content.forEach { b ->
@@ -314,11 +314,10 @@ class SuspendingAndroidBlockMeasurementProvider(
                 val cellDecoration = with(density) {
                     cell.style.blockStyle.padding.top.toPx() + cell.style.blockStyle.padding.bottom.toPx() +
                             (cell.style.blockStyle.border?.width?.toPx() ?: 0f) * 2
-                }.toInt()
+                }.roundToInt()
                 maxRowHeight = maxOf(maxRowHeight, cellHeight + cellDecoration)
             }
 
-            // CHECK: Must account for decorationBottom here
             if (currentHeight + maxRowHeight + decorationBottom > availableHeight) {
                 Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$maxRowHeight")
                 splitRowIndex = i
@@ -327,7 +326,7 @@ class SuspendingAndroidBlockMeasurementProvider(
             currentHeight += maxRowHeight
         }
 
-        if (splitRowIndex <= 0) return null // Can't even fit the first row
+        if (splitRowIndex <= 0) return null
 
         val part1Rows = block.rows.subList(0, splitRowIndex)
         val part2Rows = block.rows.subList(splitRowIndex, block.rows.size)
@@ -346,11 +345,11 @@ class SuspendingAndroidBlockMeasurementProvider(
 
         val decorationTop = with(density) {
             block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-        }.toInt()
+        }.roundToInt()
 
         val decorationBottom = with(density) {
             block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-        }.toInt()
+        }.roundToInt()
 
         currentHeight += decorationTop
 
@@ -363,9 +362,8 @@ class SuspendingAndroidBlockMeasurementProvider(
                     val currMargin = child.style.margin.top.toPx()
                     maxOf(prevMargin, currMargin)
                 } else child.style.margin.top.toPx()
-            }.toInt()
+            }.roundToInt()
 
-            // CHECK: Must account for decorationBottom here
             if (currentHeight + childHeight + margin + decorationBottom > availableHeight) {
                 splitChildIndex = i
                 break
@@ -400,6 +398,22 @@ private fun copyBlockWithNewStyle(block: ContentBlock, newStyle: BlockStyle): Co
     }
 }
 
+@Suppress("UNCHECKED_CAST")
+private fun <T : ContentBlock> setBlockExpectedHeight(block: T, height: Int): T {
+    return when (block) {
+        is ParagraphBlock -> block.copy(expectedHeight = height)
+        is HeaderBlock -> block.copy(expectedHeight = height)
+        is ImageBlock -> block.copy(expectedHeight = height)
+        is SpacerBlock -> block.copy(expectedHeight = height)
+        is QuoteBlock -> block.copy(expectedHeight = height)
+        is ListItemBlock -> block.copy(expectedHeight = height)
+        is WrappingContentBlock -> block.copy(expectedHeight = height)
+        is TableBlock -> block.copy(expectedHeight = height)
+        is FlexContainerBlock -> block.copy(expectedHeight = height)
+        is MathBlock -> block.copy(expectedHeight = height)
+    } as T
+}
+
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 suspend fun paginate(
     blocks: List<ContentBlock>,
@@ -417,10 +431,11 @@ suspend fun paginate(
     var remainingHeight = pageHeight
     val remainingBlocks = blocks.toMutableList()
     var pageIndex = 0
-    val safetyMarginPerBlock = 2
+    val safetyMarginPerBlock = 0
 
     while (remainingBlocks.isNotEmpty()) {
         val block = remainingBlocks.removeAt(0)
+
         val blockHeight = measurementProvider.measure(block)
         val blockHeightWithSafetyMargin = blockHeight + safetyMarginPerBlock
 
@@ -432,11 +447,12 @@ suspend fun paginate(
             } else {
                 block.style.margin.top.toPx()
             }
-        }
+        }.roundToInt()
 
-        val spaceRequired = (blockHeightWithSafetyMargin + spaceBetweenBlocks).toInt()
+        val spaceRequired = blockHeightWithSafetyMargin + spaceBetweenBlocks
 
-        Timber.tag("PAGINATION_DEBUG").d("Processing ${block::class.simpleName}: req=$spaceRequired, remaining=$remainingHeight, margin=$spaceBetweenBlocks, heightOnly=$blockHeight")
+        Timber.tag("PAGINATION_DEBUG")
+            .d("Processing ${block::class.simpleName}: req=$spaceRequired, remaining=$remainingHeight, margin=$spaceBetweenBlocks, heightOnly=$blockHeight")
 
         if (spaceRequired <= remainingHeight) {
             var blockToAdd = block
@@ -444,76 +460,170 @@ suspend fun paginate(
 
             if (currentPageContent.isNotEmpty()) {
                 val prevBlock = currentPageContent.last()
-                val newPrevStyle = prevBlock.style.copy(margin = prevBlock.style.margin.copy(bottom = 0.dp))
-                val newPrevBlock = copyBlockWithNewStyle(prevBlock, newPrevStyle)
+                val newPrevStyle =
+                    prevBlock.style.copy(margin = prevBlock.style.margin.copy(bottom = 0.dp))
+                val newPrevBlock = setBlockExpectedHeight(
+                    copyBlockWithNewStyle(prevBlock, newPrevStyle),
+                    prevBlock.expectedHeight
+                )
                 currentPageContent[currentPageContent.size - 1] = newPrevBlock
             }
-            val newCurrentStyle = block.style.copy(margin = block.style.margin.copy(top = collapsedMarginDp))
+            val newCurrentStyle =
+                block.style.copy(margin = block.style.margin.copy(top = collapsedMarginDp))
             blockToAdd = copyBlockWithNewStyle(block, newCurrentStyle)
+
+            blockToAdd = setBlockExpectedHeight(blockToAdd, spaceRequired)
 
             currentPageContent.add(blockToAdd)
             remainingHeight -= spaceRequired
         } else {
             var wasSplit = false
-            val heightForSplitting = remainingHeight - spaceBetweenBlocks.toInt()
+            val heightForSplitting = remainingHeight - spaceBetweenBlocks
 
             if (heightForSplitting > 50) {
                 when (block) {
                     is ParagraphBlock -> {
                         if (!block.style.pageBreakInsideAvoid) {
-                            measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                                if (part1.content.isNotEmpty()) {
-                                    val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
+                            measurementProvider.split(block, heightForSplitting)
+                                ?.let { (part1, part2) ->
+                                    if (part1.content.isNotEmpty()) {
+                                        val collapsedMarginDp =
+                                            with(density) { spaceBetweenBlocks.toDp() }
+                                        if (currentPageContent.isNotEmpty()) {
+                                            val prevBlock = currentPageContent.last()
+                                            val newPrevStyle = prevBlock.style.copy(
+                                                margin = prevBlock.style.margin.copy(bottom = 0.dp)
+                                            )
+                                            currentPageContent[currentPageContent.size - 1] =
+                                                setBlockExpectedHeight(
+                                                    copyBlockWithNewStyle(
+                                                        prevBlock,
+                                                        newPrevStyle
+                                                    ), prevBlock.expectedHeight
+                                                )
+                                        }
+                                        val newPart1Style =
+                                            part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
+                                        var finalPart1 = part1.copy(style = newPart1Style)
+
+                                        val part1Height = measurementProvider.measure(finalPart1)
+                                        val part1Total = part1Height + spaceBetweenBlocks
+                                        finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
+
+                                        currentPageContent.add(finalPart1)
+                                        if (part2.content.isNotEmpty()) remainingBlocks.add(
+                                            0,
+                                            part2
+                                        )
+                                        wasSplit = true
+                                    }
+                                }
+                        }
+                    }
+
+                    is WrappingContentBlock -> {
+                        measurementProvider.split(block, heightForSplitting)
+                            ?.let { (part1, part2) ->
+                                if (part1.paragraphsToWrap.any { it.content.isNotBlank() }) {
+                                    val collapsedMarginDp =
+                                        with(density) { spaceBetweenBlocks.toDp() }
                                     if (currentPageContent.isNotEmpty()) {
                                         val prevBlock = currentPageContent.last()
-                                        val newPrevStyle = prevBlock.style.copy(margin = prevBlock.style.margin.copy(bottom = 0.dp))
-                                        currentPageContent[currentPageContent.size - 1] = copyBlockWithNewStyle(prevBlock, newPrevStyle)
+                                        val newPrevStyle = prevBlock.style.copy(
+                                            margin = prevBlock.style.margin.copy(bottom = 0.dp)
+                                        )
+                                        currentPageContent[currentPageContent.size - 1] =
+                                            setBlockExpectedHeight(
+                                                copyBlockWithNewStyle(
+                                                    prevBlock,
+                                                    newPrevStyle
+                                                ), prevBlock.expectedHeight
+                                            )
                                     }
-                                    val newPart1Style = part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                    val finalPart1 = part1.copy(style = newPart1Style)
+                                    val newPart1Style =
+                                        part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
+                                    var finalPart1 = part1.copy(style = newPart1Style)
+
+                                    val part1Height = measurementProvider.measure(finalPart1)
+                                    val part1Total = part1Height + spaceBetweenBlocks
+                                    finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
+
                                     currentPageContent.add(finalPart1)
-                                    if (part2.content.isNotEmpty()) remainingBlocks.add(0, part2)
+                                    if (part2.isNotEmpty()) {
+                                        remainingBlocks.addAll(0, part2)
+                                    }
                                     wasSplit = true
                                 }
                             }
-                        }
                     }
-                    is WrappingContentBlock -> {
-                        measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                            if (part1.paragraphsToWrap.any { it.content.isNotBlank() }) {
+
+                    is TableBlock -> {
+                        measurementProvider.split(block, heightForSplitting)
+                            ?.let { (part1, part2) ->
                                 val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
                                 if (currentPageContent.isNotEmpty()) {
                                     val prevBlock = currentPageContent.last()
-                                    val newPrevStyle = prevBlock.style.copy(margin = prevBlock.style.margin.copy(bottom = 0.dp))
-                                    currentPageContent[currentPageContent.size - 1] = copyBlockWithNewStyle(prevBlock, newPrevStyle)
+                                    val newPrevStyle = prevBlock.style.copy(
+                                        margin = prevBlock.style.margin.copy(bottom = 0.dp)
+                                    )
+                                    currentPageContent[currentPageContent.size - 1] =
+                                        setBlockExpectedHeight(
+                                            copyBlockWithNewStyle(
+                                                prevBlock,
+                                                newPrevStyle
+                                            ), prevBlock.expectedHeight
+                                        )
                                 }
-                                val newPart1Style = part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                val finalPart1 = part1.copy(style = newPart1Style)
+
+                                val newPart1Style =
+                                    part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
+                                var finalPart1 = copyBlockWithNewStyle(part1, newPart1Style)
+
+                                val part1Height = measurementProvider.measure(finalPart1)
+                                val part1Total = part1Height + spaceBetweenBlocks
+                                finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
+
                                 currentPageContent.add(finalPart1)
-                                if (part2.isNotEmpty()) {
-                                    remainingBlocks.addAll(0, part2)
-                                }
+                                remainingBlocks.add(0, part2)
                                 wasSplit = true
                             }
-                        }
                     }
-                    is TableBlock -> {
-                        measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                            val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
-                            currentPageContent.add(copyBlockWithNewStyle(part1, part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))))
-                            remainingBlocks.add(0, part2)
-                            wasSplit = true
-                        }
-                    }
+
                     is FlexContainerBlock -> {
-                        measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                            val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
-                            currentPageContent.add(copyBlockWithNewStyle(part1, part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))))
-                            remainingBlocks.add(0, part2)
-                            wasSplit = true
-                        }
+                        measurementProvider.split(block, heightForSplitting)
+                            ?.let { (part1, part2) ->
+                                val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
+                                if (currentPageContent.isNotEmpty()) {
+                                    val prevBlock = currentPageContent.last()
+                                    val newPrevStyle = prevBlock.style.copy(
+                                        margin = prevBlock.style.margin.copy(bottom = 0.dp)
+                                    )
+                                    currentPageContent[currentPageContent.size - 1] =
+                                        setBlockExpectedHeight(
+                                            copyBlockWithNewStyle(
+                                                prevBlock,
+                                                newPrevStyle
+                                            ), prevBlock.expectedHeight
+                                        )
+                                }
+
+                                val newPart1Style =
+                                    part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
+                                var finalPart1 = copyBlockWithNewStyle(part1, newPart1Style)
+
+                                val part1Height = measurementProvider.measure(finalPart1)
+                                val part1Total = part1Height + spaceBetweenBlocks
+                                finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
+
+                                currentPageContent.add(finalPart1)
+                                remainingBlocks.add(0, part2)
+                                wasSplit = true
+                            }
                     }
-                    else -> { Timber.d("Page ${pageIndex + 1}: Block type is not splittable.") }
+
+                    else -> {
+                        Timber.d("Page ${pageIndex + 1}: Block type is not splittable.")
+                    }
                 }
             } else {
                 Timber.d("Page ${pageIndex + 1}: Not enough height for splitting ($heightForSplitting <= 50).")
@@ -521,13 +631,19 @@ suspend fun paginate(
 
             if (!wasSplit) {
                 if (currentPageContent.isEmpty()) {
-                    Timber.tag("PAGINATION_DEBUG").w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
-                    currentPageContent.add(block)
+                    Timber.tag("PAGINATION_DEBUG")
+                        .w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
+                    val forcedHeight = blockHeight + spaceBetweenBlocks
+                    val blockToAdd = setBlockExpectedHeight(block, forcedHeight)
+                    currentPageContent.add(blockToAdd)
                 } else {
-                    Timber.tag("PAGINATION_DEBUG").d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
+                    Timber.tag("PAGINATION_DEBUG")
+                        .d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
                     remainingBlocks.add(0, block)
                 }
             }
+
+            zeroOutBottomMargin(currentPageContent)
 
             pages.add(Page(content = currentPageContent.toList()))
             pageIndex++
@@ -536,6 +652,8 @@ suspend fun paginate(
         }
     }
     if (currentPageContent.isNotEmpty()) {
+        zeroOutBottomMargin(currentPageContent)
+
         pages.add(Page(content = currentPageContent.toList()))
     }
 
@@ -569,7 +687,6 @@ private suspend fun measureBlockHeight(
     val specifiedWidthDp = block.style.width
     val specifiedMaxWidthDp = block.style.maxWidth
 
-    // 1. Determine the block's final outer width.
     val blockOuterWidthPx = with(density) {
         var effectiveWidthPx = constraints.maxWidth.toFloat()
         if (specifiedWidthDp != Dp.Unspecified) {
@@ -584,18 +701,18 @@ private suspend fun measureBlockHeight(
         effectiveWidthPx.coerceAtMost(constraints.maxWidth.toFloat())
     }
 
-    // 2. Determine the width available for the content itself.
-    val contentMaxWidth = if (isBorderBox) {
+    val contentMaxWidth = if (specifiedWidthDp == Dp.Unspecified) {
+        (blockOuterWidthPx - horizontalPaddingPx - horizontalBorderPx)
+    } else if (isBorderBox) {
         (blockOuterWidthPx - horizontalPaddingPx - horizontalBorderPx)
     } else {
         blockOuterWidthPx
     }
 
     val adjustedConstraints = constraints.copy(
-        maxWidth = contentMaxWidth.toInt().coerceAtLeast(0)
+        maxWidth = contentMaxWidth.roundToInt().coerceAtLeast(0)
     )
 
-    // 3. Measure the height of the actual content using the calculated content width.
     val contentHeight = when (block) {
         is ParagraphBlock -> {
             val height = withContext(Dispatchers.Main) {
@@ -634,20 +751,19 @@ private suspend fun measureBlockHeight(
                     contentMaxWidth
                 }
 
-                val height = (imageRenderWidthPx * aspectRatio).toInt()
+                val height = (imageRenderWidthPx * aspectRatio).roundToInt()
                 height
             } else {
                 Timber.w("Image at '${block.path}' has no valid intrinsic dimensions, falling back to fixed height.")
                 if (block.style.height != Dp.Unspecified) {
-                    with(density) { block.style.height.toPx() }.toInt()
+                    with(density) { block.style.height.toPx().roundToInt() }
                 } else {
-                    with(density) { 250.dp.toPx() }.toInt()
+                    with(density) { 250.dp.toPx().roundToInt() }
                 }
             }
         }
         is SpacerBlock -> {
-            // A spacer's height property defines its content height.
-            val height = with(density) { block.height.toPx() }.toInt()
+            val height = with(density) { block.height.toPx().roundToInt() }
             height
         }
         is QuoteBlock -> {
@@ -673,7 +789,7 @@ private suspend fun measureBlockHeight(
                 ).size.height
             }
             val markerImageHeight = if (block.itemMarkerImage != null) {
-                with(density) { (defaultStyle.fontSize.value * 0.8f).sp.toPx() }.toInt()
+                with(density) { (defaultStyle.fontSize.value * 0.8f).sp.toPx().roundToInt() }
             } else {
                 0
             }
@@ -689,8 +805,8 @@ private suspend fun measureBlockHeight(
                 row.forEach { cell ->
                     val cellBlockStyle = cell.style.blockStyle
                     val cellMaxWidth = when {
-                        cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx() }.toInt()
-                        else -> (adjustedConstraints.maxWidth * (cell.colspan.toFloat() / totalColspan)).toInt()
+                        cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx().roundToInt() }
+                        else -> (adjustedConstraints.maxWidth * (cell.colspan.toFloat() / totalColspan)).roundToInt()
                     }
 
                     val cellConstraints = adjustedConstraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
@@ -702,7 +818,7 @@ private suspend fun measureBlockHeight(
                         cellDecorationHeight = cellBlockStyle.padding.top.toPx() + cellBlockStyle.padding.bottom.toPx()
                         cellBlockStyle.border?.let { cellDecorationHeight += it.width.toPx() * 2 }
                     }
-                    maxRowHeight = maxOf(maxRowHeight, (cellContentHeight + cellDecorationHeight).toInt())
+                    maxRowHeight = maxOf(maxRowHeight, (cellContentHeight + cellDecorationHeight).roundToInt())
                 }
                 totalHeight += maxRowHeight
             }
@@ -820,13 +936,12 @@ private suspend fun measureBlockHeight(
 
                 textOffset += firstLineEndOffset
 
-                // Skip leading whitespace for the next iteration.
                 while (textOffset < fullText.length && fullText[textOffset].isWhitespace()) {
                     textOffset++
                 }
             }
 
-            val height = maxOf(currentY, imageHeightPx).toInt()
+            val height = maxOf(currentY, imageHeightPx).roundToInt()
             height
         }
         is FlexContainerBlock -> {
@@ -848,36 +963,26 @@ private suspend fun measureBlockHeight(
             val heightPx = parseSvgDimension(block.svgHeight, fontSizePx, containerWidthPx, density)
 
             val finalHeight = if (heightPx != null) {
-                Timber.d("Paginator measuring MathBlock '${block.elementId}': Using explicit height '${block.svgHeight}' -> ${heightPx.toInt()}px")
-                heightPx.toInt()
-            } else if (widthPx != null && block.svgViewBox != null) {
-                val viewBoxParts = block.svgViewBox.split(' ', ',').mapNotNull { it.toFloatOrNull() }
-                if (viewBoxParts.size == 4 && viewBoxParts[2] > 0) {
-                    val viewBoxWidth = viewBoxParts[2]
-                    val viewBoxHeight = viewBoxParts[3]
-                    val aspectRatio = viewBoxHeight / viewBoxWidth
-                    val calculatedHeight = (widthPx * aspectRatio).toInt()
-                    Timber.d("Paginator measuring MathBlock '${block.elementId}': Using width '${block.svgWidth}' -> ${widthPx}px and viewBox ratio $aspectRatio -> calculated height ${calculatedHeight}px")
-                    calculatedHeight
-                } else {
-                    val fallbackHeight = with(density) { (defaultStyle.fontSize.value * 3).sp.toPx() }.toInt()
-                    Timber.w("Paginator measuring MathBlock '${block.elementId}': Invalid viewBox '${block.svgViewBox}'. Using fallback height ${fallbackHeight}px")
-                    fallbackHeight
-                }
+                heightPx.roundToInt()
             } else {
-                val fallbackHeight = with(density) { (defaultStyle.fontSize.value * 3).sp.toPx() }.toInt()
-                Timber.w("Paginator measuring MathBlock '${block.elementId}': No usable dimensions (width='${block.svgWidth}', height='${block.svgHeight}'). Using fallback height ${fallbackHeight}px")
-                fallbackHeight
+                val viewBoxParts = block.svgViewBox?.split(' ', ',')?.mapNotNull { it.toFloatOrNull() }
+                if (viewBoxParts != null && viewBoxParts.size == 4 && viewBoxParts[2] > 0) {
+                    val aspectRatio = viewBoxParts[3] / viewBoxParts[2]
+
+                    val effectiveWidth = widthPx ?: containerWidthPx.toFloat()
+                    (effectiveWidth * aspectRatio).roundToInt()
+                } else {
+                    with(density) { (defaultStyle.fontSize.value * 3).sp.toPx().roundToInt() }
+                }
             }
             finalHeight
         }
     }
-    // 4. Calculate the final total height based on box-sizing.
     val specifiedHeightDp = block.style.height
     val finalHeight = if (isBorderBox && specifiedHeightDp != Dp.Unspecified) {
-        with(density) { specifiedHeightDp.toPx() }.toInt()
+        with(density) { specifiedHeightDp.toPx().roundToInt() }
     } else {
-        (contentHeight + verticalPaddingPx + verticalBorderPx).toInt()
+        (contentHeight + verticalPaddingPx + verticalBorderPx).roundToInt()
     }
 
     Timber.tag("PAGINATION_DEBUG").v("Measure result for ${block::class.simpleName}: content=$contentHeight, paddingV=$verticalPaddingPx, borderV=$verticalBorderPx, total=$finalHeight")
@@ -897,11 +1002,11 @@ private suspend fun splitParagraphBlock(
 
     val decorationTop = with(density) {
         block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-    }
+    }.roundToInt()
 
     val decorationBottom = with(density) {
         block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
-    }
+    }.roundToInt()
 
     val availableTextHeight = availableHeight - decorationTop - decorationBottom
 
@@ -928,13 +1033,13 @@ private suspend fun splitParagraphBlock(
         return null
     }
 
-    var lastVisibleLine = layoutResult.getLineForVerticalPosition(availableTextHeight)
+    var lastVisibleLine = layoutResult.getLineForVerticalPosition(availableTextHeight.toFloat())
 
     if (layoutResult.getLineBottom(lastVisibleLine) > availableHeight.toFloat()) {
         lastVisibleLine--
     }
 
-    if (lastVisibleLine < 0) { // Safety check after decrementing
+    if (lastVisibleLine < 0) {
         return null
     }
 
@@ -1031,7 +1136,7 @@ internal fun parseSvgDimension(
         dimension.endsWith("ex") -> dimension.removeSuffix("ex").toFloatOrNull()?.let { it * 0.5f * fontSizePx }
         dimension.endsWith("em") -> dimension.removeSuffix("em").toFloatOrNull()?.let { it * fontSizePx }
         dimension.endsWith("px") -> dimension.removeSuffix("px").toFloatOrNull()
-        dimension.endsWith("pt") -> dimension.removeSuffix("pt").toFloatOrNull()?.let { it * density.density * 160f / 72f }
+        dimension.endsWith("pt") -> dimension.removeSuffix("pt").toFloatOrNull()?.let { it * 1.333f * density.density }
         dimension.endsWith("%") -> dimension.removeSuffix("%").toFloatOrNull()?.let { (it / 100f) * containerWidthPx }
         else -> dimension.toFloatOrNull()
     }
@@ -1056,12 +1161,22 @@ private suspend fun calculateContentHeightWithMargins(
             } else {
                 child.style.margin.top.toPx()
             }
-        }
-        totalHeight += (childHeight + margin).toInt()
+        }.roundToInt()
+        totalHeight += (childHeight + margin)
         Timber.tag("PAGINATION_DEBUG").v("  Internal Child ${child::class.simpleName}: h=$childHeight, margin=$margin, runningTotal=$totalHeight")
     }
     if (children.isNotEmpty()) {
-        totalHeight += with(density) { children.last().style.margin.bottom.toPx() }.toInt()
+        totalHeight += with(density) { children.last().style.margin.bottom.toPx().roundToInt() }
     }
     return totalHeight
+}
+
+private fun zeroOutBottomMargin(blocks: MutableList<ContentBlock>) {
+    if (blocks.isNotEmpty()) {
+        val lastBlock = blocks.last()
+        val newLastStyle = lastBlock.style.copy(margin = lastBlock.style.margin.copy(bottom = 0.dp))
+        val newLastBlock =
+            setBlockExpectedHeight(copyBlockWithNewStyle(lastBlock, newLastStyle), lastBlock.expectedHeight)
+        blocks[blocks.size - 1] = newLastBlock
+    }
 }

@@ -139,6 +139,7 @@ sealed interface ContentBlock {
     val elementId: String?
     val cfi: String?
     val blockIndex: Int
+    val expectedHeight: Int
 }
 
 sealed interface TextContentBlock : ContentBlock {
@@ -156,7 +157,8 @@ data class ParagraphBlock(
     @ProtoNumber(5) override val cfi: String? = null,
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) override val endCharOffsetInSource: Int = -1,
-    @ProtoNumber(8) override val blockIndex: Int
+    @ProtoNumber(8) override val blockIndex: Int,
+    @ProtoNumber(9) override val expectedHeight: Int = 0
 ) : TextContentBlock
 
 @Serializable
@@ -169,7 +171,8 @@ data class ImageBlock(
     @ProtoNumber(6) override val elementId: String? = null,
     @ProtoNumber(7) override val cfi: String? = null,
     @ProtoNumber(8) val invertOnDarkTheme: Boolean = false,
-    @ProtoNumber(9) override val blockIndex: Int
+    @ProtoNumber(9) override val blockIndex: Int,
+    @ProtoNumber(10) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable
@@ -183,6 +186,7 @@ data class HeaderBlock(
     @ProtoNumber(7) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(8) override val endCharOffsetInSource: Int = -1,
     @ProtoNumber(9) override val blockIndex: Int,
+    @ProtoNumber(10) override val expectedHeight: Int = 0
 ) : TextContentBlock
 
 @Serializable
@@ -191,7 +195,8 @@ data class SpacerBlock(
     @ProtoNumber(2) override val style: BlockStyle = BlockStyle(),
     @ProtoNumber(3) override val elementId: String? = null,
     @ProtoNumber(4) override val cfi: String? = null,
-    @ProtoNumber(5) override val blockIndex: Int
+    @ProtoNumber(5) override val blockIndex: Int,
+    @ProtoNumber(6) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable
@@ -203,7 +208,8 @@ data class QuoteBlock(
     @ProtoNumber(5) override val cfi: String? = null,
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) override val endCharOffsetInSource: Int = -1,
-    @ProtoNumber(8) override val blockIndex: Int
+    @ProtoNumber(8) override val blockIndex: Int,
+    @ProtoNumber(9) override val expectedHeight: Int = 0
 ) : TextContentBlock
 
 @Serializable
@@ -216,7 +222,8 @@ data class ListItemBlock(
     @ProtoNumber(6) override val cfi: String? = null,
     @ProtoNumber(7) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(8) override val endCharOffsetInSource: Int = -1,
-    @ProtoNumber(9) override val blockIndex: Int
+    @ProtoNumber(9) override val blockIndex: Int,
+    @ProtoNumber(10) override val expectedHeight: Int = 0
 ) : TextContentBlock
 
 @Serializable
@@ -233,7 +240,8 @@ data class TableBlock(
     @ProtoNumber(2) override val style: BlockStyle = BlockStyle(),
     @ProtoNumber(3) override val elementId: String? = null,
     @ProtoNumber(4) override val cfi: String? = null,
-    @ProtoNumber(5) override val blockIndex: Int
+    @ProtoNumber(5) override val blockIndex: Int,
+    @ProtoNumber(6) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable
@@ -247,7 +255,8 @@ data class MathBlock(
     @ProtoNumber(7) val svgHeight: String? = null,
     @ProtoNumber(8) val svgViewBox: String? = null,
     @ProtoNumber(9) val isFromMathJax: Boolean = false,
-    @ProtoNumber(10) override val blockIndex: Int
+    @ProtoNumber(10) override val blockIndex: Int,
+    @ProtoNumber(11) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable
@@ -257,7 +266,8 @@ data class WrappingContentBlock(
     @ProtoNumber(3) override val style: BlockStyle = BlockStyle(),
     @ProtoNumber(4) override val elementId: String? = null,
     @ProtoNumber(5) override val cfi: String? = null,
-    @ProtoNumber(6) override val blockIndex: Int
+    @ProtoNumber(6) override val blockIndex: Int,
+    @ProtoNumber(7) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable
@@ -332,7 +342,8 @@ data class FlexContainerBlock(
     @ProtoNumber(2) override val style: BlockStyle = BlockStyle(),
     @ProtoNumber(3) override val elementId: String? = null,
     @ProtoNumber(4) override val cfi: String? = null,
-    @ProtoNumber(5) override val blockIndex: Int
+    @ProtoNumber(5) override val blockIndex: Int,
+    @ProtoNumber(6) override val expectedHeight: Int = 0
 ) : ContentBlock
 
 @Serializable

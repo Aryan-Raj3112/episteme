@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1295,6 +1296,25 @@ private fun TextWithEmphasis(
     })
 }
 
+@SuppressLint("BinaryOperationInTimber")
+private fun checkLayoutMismatch(
+    blockIndex: Int,
+    blockType: String,
+    expectedHeight: Int,
+    actualHeight: Int,
+    tolerance: Int = 2
+) {
+    if (actualHeight > expectedHeight + tolerance) {
+        val diff = actualHeight - expectedHeight
+        Timber.tag("PAGINATION_MISMATCH").e(
+            "OVERFLOW DETECTED! Block #$blockIndex ($blockType)\n" +
+                    " -> Expected: ${expectedHeight}px\n" +
+                    " -> Actual:   ${actualHeight}px\n" +
+                    " -> Diff:     +${diff}px"
+        )
+    }
+}
+
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalFoundationApi::class)
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
@@ -1516,90 +1536,84 @@ internal fun PaginatedReaderContent(
                                     }
 
                                     Column(modifier = Modifier.fillMaxSize()) {
-                                        val searchHighlightColor =
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                        val ttsHighlightColor =
-                                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+                                        val searchHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                        val ttsHighlightColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+
                                         pageContent!!.content.forEach { block ->
                                             val marginModifier = Modifier.padding(
                                                 top = block.style.margin.top.coerceAtLeast(0.dp),
                                                 bottom = block.style.margin.bottom.coerceAtLeast(0.dp)
                                             )
 
-                                            val alignModifier =
-                                                if (block.style.horizontalAlign == "center") {
-                                                    Modifier.align(Alignment.CenterHorizontally)
-                                                } else {
-                                                    Modifier.padding(
-                                                        start = block.style.margin.left.coerceAtLeast(0.dp),
-                                                        end = block.style.margin.right.coerceAtLeast(0.dp)
-                                                    )
-                                                }
+                                            val alignModifier = if (block.style.horizontalAlign == "center") {
+                                                Modifier.align(Alignment.CenterHorizontally)
+                                            } else {
+                                                Modifier.padding(
+                                                    start = block.style.margin.left.coerceAtLeast(0.dp),
+                                                    end = block.style.margin.right.coerceAtLeast(0.dp)
+                                                )
+                                            }
 
-                                            val widthModifier =
-                                                if (block.style.width != Dp.Unspecified) {
-                                                    Modifier.width(block.style.width)
-                                                } else {
-                                                    Modifier.fillMaxWidth()
-                                                }
+                                            val widthModifier = if (block.style.width != Dp.Unspecified) {
+                                                Modifier.width(block.style.width)
+                                            } else {
+                                                Modifier.fillMaxWidth()
+                                            }
 
                                             val boxModifier = marginModifier
                                                 .then(alignModifier)
+                                                .then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
                                                 .then(
-                                                    if (block.style.horizontalAlign == "center") widthModifier
+                                                    if (block.style.borderRadius > 0.dp) Modifier.clip(RoundedCornerShape(block.style.borderRadius))
                                                     else Modifier
-                                                )
-                                                .then(
-                                                    if (block.style.borderRadius > 0.dp) {
-                                                        Modifier.clip(RoundedCornerShape(block.style.borderRadius))
-                                                    } else Modifier
                                                 )
                                                 .then(
                                                     if (block.style.backgroundColor.isSpecified) {
                                                         Modifier.background(
                                                             block.style.backgroundColor,
-                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
-                                                                block.style.borderRadius
-                                                            ) else androidx.compose.ui.graphics.RectangleShape
+                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
                                                         )
-                                                    } else {
-                                                        Modifier
-                                                    }
+                                                    } else Modifier
                                                 )
-                                                .then(block.style.border?.let { border ->
-                                                    Modifier.border(
-                                                        BorderStroke(
-                                                            border.width, border.color
-                                                        ),
-                                                        shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(
-                                                            block.style.borderRadius
-                                                        ) else androidx.compose.ui.graphics.RectangleShape
-                                                    )
-                                                } ?: Modifier)
-
-                                            Box(modifier = boxModifier) {
-                                                val paddingModifier = Modifier
-                                                    .padding(
-                                                        start = block.style.padding.left.coerceAtLeast(
-                                                            0.dp
-                                                        ),
-                                                        top = block.style.padding.top.coerceAtLeast(
-                                                            0.dp
-                                                        ),
-                                                        end = block.style.padding.right.coerceAtLeast(
-                                                            0.dp
-                                                        ),
-                                                        bottom = block.style.padding.bottom.coerceAtLeast(
-                                                            0.dp
+                                                .then(
+                                                    block.style.border?.let { border ->
+                                                        Modifier.border(
+                                                            BorderStroke(border.width, border.color),
+                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
                                                         )
-                                                    )
-                                                    .then(
-                                                        if (block.style.horizontalAlign != "center") widthModifier
-                                                        else Modifier.fillMaxWidth()
-                                                    )
+                                                    } ?: Modifier
+                                                )
+
+                                            val diagnosticModifier = Modifier
+                                                .onGloballyPositioned { coordinates ->
+                                                    val actualHeight = coordinates.size.height
+                                                    if (block.expectedHeight > 0) {
+                                                        checkLayoutMismatch(
+                                                            blockIndex = block.blockIndex,
+                                                            blockType = block::class.simpleName ?: "Block",
+                                                            expectedHeight = block.expectedHeight,
+                                                            actualHeight = actualHeight
+                                                        )
+                                                    }
+                                                }
+                                                .then(boxModifier)
+
+                                            Box(modifier = diagnosticModifier) {
+                                                val borderWidth = block.style.border?.width ?: 0.dp
+                                                val paddingModifier = Modifier.padding(
+                                                    start = block.style.padding.left.coerceAtLeast(0.dp) + borderWidth,
+                                                    top = block.style.padding.top.coerceAtLeast(0.dp) + borderWidth,
+                                                    end = block.style.padding.right.coerceAtLeast(0.dp) + borderWidth,
+                                                    bottom = block.style.padding.bottom.coerceAtLeast(0.dp) + borderWidth
+                                                ).then(
+                                                    if (block.style.horizontalAlign != "center") widthModifier else Modifier.fillMaxWidth()
+                                                )
 
                                                 @Suppress("DEPRECATION") when (block) {
                                                     is ParagraphBlock -> {
+                                                        val paragraphStyle = textStyle.copy(
+                                                            textAlign = block.textAlign ?: textStyle.textAlign
+                                                        )
                                                         val searchHighlighted = highlightQueryInText(
                                                             block.content,
                                                             searchQuery,
@@ -1648,7 +1662,7 @@ internal fun PaginatedReaderContent(
                                                                 searchHighlighted
                                                             }
 
-                                                        val diagnosticModifier =
+                                                        @Suppress("UnusedVariable", "Unused") val diagnosticModifier =
                                                             if (block.textAlign == TextAlign.Justify) {
                                                                 Modifier.onGloballyPositioned { coordinates ->
                                                                     val width = coordinates.size.width
@@ -1672,10 +1686,8 @@ internal fun PaginatedReaderContent(
 
                                                         TextWithEmphasis(
                                                             text = finalContent,
-                                                            style = textStyle,
-                                                            modifier = paddingModifier.then(
-                                                                diagnosticModifier
-                                                            ),
+                                                            style = paragraphStyle,
+                                                            modifier = paddingModifier,
                                                             textMeasurer = textMeasurer,
                                                             onLinkClick = onLinkClickCallback,
                                                             onGeneralTap = onGeneralTapCallback,
@@ -1704,7 +1716,8 @@ internal fun PaginatedReaderContent(
 
                                                     is HeaderBlock -> {
                                                         val style = textStyle.copy(
-                                                            fontWeight = FontWeight.Bold
+                                                            fontWeight = FontWeight.Bold,
+                                                            textAlign = block.textAlign ?: textStyle.textAlign
                                                         )
                                                         val searchHighlighted = highlightQueryInText(
                                                             block.content,
@@ -1780,6 +1793,9 @@ internal fun PaginatedReaderContent(
                                                     }
 
                                                     is QuoteBlock -> {
+                                                        val quoteStyle = textStyle.copy(
+                                                            textAlign = block.textAlign ?: textStyle.textAlign
+                                                        )
                                                         val quoteModifier =
                                                             paddingModifier.padding(start = 16.dp)
                                                         val searchHighlighted = highlightQueryInText(
@@ -1827,7 +1843,7 @@ internal fun PaginatedReaderContent(
                                                             }
                                                         TextWithEmphasis(
                                                             text = finalContent,
-                                                            style = textStyle,
+                                                            style = quoteStyle,
                                                             modifier = quoteModifier,
                                                             textMeasurer = textMeasurer,
                                                             onLinkClick = onLinkClickCallback,
@@ -2112,22 +2128,39 @@ internal fun PaginatedReaderContent(
                                                                     containerWidthPx,
                                                                     localDensity
                                                                 )
-                                                                val imageModifier =
-                                                                    if (widthPx != null) {
-                                                                        val finalWidthDp =
-                                                                            with(localDensity) {
-                                                                                widthPx.toDp()
-                                                                            }
-                                                                        Timber.d(
-                                                                            "Applying calculated width to MathBlock image: $finalWidthDp"
-                                                                        )
-                                                                        Modifier.width(finalWidthDp)
+                                                                val heightPx = parseSvgDimension(
+                                                                    block.svgHeight,
+                                                                    fontSizePx,
+                                                                    containerWidthPx,
+                                                                    localDensity
+                                                                )
+
+                                                                var imageModifier: Modifier = Modifier
+                                                                if (widthPx != null) {
+                                                                    val finalWidthDp = with(localDensity) { widthPx.toDp() }
+                                                                    Timber.d("Applying calculated width to MathBlock image: $finalWidthDp")
+                                                                    imageModifier = imageModifier.width(finalWidthDp)
+                                                                } else {
+                                                                    Timber.w("Could not calculate a specific width for MathBlock. It will fill available space.")
+                                                                    imageModifier = imageModifier.fillMaxWidth()
+                                                                }
+
+                                                                if (heightPx != null) {
+                                                                    val finalHeightDp = with(localDensity) { heightPx.toDp() }
+                                                                    Timber.d("Applying calculated height to MathBlock image: $finalHeightDp")
+                                                                    imageModifier = imageModifier.height(finalHeightDp)
+                                                                } else {
+                                                                    val viewBoxParts = block.svgViewBox?.split(' ', ',')?.mapNotNull { it.toFloatOrNull() }
+                                                                    if (viewBoxParts != null && viewBoxParts.size == 4 && viewBoxParts[2] > 0) {
+                                                                        val aspectRatio = viewBoxParts[3] / viewBoxParts[2]
+                                                                        val effectiveWidth = widthPx ?: containerWidthPx.toFloat()
+                                                                        val finalHeightDp = with(localDensity) { (effectiveWidth * aspectRatio).toDp() }
+                                                                        imageModifier = imageModifier.height(finalHeightDp)
                                                                     } else {
-                                                                        Timber.w(
-                                                                            "Could not calculate a specific width for MathBlock. It will fill available space."
-                                                                        )
-                                                                        Modifier
+                                                                        val fallbackHeightDp = with(localDensity) { (textStyle.fontSize.value * 3).sp.toDp() }
+                                                                        imageModifier = imageModifier.height(fallbackHeightDp)
                                                                     }
+                                                                }
 
                                                                 val imageRequest =
                                                                     Builder(LocalContext.current).data(
@@ -2185,6 +2218,15 @@ internal fun PaginatedReaderContent(
                                                                     max = style.maxWidth
                                                                 )
                                                                 else Modifier
+                                                            )
+                                                            .then(
+                                                                if (block.intrinsicWidth != null && block.intrinsicHeight != null && block.intrinsicWidth > 0f && block.intrinsicHeight > 0f) {
+                                                                    Modifier.aspectRatio(block.intrinsicWidth / block.intrinsicHeight, matchHeightConstraintsFirst = false)
+                                                                } else if (style.height != Dp.Unspecified) {
+                                                                    Modifier.height(style.height)
+                                                                } else {
+                                                                    Modifier.height(250.dp)
+                                                                }
                                                             )
                                                             .then(paddingModifier)
 
@@ -2450,6 +2492,15 @@ internal fun PaginatedReaderContent(
                                                                                     }
 
                                                                                     is ImageBlock -> {
+                                                                                        val imageModifier = Modifier.fillMaxWidth().then(
+                                                                                            if (blockInCell.intrinsicWidth != null && blockInCell.intrinsicHeight != null && blockInCell.intrinsicWidth > 0f && blockInCell.intrinsicHeight > 0f) {
+                                                                                                Modifier.aspectRatio(blockInCell.intrinsicWidth / blockInCell.intrinsicHeight, matchHeightConstraintsFirst = false)
+                                                                                            } else if (blockInCell.style.height != Dp.Unspecified) {
+                                                                                                Modifier.height(blockInCell.style.height)
+                                                                                            } else {
+                                                                                                Modifier.height(250.dp)
+                                                                                            }
+                                                                                        )
                                                                                         AsyncImage(
                                                                                             model = Builder(
                                                                                                 LocalContext.current
@@ -2460,12 +2511,9 @@ internal fun PaginatedReaderContent(
                                                                                             ).build(),
                                                                                             contentDescription = blockInCell.altText,
                                                                                             contentScale = ContentScale.Fit,
-                                                                                            modifier = Modifier.fillMaxWidth()
+                                                                                            modifier = imageModifier
                                                                                         )
                                                                                     }
-                                                                                    // Catch-all for any
-                                                                                    // other text-based
-                                                                                    // content
                                                                                     is TextContentBlock -> {
                                                                                         Text(
                                                                                             text = blockInCell.content,
@@ -3178,6 +3226,15 @@ private fun RenderFlexChildBlock(
                     if (style.maxWidth != Dp.Unspecified) Modifier.widthIn(max = style.maxWidth)
                     else Modifier
                 )
+                .then(
+                    if (childBlock.intrinsicWidth != null && childBlock.intrinsicHeight != null && childBlock.intrinsicWidth > 0f && childBlock.intrinsicHeight > 0f) {
+                        Modifier.aspectRatio(childBlock.intrinsicWidth / childBlock.intrinsicHeight, matchHeightConstraintsFirst = false)
+                    } else if (style.height != Dp.Unspecified) {
+                        Modifier.height(style.height)
+                    } else {
+                        Modifier.height(250.dp)
+                    }
+                )
 
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
                 val matrix = floatArrayOf(
@@ -3295,6 +3352,15 @@ private fun RenderFlexChildBlock(
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     } else if (blockInCell is ImageBlock) {
+                                        val imageModifier = Modifier.fillMaxWidth().then(
+                                            if (blockInCell.intrinsicWidth != null && blockInCell.intrinsicHeight != null && blockInCell.intrinsicWidth > 0f && blockInCell.intrinsicHeight > 0f) {
+                                                Modifier.aspectRatio(blockInCell.intrinsicWidth / blockInCell.intrinsicHeight, matchHeightConstraintsFirst = false)
+                                            } else if (blockInCell.style.height != Dp.Unspecified) {
+                                                Modifier.height(blockInCell.style.height)
+                                            } else {
+                                                Modifier.height(250.dp)
+                                            }
+                                        )
                                         AsyncImage(
                                             model = Builder(LocalContext.current).data(
                                                 File(
@@ -3303,7 +3369,7 @@ private fun RenderFlexChildBlock(
                                             ).build(),
                                             contentDescription = blockInCell.altText,
                                             contentScale = ContentScale.Fit,
-                                            modifier = Modifier.fillMaxWidth()
+                                            modifier = imageModifier
                                         )
                                     }
                                 }
