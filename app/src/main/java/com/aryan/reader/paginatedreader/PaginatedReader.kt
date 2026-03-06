@@ -31,6 +31,8 @@ import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -544,7 +546,12 @@ fun PaginatedReaderScreen(
                 lineHeight = adjustedLineHeight,
                 fontFamily = debouncedFontFamily,
                 lineBreak = LineBreak.Paragraph,
-                letterSpacing = TextUnit.Unspecified
+                letterSpacing = TextUnit.Unspecified,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Proportional,
+                    trim = LineHeightStyle.Trim.None
+                )
             )
         }
 
@@ -1302,15 +1309,22 @@ private fun checkLayoutMismatch(
     blockType: String,
     expectedHeight: Int,
     actualHeight: Int,
-    tolerance: Int = 2
+    textSnippet: String,
+    @Suppress("SameParameterValue") tolerance: Int = 2
 ) {
+    if (expectedHeight == 0) {
+        Timber.tag("PAGINATION_MISMATCH").w("Block #$blockIndex ($blockType) has expectedHeight=0. Skipping check. Text: '$textSnippet'")
+        return
+    }
+
     if (actualHeight > expectedHeight + tolerance) {
         val diff = actualHeight - expectedHeight
         Timber.tag("PAGINATION_MISMATCH").e(
             "OVERFLOW DETECTED! Block #$blockIndex ($blockType)\n" +
                     " -> Expected: ${expectedHeight}px\n" +
                     " -> Actual:   ${actualHeight}px\n" +
-                    " -> Diff:     +${diff}px"
+                    " -> Diff:     +${diff}px\n" +
+                    " -> Content:  '$textSnippet'"
         )
     }
 }
@@ -1560,8 +1574,7 @@ internal fun PaginatedReaderContent(
                                                 Modifier.fillMaxWidth()
                                             }
 
-                                            val boxModifier = marginModifier
-                                                .then(alignModifier)
+                                            val styleModifier = alignModifier
                                                 .then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
                                                 .then(
                                                     if (block.style.borderRadius > 0.dp) Modifier.clip(RoundedCornerShape(block.style.borderRadius))
@@ -1588,15 +1601,27 @@ internal fun PaginatedReaderContent(
                                                 .onGloballyPositioned { coordinates ->
                                                     val actualHeight = coordinates.size.height
                                                     if (block.expectedHeight > 0) {
+                                                        val snippet = when(block) {
+                                                            is ParagraphBlock -> block.content.text.take(50)
+                                                            is HeaderBlock -> block.content.text.take(50)
+                                                            is QuoteBlock -> block.content.text.take(50)
+                                                            is ListItemBlock -> block.content.text.take(50)
+                                                            is TextContentBlock -> block.content.text.take(50)
+                                                            else -> "Non-text content"
+                                                        }
+
                                                         checkLayoutMismatch(
                                                             blockIndex = block.blockIndex,
                                                             blockType = block::class.simpleName ?: "Block",
                                                             expectedHeight = block.expectedHeight,
-                                                            actualHeight = actualHeight
+                                                            actualHeight = actualHeight,
+                                                            textSnippet = snippet,
+                                                            tolerance = 2
                                                         )
                                                     }
                                                 }
-                                                .then(boxModifier)
+                                                .then(marginModifier)
+                                                .then(styleModifier)
 
                                             Box(modifier = diagnosticModifier) {
                                                 val borderWidth = block.style.border?.width ?: 0.dp
