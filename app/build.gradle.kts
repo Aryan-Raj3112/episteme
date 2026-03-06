@@ -20,6 +20,7 @@ if (localPropertiesFile.exists()) {
 android {
     namespace = "com.aryan.reader"
     compileSdk = 35
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.aryan.reader"

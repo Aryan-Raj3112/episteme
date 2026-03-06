@@ -1820,15 +1820,7 @@
         observer: null,
 
         init: function (initialChunkIndex, total) {
-            console.log(`Virtualization: Init with $ {
-                        total
-                    }
-
-                    chunks. Anchor: $ {
-                        initialChunkIndex
-                    }
-
-                    `);
+            console.log(`Virtualization: Init with ${total} chunks. Anchor: ${initialChunkIndex}`);
             this.totalChunks = total;
             this.chunksData = new Array(total).fill(null);
             this.chunkHeights = new Array(total).fill(0);
@@ -1838,11 +1830,12 @@
             if (container) {
                 container.querySelectorAll(".chunk-container").forEach((div) => {
                     let idx = parseInt(div.dataset.chunkIndex, 10);
-                    let content = div.innerHTML.trim();
+                    let content = div.innerHTML; // Don't trim, keep original HTML structure
 
-                    if (content.length > 0) {
-                        this.chunksData = content;
-                        this.chunkHeights = div.getBoundingClientRect().height;
+                    if (content.trim().length > 0) {
+                        // FIX: Assign to specific index, don't overwrite the whole array
+                        this.chunksData[idx] = content;
+                        this.chunkHeights[idx] = div.getBoundingClientRect().height;
                     }
                 });
             }
@@ -1862,26 +1855,31 @@
                         let idx = parseInt(div.dataset.chunkIndex, 10);
 
                         if (entry.isIntersecting) {
-                            if (!this.chunksData) {
+                            // Check if we have data for this chunk at specific index
+                            if (!this.chunksData[idx]) {
                                 if (window.ContentBridge && window.ContentBridge.requestChunk) {
                                     window.ContentBridge.requestChunk(idx);
                                 }
                             } else if (div.innerHTML === "") {
+                                // Restore content from cache
                                 let oldHeight = div.getBoundingClientRect().height;
-                                div.innerHTML = this.chunksData;
-                                div.style.height = "";
-                                let newHeight = div.getBoundingClientRect().height;
-                                this.chunkHeights = newHeight;
+                                div.innerHTML = this.chunksData[idx]; // FIX: Access by index
+                                div.style.height = ""; // Allow auto height
 
+                                let newHeight = div.getBoundingClientRect().height;
+                                this.chunkHeights[idx] = newHeight; // Update cached height
+
+                                // Adjust scroll if this expansion happened above our viewport
                                 if (div.getBoundingClientRect().top < 0) {
-                                    scrollAdjust += newHeight - oldHeight;
+                                    scrollAdjust += (newHeight - oldHeight);
                                 }
                             }
                         } else {
+                            // Unload content to save memory/DOM weight
                             if (div.innerHTML !== "") {
                                 let oldHeight = div.getBoundingClientRect().height;
-                                this.chunkHeights = oldHeight;
-                                div.style.height = oldHeight + "px";
+                                this.chunkHeights[idx] = oldHeight;
+                                div.style.height = oldHeight + "px"; // Fix height to placeholder
                                 div.innerHTML = "";
                             }
                         }
@@ -1891,8 +1889,7 @@
                         window.scrollBy(0, scrollAdjust);
                     }
                 },
-
-                { rootMargin: "2500px 0px" },
+                { rootMargin: "2500px 0px" } // Keep large margin for smooth scrolling
             );
 
             document.querySelectorAll(".chunk-container").forEach((div) => {
