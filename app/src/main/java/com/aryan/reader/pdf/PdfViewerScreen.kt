@@ -37,6 +37,9 @@ import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.aryan.reader.epubreader.EpubReaderHost
+import com.aryan.reader.RenderMode
+import com.aryan.reader.paginatedreader.Locator
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
@@ -231,6 +234,7 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -4345,6 +4349,25 @@ fun PdfViewerScreen(
                                                 )
                                             )
                                         }
+
+                                        HorizontalDivider()
+
+                                        DropdownMenuItem(
+                                            text = { Text("Reflow Mode (Text View)") },
+                                            enabled = pdfDocument != null,
+                                            onClick = {
+                                                showMoreMenu = false
+                                                viewModel.toggleReflowMode()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.format_size), // or suitable icon
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
+                                        
                                         HorizontalDivider()
 
                                         DropdownMenuItem(text = { Text("Share") }, onClick = {

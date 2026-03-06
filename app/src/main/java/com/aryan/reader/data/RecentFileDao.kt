@@ -40,6 +40,9 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files")
     suspend fun getAllFiles(): List<RecentFileEntity>
 
+    @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
+    suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
+
     @Query("SELECT * FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentFilesList(limit: Int): List<RecentFileEntity>
 

@@ -128,6 +128,7 @@ import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.DeviceVoiceSettingsSheet
+import com.aryan.reader.MainViewModel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -291,8 +292,12 @@ fun EpubReaderScreen(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit
+    onImportFont: (Uri) -> Unit,
+    viewModel: MainViewModel
 ) {
+    val uiState by viewModel.uiState.collectAsState()
+    val isReflowMode = uiState.recentFiles.find { it.bookId == uiState.selectedBookId }?.isReflowPreferred == true
+
     EpubReaderHost(
         epubBook = epubBook,
         renderMode = renderMode,
@@ -307,7 +312,8 @@ fun EpubReaderScreen(
         coverImagePath = coverImagePath,
         onRenderModeChange = onRenderModeChange,
         customFonts = customFonts,
-        onImportFont = onImportFont
+        onImportFont = onImportFont,
+        onToggleReflow = if (isReflowMode) { { viewModel.toggleReflowMode() } } else null
     )
 }
 
@@ -330,7 +336,8 @@ fun EpubReaderHost(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit
+    onImportFont: (Uri) -> Unit,
+    onToggleReflow: (() -> Unit)? = null
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -2880,7 +2887,8 @@ fun EpubReaderHost(
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
-                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true }
+                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                    onToggleReflow = onToggleReflow,
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(

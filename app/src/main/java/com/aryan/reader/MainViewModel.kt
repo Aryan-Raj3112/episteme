@@ -30,6 +30,7 @@ import android.content.SharedPreferences
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -68,6 +69,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PdfExporter
+import com.aryan.reader.pdf.PdfToMarkdownGenerator
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -76,6 +78,7 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -2252,90 +2255,237 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun toggleReflowMode() {
+        val currentState = _internalState.value
+        val isCurrentlyPdf = currentState.selectedFileType == FileType.PDF
+        val bookId = currentState.selectedBookId ?: return
+
+        // CHANGE: Launch coroutine immediately to allow calling suspend functions
+        viewModelScope.launch {
+            // CHANGE: Call getFileByBookId inside the coroutine
+            val originalUri = currentState.selectedPdfUri
+                ?: recentFilesRepository.getFileByBookId(bookId)?.getUri()
+                ?: return@launch
+
+            _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage("Switching view mode...")) }
+
+            try {
+                if (isCurrentlyPdf) {
+                    // --- Switch TO Reflow (EPUB Reader) ---
+
+                    var tempPfd: ParcelFileDescriptor? = null
+                    var tempDoc: PdfDocumentKt? = null
+
+                    val generatedFile: File = try {
+                        // Open PDF just for extraction
+                        tempPfd = appContext.contentResolver.openFileDescriptor(originalUri, "r")
+                        val pdfium = io.legere.pdfiumandroid.suspend.PdfiumCoreKt(Dispatchers.Default)
+                        tempDoc = pdfium.newDocument(tempPfd!!)
+                        val pages = tempDoc.getPageCount()
+
+                        // 2. Generate/Get Cached MD
+                        PdfToMarkdownGenerator.generateReflowFile(
+                            appContext, bookId, tempDoc, pdfTextRepository, pages
+                        )
+                    } finally {
+                        tempDoc?.close()
+                        tempPfd?.close()
+                    }
+
+                    // 3. Import the MD file as an EpubBook
+                    val mdUri = generatedFile.toUri()
+                    val epubBook = singleFileImporter.importSingleFile(
+                        generatedFile.inputStream(),
+                        FileType.MD,
+                        "Reflow: ${currentState.recentFiles.find { it.bookId == bookId }?.displayName ?: "Document"}"
+                    )
+
+                    // 4. Update Database Preference
+                    // CHANGE: Use repository instead of dao
+                    recentFilesRepository.updateReflowPreference(bookId, true)
+
+                    // 5. Swap State (Close PDF, Open EPUB)
+                    _internalState.update {
+                        it.copy(
+                            selectedPdfUri = null,
+                            selectedEpubUri = mdUri,
+                            selectedEpubBook = epubBook,
+                            selectedFileType = FileType.MD,
+                            isLoading = false,
+                            bannerMessage = null
+                        )
+                    }
+
+                } else {
+                    // --- Switch TO Original PDF ---
+
+                    // 1. Update Database Preference
+                    // CHANGE: Use repository instead of dao
+                    recentFilesRepository.updateReflowPreference(bookId, false)
+
+                    // 2. Swap State (Close EPUB, Open PDF)
+                    _internalState.update {
+                        it.copy(
+                            selectedEpubUri = null,
+                            selectedEpubBook = null,
+                            selectedPdfUri = originalUri,
+                            selectedFileType = FileType.PDF,
+                            isLoading = false,
+                            bannerMessage = null
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to toggle reflow mode")
+                _internalState.update {
+                    it.copy(isLoading = false, errorMessage = "Could not switch modes: ${e.message}")
+                }
+            }
+        }
+    }
+
     private fun openBook(
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null
     ) {
-        Timber.d("Opening book with determined type: $type for bookId: $bookId")
+        Timber.d("Opening book type: $type for bookId: $bookId")
 
-        _internalState.update {
-            it.copy(
-                selectedPdfUri = null,
-                selectedEpubUri = null,
-                selectedBookId = bookId,
-                selectedEpubBook = null,
-                selectedFileType = type,
-                isLoading = true,
-                errorMessage = null,
-                initialLocator = null,
-                initialPageInBook = null
-            )
-        }
+        viewModelScope.launch {
+            val recentItem = recentFilesRepository.getFileByBookId(bookId)
 
-        if (type == FileType.PDF) {
-            viewModelScope.launch {
-                val recentItem = recentFilesRepository.getFileByBookId(bookId)
+            if (type == FileType.PDF && recentItem?.isReflowPreferred == true) {
+                Timber.i("Reflow preferred for $bookId. Generating/Loading Reflow view...")
 
-                if (recentItem?.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                _internalState.update { it.copy(isLoading = true, selectedBookId = bookId) }
+
+                try {
+                    var tempPfd: ParcelFileDescriptor? = null
+                    var tempDoc: PdfDocumentKt? = null
+                    val generatedFile: File = try {
+                        tempPfd = appContext.contentResolver.openFileDescriptor(uri, "r")
+                        val pdfium =
+                            io.legere.pdfiumandroid.suspend.PdfiumCoreKt(Dispatchers.Default)
+                        tempDoc = pdfium.newDocument(tempPfd!!)
+                        PdfToMarkdownGenerator.generateReflowFile(
+                            appContext,
+                            bookId,
+                            tempDoc,
+                            pdfTextRepository,
+                            tempDoc.getPageCount()
+                        )
+                    } finally {
+                        tempDoc?.close()
+                        tempPfd?.close()
                     }
-                }
 
-                Timber.d("openBook: Loading PDF. bookId=$bookId ...")
-                _internalState.update {
-                    it.copy(
-                        selectedPdfUri = uri,
-                        initialPageInBook = recentItem?.lastPage,
-                        initialBookmarksJson = recentItem?.bookmarksJson,
-                        isLoading = false
+                    val epubBook = singleFileImporter.importSingleFile(
+                        generatedFile.inputStream(), FileType.MD, originalDisplayName ?: "Document"
                     )
+
+                    _internalState.update {
+                        it.copy(
+                            selectedPdfUri = null,
+                            selectedEpubUri = generatedFile.toUri(), // Point to cache
+                            selectedEpubBook = epubBook,
+                            selectedFileType = FileType.MD,
+                            isLoading = false,
+                            // We don't restore PDF page in EPUB mode easily yet, start at beginning or saved epub pos
+                            initialLocator = null
+                        )
+                    }
+                    return@launch
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to open in reflow mode, falling back to PDF")
+                    // Fallthrough to standard PDF open
                 }
-                addFileToRecent(
-                    uri,
-                    type,
-                    bookId,
-                    customDisplayName = originalDisplayName,
-                    isRecent = true,
-                    sourceFolderUri = null
+            }
+
+            _internalState.update {
+                it.copy(
+                    selectedPdfUri = null,
+                    selectedEpubUri = null,
+                    selectedBookId = bookId,
+                    selectedEpubBook = null,
+                    selectedFileType = type,
+                    isLoading = true,
+                    errorMessage = null,
+                    initialLocator = null,
+                    initialPageInBook = null
                 )
             }
-        } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
-            viewModelScope.launch {
-                val recentItem = recentFilesRepository.getFileByBookId(bookId)
-                if (recentItem?.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
-                    }
-                }
-                val locator =
-                    if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
-                        Locator(
-                            chapterIndex = recentItem.lastChapterIndex,
-                            blockIndex = recentItem.locatorBlockIndex,
-                            charOffset = recentItem.locatorCharOffset
-                        )
-                    } else {
-                        null
+
+            if (type == FileType.PDF) {
+                viewModelScope.launch {
+                    val recentItem = recentFilesRepository.getFileByBookId(bookId)
+
+                    if (recentItem?.sourceFolderUri != null) {
+                        launch(Dispatchers.IO) {
+                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                        }
                     }
 
-                _internalState.update {
-                    it.copy(
-                        selectedEpubUri = uri,
-                        initialLocator = locator,
-                        initialCfi = recentItem?.lastPositionCfi,
-                        initialBookmarksJson = recentItem?.bookmarksJson
+                    Timber.d("openBook: Loading PDF. bookId=$bookId ...")
+                    _internalState.update {
+                        it.copy(
+                            selectedPdfUri = uri,
+                            initialPageInBook = recentItem?.lastPage,
+                            initialBookmarksJson = recentItem?.bookmarksJson,
+                            isLoading = false
+                        )
+                    }
+                    addFileToRecent(
+                        uri,
+                        type,
+                        bookId,
+                        customDisplayName = originalDisplayName,
+                        isRecent = true,
+                        sourceFolderUri = null
                     )
                 }
+            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
+                viewModelScope.launch {
+                    val recentItem = recentFilesRepository.getFileByBookId(bookId)
+                    if (recentItem?.sourceFolderUri != null) {
+                        launch(Dispatchers.IO) {
+                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                        }
+                    }
+                    val locator =
+                        if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
+                            Locator(
+                                chapterIndex = recentItem.lastChapterIndex,
+                                blockIndex = recentItem.locatorBlockIndex,
+                                charOffset = recentItem.locatorCharOffset
+                            )
+                        } else {
+                            null
+                        }
 
-                when (type) {
-                    FileType.EPUB -> {
-                        loadEpub(uri, bookId, customDisplayName = originalDisplayName)
+                    _internalState.update {
+                        it.copy(
+                            selectedEpubUri = uri,
+                            initialLocator = locator,
+                            initialCfi = recentItem?.lastPositionCfi,
+                            initialBookmarksJson = recentItem?.bookmarksJson
+                        )
                     }
-                    FileType.MOBI -> {
-                        loadMobi(uri, bookId, customDisplayName = originalDisplayName)
-                    }
-                    else -> {
-                        loadSingleFile(uri, bookId, type, customDisplayName = originalDisplayName)
+
+                    when (type) {
+                        FileType.EPUB -> {
+                            loadEpub(uri, bookId, customDisplayName = originalDisplayName)
+                        }
+
+                        FileType.MOBI -> {
+                            loadMobi(uri, bookId, customDisplayName = originalDisplayName)
+                        }
+
+                        else -> {
+                            loadSingleFile(
+                                uri,
+                                bookId,
+                                type,
+                                customDisplayName = originalDisplayName
+                            )
+                        }
                     }
                 }
             }

@@ -43,7 +43,8 @@ data class RecentFileItem(
     val lastModifiedTimestamp: Long = 0L,
     val isDeleted: Boolean = false,
     val bookmarksJson: String? = null,
-    val sourceFolderUri: String? = null
+    val sourceFolderUri: String? = null,
+    val isReflowPreferred: Boolean = false
 ) {
     fun getUri(): Uri? = uriString?.toUri()
 }
@@ -69,7 +70,8 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         lastModifiedTimestamp = this.lastModifiedTimestamp,
         isDeleted = this.isDeleted,
         bookmarksJson = this.bookmarks,
-        sourceFolderUri = this.sourceFolderUri
+        sourceFolderUri = this.sourceFolderUri,
+        isReflowPreferred = this.isReflowPreferred
     )
 }
 
@@ -94,7 +96,8 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         lastModifiedTimestamp = this.lastModifiedTimestamp,
         isDeleted = this.isDeleted,
         bookmarks = this.bookmarksJson,
-        sourceFolderUri = this.sourceFolderUri
+        sourceFolderUri = this.sourceFolderUri,
+        isReflowPreferred = this.isReflowPreferred
     )
 }
 

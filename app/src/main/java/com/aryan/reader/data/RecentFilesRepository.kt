@@ -294,6 +294,10 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
     }
 
+    suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean) = withContext(Dispatchers.IO) {
+        recentFileDao.updateReflowPreference(bookId, isPreferred)
+    }
+
     suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
         recentFileDao.detachAllFolderBooks()
         Timber.d("Detached all folder books. They are now standard local files.")
