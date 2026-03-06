@@ -105,17 +105,8 @@ class SingleFileImporter(private val context: Context) {
         var chapterCounter = 1
 
         val cssStyle = """
-            body { margin: 0; padding: 0; }
-            pre { 
-                font-family: 'Courier New', Courier, monospace; 
-                font-size: 1em;
-                line-height: 1.5;
-                white-space: pre-wrap; 
-                overflow-wrap: anywhere; 
-                word-break: break-word;
-                padding: 1em;
-                margin: 0;
-            }
+            body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
+            p { margin-bottom: 1em; text-indent: 1.5em; }
         """.trimIndent()
 
         val currentChapterContent = StringBuilder()
@@ -135,7 +126,9 @@ class SingleFileImporter(private val context: Context) {
                     <title>$chapterTitle</title>
                     <style>$cssStyle</style>
                 </head>
-                <body><pre>${currentChapterContent}</pre></body>
+                <body>
+                $currentChapterContent
+                </body>
                 </html>
             """.trimIndent()
 
@@ -160,37 +153,55 @@ class SingleFileImporter(private val context: Context) {
             chapterCounter++
         }
 
+        fun escapeHtml(text: String): String {
+            return text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+        }
+
         val reader = inputStream.bufferedReader()
-        val buffer = CharArray(8192)
+        var inParagraph = false
 
         while (true) {
-            val readCount = reader.read(buffer)
-            if (readCount == -1) break
-
-            for (i in 0 until readCount) {
-                val c = buffer[i]
-
-                if ((c < ' ' && c != '\t' && c != '\n' && c != '\r')) {
-                    continue
+            val line = reader.readLine()
+            if (line == null) {
+                if (inParagraph) {
+                    currentChapterContent.append("</p>\n")
                 }
-
-                when (c) {
-                    '<' -> currentChapterContent.append("&lt;")
-                    '>' -> currentChapterContent.append("&gt;")
-                    '&' -> currentChapterContent.append("&amp;")
-                    else -> currentChapterContent.append(c)
-                }
+                break
             }
 
-            if (currentChapterContent.length >= chapterTargetSize) {
-                flushChapter()
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                if (inParagraph) {
+                    currentChapterContent.append("</p>\n")
+                    inParagraph = false
+                }
+
+                if (currentChapterContent.length >= chapterTargetSize) {
+                    flushChapter()
+                }
+            } else {
+                if (!inParagraph) {
+                    currentChapterContent.append("<p>")
+                    inParagraph = true
+                } else {
+                    currentChapterContent.append(" ")
+                }
+                currentChapterContent.append(escapeHtml(trimmed))
+
+                if (currentChapterContent.length >= chapterTargetSize * 2) {
+                    currentChapterContent.append("</p>\n")
+                    flushChapter()
+                    inParagraph = false
+                }
             }
         }
 
         flushChapter()
 
         if (chapters.isEmpty()) {
-            currentChapterContent.append("(Empty File)")
+            currentChapterContent.append("<p>(Empty File)</p>")
             flushChapter()
         }
 

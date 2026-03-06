@@ -710,7 +710,8 @@ private suspend fun measureBlockHeight(
     }
 
     val adjustedConstraints = constraints.copy(
-        maxWidth = contentMaxWidth.roundToInt().coerceAtLeast(0)
+        maxWidth = contentMaxWidth.roundToInt().coerceAtLeast(0),
+        maxHeight = Constraints.Infinity
     )
 
     val contentHeight = when (block) {
@@ -1021,7 +1022,7 @@ private suspend fun splitParagraphBlock(
         textMeasurer.measure(
             text = text,
             style = textStyle,
-            constraints = constraints
+            constraints = constraints.copy(maxHeight = Constraints.Infinity)
         )
     }
 
