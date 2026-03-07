@@ -1896,7 +1896,7 @@ fun EpubReaderHost(
                                                     Timber.d("Auto-scroll toggled via tap: $isAutoScrollPlaying")
                                                 }
 
-                                                if (!isMusicianMode && System.currentTimeMillis() - lastHighlightClickTime > 500) {
+                                                if (!(isMusicianMode && isAutoScrollModeActive) && System.currentTimeMillis() - lastHighlightClickTime > 500) {
                                                     focusManager.clearFocus()
                                                     if (volumeScrollEnabled && !searchState.isSearchActive) {
                                                         containerFocusRequester.requestFocus()

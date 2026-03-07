@@ -74,8 +74,6 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -993,7 +991,7 @@ fun AutoScrollControls(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                val speedOptions = listOf(0.1f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
+                                val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween

@@ -1345,7 +1345,7 @@ fun PdfViewerScreen(
                 }
                 selectedTextBoxId = null
             } else {
-                if (!isFullScreen && !isMusicianMode) {
+                if (!isFullScreen && !(isMusicianMode && isAutoScrollModeActive))  {
                     showBars = !showBars
                     Timber.d("Vertical Reader Clicked. showBars now: $showBars")
                 }
