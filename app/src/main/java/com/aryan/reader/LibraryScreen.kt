@@ -109,6 +109,7 @@ import com.aryan.reader.data.RecentFileItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -156,9 +157,27 @@ fun LibraryScreen(
             viewModel.setSyncedFolder(it)
         }
     }
-    val onSelectSyncFolderClick = { pickFolderLauncher.launch(null) }
+
+    val onSelectSyncFolderClick = {
+        try {
+            pickFolderLauncher.launch(null)
+        } catch (_: android.content.ActivityNotFoundException) {
+            viewModel.showBanner("Your device doesn't support folder selection. You can still import files individually.", isError = true)
+        }
+    }
 
     val pickFileLauncher = rememberFilePickerLauncher { uris ->
+        if (isContextualModeActive) {
+            viewModel.clearContextualAction()
+        }
+        uris.forEach { uri ->
+            viewModel.onFileSelected(uri, isFromRecent = false)
+        }
+    }
+
+    val fallbackFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
         if (isContextualModeActive) {
             viewModel.clearContextualAction()
         }
@@ -171,7 +190,16 @@ fun LibraryScreen(
         if (isContextualModeActive) {
             viewModel.clearContextualAction()
         }
-        pickFileLauncher.launch(arrayOf("*/*"))
+        try {
+            pickFileLauncher.launch(arrayOf("*/*"))
+        } catch (_: android.content.ActivityNotFoundException) {
+            Timber.w("OpenDocument picker failed. Falling back to GetMultipleContents.")
+            try {
+                fallbackFilePickerLauncher.launch("*/*")
+            } catch (_: android.content.ActivityNotFoundException) {
+                viewModel.showBanner("No file manager found. Please install a file manager app.", isError = true)
+            }
+        }
     }
 
     LaunchedEffect(pagerState) {

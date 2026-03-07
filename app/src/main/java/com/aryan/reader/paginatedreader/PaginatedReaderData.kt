@@ -354,21 +354,31 @@ data class OptimizedCssRules(
     @ProtoNumber(4) val otherComplex: List<CssRule> = emptyList()
 ) {
     fun merge(other: OptimizedCssRules): OptimizedCssRules {
-        val mergedByTag = (this.byTag.asSequence() + other.byTag.asSequence())
-            .groupBy({ it.key }, { it.value })
-            .mapValues { (_, values) -> values.flatten() }
+        fun mergeMap(
+            m1: Map<String, List<CssRule>>,
+            m2: Map<String, List<CssRule>>
+        ): Map<String, List<CssRule>> {
+            if (m1.isEmpty()) return m2
+            if (m2.isEmpty()) return m1
 
-        val mergedByClass = (this.byClass.asSequence() + other.byClass.asSequence())
-            .groupBy({ it.key }, { it.value })
-            .mapValues { (_, values) -> values.flatten() }
+            val result = LinkedHashMap(m1)
+            for ((key, value) in m2) {
+                val existing = result[key]
+                if (existing != null) {
+                    result[key] = existing + value
+                } else {
+                    result[key] = value
+                }
+            }
+            return result
+        }
 
-        val mergedById = (this.byId.asSequence() + other.byId.asSequence())
-            .groupBy({ it.key }, { it.value })
-            .mapValues { (_, values) -> values.flatten() }
-
-        val mergedOtherComplex = this.otherComplex + other.otherComplex
-
-        return OptimizedCssRules(mergedByTag, mergedByClass, mergedById, mergedOtherComplex)
+        return OptimizedCssRules(
+            byTag = mergeMap(this.byTag, other.byTag),
+            byClass = mergeMap(this.byClass, other.byClass),
+            byId = mergeMap(this.byId, other.byId),
+            otherComplex = this.otherComplex + other.otherComplex
+        )
     }
 
     fun toFlatList(): List<CssRule> {

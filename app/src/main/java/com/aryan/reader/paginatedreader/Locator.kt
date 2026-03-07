@@ -53,29 +53,52 @@ class LocatorConverter(
         try {
             val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
 
-            // 1. Parse CSS from the book
-            var parsingCssRules = OptimizedCssRules()
+            val mergedByTag = mutableMapOf<String, MutableList<CssRule>>()
+            val mergedByClass = mutableMapOf<String, MutableList<CssRule>>()
+            val mergedById = mutableMapOf<String, MutableList<CssRule>>()
+            val mergedOtherComplex = mutableListOf<CssRule>()
+
             val density = Density(context)
             val displayMetrics = context.resources.displayMetrics
             val constraints = Constraints(maxWidth = displayMetrics.widthPixels, maxHeight = displayMetrics.heightPixels)
+
+            fun aggregateRules(
+                target: MutableMap<String, MutableList<CssRule>>,
+                source: Map<String, List<CssRule>>
+            ) {
+                source.forEach { (k, v) ->
+                    target.getOrPut(k) { mutableListOf() }.addAll(v)
+                }
+            }
 
             book.css.forEach { (path, content) ->
                 val bookCssResult = CssParser.parse(
                     cssContent = content,
                     cssPath = path,
-                    baseFontSizeSp = 16f, // A reasonable default for non-rendering parsing
+                    baseFontSizeSp = 16f,
                     density = density.density,
                     constraints = constraints,
                     isDarkTheme = false
                 )
-                parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
+
+                val rules = bookCssResult.rules
+                aggregateRules(mergedByTag, rules.byTag)
+                aggregateRules(mergedByClass, rules.byClass)
+                aggregateRules(mergedById, rules.byId)
+                mergedOtherComplex.addAll(rules.otherComplex)
             }
 
-            // 2. Parse HTML to SemanticBlocks
+            val parsingCssRules = OptimizedCssRules(
+                byTag = mergedByTag,
+                byClass = mergedByClass,
+                byId = mergedById,
+                otherComplex = mergedOtherComplex
+            )
+
             val semanticBlocks = htmlToSemanticBlocks(
                 html = chapter.htmlContent,
                 cssRules = parsingCssRules,
-                textStyle = TextStyle(), // Not used for rendering, so a default is fine
+                textStyle = TextStyle(),
                 chapterAbsPath = chapter.absPath,
                 extractionBasePath = book.extractionBasePath,
                 density = density,
@@ -83,13 +106,12 @@ class LocatorConverter(
                 constraints = constraints
             )
 
-            // 3. Serialize and cache the result
             val protoBytes = proto.encodeToByteArray(semanticBlocks)
             val newCacheEntry = ProcessedChapter(
                 bookId = book.title,
                 chapterIndex = chapterIndex,
                 contentBlocksProto = protoBytes,
-                estimatedPageCount = 0 // Page count is not relevant for locator conversion
+                estimatedPageCount = 0
             )
             bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
             Timber.i("On-demand processing SUCCESS for chapter $chapterIndex.")

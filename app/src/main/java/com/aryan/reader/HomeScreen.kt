@@ -214,11 +214,31 @@ fun HomeScreen(
             }
         }
 
+        val fallbackFilePickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetMultipleContents()
+        ) { uris ->
+            if (isContextualModeActive) {
+                viewModel.clearContextualAction()
+            }
+            uris.forEach { uri ->
+                viewModel.onFileSelected(uri, isFromRecent = false)
+            }
+        }
+
         val onSelectFileClick = {
             if (isContextualModeActive) {
                 viewModel.clearContextualAction()
             }
-            pickFileLauncher.launch(arrayOf("*/*"))
+            try {
+                pickFileLauncher.launch(arrayOf("*/*"))
+            } catch (_: android.content.ActivityNotFoundException) {
+                Timber.w("OpenDocument picker failed. Falling back to GetMultipleContents.")
+                try {
+                    fallbackFilePickerLauncher.launch("*/*")
+                } catch (_: android.content.ActivityNotFoundException) {
+                    viewModel.showBanner("No file manager found. Please install a file manager app.", isError = true)
+                }
+            }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
