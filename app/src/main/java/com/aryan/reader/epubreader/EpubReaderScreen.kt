@@ -2667,8 +2667,8 @@ fun EpubReaderHost(
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
                     visible = renderMode == RenderMode.VERTICAL_SCROLL && !showBars,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    enter = fadeIn(animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
                     Box(
@@ -2710,8 +2710,8 @@ fun EpubReaderHost(
                 // Page Info Bar (Paginated)
                 AnimatedVisibility(
                     visible = renderMode == RenderMode.PAGINATED && paginator != null && !showBars && paginatedPagerState.pageCount > 0,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    enter = fadeIn(animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
                     Box(
@@ -2922,8 +2922,8 @@ fun EpubReaderHost(
 
                 AnimatedVisibility(
                     visible = isAutoScrollControlsVisible,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
                         .align(BiasAlignment(alignmentBias, 1f))
                         .padding(bottom = autoScrollPadding)

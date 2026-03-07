@@ -45,6 +45,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -4144,9 +4145,10 @@ fun PdfViewerScreen(
                 // Custom Top Bar
                 AnimatedVisibility(
                     visible = showStandardBars,
-                    enter = slideInVertically { fullHeight -> -fullHeight } + fadeIn(),
-                    exit = slideOutVertically { fullHeight -> -fullHeight } + fadeOut(),
-                    modifier = Modifier.align(Alignment.TopCenter)) {
+                    enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> -fullHeight } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> -fullHeight } + fadeOut(animationSpec = tween(200)),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -4469,8 +4471,8 @@ fun PdfViewerScreen(
 
                 AnimatedVisibility(
                     visible = showStandardBars && isReflowingThisBook,
-                    enter = fadeIn() + slideInVertically(),
-                    exit = fadeOut() + slideOutVertically(),
+                    enter = fadeIn(animationSpec = tween(200)) + slideInVertically(animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = tween(200)),
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 56.dp)
@@ -4579,11 +4581,12 @@ fun PdfViewerScreen(
                 // Search Navigation Controls
                 AnimatedVisibility(
                     visible = searchState.isSearchActive && !searchState.showSearchResultsPanel && smartSearchResult != null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 24.dp)) {
+                        .padding(bottom = 24.dp)
+                ) {
                     val currentResult = currentPdfSearchResult
                     val searchData = smartSearchResult
 
@@ -4691,9 +4694,10 @@ fun PdfViewerScreen(
                 // Bottom Bar
                 AnimatedVisibility(
                     visible = showStandardBars && !searchState.isSearchActive,
-                    enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
-                    exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut(),
-                    modifier = Modifier.align(Alignment.BottomCenter)) {
+                    enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -5925,8 +5929,8 @@ fun PdfViewerScreen(
 
                 AnimatedVisibility(
                     visible = isAutoScrollControlsVisible,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
                         .align(BiasAlignment(alignmentBias, 1f))
                         .padding(bottom = autoScrollPadding)

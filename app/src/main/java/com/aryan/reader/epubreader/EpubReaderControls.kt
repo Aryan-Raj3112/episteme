@@ -156,8 +156,8 @@ fun EpubReaderTopBar(
 ) {
     AnimatedVisibility(
         visible = isVisible,
-        enter = slideInVertically { -it } + fadeIn(),
-        exit = slideOutVertically { -it } + fadeOut(),
+        enter = slideInVertically(animationSpec = tween(200)) { -it } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { -it } + fadeOut(animationSpec = tween(200)),
         modifier = modifier
     ) {
         Surface(
@@ -347,8 +347,8 @@ fun EpubReaderBottomBar(
 ) {
     AnimatedVisibility(
         visible = isVisible,
-        enter = slideInVertically { it } + fadeIn(),
-        exit = slideOutVertically { it } + fadeOut(),
+        enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
         modifier = modifier
     ) {
         Surface(
@@ -456,11 +456,10 @@ fun EpubReaderPageSlider(
 ) {
     AnimatedVisibility(
         visible = isVisible,
-        enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
-        exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut()
+        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200))
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Dismiss area
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -470,14 +469,6 @@ fun EpubReaderPageSlider(
                     ) { onClose() }
             )
 
-            // Fast scrub overlay
-            // Note: In the refactor, we rely on the parent or this logic to determine "isFastScrubbing".
-            // Since `isFastScrubbing` was state in the parent, we'll implement a local check or just show it if `isVisible`.
-            // Ideally, the parent handles the "Scrubbing Animation" separately, but let's bundle it here for simplicity.
-            // For now, we only show the static overlay logic.
-            // If we want the big center indicator, we can render it based on interaction state here.
-
-            // Top back button
             IconButton(
                 onClick = onClose,
                 modifier = Modifier
