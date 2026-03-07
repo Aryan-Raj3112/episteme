@@ -1677,6 +1677,7 @@ fun PdfViewerScreen(
             )
 
             if (result == SnackbarResult.ActionPerformed) {
+                snackbarHostState.currentSnackbarData?.dismiss()
                 val item = uiState.recentFiles.find { it.bookId == reflowBookId }
                 if (item != null) {
                     viewModel.onRecentFileClicked(item)

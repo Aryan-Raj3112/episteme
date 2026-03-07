@@ -60,7 +60,7 @@ class SingleFileImporter(private val context: Context) {
         Timber.d("Parsing Markdown with Page-Level Chaptering: $originalBookNameHint")
         val title = originalBookNameHint.substringBeforeLast(".")
 
-        // Read the full markdown content
+        // Read the full Markdown content
         val markdownContent = inputStream.bufferedReader().use { it.readText() }
 
         // Flexmark Setup
@@ -311,8 +311,8 @@ class SingleFileImporter(private val context: Context) {
 
     private fun createBookFromHtmlBody(
         title: String,
-        bodyContent: String?,
-        cssStyle: String?,
+        @Suppress("SameParameterValue") bodyContent: String?,
+        @Suppress("SameParameterValue")cssStyle: String?,
         fileName: String,
         preGeneratedFullHtml: String? = null,
         author: String? = null

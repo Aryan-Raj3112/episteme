@@ -33,6 +33,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
+import java.io.File
 
 data class Locator(
     val chapterIndex: Int,
@@ -50,8 +51,41 @@ class LocatorConverter(
     private val context: Context
 ) {
     private suspend fun processAndCacheChapter(book: EpubBook, chapterIndex: Int): List<SemanticBlock>? = withContext(Dispatchers.IO) {
+        Timber.tag("PosSaveDiag").d("processAndCacheChapter: STARTED for book='${book.title}', chapterIndex=$chapterIndex")
         try {
-            val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
+            val chapter = book.chapters.getOrNull(chapterIndex)
+            if (chapter == null) {
+                Timber.tag("PosSaveDiag").e("processAndCacheChapter: FAILED. Chapter is null for index $chapterIndex")
+                return@withContext null
+            }
+
+            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Checking HTML content. RAM content length: ${chapter.htmlContent.length}")
+
+            val htmlToParse = if (chapter.htmlContent.isNotBlank()) {
+                Timber.tag("PosSaveDiag").d("processAndCacheChapter: Using HTML from RAM.")
+                chapter.htmlContent
+            } else {
+                Timber.tag("PosSaveDiag").d("processAndCacheChapter: RAM HTML is blank. Falling back to disk. Path: ${book.extractionBasePath} / ${chapter.htmlFilePath}")
+                try {
+                    val file = File(book.extractionBasePath, chapter.htmlFilePath)
+                    if (file.exists()) {
+                        val content = file.readText()
+                        Timber.tag("PosSaveDiag").d("processAndCacheChapter: Read file from disk SUCCESS. Content length: ${content.length}")
+                        content
+                    } else {
+                        Timber.tag("PosSaveDiag").e("processAndCacheChapter: File DOES NOT EXIST at ${file.absolutePath}")
+                        ""
+                    }
+                } catch (e: Exception) {
+                    Timber.tag("PosSaveDiag").e(e, "processAndCacheChapter: Exception reading chapter file from disk")
+                    ""
+                }
+            }
+
+            if (htmlToParse.isBlank()) {
+                Timber.tag("PosSaveDiag").w("processAndCacheChapter: Final HTML to parse is blank. Aborting semantic block generation.")
+                return@withContext null
+            }
 
             val mergedByTag = mutableMapOf<String, MutableList<CssRule>>()
             val mergedByClass = mutableMapOf<String, MutableList<CssRule>>()
@@ -95,8 +129,9 @@ class LocatorConverter(
                 otherComplex = mergedOtherComplex
             )
 
+            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Calling htmlToSemanticBlocks...")
             val semanticBlocks = htmlToSemanticBlocks(
-                html = chapter.htmlContent,
+                html = htmlToParse,
                 cssRules = parsingCssRules,
                 textStyle = TextStyle(),
                 chapterAbsPath = chapter.absPath,
@@ -105,8 +140,11 @@ class LocatorConverter(
                 fontFamilyMap = emptyMap(),
                 constraints = constraints
             )
+            Timber.tag("PosSaveDiag").d("processAndCacheChapter: htmlToSemanticBlocks returned ${semanticBlocks.size} blocks.")
 
             val protoBytes = proto.encodeToByteArray(semanticBlocks)
+            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Encoded blocks to protoBytes (size: ${protoBytes.size} bytes).")
+
             val newCacheEntry = ProcessedChapter(
                 bookId = book.title,
                 chapterIndex = chapterIndex,
@@ -114,50 +152,48 @@ class LocatorConverter(
                 estimatedPageCount = 0
             )
             bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
-            Timber.i("On-demand processing SUCCESS for chapter $chapterIndex.")
+            Timber.tag("PosSaveDiag").i("processAndCacheChapter: On-demand processing and DB caching SUCCESS for chapter $chapterIndex.")
             semanticBlocks
         } catch (e: Exception) {
-            Timber.e(e, "On-demand processing FAILED for chapter $chapterIndex")
+            Timber.tag("PosSaveDiag").e(e, "processAndCacheChapter: FAILED for chapter $chapterIndex")
             null
         }
     }
 
-    /**
-     * Converts a CFI string from the WebView into an abstract Locator.
-     */
     suspend fun getLocatorFromCfi(book: EpubBook, chapterIndex: Int, cfi: String): Locator? = withContext(Dispatchers.IO) {
-        Timber.d("getLocatorFromCfi: Starting conversion for book='${book.title}', chapter=$chapterIndex, cfi='$cfi'")
-
         val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = chapterIndex)
-        val allBlocks = if (processedChapter != null) {
-            proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
-        } else {
-            Timber.w("getLocatorFromCfi: Chapter $chapterIndex not in DB. Triggering on-demand processing.")
-            processAndCacheChapter(book, chapterIndex)
+
+        var allBlocks: List<SemanticBlock>? = null
+
+        if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
+            allBlocks = try {
+                proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
+            } catch (_: Exception) { null }
         }
 
-        if (allBlocks == null) {
-            Timber.w("getLocatorFromCfi: FAILED. Could not get or process semantic blocks for chapter $chapterIndex.")
+        if (allBlocks.isNullOrEmpty()) {
+            Timber.tag("PosSaveDiag").w("getLocatorFromCfi: Cache missing or empty for chapter $chapterIndex. Triggering on-demand processing.")
+            allBlocks = processAndCacheChapter(book, chapterIndex)
+        }
+
+        if (allBlocks.isNullOrEmpty()) {
+            Timber.tag("PosSaveDiag").e("getLocatorFromCfi: FAILED. Could not get or process semantic blocks.")
             return@withContext null
         }
-
 
         val (baseCfiPath, charOffset) = cfi.split(':').let {
             it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 0)
         }
-        Timber.d("getLocatorFromCfi: Parsed CFI into basePath='$baseCfiPath' and charOffset=$charOffset")
 
         val bestMatch = findBestMatchingBlock(allBlocks, baseCfiPath)
 
         if (bestMatch != null) {
-            Timber.i("getLocatorFromCfi: SUCCESS. Found best match. Block index: ${bestMatch.blockIndex}, Block CFI: '${bestMatch.cfi}'")
             Locator(
                 chapterIndex = chapterIndex,
                 blockIndex = bestMatch.blockIndex,
                 charOffset = charOffset
             )
         } else {
-            Timber.w("getLocatorFromCfi: FAILED. No matching block found for CFI base path '$baseCfiPath'.")
             null
         }
     }
@@ -200,29 +236,31 @@ class LocatorConverter(
         return bestMatch
     }
 
-    suspend fun getCfiFromLocator(bookId: String, locator: Locator): String? = withContext(Dispatchers.IO) {
-        Timber.d("getCfiFromLocator: Attempting to get CFI from locator: $locator")
-        val processedChapter = bookCacheDao.getProcessedChapter(bookId = bookId, chapterIndex = locator.chapterIndex)
-        if (processedChapter == null) {
-            Timber.w("getCfiFromLocator: FAILED. Could not find processed chapter ${locator.chapterIndex} in database.")
+    suspend fun getCfiFromLocator(book: EpubBook, locator: Locator): String? = withContext(Dispatchers.IO) {
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)
+
+        var blocks: List<SemanticBlock>? = null
+        if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
+            blocks = try {
+                proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
+            } catch (_: Exception) { null }
+        }
+
+        if (blocks.isNullOrEmpty()) {
+            blocks = processAndCacheChapter(book, locator.chapterIndex)
+        }
+
+        if (blocks.isNullOrEmpty()) {
             return@withContext null
         }
-        val blocks = proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
 
         val foundBlock = findBlockByBlockIndex(blocks, locator.blockIndex)
-        if (foundBlock != null) {
-            foundBlock.cfi?.let { cfi ->
-                val finalCfi = if (locator.charOffset > 0) {
-                    "$cfi:${locator.charOffset}"
-                } else {
-                    cfi
-                }
-                Timber.i("getCfiFromLocator: SUCCESS. Found block ${foundBlock.blockIndex} with CFI '${foundBlock.cfi}'. Final CFI: '$finalCfi'")
-                finalCfi
+        foundBlock?.cfi?.let { cfi ->
+            if (locator.charOffset > 0) {
+                "$cfi:${locator.charOffset}"
+            } else {
+                cfi
             }
-        } else {
-            Timber.w("getCfiFromLocator: FAILED. Could not find block with index ${locator.blockIndex} in chapter ${locator.chapterIndex}.")
-            null
         }
     }
 
@@ -249,11 +287,19 @@ class LocatorConverter(
 
     suspend fun getTextOffset(book: EpubBook, locator: Locator): Int? = withContext(Dispatchers.IO) {
         val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)
-        val allBlocks = if (processedChapter != null) {
-            proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
-        } else {
-            processAndCacheChapter(book, locator.chapterIndex)
-        } ?: return@withContext null
+
+        var allBlocks: List<SemanticBlock>? = null
+        if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
+            allBlocks = try {
+                proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
+            } catch(_: Exception) { null }
+        }
+
+        if (allBlocks.isNullOrEmpty()) {
+            allBlocks = processAndCacheChapter(book, locator.chapterIndex)
+        }
+
+        if (allBlocks.isNullOrEmpty()) return@withContext null
 
         var offset = 0
         val separatorLength = 1

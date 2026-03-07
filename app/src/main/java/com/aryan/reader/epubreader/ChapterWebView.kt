@@ -181,6 +181,9 @@ class CfiJsBridge(
     @JavascriptInterface
     fun onCfiExtracted(jsonResponse: String) {
         try {
+            // --- ADDED LOG ---
+            Timber.tag("PosSaveDiag").d("CfiJsBridge.onCfiExtracted: Raw JSON received from JS: $jsonResponse")
+
             val json = JSONObject(jsonResponse)
             val cfi = json.optString("cfi", "/4")
             val logArray = json.optJSONArray("log")
@@ -200,7 +203,7 @@ class CfiJsBridge(
                 onCfiReady(cfi)
             }
         } catch (e: Exception) {
-            Timber.e(e, "Error parsing CFI JSON response: $jsonResponse")
+            Timber.tag("PosSaveDiag").e(e, "CfiJsBridge.onCfiExtracted: Error parsing CFI JSON response: $jsonResponse")
             onCfiReady("/4")
         }
     }

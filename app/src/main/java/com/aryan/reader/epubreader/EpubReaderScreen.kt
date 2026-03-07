@@ -2161,9 +2161,10 @@ fun EpubReaderHost(
                                                 showDictionaryUpsellDialog = true
                                             },
                                             onCfiGenerated = { cfi ->
+                                                Timber.tag("PosSaveDiag").d("EpubReaderScreen: onCfiGenerated callback triggered with CFI: '$cfi'")
+
                                                 if (cfi.isBlank() || !cfi.startsWith('/')) {
-                                                    Timber.w("onCfiGenerated received an invalid CFI, aborting save: '$cfi'"
-                                                    )
+                                                    Timber.tag("PosSaveDiag").w("EpubReaderScreen: onCfiGenerated received an invalid CFI, aborting save: '$cfi'")
                                                     if (isSavingAndExiting) {
                                                         isSavingAndExiting = false
                                                         onNavigateBack()
@@ -2172,6 +2173,7 @@ fun EpubReaderHost(
                                                 }
 
                                                 scope.launch {
+                                                    Timber.tag("PosSaveDiag").d("EpubReaderScreen: Requesting locator conversion for chapter $latestChapterIndex")
                                                     val locator =
                                                         locatorConverter.getLocatorFromCfi(
                                                             epubBook,
@@ -2179,10 +2181,11 @@ fun EpubReaderHost(
                                                             cfi
                                                         )
 
+                                                    Timber.tag("PosSaveDiag").d("EpubReaderScreen: Locator conversion returned: $locator")
+
                                                     if (locator != null) {
                                                         lastKnownLocator = locator
 
-                                                        // Calculate progress (Logic moved out of `val progress` block for scope visibility)
                                                         val progressWithinChapter =
                                                             if (currentScrollHeightValue > currentClientHeightValue) {
                                                                 val scrollableHeight =
@@ -2945,7 +2948,7 @@ fun EpubReaderHost(
                             } else {
                                 scope.launch {
                                     lastKnownLocator?.let { locator ->
-                                        val cfi = locatorConverter.getCfiFromLocator(epubBook.title, locator)
+                                        val cfi = locatorConverter.getCfiFromLocator(epubBook, locator)
                                         if (cfi != null) {
                                             val targetChunk = locator.blockIndex / 20
                                             chunkTargetOverride = targetChunk
