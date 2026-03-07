@@ -35,6 +35,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import androidx.compose.foundation.border
 import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -291,7 +292,6 @@ private const val DOCK_LOCATION_KEY = "dock_location"
 private const val DOCK_OFFSET_X_KEY = "dock_offset_x"
 private const val DOCK_OFFSET_Y_KEY = "dock_offset_y"
 private const val PDF_AUTO_SCROLL_SPEED_KEY = "pdf_auto_scroll_speed"
-private const val PDF_AUTO_SCROLL_LOCKED_KEY = "pdf_auto_scroll_locked"
 private const val PDF_AUTO_SCROLL_USE_SLIDER_KEY = "pdf_auto_scroll_use_slider"
 private const val PDF_AUTO_SCROLL_MIN_SPEED_KEY = "pdf_auto_scroll_min_speed"
 private const val PDF_AUTO_SCROLL_MAX_SPEED_KEY = "pdf_auto_scroll_max_speed"
@@ -301,6 +301,39 @@ private const val PDF_AUTO_SCROLL_IS_LOCAL_PREFIX = "pdf_as_local_"
 private const val PDF_AUTO_SCROLL_LOCAL_SPEED_PREFIX = "pdf_as_local_speed_"
 private const val PDF_AUTO_SCROLL_LOCAL_MIN_PREFIX = "pdf_as_local_min_"
 private const val PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX = "pdf_as_local_max_"
+private const val PDF_SCROLL_LOCKED_PREFIX = "pdf_sl_local_"
+private const val PDF_FULL_SCREEN_PREFIX = "pdf_fs_local_"
+private const val PDF_MUSICIAN_MODE_KEY = "pdf_musician_mode_enabled"
+
+private fun savePdfMusicianMode(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_MUSICIAN_MODE_KEY, isEnabled) }
+}
+
+private fun loadPdfMusicianMode(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_MUSICIAN_MODE_KEY, false)
+}
+
+private fun savePdfScrollLocked(context: Context, bookId: String, isLocked: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_SCROLL_LOCKED_PREFIX + bookId, isLocked) }
+}
+
+private fun loadPdfScrollLocked(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_SCROLL_LOCKED_PREFIX + bookId, false)
+}
+
+private fun savePdfFullScreen(context: Context, bookId: String, isFull: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_FULL_SCREEN_PREFIX + bookId, isFull) }
+}
+
+private fun loadPdfFullScreen(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_FULL_SCREEN_PREFIX + bookId, false)
+}
 
 private fun savePdfAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -359,16 +392,6 @@ private fun savePdfAutoScrollMaxSpeed(context: Context, speed: Float) {
 private fun loadPdfAutoScrollMaxSpeed(context: Context): Float {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getFloat(PDF_AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
-}
-
-private fun savePdfAutoScrollLocked(context: Context, isLocked: Boolean) {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PDF_AUTO_SCROLL_LOCKED_KEY, isLocked) }
-}
-
-private fun loadPdfAutoScrollLocked(context: Context): Boolean {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getBoolean(PDF_AUTO_SCROLL_LOCKED_KEY, false)
 }
 
 private fun savePdfAutoScrollUseSlider(context: Context, useSlider: Boolean) {
@@ -680,6 +703,11 @@ fun PdfViewerScreen(
     var currentBookId by remember { mutableStateOf<String?>(null) }
     val bookId = currentBookId ?: pdfUri.toString().hashCode().toString()
 
+    LaunchedEffect(bookId) {
+        isScrollLocked = loadPdfScrollLocked(context, bookId)
+        isFullScreen = loadPdfFullScreen(context, bookId)
+    }
+
     val uiState by viewModel.uiState.collectAsState()
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
     val hasReflowFile by remember(uiState.recentFiles, reflowBookId) {
@@ -702,7 +730,7 @@ fun PdfViewerScreen(
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
-    var isAutoScrollLocked by remember { mutableStateOf(loadPdfAutoScrollLocked(context)) }
+    var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
@@ -1317,7 +1345,7 @@ fun PdfViewerScreen(
                 }
                 selectedTextBoxId = null
             } else {
-                if (!isFullScreen) {
+                if (!isFullScreen && !isMusicianMode) {
                     showBars = !showBars
                     Timber.d("Vertical Reader Clicked. showBars now: $showBars")
                 }
@@ -2847,9 +2875,17 @@ fun PdfViewerScreen(
 
             isFullScreen -> {
                 isFullScreen = false
+                savePdfFullScreen(context, bookId, false)
             }
 
             showReindexDialog != null -> showReindexDialog = null
+
+            isAutoScrollModeActive -> {
+                isAutoScrollModeActive = false
+                isAutoScrollPlaying = false
+                showBars = true
+            }
+
             drawerState.isOpen -> {
                 coroutineScope.launch { drawerState.close() }
             }
@@ -3902,6 +3938,79 @@ fun PdfViewerScreen(
                     }
                 }
 
+                if (isMusicianMode && isAutoScrollModeActive) {
+                    val density = LocalDensity.current
+
+                    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
+                    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
+
+                    val leftPulseAlpha by animateFloatAsState(
+                        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
+                        animationSpec = tween(150), label = "leftPulse"
+                    )
+                    val rightPulseAlpha by animateFloatAsState(
+                        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
+                        animationSpec = tween(150), label = "rightPulse"
+                    )
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        val regionHeight = Modifier.fillMaxHeight(0.4f)
+                        val regionWidth = Modifier.fillMaxWidth(0.25f)
+                        val topOffset = 100.dp
+
+                        val scrollAmount = boxMaxHeightFloat * 0.75f
+
+                        Box(
+                            modifier = regionWidth
+                                .then(regionHeight)
+                                .align(Alignment.TopStart)
+                                .offset(y = topOffset)
+                                .padding(start = 8.dp)
+                                .background(Color.White.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
+                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        Timber.tag("MusicianMode").d("Left region tapped")
+                                        leftPulseTrigger = System.currentTimeMillis()
+
+                                        triggerAutoScrollTempPause(600L)
+
+                                        coroutineScope.launch {
+                                            verticalReaderState.scrollBy(-scrollAmount)
+                                        }
+                                    }
+                                )
+                        )
+
+                        Box(
+                            modifier = regionWidth
+                                .then(regionHeight)
+                                .align(Alignment.TopEnd)
+                                .offset(y = topOffset)
+                                .padding(end = 8.dp)
+                                .background(Color.White.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
+                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        Timber.tag("MusicianMode").d("Right region tapped")
+                                        rightPulseTrigger = System.currentTimeMillis() // Trigger flash
+
+                                        // Pause loop to allow smooth scroll
+                                        triggerAutoScrollTempPause(600L)
+
+                                        coroutineScope.launch {
+                                            verticalReaderState.scrollBy(scrollAmount)
+                                        }
+                                    }
+                                )
+                        )
+                    }
+                }
+
                 // OCR language download indicator
                 AnimatedVisibility(
                     visible = isOcrModelDownloading,
@@ -4213,7 +4322,10 @@ fun PdfViewerScreen(
                                     )
                                 }
 
-                                IconButton(onClick = { isScrollLocked = !isScrollLocked }) {
+                                IconButton(onClick = {
+                                    isScrollLocked = !isScrollLocked
+                                    savePdfScrollLocked(context, bookId, isScrollLocked)
+                                }) {
                                     Icon(
                                         imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
                                         contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
@@ -4221,7 +4333,10 @@ fun PdfViewerScreen(
                                     )
                                 }
 
-                                IconButton(onClick = { isFullScreen = true }) {
+                                IconButton(onClick = {
+                                    isFullScreen = true
+                                    savePdfFullScreen(context, bookId, true)
+                                }) {
                                     Icon(
                                         imageVector = Icons.Default.Fullscreen,
                                         contentDescription = "Enter Full Screen",
@@ -4337,7 +4452,11 @@ fun PdfViewerScreen(
                                                 showMoreMenu = false
                                                 isAutoScrollModeActive = true
                                                 isAutoScrollPlaying = true
-                                                showBars = true
+                                                showBars = if (isMusicianMode) {
+                                                    false
+                                                } else {
+                                                    true
+                                                }
                                             }
                                         )
 
@@ -4943,7 +5062,10 @@ fun PdfViewerScreen(
                     val fabContentColor = if (isBackgroundDark) Color.White else Color.Black
 
                     Surface(
-                        onClick = { isFullScreen = false },
+                        onClick = {
+                            isFullScreen = false
+                            savePdfFullScreen(context, bookId, false)
+                        },
                         color = fabContainerColor,
                         contentColor = fabContentColor,
                         shape = CircleShape,
@@ -5920,7 +6042,7 @@ fun PdfViewerScreen(
                     label = "AutoScrollPadding"
                 )
 
-                val isAutoScrollControlsVisible = isAutoScrollModeActive && (!isAutoScrollLocked || showBars)
+                val isAutoScrollControlsVisible = isAutoScrollModeActive
 
                 val alignmentBias by animateFloatAsState(
                     targetValue = if (isAutoScrollCollapsed) 1f else 0f,
@@ -5992,10 +6114,15 @@ fun PdfViewerScreen(
                         },
                         isCollapsed = isAutoScrollCollapsed,
                         onCollapseChange = { isAutoScrollCollapsed = it },
-                        isLocked = isAutoScrollLocked,
-                        onLockToggle = {
-                            isAutoScrollLocked = !isAutoScrollLocked
-                            savePdfAutoScrollLocked(context, isAutoScrollLocked)
+                        isMusicianMode = isMusicianMode,
+                        onMusicianModeToggle = {
+                            val newMode = !isMusicianMode
+                            isMusicianMode = newMode
+                            savePdfMusicianMode(context, newMode)
+                            if (newMode) {
+                                showBars = false
+                            }
+                            Timber.d("Musician mode toggled: $newMode")
                         },
                         useSlider = autoScrollUseSlider,
                         onInputModeToggle = {

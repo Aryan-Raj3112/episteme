@@ -766,8 +766,8 @@ fun AutoScrollControls(
     onClose: () -> Unit,
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
-    isLocked: Boolean,
-    onLockToggle: () -> Unit,
+    isMusicianMode: Boolean,
+    onMusicianModeToggle: () -> Unit,
     useSlider: Boolean,
     onInputModeToggle: () -> Unit,
     isLocalMode: Boolean,
@@ -908,14 +908,14 @@ fun AutoScrollControls(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             IconButton(
-                                onClick = onLockToggle,
+                                onClick = onMusicianModeToggle,
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (isLocked) Icons.Default.LockOpen else Icons.Default.Lock,
-                                    contentDescription = if (isLocked) "Unlock" else "Lock",
+                                    painter = painterResource(id = R.drawable.music_note),
+                                    contentDescription = if (isMusicianMode) "Disable Musician Mode" else "Enable Musician Mode",
                                     modifier = Modifier.size(18.dp),
-                                    tint = if (isLocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             IconButton(

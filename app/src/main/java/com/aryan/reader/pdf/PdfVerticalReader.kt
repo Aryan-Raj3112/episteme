@@ -137,8 +137,8 @@ class VerticalPdfReaderState {
         internal set
 
     internal var scrollToPageHandler: (suspend (Int) -> Unit)? = null
-
     internal var snapToPageHandler: (suspend (Int) -> Unit)? = null
+    internal var scrollByHandler: (suspend (Float) -> Unit)? = null
 
     suspend fun scrollToPage(pageIndex: Int) {
         scrollToPageHandler?.invoke(pageIndex)
@@ -146,6 +146,10 @@ class VerticalPdfReaderState {
 
     suspend fun snapToPage(pageIndex: Int) {
         snapToPageHandler?.invoke(pageIndex)
+    }
+
+    suspend fun scrollBy(delta: Float) {
+        scrollByHandler?.invoke(delta)
     }
 }
 
@@ -412,6 +416,22 @@ internal fun PdfVerticalReader(
                 val clampedPanY = calculateTargetPanY(index)
                 if (clampedPanY != null) {
                     panYAnimatable.snapTo(clampedPanY)
+                }
+            }
+
+            state.scrollByHandler = { delta ->
+                val currentZoom = zoomAnimatable.value
+                val zoomedDocHeight = totalDocHeight * currentZoom
+
+                val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+
+                val targetPanY = (panYAnimatable.value - delta).coerceIn(minPanY, headerHeightPx)
+
+                if (abs(targetPanY - panYAnimatable.value) > 0.5f) {
+                    panYAnimatable.animateTo(
+                        targetValue = targetPanY,
+                        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
+                    )
                 }
             }
         }

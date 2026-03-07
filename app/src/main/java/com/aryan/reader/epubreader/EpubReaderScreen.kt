@@ -46,8 +46,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -60,12 +62,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
@@ -106,6 +110,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -175,7 +180,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private const val AUTO_SCROLL_LOCKED_KEY = "auto_scroll_locked"
 private const val AUTO_SCROLL_USE_SLIDER_KEY = "auto_scroll_use_slider"
 private const val AUTO_SCROLL_MIN_SPEED_KEY = "auto_scroll_min_speed"
 private const val AUTO_SCROLL_MAX_SPEED_KEY = "auto_scroll_max_speed"
@@ -186,6 +190,17 @@ private const val AUTO_SCROLL_IS_LOCAL_PREFIX = "auto_scroll_is_local_"
 private const val AUTO_SCROLL_LOCAL_SPEED_PREFIX = "auto_scroll_local_speed_"
 private const val AUTO_SCROLL_LOCAL_MIN_PREFIX = "auto_scroll_local_min_"
 private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
+private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
+
+private fun saveMusicianMode(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(MUSICIAN_MODE_KEY, isEnabled) }
+}
+
+private fun loadMusicianMode(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(MUSICIAN_MODE_KEY, false)
+}
 
 private fun getBookIdForPrefs(title: String): String {
     return title.hashCode().toString()
@@ -248,17 +263,6 @@ private fun saveAutoScrollMaxSpeed(context: Context, speed: Float) {
 private fun loadAutoScrollMaxSpeed(context: Context): Float {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getFloat(AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
-}
-
-
-private fun saveAutoScrollLocked(context: Context, isLocked: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(AUTO_SCROLL_LOCKED_KEY, isLocked)}
-}
-
-private fun loadAutoScrollLocked(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(AUTO_SCROLL_LOCKED_KEY, false)
 }
 
 private fun saveAutoScrollUseSlider(context: Context, useSlider: Boolean) {
@@ -766,7 +770,7 @@ fun EpubReaderHost(
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
 
-    var isAutoScrollLocked by remember { mutableStateOf(loadAutoScrollLocked(context)) }
+    var isMusicianMode by remember { mutableStateOf(loadMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadAutoScrollUseSlider(context)) }
 
     DisposableEffect(Unit) {
@@ -1298,6 +1302,10 @@ fun EpubReaderHost(
                 Timber.d("Back pressed: Closing drawer")
                 drawerState.close()
             }
+        } else if (isAutoScrollModeActive) {
+            isAutoScrollModeActive = false
+            isAutoScrollPlaying = false
+            showBars = true
         } else if (searchState.isSearchActive) {
             searchState.isSearchActive = false
             searchState.onQueryChange("")
@@ -1888,7 +1896,7 @@ fun EpubReaderHost(
                                                     Timber.d("Auto-scroll toggled via tap: $isAutoScrollPlaying")
                                                 }
 
-                                                if (System.currentTimeMillis() - lastHighlightClickTime > 500) {
+                                                if (!isMusicianMode && System.currentTimeMillis() - lastHighlightClickTime > 500) {
                                                     focusManager.clearFocus()
                                                     if (volumeScrollEnabled && !searchState.isSearchActive) {
                                                         containerFocusRequester.requestFocus()
@@ -2805,6 +2813,80 @@ fun EpubReaderHost(
                     }
                 }
 
+                if (isMusicianMode && isAutoScrollModeActive) {
+                    val density = LocalDensity.current
+
+                    // States for visual feedback
+                    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
+                    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
+
+                    val leftPulseAlpha by animateFloatAsState(
+                        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
+                        animationSpec = tween(150), label = "leftPulse"
+                    )
+                    val rightPulseAlpha by animateFloatAsState(
+                        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
+                        animationSpec = tween(150), label = "rightPulse"
+                    )
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        val regionHeight = Modifier.fillMaxHeight(0.4f)
+                        val regionWidth = Modifier.fillMaxWidth(0.25f)
+                        val topOffset = 100.dp
+
+                        // Left Region
+                        Box(
+                            modifier = regionWidth
+                                .then(regionHeight)
+                                .align(Alignment.TopStart)
+                                .offset(y = topOffset)
+                                .padding(start = 8.dp)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp)) // Pulse
+                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        leftPulseTrigger = System.currentTimeMillis()
+
+                                        // Pause loop to allow smooth scroll
+                                        triggerAutoScrollTempPause(600L)
+
+                                        val amount = (currentClientHeightValue * 0.75f).toInt()
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "window.scrollBy({ top: -${amount}, behavior: 'smooth' });", null
+                                        )
+                                    }
+                                )
+                        )
+
+                        // Right Region
+                        Box(
+                            modifier = regionWidth
+                                .then(regionHeight)
+                                .align(Alignment.TopEnd)
+                                .offset(y = topOffset)
+                                .padding(end = 8.dp)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp)) // Pulse
+                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        rightPulseTrigger = System.currentTimeMillis()
+
+                                        triggerAutoScrollTempPause(600L)
+
+                                        val amount = (currentClientHeightValue * 0.75f).toInt()
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "window.scrollBy({ top: ${amount}, behavior: 'smooth' });", null
+                                        )
+                                    }
+                                )
+                        )
+                    }
+                }
+
                 Box(modifier = Modifier.fillMaxSize()) {
                     EpubReaderSearchOverlay(
                         searchState = searchState,
@@ -2898,8 +2980,11 @@ fun EpubReaderHost(
                     onStartAutoScroll = {
                         isAutoScrollModeActive = true
                         isAutoScrollPlaying = true
-                        showBars = false
-                        showBars = true
+                        showBars = if (isMusicianMode) {
+                            false
+                        } else {
+                            true
+                        }
                     },
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -2918,7 +3003,7 @@ fun EpubReaderHost(
                     label = "AutoScrollAlignAnimation"
                 )
 
-                val isAutoScrollControlsVisible = isAutoScrollModeActive && (!isAutoScrollLocked || showBars)
+                val isAutoScrollControlsVisible = isAutoScrollModeActive
 
                 AnimatedVisibility(
                     visible = isAutoScrollControlsVisible,
@@ -2985,10 +3070,16 @@ fun EpubReaderHost(
                         },
                         isCollapsed = isAutoScrollCollapsed,
                         onCollapseChange = { isAutoScrollCollapsed = it },
-                        isLocked = isAutoScrollLocked,
-                        onLockToggle = {
-                            isAutoScrollLocked = !isAutoScrollLocked
-                            saveAutoScrollLocked(context, isAutoScrollLocked)
+                        isMusicianMode = isMusicianMode,
+                        onMusicianModeToggle = {
+                            val newMode = !isMusicianMode
+                            isMusicianMode = newMode
+                            saveMusicianMode(context, newMode)
+                            if (newMode) {
+                                showBars = false
+                                showFormatAdjustmentBars = false
+                            }
+                            Timber.d("Musician mode toggled: $newMode")
                         },
                         useSlider = autoScrollUseSlider,
                         onInputModeToggle = {
