@@ -2882,6 +2882,12 @@ fun PdfViewerScreen(
         }
     }
 
+    val showStandardBars = showBars && !isEditMode
+    val snackbarPadding by animateDpAsState(
+        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp else 0.dp,
+        label = "SnackbarPadding"
+    )
+
     ModalNavigationDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
@@ -3145,7 +3151,14 @@ fun PdfViewerScreen(
                 }
             }
         }) {
-        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
+        Scaffold(
+            snackbarHost = {
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier.padding(bottom = snackbarPadding)
+                )
+            }
+        ) { paddingValues ->
             BoxWithConstraints(modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)) {
@@ -4127,8 +4140,6 @@ fun PdfViewerScreen(
                         }
                     }
                 }
-
-                val showStandardBars = showBars && !isEditMode
 
                 // Custom Top Bar
                 AnimatedVisibility(

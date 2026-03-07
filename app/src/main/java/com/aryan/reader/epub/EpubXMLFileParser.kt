@@ -19,8 +19,8 @@
  */
 package com.aryan.reader.epub
 
-import timber.log.Timber
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 
 /**
  * Parses an XML/HTML file from an EPUB archive, primarily to extract a title
@@ -55,8 +55,15 @@ class EpubXMLFileParser(
      * @return [Output] The title and effective HTML path.
      */
     fun parseForTitleAndPath(): Output {
-        Timber.d("Parsing for title and path: $fileRelativePath, fragment: $fragmentId")
         val document = Jsoup.parse(data.inputStream(), "UTF-8", "")
+        return parseForTitleAndPath(document)
+    }
+
+    /**
+     * Overload to use an existing Document to avoid double parsing.
+     */
+    fun parseForTitleAndPath(document: Document): Output {
+
         val extractedTitle = document.selectFirst("h1, h2, h3, h4, h5, h6")?.text()?.trim()
 
         val pathWithFragment = if (fragmentId != null) {
@@ -64,7 +71,6 @@ class EpubXMLFileParser(
         } else {
             fileRelativePath
         }
-        Timber.d("Effective HTML path: $pathWithFragment for file: $fileRelativePath")
 
         return Output(
             title = extractedTitle,

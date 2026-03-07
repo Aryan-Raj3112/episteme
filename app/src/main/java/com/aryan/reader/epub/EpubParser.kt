@@ -36,6 +36,10 @@ import java.net.URLDecoder
 import java.nio.file.Paths
 import java.util.UUID
 import java.util.zip.ZipFile
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class EpubParser(private val context: Context) {
     data class EpubDocument(
@@ -472,94 +476,102 @@ class EpubParser(private val context: Context) {
         return UUID.randomUUID().toString()
     }
 
-    private fun parseUsingSpine(
+    private suspend fun parseUsingSpine(
         spine: Node,
         manifestItems: Map<String, EpubManifestItem>,
         filesContentMap: Map<String, EpubFile>,
         ncxMetadataMap: Map<String, NcxMetadata>
-    ): List<EpubChapter> {
-        var chapterCounter = 0
-        val tempChapters = mutableListOf<TempEpubChapter>()
+    ): List<EpubChapter> = withContext(Dispatchers.Default) {
+        val parsingSemaphore = Semaphore(6)
 
-        spine.selectChildTag("itemref")
+        val spineItems = spine.selectChildTag("itemref")
             .ifEmpty { spine.selectChildTag("opf:itemref") }
-            .mapNotNull { manifestItems[it.getAttribute("idref")] }
-            .forEach { item ->
-                val fileBytes = filesContentMap[item.absPath]?.data
-                if (fileBytes != null) {
-                    if (item.mediaType.startsWith("application/xhtml+xml") ||
-                        item.mediaType.startsWith("text/html") ||
-                        item.absPath.endsWith(".html", ignoreCase = true) ||
-                        item.absPath.endsWith(".xhtml", ignoreCase = true) ||
-                        item.absPath.endsWith(".xml", ignoreCase = true)
+
+        val deferredChapters = spineItems.mapIndexed { index, itemRef ->
+            async {
+                parsingSemaphore.withPermit {
+                    val idRef = itemRef.getAttribute("idref")
+                    val item = manifestItems[idRef] ?: return@withPermit null
+
+                    val fileBytes = filesContentMap[item.absPath]?.data ?: return@withPermit null
+
+                    val mediaType = item.mediaType
+                    val absPath = item.absPath
+
+                    if (mediaType.startsWith("application/xhtml+xml") ||
+                        mediaType.startsWith("text/html") ||
+                        absPath.endsWith(".html", ignoreCase = true) ||
+                        absPath.endsWith(".xhtml", ignoreCase = true) ||
+                        absPath.endsWith(".xml", ignoreCase = true)
                     ) {
                         val rawHtml = String(fileBytes, Charsets.UTF_8)
-                        val plainText = Jsoup.parse(rawHtml).text()
+                        val document = Jsoup.parse(rawHtml)
+                        val plainText = document.text()
 
                         val parser = EpubXMLFileParser(
-                            fileRelativePath = item.absPath,
+                            fileRelativePath = absPath,
                             data = fileBytes,
                             fragmentId = null
                         )
-                        val res = parser.parseForTitleAndPath()
+                        val res = parser.parseForTitleAndPath(document)
+
                         val chapterTitleFromHtml = res.title
-                        val ncxKey = item.absPath.substringBefore('#')
+                        val ncxKey = absPath.substringBefore('#')
                         val ncxData = ncxMetadataMap[ncxKey]
+
                         val isEffectiveInToc = if (ncxMetadataMap.isNotEmpty()) {
                             ncxData != null
                         } else {
                             true
                         }
+
                         val finalChapterTitle = if (ncxData != null && ncxData.title.isNotBlank()) {
                             ncxData.title
                         } else {
-                            Timber.d("No NCX title for ${item.absPath}, using HTML title: '$chapterTitleFromHtml'")
                             chapterTitleFromHtml
                         }
                         val finalDepth = ncxData?.depth ?: 0
 
-                        chapterCounter++
-
-                        tempChapters.add(
-                            TempEpubChapter(
-                                url = item.absPath,
-                                title = finalChapterTitle,
-                                htmlFilePath = res.effectiveHtmlPath,
-                                chapterIndex = chapterCounter,
-                                plainTextContent = plainText,
-                                htmlContent = rawHtml,
-                                depth = finalDepth,
-                                isInToc = isEffectiveInToc
-                            )
+                        TempEpubChapter(
+                            url = absPath,
+                            title = finalChapterTitle,
+                            htmlFilePath = res.effectiveHtmlPath,
+                            chapterIndex = index + 1,
+                            plainTextContent = plainText,
+                            htmlContent = "", // OPTIMIZATION: Don't store HTML in memory, it's on disk
+                            depth = finalDepth,
+                            isInToc = isEffectiveInToc
                         )
-                    } else if (item.mediaType.startsWith("image/")) {
+                    } else if (mediaType.startsWith("image/")) {
+                        // Image handling remains similar, but usually small enough
                         val htmlContent = """
-                            <!DOCTYPE html><html style="margin:0;padding:0;height:100%;"><head><title>Image</title></head><body style="margin:0;padding:0;height:100%;text-align:center;"><img src="${item.absPath}" alt="Image from spine" style="object-fit:contain;width:100%;height:100%;"/></body></html>
+                            <!DOCTYPE html><html style="margin:0;padding:0;height:100%;"><head><title>Image</title></head><body style="margin:0;padding:0;height:100%;text-align:center;"><img src="$absPath" alt="Image from spine" style="object-fit:contain;width:100%;height:100%;"/></body></html>
                         """.trimIndent()
 
-                        val ncxKey = item.absPath.substringBefore('#')
+                        val ncxKey = absPath.substringBefore('#')
                         val ncxData = ncxMetadataMap[ncxKey]
                         val isEffectiveInToc = if (ncxMetadataMap.isNotEmpty()) ncxData != null else true
 
-                        chapterCounter++
-
-                        tempChapters.add(
-                            TempEpubChapter(
-                                url = item.absPath,
-                                title = ncxData?.title ?: "Image",
-                                htmlFilePath = item.absPath,
-                                chapterIndex = chapterCounter,
-                                plainTextContent = "[Image]",
-                                htmlContent = htmlContent,
-                                depth = ncxData?.depth ?: 0,
-                                isInToc = isEffectiveInToc
-                            )
+                        TempEpubChapter(
+                            url = absPath,
+                            title = ncxData?.title ?: "Image",
+                            htmlFilePath = absPath,
+                            chapterIndex = index + 1,
+                            plainTextContent = "[Image]",
+                            htmlContent = htmlContent,
+                            depth = ncxData?.depth ?: 0,
+                            isInToc = isEffectiveInToc
                         )
+                    } else {
+                        null
                     }
                 }
             }
+        }
 
-        return tempChapters.map { tempChapter ->
+        val tempChapters = deferredChapters.toList().awaitAll().filterNotNull()
+
+        return@withContext tempChapters.map { tempChapter ->
             EpubChapter(
                 chapterId = generateId(),
                 absPath = tempChapter.url,
@@ -572,7 +584,6 @@ class EpubParser(private val context: Context) {
             )
         }.filter { it.htmlFilePath.isNotBlank() }
     }
-
 
     private fun parseEpubImages(
         manifestItems: Map<String, EpubManifestItem>,

@@ -135,7 +135,7 @@ class SingleFileImporter(private val context: Context) {
                 title = chapterTitle,
                 htmlFilePath = fileName,
                 plainTextContent = Jsoup.parse(htmlBody).text(),
-                htmlContent = fullHtml,
+                htmlContent = "",
                 depth = 0,
                 isInToc = true
             ))
@@ -212,7 +212,7 @@ class SingleFileImporter(private val context: Context) {
                     title = chapterTitle,
                     htmlFilePath = fileName,
                     plainTextContent = plainText,
-                    htmlContent = fullHtml,
+                    htmlContent = "",
                     depth = 0,
                     isInToc = true
                 )
@@ -351,7 +351,7 @@ class SingleFileImporter(private val context: Context) {
             title = title,
             htmlFilePath = "content.html",
             plainTextContent = plainText,
-            htmlContent = fullHtml,
+            htmlContent = "",
             depth = 0,
             isInToc = true
         )
