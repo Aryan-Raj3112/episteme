@@ -29,6 +29,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -1633,6 +1635,25 @@ fun PdfViewerScreen(
             verticalReaderState.currentPage
         }
         onToggleBookmark(currentPage)
+    }
+
+    LaunchedEffect(reflowInfo) {
+        if (reflowInfo?.state == WorkInfo.State.SUCCEEDED &&
+            reflowInfo?.tags?.contains("book_$bookId") == true) {
+
+            val result = snackbarHostState.showSnackbar(
+                message = "Text View generation complete!",
+                actionLabel = "OPEN",
+                duration = SnackbarDuration.Long
+            )
+
+            if (result == SnackbarResult.ActionPerformed) {
+                val item = uiState.recentFiles.find { it.bookId == reflowBookId }
+                if (item != null) {
+                    viewModel.onRecentFileClicked(item)
+                }
+            }
+        }
     }
 
     LaunchedEffect(pdfUri) { debugPdfLinks(context, pdfUri, pdfiumCore, this) }
@@ -4441,27 +4462,38 @@ fun PdfViewerScreen(
                     exit = fadeOut() + slideOutVertically(),
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 56.dp) // Below top bar
+                        .padding(top = 56.dp)
                         .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 ) {
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                        shadowElevation = 4.dp
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = "Generating Text View...",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Generating Text View...",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "${(reflowProgressValue * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
                             androidx.compose.material3.LinearProgressIndicator(
                                 progress = { reflowProgressValue },
-                                modifier = Modifier.width(100.dp).height(4.dp),
+                                modifier = Modifier.fillMaxWidth().height(6.dp),
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             )
                         }

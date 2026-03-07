@@ -21,6 +21,7 @@ package com.aryan.reader.epub
 
 import android.content.Context
 import com.aryan.reader.FileType
+import com.aryan.reader.pdf.PdfToMarkdownGenerator
 import com.vladsch.flexmark.ext.autolink.AutolinkExtension
 import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension
 import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension
@@ -56,10 +57,13 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String
     ): EpubBook = withContext(Dispatchers.IO) {
-        Timber.d("Parsing Markdown: $originalBookNameHint")
+        Timber.d("Parsing Markdown with Page-Level Chaptering: $originalBookNameHint")
         val title = originalBookNameHint.substringBeforeLast(".")
+
+        // Read the full markdown content
         val markdownContent = inputStream.bufferedReader().use { it.readText() }
 
+        // Flexmark Setup
         val options = MutableDataSet().apply {
             set(Parser.EXTENSIONS, listOf(
                 TablesExtension.create(),
@@ -70,13 +74,10 @@ class SingleFileImporter(private val context: Context) {
             set(HtmlRenderer.GENERATE_HEADER_ID, true)
             set(HtmlRenderer.RENDER_HEADER_ID, true)
         }
-
         val parser = Parser.builder(options).build()
         val renderer = HtmlRenderer.builder(options).build()
 
-        val document = parser.parse(markdownContent)
-        val htmlBody = renderer.render(document)
-
+        // Shared CSS
         val style = """
             body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
             table { border-collapse: collapse; width: 100%; margin: 1em 0; }
@@ -84,9 +85,77 @@ class SingleFileImporter(private val context: Context) {
             blockquote { border-left: 4px solid currentColor; padding-left: 1em; margin-left: 0; opacity: 0.8; }
             pre { overflow-x: auto; background: rgba(127,127,127,0.1); padding: 1em; border-radius: 4px; }
             img { max-width: 100%; height: auto; }
+            hr { border: 0; border-top: 1px solid #ccc; margin: 2em 0; }
         """.trimIndent()
 
-        return@withContext createBookFromHtmlBody(title, htmlBody, style, originalBookNameHint, author = null)
+        val delimiter = PdfToMarkdownGenerator.PAGE_DELIMITER.trim()
+        val rawChapters = if (markdownContent.contains(delimiter)) {
+            markdownContent.split(delimiter)
+        } else {
+            markdownContent.split("\n\n---\n\n")
+        }
+
+        val bookId = UUID.randomUUID().toString()
+        val extractionDir = File(context.cacheDir, "imported_md_$bookId").apply {
+            if (!exists()) mkdirs()
+        }
+
+        val chapters = mutableListOf<EpubChapter>()
+
+        rawChapters.forEachIndexed { index, rawText ->
+            if (rawText.isBlank()) return@forEachIndexed
+
+            val pageNum = index + 1
+            val chapterTitle = "Page $pageNum"
+
+            val document = parser.parse(rawText)
+            val htmlBody = renderer.render(document)
+
+            val fileName = "page_$pageNum.html"
+            val file = File(extractionDir, fileName)
+
+            val fullHtml = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>$chapterTitle</title>
+                    <style>$style</style>
+                </head>
+                <body>
+                $htmlBody
+                </body>
+                </html>
+            """.trimIndent()
+
+            file.writeText(fullHtml)
+
+            chapters.add(EpubChapter(
+                chapterId = "${bookId}_$pageNum",
+                absPath = fileName,
+                title = chapterTitle,
+                htmlFilePath = fileName,
+                plainTextContent = Jsoup.parse(htmlBody).text(),
+                htmlContent = fullHtml,
+                depth = 0,
+                isInToc = true
+            ))
+        }
+
+        Timber.d("Markdown import complete. Created ${chapters.size} chapters (one per page).")
+
+        return@withContext EpubBook(
+            fileName = originalBookNameHint,
+            title = title,
+            author = "Unknown",
+            language = "en",
+            coverImage = null,
+            chapters = chapters,
+            chaptersForPagination = chapters,
+            images = emptyList(),
+            pageList = emptyList(),
+            extractionBasePath = extractionDir.absolutePath,
+            css = emptyMap()
+        )
     }
 
     private suspend fun parsePlainText(
