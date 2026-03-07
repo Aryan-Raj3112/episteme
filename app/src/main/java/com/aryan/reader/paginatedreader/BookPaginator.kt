@@ -413,10 +413,25 @@ class BookPaginator(
             if (cachedChapter.estimatedPageCount == 0) {
                 Timber.d("getBlocksForChapter: Found 'lite' cache for chapter $chapterIndex. Reprocessing for full fidelity.")
             } else {
-                Timber.d("getBlocksForChapter: Cache HIT for chapter $chapterIndex in DATABASE.")
                 try {
                     val semanticBlocks = proto.decodeFromByteArray<List<SemanticBlock>>(cachedChapter.contentBlocksProto)
-                    return styler.style(semanticBlocks)
+
+                    val isCacheEmpty = semanticBlocks.isEmpty()
+                    val isLazyChapter = chapter.htmlContent.isEmpty()
+
+                    var shouldIgnoreCache = false
+                    if (isCacheEmpty && isLazyChapter) {
+                        val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+                        if (file.exists() && file.length() > 0) {
+                            Timber.tag("ReflowPaginationDiag").w("getBlocksForChapter: Cache HIT but empty for lazy chapter $chapterIndex. Backing file exists (${file.length()} bytes). Ignoring cache.")
+                            shouldIgnoreCache = true
+                        }
+                    }
+
+                    if (!shouldIgnoreCache) {
+                        Timber.d("getBlocksForChapter: Cache HIT for chapter $chapterIndex in DATABASE.")
+                        return styler.style(semanticBlocks)
+                    }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to deserialize/style chapter $chapterIndex from DB. Reprocessing for this session.")
                 }
@@ -424,7 +439,23 @@ class BookPaginator(
         }
 
         Timber.d("getBlocksForChapter: Cache MISS or 'lite' version found for chapter $chapterIndex. Parsing to Semantic IR.")
-        val document = Jsoup.parse(chapter.htmlContent, chapter.absPath)
+
+        var htmlToParse = chapter.htmlContent
+        if (htmlToParse.isEmpty()) {
+            val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+            if (file.exists()) {
+                Timber.tag("ReflowPaginationDiag").d("getBlocksForChapter: Lazy loading content from disk for chapter $chapterIndex: ${file.name} (${file.length()} bytes)")
+                try {
+                    htmlToParse = file.readText()
+                } catch (e: Exception) {
+                    Timber.tag("ReflowPaginationDiag").e(e, "Failed to read lazy HTML file")
+                }
+            } else {
+                Timber.tag("ReflowPaginationDiag").w("getBlocksForChapter: htmlContent is empty and file not found: ${file.absolutePath}")
+            }
+        }
+
+        val document = Jsoup.parse(htmlToParse, chapter.absPath)
         val mathElements = document.select("math")
         val svgResults = mutableMapOf<String, String>()
 

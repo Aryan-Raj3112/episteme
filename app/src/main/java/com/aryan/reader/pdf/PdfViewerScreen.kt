@@ -684,6 +684,7 @@ fun PdfViewerScreen(
                 ?: pdfUri.lastPathSegment ?: "Document.pdf"
         }
     }
+    val reflowProgress = uiState.reflowProgress
 
     var isDockDragging by remember { mutableStateOf(false) }
 
@@ -4302,7 +4303,7 @@ fun PdfViewerScreen(
                                                 )
                                             }
                                         )
-                                        
+
                                         if (BuildConfig.DEBUG) {
                                             DropdownMenuItem(
                                                 text = { Text("TTS Settings (Debug)") },
@@ -4367,7 +4368,7 @@ fun PdfViewerScreen(
                                                 )
                                             }
                                         )
-                                        
+
                                         HorizontalDivider()
 
                                         DropdownMenuItem(text = { Text("Share") }, onClick = {
@@ -5795,6 +5796,50 @@ fun PdfViewerScreen(
                         }
                     }
                 }
+
+                if (uiState.isLoading && reflowProgress != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.9f))
+                            .clickable(enabled = false) {}, // Block touches
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(32.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(48.dp),
+                                strokeWidth = 4.dp
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+
+                            val percent = (reflowProgress * 100).toInt()
+                            Text(
+                                text = "Reflowing PDF...",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Linear indicator for exact progress
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { reflowProgress },
+                                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "$percent% Complete",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 val autoScrollPadding by animateDpAsState(
                     targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
                     label = "AutoScrollPadding"

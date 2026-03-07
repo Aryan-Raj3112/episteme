@@ -30,7 +30,6 @@ import android.content.SharedPreferences
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -78,7 +77,6 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -191,6 +189,7 @@ data class ReaderScreenState(
     val searchQuery: String = "",
     val showFolderMigrationDialog: Boolean = false,
     val isRefreshing: Boolean = false,
+    val reflowProgress: Float? = null
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -2260,70 +2259,61 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val isCurrentlyPdf = currentState.selectedFileType == FileType.PDF
         val bookId = currentState.selectedBookId ?: return
 
-        // CHANGE: Launch coroutine immediately to allow calling suspend functions
+        Timber.tag("ReflowPaginationDiag").d("toggleReflowMode: isCurrentlyPdf=$isCurrentlyPdf, bookId=$bookId")
+
         viewModelScope.launch {
-            // CHANGE: Call getFileByBookId inside the coroutine
             val originalUri = currentState.selectedPdfUri
                 ?: recentFilesRepository.getFileByBookId(bookId)?.getUri()
                 ?: return@launch
 
-            _internalState.update { it.copy(isLoading = true, bannerMessage = BannerMessage("Switching view mode...")) }
+            // Get current page to prioritize processing
+            val recentItem = recentFilesRepository.getFileByBookId(bookId)
+            val currentPdfPage = recentItem?.lastPage ?: 0
+
+            _internalState.update {
+                it.copy(
+                    isLoading = true,
+                    reflowProgress = 0f,
+                    bannerMessage = BannerMessage("Initializing reflow...")
+                )
+            }
 
             try {
                 if (isCurrentlyPdf) {
-                    // --- Switch TO Reflow (EPUB Reader) ---
-
-                    var tempPfd: ParcelFileDescriptor? = null
-                    var tempDoc: PdfDocumentKt? = null
-
-                    val generatedFile: File = try {
-                        // Open PDF just for extraction
-                        tempPfd = appContext.contentResolver.openFileDescriptor(originalUri, "r")
-                        val pdfium = io.legere.pdfiumandroid.suspend.PdfiumCoreKt(Dispatchers.Default)
-                        tempDoc = pdfium.newDocument(tempPfd!!)
-                        val pages = tempDoc.getPageCount()
-
-                        // 2. Generate/Get Cached MD
-                        PdfToMarkdownGenerator.generateReflowFile(
-                            appContext, bookId, tempDoc, pdfTextRepository, pages
-                        )
-                    } finally {
-                        tempDoc?.close()
-                        tempPfd?.close()
-                    }
-
-                    // 3. Import the MD file as an EpubBook
-                    val mdUri = generatedFile.toUri()
-                    val epubBook = singleFileImporter.importSingleFile(
-                        generatedFile.inputStream(),
-                        FileType.MD,
-                        "Reflow: ${currentState.recentFiles.find { it.bookId == bookId }?.displayName ?: "Document"}"
+                    // Pass viewModelScope here so processing continues in background
+                    val epubBook = PdfToMarkdownGenerator.generateReflowBook(
+                        context = appContext,
+                        bookId = bookId,
+                        pdfUri = originalUri,
+                        scope = viewModelScope,
+                        startPage = currentPdfPage,
+                        onProgress = { current, total ->
+                            val progress = if (total > 0) current.toFloat() / total.toFloat() else 0f
+                            // Only update UI state if we are still in MD mode to avoid UI thrashing
+                            if (_internalState.value.selectedFileType == FileType.MD) {
+                                _internalState.update { it.copy(reflowProgress = progress) }
+                            }
+                        }
                     )
 
-                    // 4. Update Database Preference
-                    // CHANGE: Use repository instead of dao
                     recentFilesRepository.updateReflowPreference(bookId, true)
 
-                    // 5. Swap State (Close PDF, Open EPUB)
                     _internalState.update {
                         it.copy(
                             selectedPdfUri = null,
-                            selectedEpubUri = mdUri,
+                            selectedEpubUri = null,
                             selectedEpubBook = epubBook,
                             selectedFileType = FileType.MD,
                             isLoading = false,
+                            // Keep progress visible until 100%
+                            reflowProgress = 0f,
                             bannerMessage = null
                         )
                     }
 
                 } else {
-                    // --- Switch TO Original PDF ---
-
-                    // 1. Update Database Preference
-                    // CHANGE: Use repository instead of dao
                     recentFilesRepository.updateReflowPreference(bookId, false)
 
-                    // 2. Swap State (Close EPUB, Open PDF)
                     _internalState.update {
                         it.copy(
                             selectedEpubUri = null,
@@ -2331,6 +2321,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             selectedPdfUri = originalUri,
                             selectedFileType = FileType.PDF,
                             isLoading = false,
+                            reflowProgress = null,
                             bannerMessage = null
                         )
                     }
@@ -2338,7 +2329,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Failed to toggle reflow mode")
                 _internalState.update {
-                    it.copy(isLoading = false, errorMessage = "Could not switch modes: ${e.message}")
+                    it.copy(
+                        isLoading = false,
+                        reflowProgress = null,
+                        errorMessage = "Could not switch modes: ${e.message}"
+                    )
                 }
             }
         }
@@ -2353,49 +2348,40 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val recentItem = recentFilesRepository.getFileByBookId(bookId)
 
             if (type == FileType.PDF && recentItem?.isReflowPreferred == true) {
-                Timber.i("Reflow preferred for $bookId. Generating/Loading Reflow view...")
+                Timber.tag("ReflowPaginationDiag").i("openBook: Reflow preferred for $bookId. Generating/Loading Reflow view...")
 
                 _internalState.update { it.copy(isLoading = true, selectedBookId = bookId) }
 
                 try {
-                    var tempPfd: ParcelFileDescriptor? = null
-                    var tempDoc: PdfDocumentKt? = null
-                    val generatedFile: File = try {
-                        tempPfd = appContext.contentResolver.openFileDescriptor(uri, "r")
-                        val pdfium =
-                            io.legere.pdfiumandroid.suspend.PdfiumCoreKt(Dispatchers.Default)
-                        tempDoc = pdfium.newDocument(tempPfd!!)
-                        PdfToMarkdownGenerator.generateReflowFile(
-                            appContext,
-                            bookId,
-                            tempDoc,
-                            pdfTextRepository,
-                            tempDoc.getPageCount()
-                        )
-                    } finally {
-                        tempDoc?.close()
-                        tempPfd?.close()
-                    }
+                    val currentPdfPage = recentItem.lastPage ?: 0
 
-                    val epubBook = singleFileImporter.importSingleFile(
-                        generatedFile.inputStream(), FileType.MD, originalDisplayName ?: "Document"
+                    val epubBook = PdfToMarkdownGenerator.generateReflowBook(
+                        context = appContext,
+                        bookId = bookId,
+                        pdfUri = uri,
+                        scope = viewModelScope,
+                        startPage = currentPdfPage,
+                        onProgress = { current, total ->
+                            val progress = if (total > 0) current.toFloat() / total.toFloat() else 0f
+                            if (_internalState.value.selectedFileType == FileType.MD) {
+                                _internalState.update { it.copy(reflowProgress = progress) }
+                            }
+                        }
                     )
 
                     _internalState.update {
                         it.copy(
                             selectedPdfUri = null,
-                            selectedEpubUri = generatedFile.toUri(), // Point to cache
+                            selectedEpubUri = null,
                             selectedEpubBook = epubBook,
                             selectedFileType = FileType.MD,
                             isLoading = false,
-                            // We don't restore PDF page in EPUB mode easily yet, start at beginning or saved epub pos
                             initialLocator = null
                         )
                     }
                     return@launch
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to open in reflow mode, falling back to PDF")
-                    // Fallthrough to standard PDF open
                 }
             }
 
@@ -3410,6 +3396,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Error migrating legacy book data")
+        }
+    }
+
+    fun clearReflowCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val reflowDir = File(appContext.cacheDir, "reflow_cache")
+            if (reflowDir.exists()) {
+                reflowDir.deleteRecursively()
+            }
+            val imagesDir = File(appContext.cacheDir, "reflow_images")
+            if (imagesDir.exists()) {
+                imagesDir.deleteRecursively()
+            }
+
+            withContext(Dispatchers.Main) {
+                showBanner("Reflow cache & images cleared.")
+            }
         }
     }
 
