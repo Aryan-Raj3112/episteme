@@ -169,7 +169,7 @@ fun AppNavigation(
                     Timber.i("Displaying EPUB Reader for Book: ${epubBook.title}, initialLocator: $initialLocator")
                     val coverPath = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.coverImagePath
                     val epubUri = uiState.selectedEpubUri
-                    val bookId = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
+                    uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
                     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
 
                     EpubReaderScreen(
@@ -204,6 +204,7 @@ fun AppNavigation(
                         onRenderModeChange = viewModel::setRenderMode,
                         customFonts = customFonts,
                         onImportFont = viewModel::importFont,
+                        viewModel = viewModel
                     )
                 }
                 isLoading -> {

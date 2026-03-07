@@ -655,7 +655,10 @@ fun PaginatedReaderScreen(
                 BookCacheDatabase.getDatabase(context.applicationContext).bookCacheDao()
             val proto = ProtoBuf { serializersModule = semanticBlockModule }
 
-            Timber.d("Recreating BookPaginator. TextAlign: $userTextAlign")
+            val uniqueBookId = if (book.fileName.length > 20) book.fileName else book.title
+
+            Timber.d("Recreating BookPaginator for ID: $uniqueBookId. TextAlign: $userTextAlign")
+            Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: Instantiating BookPaginator. book.chaptersForPagination.size=${book.chaptersForPagination.size}, initialChapter=$effectiveInitialChapter")
 
             BookPaginator(
                 coroutineScope = coroutineScope,
@@ -667,7 +670,7 @@ fun PaginatedReaderScreen(
                 density = density,
                 fontFamilyMap = fontFamilyMap,
                 isDarkTheme = isDarkTheme,
-                bookId = book.title,
+                bookId = uniqueBookId,
                 bookCacheDao = bookCacheDao,
                 proto = proto,
                 initialChapterToPaginate = effectiveInitialChapter,
@@ -719,23 +722,29 @@ fun PaginatedReaderScreen(
             }
         }
 
-        // FIX 2: Replace property delegates with local state and a LaunchedEffect observer.
         var isLoading by remember { mutableStateOf(true) }
         var totalPageCount by remember { mutableIntStateOf(0) }
         var generation by remember { mutableIntStateOf(0) }
 
         LaunchedEffect(paginator) {
-            launch { snapshotFlow { paginator.isLoading }.collect { isLoading = it } }
+            launch { snapshotFlow { paginator.isLoading }.collect {
+                Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: paginator.isLoading=$it")
+                isLoading = it
+            } }
             launch {
                 snapshotFlow { paginator.totalPageCount }.collect { newTotalPageCount ->
+                    Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: paginator.totalPageCount=$newTotalPageCount")
                     totalPageCount = newTotalPageCount
                 }
             }
-            launch { snapshotFlow { paginator.generation }.collect { generation = it } }
+            launch { snapshotFlow { paginator.generation }.collect {
+                Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: paginator.generation=$it")
+                generation = it
+            } }
         }
 
         LaunchedEffect(pagerState, paginator) {
-            snapshotFlow { pagerState.currentPage }.debounce(500) // Wait for scrolling to settle
+            snapshotFlow { pagerState.currentPage }.debounce(500)
                 .collectLatest { page -> paginator.onUserScrolledTo(page) }
         }
 
@@ -1432,6 +1441,7 @@ internal fun PaginatedReaderContent(
             CircularProgressIndicator()
         }
     } else {
+        Timber.tag("ReflowPaginationDiag").d("PaginatedReaderContent: isLoading=false, totalPageCount=${uiState.totalPageCount}")
         if (uiState.totalPageCount > 0) {
             uiState.generation
 
@@ -1508,7 +1518,9 @@ internal fun PaginatedReaderContent(
                     var currentChapterPath by remember { mutableStateOf<String?>(null) }
 
                     LaunchedEffect(pageIndex, uiState.generation) {
+                        Timber.tag("ReflowPaginationDiag").d("PaginatedReaderContent: Fetching page $pageIndex content. generation=${uiState.generation}")
                         pageContent = onGetPage(pageIndex)
+                        Timber.tag("ReflowPaginationDiag").d("PaginatedReaderContent: Fetched page $pageIndex content. isNull=${pageContent == null}, blocks=${pageContent?.content?.size}")
                         onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
                     }
 

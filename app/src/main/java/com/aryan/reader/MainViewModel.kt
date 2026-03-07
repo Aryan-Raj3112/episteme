@@ -68,6 +68,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PdfExporter
+import com.aryan.reader.pdf.ReflowWorker
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -80,10 +81,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -188,6 +191,7 @@ data class ReaderScreenState(
     val searchQuery: String = "",
     val showFolderMigrationDialog: Boolean = false,
     val isRefreshing: Boolean = false,
+    val reflowProgress: Float? = null
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -2252,90 +2256,141 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    val reflowWorkInfo: Flow<WorkInfo?> = WorkManager.getInstance(appContext)
+        .getWorkInfosByTagFlow(ReflowWorker.WORK_NAME)
+        .map { list ->
+            list.find { !it.state.isFinished } ?: list.firstOrNull()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    fun generateAndImportReflowFile(pdfBookId: String, pdfUri: Uri, originalTitle: String) {
+        val reflowBookId = "${pdfBookId}_reflow"
+
+        viewModelScope.launch {
+            val existing = recentFilesRepository.getFileByBookId(reflowBookId)
+            if (existing != null) {
+                showBanner("Opening existing text view...")
+                onRecentFileClicked(existing)
+                return@launch
+            }
+
+            val workManager = WorkManager.getInstance(appContext)
+
+            val inputData = androidx.work.Data.Builder()
+                .putString(ReflowWorker.KEY_BOOK_ID, pdfBookId)
+                .putString(ReflowWorker.KEY_PDF_URI, pdfUri.toString())
+                .putString(ReflowWorker.KEY_ORIGINAL_TITLE, originalTitle)
+                .build()
+
+            val request = OneTimeWorkRequestBuilder<ReflowWorker>()
+                .setInputData(inputData)
+                .addTag(ReflowWorker.WORK_NAME)
+                .addTag("book_$pdfBookId")
+                .build()
+
+            workManager.enqueueUniqueWork(
+                "reflow_$pdfBookId",
+                ExistingWorkPolicy.KEEP,
+                request
+            )
+
+            showBanner("Text view generation started in background.")
+        }
+    }
+
     private fun openBook(
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null
     ) {
-        Timber.d("Opening book with determined type: $type for bookId: $bookId")
+        Timber.d("Opening book type: $type for bookId: $bookId")
 
-        _internalState.update {
-            it.copy(
-                selectedPdfUri = null,
-                selectedEpubUri = null,
-                selectedBookId = bookId,
-                selectedEpubBook = null,
-                selectedFileType = type,
-                isLoading = true,
-                errorMessage = null,
-                initialLocator = null,
-                initialPageInBook = null
-            )
-        }
-
-        if (type == FileType.PDF) {
-            viewModelScope.launch {
-                val recentItem = recentFilesRepository.getFileByBookId(bookId)
-
-                if (recentItem?.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
-                    }
-                }
-
-                Timber.d("openBook: Loading PDF. bookId=$bookId ...")
-                _internalState.update {
-                    it.copy(
-                        selectedPdfUri = uri,
-                        initialPageInBook = recentItem?.lastPage,
-                        initialBookmarksJson = recentItem?.bookmarksJson,
-                        isLoading = false
-                    )
-                }
-                addFileToRecent(
-                    uri,
-                    type,
-                    bookId,
-                    customDisplayName = originalDisplayName,
-                    isRecent = true,
-                    sourceFolderUri = null
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(
+                    selectedPdfUri = null,
+                    selectedEpubUri = null,
+                    selectedBookId = bookId,
+                    selectedEpubBook = null,
+                    selectedFileType = type,
+                    isLoading = true,
+                    errorMessage = null,
+                    initialLocator = null,
+                    initialPageInBook = null
                 )
             }
-        } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
-            viewModelScope.launch {
-                val recentItem = recentFilesRepository.getFileByBookId(bookId)
-                if (recentItem?.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
-                    }
-                }
-                val locator =
-                    if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
-                        Locator(
-                            chapterIndex = recentItem.lastChapterIndex,
-                            blockIndex = recentItem.locatorBlockIndex,
-                            charOffset = recentItem.locatorCharOffset
-                        )
-                    } else {
-                        null
+
+            if (type == FileType.PDF) {
+                viewModelScope.launch {
+                    val recentItem = recentFilesRepository.getFileByBookId(bookId)
+
+                    if (recentItem?.sourceFolderUri != null) {
+                        launch(Dispatchers.IO) {
+                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                        }
                     }
 
-                _internalState.update {
-                    it.copy(
-                        selectedEpubUri = uri,
-                        initialLocator = locator,
-                        initialCfi = recentItem?.lastPositionCfi,
-                        initialBookmarksJson = recentItem?.bookmarksJson
+                    Timber.d("openBook: Loading PDF. bookId=$bookId ...")
+                    _internalState.update {
+                        it.copy(
+                            selectedPdfUri = uri,
+                            initialPageInBook = recentItem?.lastPage,
+                            initialBookmarksJson = recentItem?.bookmarksJson,
+                            isLoading = false
+                        )
+                    }
+                    addFileToRecent(
+                        uri,
+                        type,
+                        bookId,
+                        customDisplayName = originalDisplayName,
+                        isRecent = true,
+                        sourceFolderUri = null
                     )
                 }
+            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
+                viewModelScope.launch {
+                    val recentItem = recentFilesRepository.getFileByBookId(bookId)
+                    if (recentItem?.sourceFolderUri != null) {
+                        launch(Dispatchers.IO) {
+                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                        }
+                    }
+                    val locator =
+                        if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
+                            Locator(
+                                chapterIndex = recentItem.lastChapterIndex,
+                                blockIndex = recentItem.locatorBlockIndex,
+                                charOffset = recentItem.locatorCharOffset
+                            )
+                        } else {
+                            null
+                        }
 
-                when (type) {
-                    FileType.EPUB -> {
-                        loadEpub(uri, bookId, customDisplayName = originalDisplayName)
+                    _internalState.update {
+                        it.copy(
+                            selectedEpubUri = uri,
+                            initialLocator = locator,
+                            initialCfi = recentItem?.lastPositionCfi,
+                            initialBookmarksJson = recentItem?.bookmarksJson
+                        )
                     }
-                    FileType.MOBI -> {
-                        loadMobi(uri, bookId, customDisplayName = originalDisplayName)
-                    }
-                    else -> {
-                        loadSingleFile(uri, bookId, type, customDisplayName = originalDisplayName)
+
+                    when (type) {
+                        FileType.EPUB -> {
+                            loadEpub(uri, bookId, customDisplayName = originalDisplayName)
+                        }
+
+                        FileType.MOBI -> {
+                            loadMobi(uri, bookId, customDisplayName = originalDisplayName)
+                        }
+
+                        else -> {
+                            loadSingleFile(
+                                uri,
+                                bookId,
+                                type,
+                                customDisplayName = originalDisplayName
+                            )
+                        }
                     }
                 }
             }
@@ -3260,6 +3315,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Error migrating legacy book data")
+        }
+    }
+
+    fun clearReflowCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val reflowDir = File(appContext.cacheDir, "reflow_cache")
+            if (reflowDir.exists()) {
+                reflowDir.deleteRecursively()
+            }
+            val imagesDir = File(appContext.cacheDir, "reflow_images")
+            if (imagesDir.exists()) {
+                imagesDir.deleteRecursively()
+            }
+
+            withContext(Dispatchers.Main) {
+                showBanner("Reflow cache & images cleared.")
+            }
         }
     }
 

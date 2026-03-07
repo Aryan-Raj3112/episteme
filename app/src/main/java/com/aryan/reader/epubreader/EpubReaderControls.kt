@@ -151,7 +151,8 @@ fun EpubReaderTopBar(
     onOpenTtsSettings: () -> Unit,
     onOpenDeviceVoiceSettings: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onToggleReflow: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(
         visible = isVisible,
@@ -201,6 +202,24 @@ fun EpubReaderTopBar(
                             expanded = showMoreMenu,
                             onDismissRequest = { showMoreMenu = false }
                         ) {
+                            if (onToggleReflow != null) {
+                                DropdownMenuItem(
+                                    text = { Text("View Original PDF") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onToggleReflow()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.picture_as_pdf),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                )
+                                HorizontalDivider()
+                            }
+
                             DropdownMenuItem(
                                 text = { Text("Reading Mode: Vertical") },
                                 enabled = !isTtsActive,

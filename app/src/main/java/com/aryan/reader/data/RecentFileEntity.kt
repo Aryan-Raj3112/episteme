@@ -47,5 +47,6 @@ data class RecentFileEntity(
     val locatorBlockIndex: Int?,
     val locatorCharOffset: Int?,
     val bookmarks: String?,
-    @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?
+    @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?,
+    @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean
 )

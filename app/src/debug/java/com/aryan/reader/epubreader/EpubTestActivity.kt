@@ -31,7 +31,7 @@ class EpubTestActivity : ComponentActivity() {
                 coverImagePath = null,
                 onRenderModeChange = {},
                 customFonts = TODO(),
-                onImportFont = TODO()
+                onImportFont = TODO(), viewModel = TODO()
             )
         }
     }

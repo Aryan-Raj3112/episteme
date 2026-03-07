@@ -29,6 +29,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -220,6 +222,7 @@ import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
+import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
@@ -673,7 +676,16 @@ fun PdfViewerScreen(
     var isBackgroundIndexing by remember { mutableStateOf(false) }
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
+    var currentBookId by remember { mutableStateOf<String?>(null) }
+    val bookId = currentBookId ?: pdfUri.toString().hashCode().toString()
+
     val uiState by viewModel.uiState.collectAsState()
+    val reflowBookId = remember(bookId) { "${bookId}_reflow" }
+    val hasReflowFile by remember(uiState.recentFiles, reflowBookId) {
+        derivedStateOf {
+            uiState.recentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
+        }
+    }
     val originalFileName by remember(uiState.recentFiles, pdfUri) {
         derivedStateOf {
             uiState.recentFiles.find { it.uriString == pdfUri.toString() }?.displayName
@@ -736,9 +748,6 @@ fun PdfViewerScreen(
     val isDrawingActive by remember(isEditMode, isDockMinimized) {
         derivedStateOf { isEditMode && !isDockMinimized }
     }
-
-    var currentBookId by remember { mutableStateOf<String?>(null) }
-    val bookId = currentBookId ?: pdfUri.toString().hashCode().toString()
 
     var isAutoScrollLocal by remember { mutableStateOf(loadPdfAutoScrollLocalMode(context, bookId)) }
 
@@ -1602,6 +1611,23 @@ fun PdfViewerScreen(
         }
     }
 
+    val reflowInfo by viewModel.reflowWorkInfo.collectAsState(initial = null)
+
+    val isReflowingThisBook by remember(reflowInfo, bookId) {
+        derivedStateOf {
+            reflowInfo?.tags?.contains("book_$bookId") == true &&
+                    (reflowInfo?.state == WorkInfo.State.RUNNING || reflowInfo?.state == WorkInfo.State.ENQUEUED)
+        }
+    }
+
+    val reflowProgressValue by remember(reflowInfo, isReflowingThisBook) {
+        derivedStateOf {
+            if (isReflowingThisBook) {
+                reflowInfo?.progress?.getFloat(ReflowWorker.KEY_PROGRESS, 0f) ?: 0f
+            } else 0f
+        }
+    }
+
     val onBookmarkClick: () -> Unit = {
         val currentPage = if (displayMode == DisplayMode.PAGINATION) {
             pagerState.currentPage
@@ -1609,6 +1635,25 @@ fun PdfViewerScreen(
             verticalReaderState.currentPage
         }
         onToggleBookmark(currentPage)
+    }
+
+    LaunchedEffect(reflowInfo) {
+        if (reflowInfo?.state == WorkInfo.State.SUCCEEDED &&
+            reflowInfo?.tags?.contains("book_$bookId") == true) {
+
+            val result = snackbarHostState.showSnackbar(
+                message = "Text View generation complete!",
+                actionLabel = "OPEN",
+                duration = SnackbarDuration.Long
+            )
+
+            if (result == SnackbarResult.ActionPerformed) {
+                val item = uiState.recentFiles.find { it.bookId == reflowBookId }
+                if (item != null) {
+                    viewModel.onRecentFileClicked(item)
+                }
+            }
+        }
     }
 
     LaunchedEffect(pdfUri) { debugPdfLinks(context, pdfUri, pdfiumCore, this) }
@@ -2837,6 +2882,12 @@ fun PdfViewerScreen(
         }
     }
 
+    val showStandardBars = showBars && !isEditMode
+    val snackbarPadding by animateDpAsState(
+        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp else 0.dp,
+        label = "SnackbarPadding"
+    )
+
     ModalNavigationDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
@@ -3100,7 +3151,14 @@ fun PdfViewerScreen(
                 }
             }
         }) {
-        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
+        Scaffold(
+            snackbarHost = {
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier.padding(bottom = snackbarPadding)
+                )
+            }
+        ) { paddingValues ->
             BoxWithConstraints(modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)) {
@@ -4083,8 +4141,6 @@ fun PdfViewerScreen(
                     }
                 }
 
-                val showStandardBars = showBars && !isEditMode
-
                 // Custom Top Bar
                 AnimatedVisibility(
                     visible = showStandardBars,
@@ -4298,7 +4354,7 @@ fun PdfViewerScreen(
                                                 )
                                             }
                                         )
-                                        
+
                                         if (BuildConfig.DEBUG) {
                                             DropdownMenuItem(
                                                 text = { Text("TTS Settings (Debug)") },
@@ -4345,6 +4401,44 @@ fun PdfViewerScreen(
                                                 )
                                             )
                                         }
+
+                                        HorizontalDivider()
+
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    when {
+                                                        isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
+                                                        hasReflowFile -> "Open Text View"
+                                                        else -> "Generate Text View"
+                                                    }
+                                                )
+                                            },
+                                            enabled = pdfDocument != null && !isReflowingThisBook,
+                                            onClick = {
+                                                showMoreMenu = false
+                                                if (hasReflowFile) {
+                                                    val item = uiState.recentFiles.find { it.bookId == reflowBookId }
+                                                    if (item != null) {
+                                                        viewModel.onRecentFileClicked(item)
+                                                    }
+                                                } else {
+                                                    viewModel.generateAndImportReflowFile(
+                                                        pdfBookId = bookId,
+                                                        pdfUri = pdfUri,
+                                                        originalTitle = originalFileName
+                                                    )
+                                                }
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.format_size),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
+
                                         HorizontalDivider()
 
                                         DropdownMenuItem(text = { Text("Share") }, onClick = {
@@ -4369,6 +4463,50 @@ fun PdfViewerScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showStandardBars && isReflowingThisBook,
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 56.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                        shadowElevation = 4.dp
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Generating Text View...",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "${(reflowProgressValue * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { reflowProgressValue },
+                                modifier = Modifier.fillMaxWidth().height(6.dp),
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            )
                         }
                     }
                 }
@@ -5772,6 +5910,7 @@ fun PdfViewerScreen(
                         }
                     }
                 }
+
                 val autoScrollPadding by animateDpAsState(
                     targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
                     label = "AutoScrollPadding"

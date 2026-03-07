@@ -128,6 +128,7 @@ import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.DeviceVoiceSettingsSheet
+import com.aryan.reader.MainViewModel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -291,8 +292,25 @@ fun EpubReaderScreen(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit
+    onImportFont: (Uri) -> Unit,
+    viewModel: MainViewModel
 ) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    val isReflowFile = uiState.selectedBookId?.endsWith("_reflow") == true
+    val originalBookId = if (isReflowFile) uiState.selectedBookId!!.removeSuffix("_reflow") else null
+
+    val onOpenOriginal: (() -> Unit)? = if (originalBookId != null) {
+        {
+            val originalItem = uiState.recentFiles.find { it.bookId == originalBookId }
+            if (originalItem != null) {
+                viewModel.onRecentFileClicked(originalItem)
+            } else {
+                viewModel.showBanner("Original PDF not found.", true)
+            }
+        }
+    } else null
+
     EpubReaderHost(
         epubBook = epubBook,
         renderMode = renderMode,
@@ -307,7 +325,8 @@ fun EpubReaderScreen(
         coverImagePath = coverImagePath,
         onRenderModeChange = onRenderModeChange,
         customFonts = customFonts,
-        onImportFont = onImportFont
+        onImportFont = onImportFont,
+        onToggleReflow = onOpenOriginal
     )
 }
 
@@ -330,7 +349,8 @@ fun EpubReaderHost(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit
+    onImportFont: (Uri) -> Unit,
+    onToggleReflow: (() -> Unit)? = null
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -389,7 +409,9 @@ fun EpubReaderHost(
 
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
 
-    val bookId = remember(epubBook.title) { getBookIdForPrefs(epubBook.title) }
+    val bookId = remember(epubBook.title, epubBook.fileName) {
+        if (epubBook.fileName.length > 20) epubBook.fileName else getBookIdForPrefs(epubBook.title)
+    }
     var isAutoScrollLocal by remember { mutableStateOf(loadAutoScrollLocalMode(context, bookId)) }
 
     val initialSettings = remember(isAutoScrollLocal) {
@@ -1008,6 +1030,7 @@ fun EpubReaderHost(
         chapterChunks = result.chunks
         isChapterParsing = false
         loadUpToChunkIndex = result.startChunkIndex
+        Timber.tag("ReflowPaginationDiag").d("EpubReaderScreen: loadChapterContent finished. chapterChunks.size=${chapterChunks.size}, isChapterParsing=$isChapterParsing")
 
         if (chunkTargetOverride != null) {
             chunkTargetOverride = null
@@ -1030,6 +1053,7 @@ fun EpubReaderHost(
 
     var isPagerInitialized by remember(initialLocator) { mutableStateOf(initialLocator == null) }
     LaunchedEffect(paginator, currentRenderMode, isPagerInitialized) {
+        Timber.tag("ReflowPaginationDiag").d("EpubReaderScreen: Checking paginator init. currentRenderMode=$currentRenderMode, paginator=${paginator != null}, isPagerInitialized=$isPagerInitialized")
         if (currentRenderMode == RenderMode.PAGINATED && paginator != null && !isPagerInitialized) {
             scope.launch {
                 val bookPaginator = paginator as? BookPaginator
@@ -2880,7 +2904,8 @@ fun EpubReaderHost(
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
-                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true }
+                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                    onToggleReflow = onToggleReflow,
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(

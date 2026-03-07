@@ -277,7 +277,8 @@ fun HomeScreen(
                                     }
                                 },
                                 onShowDeviceManagement = viewModel::showDeviceManagementForDebug,
-                                onFolderSyncToggle = viewModel::setFolderSyncEnabled
+                                onFolderSyncToggle = viewModel::setFolderSyncEnabled,
+                                onClearReflowCache = viewModel::clearReflowCache
                             )
                         } else {
                             ContextualTopAppBar(
@@ -643,6 +644,7 @@ fun DefaultTopAppBar(
     onRenderModeChange: (RenderMode) -> Unit,
     onClearCache: () -> Unit,
     onClearCloudData: () -> Unit,
+    onClearReflowCache: () -> Unit, // Add this parameter
     onDrawerClick: () -> Unit,
     onAboutClick: () -> Unit,
     onShowDeviceManagement: () -> Unit,
@@ -682,6 +684,10 @@ fun DefaultTopAppBar(
                     })
                     DropdownMenuItem(text = { Text("[Debug] Clear Book Cache") }, onClick = {
                         onClearCache()
+                        showOptionsMenu = false
+                    })
+                    DropdownMenuItem(text = { Text("[Debug] Clear Reflow Cache") }, onClick = {
+                        onClearReflowCache()
                         showOptionsMenu = false
                     })
                     DropdownMenuItem(
