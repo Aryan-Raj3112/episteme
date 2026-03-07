@@ -296,7 +296,20 @@ fun EpubReaderScreen(
     viewModel: MainViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val isReflowMode = uiState.recentFiles.find { it.bookId == uiState.selectedBookId }?.isReflowPreferred == true
+
+    val isReflowFile = uiState.selectedBookId?.endsWith("_reflow") == true
+    val originalBookId = if (isReflowFile) uiState.selectedBookId!!.removeSuffix("_reflow") else null
+
+    val onOpenOriginal: (() -> Unit)? = if (originalBookId != null) {
+        {
+            val originalItem = uiState.recentFiles.find { it.bookId == originalBookId }
+            if (originalItem != null) {
+                viewModel.onRecentFileClicked(originalItem)
+            } else {
+                viewModel.showBanner("Original PDF not found.", true)
+            }
+        }
+    } else null
 
     EpubReaderHost(
         epubBook = epubBook,
@@ -313,7 +326,7 @@ fun EpubReaderScreen(
         onRenderModeChange = onRenderModeChange,
         customFonts = customFonts,
         onImportFont = onImportFont,
-        onToggleReflow = if (isReflowMode) { { viewModel.toggleReflowMode() } } else null
+        onToggleReflow = onOpenOriginal
     )
 }
 

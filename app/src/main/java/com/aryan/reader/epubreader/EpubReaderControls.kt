@@ -211,7 +211,7 @@ fun EpubReaderTopBar(
                                     },
                                     leadingIcon = {
                                         Icon(
-                                            painter = painterResource(id = R.drawable.broken_image),
+                                            painter = painterResource(id = R.drawable.picture_as_pdf),
                                             contentDescription = null,
                                             modifier = Modifier.size(20.dp)
                                         )

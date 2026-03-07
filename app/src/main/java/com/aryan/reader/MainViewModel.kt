@@ -68,7 +68,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PdfExporter
-import com.aryan.reader.pdf.PdfToMarkdownGenerator
+import com.aryan.reader.pdf.ReflowWorker
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -81,10 +81,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -2254,88 +2256,45 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun toggleReflowMode() {
-        val currentState = _internalState.value
-        val isCurrentlyPdf = currentState.selectedFileType == FileType.PDF
-        val bookId = currentState.selectedBookId ?: return
+    val reflowWorkInfo: Flow<WorkInfo?> = WorkManager.getInstance(appContext)
+        .getWorkInfosByTagFlow(ReflowWorker.WORK_NAME)
+        .map { list ->
+            list.find { !it.state.isFinished } ?: list.firstOrNull()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-        Timber.tag("ReflowPaginationDiag").d("toggleReflowMode: isCurrentlyPdf=$isCurrentlyPdf, bookId=$bookId")
+    fun generateAndImportReflowFile(pdfBookId: String, pdfUri: Uri, originalTitle: String) {
+        val reflowBookId = "${pdfBookId}_reflow"
 
         viewModelScope.launch {
-            val originalUri = currentState.selectedPdfUri
-                ?: recentFilesRepository.getFileByBookId(bookId)?.getUri()
-                ?: return@launch
-
-            // Get current page to prioritize processing
-            val recentItem = recentFilesRepository.getFileByBookId(bookId)
-            val currentPdfPage = recentItem?.lastPage ?: 0
-
-            _internalState.update {
-                it.copy(
-                    isLoading = true,
-                    reflowProgress = 0f,
-                    bannerMessage = BannerMessage("Initializing reflow...")
-                )
+            val existing = recentFilesRepository.getFileByBookId(reflowBookId)
+            if (existing != null) {
+                showBanner("Opening existing text view...")
+                onRecentFileClicked(existing)
+                return@launch
             }
 
-            try {
-                if (isCurrentlyPdf) {
-                    // Pass viewModelScope here so processing continues in background
-                    val epubBook = PdfToMarkdownGenerator.generateReflowBook(
-                        context = appContext,
-                        bookId = bookId,
-                        pdfUri = originalUri,
-                        scope = viewModelScope,
-                        startPage = currentPdfPage,
-                        onProgress = { current, total ->
-                            val progress = if (total > 0) current.toFloat() / total.toFloat() else 0f
-                            // Only update UI state if we are still in MD mode to avoid UI thrashing
-                            if (_internalState.value.selectedFileType == FileType.MD) {
-                                _internalState.update { it.copy(reflowProgress = progress) }
-                            }
-                        }
-                    )
+            val workManager = WorkManager.getInstance(appContext)
 
-                    recentFilesRepository.updateReflowPreference(bookId, true)
+            val inputData = androidx.work.Data.Builder()
+                .putString(ReflowWorker.KEY_BOOK_ID, pdfBookId)
+                .putString(ReflowWorker.KEY_PDF_URI, pdfUri.toString())
+                .putString(ReflowWorker.KEY_ORIGINAL_TITLE, originalTitle)
+                .build()
 
-                    _internalState.update {
-                        it.copy(
-                            selectedPdfUri = null,
-                            selectedEpubUri = null,
-                            selectedEpubBook = epubBook,
-                            selectedFileType = FileType.MD,
-                            isLoading = false,
-                            // Keep progress visible until 100%
-                            reflowProgress = 0f,
-                            bannerMessage = null
-                        )
-                    }
+            val request = OneTimeWorkRequestBuilder<ReflowWorker>()
+                .setInputData(inputData)
+                .addTag(ReflowWorker.WORK_NAME)
+                .addTag("book_$pdfBookId")
+                .build()
 
-                } else {
-                    recentFilesRepository.updateReflowPreference(bookId, false)
+            workManager.enqueueUniqueWork(
+                "reflow_$pdfBookId",
+                ExistingWorkPolicy.KEEP,
+                request
+            )
 
-                    _internalState.update {
-                        it.copy(
-                            selectedEpubUri = null,
-                            selectedEpubBook = null,
-                            selectedPdfUri = originalUri,
-                            selectedFileType = FileType.PDF,
-                            isLoading = false,
-                            reflowProgress = null,
-                            bannerMessage = null
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to toggle reflow mode")
-                _internalState.update {
-                    it.copy(
-                        isLoading = false,
-                        reflowProgress = null,
-                        errorMessage = "Could not switch modes: ${e.message}"
-                    )
-                }
-            }
+            showBanner("Text view generation started in background.")
         }
     }
 
@@ -2345,46 +2304,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.d("Opening book type: $type for bookId: $bookId")
 
         viewModelScope.launch {
-            val recentItem = recentFilesRepository.getFileByBookId(bookId)
-
-            if (type == FileType.PDF && recentItem?.isReflowPreferred == true) {
-                Timber.tag("ReflowPaginationDiag").i("openBook: Reflow preferred for $bookId. Generating/Loading Reflow view...")
-
-                _internalState.update { it.copy(isLoading = true, selectedBookId = bookId) }
-
-                try {
-                    val currentPdfPage = recentItem.lastPage ?: 0
-
-                    val epubBook = PdfToMarkdownGenerator.generateReflowBook(
-                        context = appContext,
-                        bookId = bookId,
-                        pdfUri = uri,
-                        scope = viewModelScope,
-                        startPage = currentPdfPage,
-                        onProgress = { current, total ->
-                            val progress = if (total > 0) current.toFloat() / total.toFloat() else 0f
-                            if (_internalState.value.selectedFileType == FileType.MD) {
-                                _internalState.update { it.copy(reflowProgress = progress) }
-                            }
-                        }
-                    )
-
-                    _internalState.update {
-                        it.copy(
-                            selectedPdfUri = null,
-                            selectedEpubUri = null,
-                            selectedEpubBook = epubBook,
-                            selectedFileType = FileType.MD,
-                            isLoading = false,
-                            initialLocator = null
-                        )
-                    }
-                    return@launch
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to open in reflow mode, falling back to PDF")
-                }
-            }
-
             _internalState.update {
                 it.copy(
                     selectedPdfUri = null,
