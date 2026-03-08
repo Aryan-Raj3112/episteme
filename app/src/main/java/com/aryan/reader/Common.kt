@@ -104,6 +104,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -531,7 +532,8 @@ fun AiDefinitionPopup(
     result: AiDefinitionResult?,
     isLoading: Boolean,
     onDismiss: () -> Unit,
-    isMainTtsActive: Boolean = false
+    isMainTtsActive: Boolean = false,
+    onOpenExternalDictionary: () -> Unit
 ) {
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
@@ -640,6 +642,13 @@ fun AiDefinitionPopup(
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
                                     contentDescription = "Copy"
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(onClick = onOpenExternalDictionary) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.dictionary),
+                                    contentDescription = "Open in Dictionary App"
                                 )
                             }
                         }

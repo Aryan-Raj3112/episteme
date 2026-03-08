@@ -1467,15 +1467,9 @@ internal fun PaginatedReaderContent(
 
                         if (isForDictionary) {
                             if (!text.isNullOrBlank()) {
-                                if (isProUser || countWords(text) <= 1) {
-                                    if (text.length <= 2000) {
-                                        onWordSelectedForAiDefinition(text)
-                                    }
-                                } else {
-                                    onShowDictionaryUpsellDialog()
-                                }
+                                onWordSelectedForAiDefinition(text)
                             }
-                        } else if (isForHighlight) {
+                        }  else if (isForHighlight) {
                             // Do not copy to real clipboard
                         } else {
                             realClipboard.setClipEntry(clipEntry)
@@ -3022,28 +3016,26 @@ private fun PaginatedTextSelectionMenu(
             }
 
             // 5. Dictionary Option
-            if (!isOss) {
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onDictionary)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.dictionary),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        "Dictionary",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onDictionary)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.dictionary),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    "Dictionary",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
         }
     }

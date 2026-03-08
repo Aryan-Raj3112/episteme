@@ -30,6 +30,11 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material.icons.filled.MenuBook
+import android.widget.Toast
+import com.aryan.reader.epubreader.DictionarySettingsSheet
+import com.aryan.reader.epubreader.ExternalDictionaryHelper
+import com.aryan.reader.epubreader.ExternalDictionaryApp
 import androidx.compose.material3.SnackbarResult
 import android.net.Uri
 import android.os.Build
@@ -90,6 +95,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
@@ -236,6 +242,7 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -304,6 +311,29 @@ private const val PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX = "pdf_as_local_max_"
 private const val PDF_SCROLL_LOCKED_PREFIX = "pdf_sl_local_"
 private const val PDF_FULL_SCREEN_PREFIX = "pdf_fs_local_"
 private const val PDF_MUSICIAN_MODE_KEY = "pdf_musician_mode_enabled"
+private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
+private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
+
+private fun loadUseOnlineDict(context: Context): Boolean {
+    if (BuildConfig.FLAVOR == "oss") return false
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
+}
+
+private fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
+}
+
+private fun loadExternalDictPackage(context: Context): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PREF_EXTERNAL_DICT_PKG, null)
+}
+
+private fun saveExternalDictPackage(context: Context, packageName: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_EXTERNAL_DICT_PKG, packageName) }
+}
 
 private fun savePdfMusicianMode(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -735,6 +765,10 @@ fun PdfViewerScreen(
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+
+    var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+    var useOnlineDictionary by remember { mutableStateOf(loadUseOnlineDict(context)) }
+    var selectedDictPackage by remember { mutableStateOf(loadExternalDictPackage(context)) }
 
     var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
@@ -1842,22 +1876,46 @@ fun PdfViewerScreen(
 
     val onShowDictionaryUpsellDialogStable = remember { { showDictionaryUpsellDialog = true } }
 
-    val onWordSelectedForAiDefinitionStable = remember(isProUser, executeWithOcrCheck) {
+    val onDictionaryLookupStable = remember(isProUser, executeWithOcrCheck, useOnlineDictionary, selectedDictPackage) {
         { text: String ->
             executeWithOcrCheck {
-                selectedTextForAi = text
-                showAiDefinitionPopup = true
-                coroutineScope.launch {
-                    isAiDefinitionLoading = true
-                    aiDefinitionResult = null
-                    fetchAiDefinition(text = text, onUpdate = { chunk ->
-                        val currentDefinition = aiDefinitionResult?.definition ?: ""
-                        aiDefinitionResult = AiDefinitionResult(
-                            definition = currentDefinition + chunk
-                        )
-                    }, onError = { error ->
-                        aiDefinitionResult = AiDefinitionResult(error = error)
-                    }, onFinish = { isAiDefinitionLoading = false })
+                val isOss = BuildConfig.FLAVOR == "oss"
+                val effectiveUseOnline = !isOss && useOnlineDictionary
+
+                if (effectiveUseOnline) {
+                    val wordCount = countWords(text)
+                    if (isProUser || wordCount <= 1) {
+                        selectedTextForAi = text
+                        showAiDefinitionPopup = true
+                        coroutineScope.launch {
+                            isAiDefinitionLoading = true
+                            aiDefinitionResult = null
+                            fetchAiDefinition(
+                                text = text,
+                                onUpdate = { chunk ->
+                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                    aiDefinitionResult = AiDefinitionResult(
+                                        definition = currentDefinition + chunk
+                                    )
+                                },
+                                onError = { error ->
+                                    aiDefinitionResult = AiDefinitionResult(error = error)
+                                },
+                                onFinish = {
+                                    isAiDefinitionLoading = false
+                                }
+                            )
+                        }
+                    } else {
+                        showDictionaryUpsellDialog = true
+                    }
+                } else {
+                    if (selectedDictPackage != null) {
+                        ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                    } else {
+                        Toast.makeText(context, "Please select a dictionary app first.", Toast.LENGTH_SHORT).show()
+                        showDictionarySettingsSheet = true
+                    }
                 }
             }
         }
@@ -3460,31 +3518,7 @@ fun PdfViewerScreen(
                                                 onShowDictionaryUpsellDialog = {
                                                     showDictionaryUpsellDialog = true
                                                 },
-                                                onWordSelectedForAiDefinition = { text ->
-                                                    selectedTextForAi = text
-                                                    showAiDefinitionPopup = true
-                                                    coroutineScope.launch {
-                                                        isAiDefinitionLoading = true
-                                                        aiDefinitionResult = null
-                                                        fetchAiDefinition(
-                                                            text = text,
-                                                            onUpdate = { chunk ->
-                                                                val currentDefinition =
-                                                                    aiDefinitionResult?.definition ?: ""
-                                                                aiDefinitionResult = AiDefinitionResult(
-                                                                    definition = currentDefinition + chunk
-                                                                )
-                                                            },
-                                                            onError = { error ->
-                                                                aiDefinitionResult = AiDefinitionResult(
-                                                                    error = error
-                                                                )
-                                                            },
-                                                            onFinish = {
-                                                                isAiDefinitionLoading = false
-                                                            })
-                                                    }
-                                                },
+                                                onWordSelectedForAiDefinition = onDictionaryLookupStable,
                                                 onOcrStateChange = onOcrStateChange,
                                                 onLinkClicked = { url -> clickedLinkUrl = url },
                                                 onInternalLinkClicked = onInternalLinkNav,
@@ -3846,7 +3880,7 @@ fun PdfViewerScreen(
                                             searchResultToHighlight = searchHighlightTarget,
                                             isProUser = isProUser,
                                             onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialogStable,
-                                            onWordSelectedForAiDefinition = onWordSelectedForAiDefinitionStable,
+                                            onWordSelectedForAiDefinition = onDictionaryLookupStable,
                                             ttsHighlightData = ttsHighlightData,
                                             ttsReadingPage = ttsPageData?.pageIndex,
                                             onLinkClicked = onLinkClickedStable,
@@ -4341,6 +4375,14 @@ fun PdfViewerScreen(
                                     Icon(
                                         imageVector = Icons.Default.Fullscreen,
                                         contentDescription = "Enter Full Screen",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                IconButton(onClick = { showDictionarySettingsSheet = true }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                                        contentDescription = "Dictionary Settings",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -5741,7 +5783,17 @@ fun PdfViewerScreen(
                             selectedTextForAi = null
                             aiDefinitionResult = null
                         },
-                        isMainTtsActive = isTtsSessionActive
+                        isMainTtsActive = isTtsSessionActive,
+                        onOpenExternalDictionary = {
+                            selectedTextForAi?.let { text ->
+                                if (selectedDictPackage != null) {
+                                    ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                                } else {
+                                    Toast.makeText(context, "Select an offline dictionary first.", Toast.LENGTH_SHORT).show()
+                                    showDictionarySettingsSheet = true
+                                }
+                            }
+                        }
                     )
                 }
                 if (showDictionaryUpsellDialog) {
@@ -5870,6 +5922,24 @@ fun PdfViewerScreen(
                             ttsController.changeSpeaker(newSpeaker)
                         },
                         isTtsActive = isTtsSessionActive
+                    )
+                }
+
+                if (showDictionarySettingsSheet) {
+                    DictionarySettingsSheet(
+                        isVisible = true,
+                        onDismiss = { showDictionarySettingsSheet = false },
+                        isProUser = isProUser,
+                        useOnlineDictionary = useOnlineDictionary,
+                        onToggleOnlineDictionary = { newState ->
+                            useOnlineDictionary = newState
+                            saveUseOnlineDict(context, newState)
+                        },
+                        selectedPackageName = selectedDictPackage,
+                        onSelectPackage = { pkg ->
+                            selectedDictPackage = pkg
+                            saveExternalDictPackage(context, pkg)
+                        }
                     )
                 }
 

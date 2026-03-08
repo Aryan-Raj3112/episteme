@@ -227,21 +227,16 @@ suspend fun executeRecapLogic(
  */
 @Composable
 fun EpubReaderAiOverlays(
-    // Summarization State
     showSummarizationPopup: Boolean,
     summarizationResult: SummarizationResult?,
     isSummarizationLoading: Boolean,
     onDismissSummarization: () -> Unit,
     showSummarizationUpsellDialog: Boolean,
     onDismissSummarizationUpsell: () -> Unit,
-
-    // Recap State
     showRecapPopup: Boolean,
     recapResult: SummarizationResult?,
     isRecapLoading: Boolean,
     onDismissRecap: () -> Unit,
-
-    // Dictionary State
     showAiDefinitionPopup: Boolean,
     selectedTextForAi: String?,
     aiDefinitionResult: AiDefinitionResult?,
@@ -249,10 +244,9 @@ fun EpubReaderAiOverlays(
     onDismissAiDefinition: () -> Unit,
     showDictionaryUpsellDialog: Boolean,
     onDismissDictionaryUpsell: () -> Unit,
-
-    // Navigation
     onNavigateToPro: () -> Unit,
-    isTtsSessionActive: Boolean
+    isTtsSessionActive: Boolean,
+    onOpenExternalDictionary: (String) -> Unit
 ) {
     if (showSummarizationPopup) {
         SummarizationPopup(
@@ -298,7 +292,11 @@ fun EpubReaderAiOverlays(
             result = aiDefinitionResult,
             isLoading = isAiDefinitionLoading,
             onDismiss = onDismissAiDefinition,
-            isMainTtsActive = isTtsSessionActive
+            isMainTtsActive = isTtsSessionActive,
+            // Pass it down
+            onOpenExternalDictionary = {
+                selectedTextForAi?.let { text -> onOpenExternalDictionary(text) }
+            }
         )
     }
 

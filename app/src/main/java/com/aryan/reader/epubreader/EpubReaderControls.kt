@@ -67,6 +67,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
@@ -148,6 +149,7 @@ fun EpubReaderTopBar(
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onOpenDeviceVoiceSettings: () -> Unit,
+    onOpenDictionarySettings: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
@@ -190,6 +192,12 @@ fun EpubReaderTopBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = onOpenDictionarySettings) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                            contentDescription = "Dictionary Settings"
+                        )
+                    }
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }
                         IconButton(onClick = { showMoreMenu = true }) {

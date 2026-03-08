@@ -32,6 +32,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.webkit.WebView
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -280,6 +281,30 @@ private fun saveTtsMode(context: Context, modeName: String) {
     prefs.edit { putString(TTS_MODE_KEY, modeName) }
 }
 
+private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
+private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
+
+private fun loadUseOnlineDict(context: Context): Boolean {
+    if (BuildConfig.FLAVOR == "oss") return false
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
+}
+
+private fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
+}
+
+private fun loadExternalDictPackage(context: Context): String? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(PREF_EXTERNAL_DICT_PKG, null)
+}
+
+private fun saveExternalDictPackage(context: Context, packageName: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_EXTERNAL_DICT_PKG, packageName) }
+}
+
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun EpubReaderScreen(
@@ -516,6 +541,61 @@ fun EpubReaderHost(
         saveHighlightsToPrefs(context, epubBook.title, userHighlights)
     }
 
+    // Dictionary
+    var showAiDefinitionPopup by remember { mutableStateOf(false) }
+    var selectedTextForAi by remember { mutableStateOf<String?>(null) }
+    var aiDefinitionResult by remember { mutableStateOf<AiDefinitionResult?>(null) }
+    var isAiDefinitionLoading by remember { mutableStateOf(false) }
+
+    var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+
+    var useOnlineDictionary by remember {
+        mutableStateOf(loadUseOnlineDict(context))
+    }
+    var selectedDictPackage by remember {
+        mutableStateOf(loadExternalDictPackage(context))
+    }
+
+    var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
+    var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
+
+    val onDictionaryLookup = { word: String ->
+        val isOss = BuildConfig.FLAVOR == "oss"
+        val effectiveUseOnline = !isOss && useOnlineDictionary
+
+        if (effectiveUseOnline) {
+            val wordCount = countWords(word)
+            if (isProUser || wordCount <= 1) {
+                selectedTextForAi = word
+                showAiDefinitionPopup = true
+                scope.launch {
+                    isAiDefinitionLoading = true
+                    aiDefinitionResult = null
+                    fetchAiDefinition(
+                        text = word,
+                        onUpdate = { chunk ->
+                            val currentDefinition = aiDefinitionResult?.definition ?: ""
+                            aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
+                        },
+                        onError = { error ->
+                            aiDefinitionResult = AiDefinitionResult(error = error)
+                        },
+                        onFinish = { isAiDefinitionLoading = false }
+                    )
+                }
+            } else {
+                showDictionaryUpsellDialog = true
+            }
+        } else {
+            if (selectedDictPackage != null) {
+                ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, word)
+            } else {
+                Toast.makeText(context, "Please select a dictionary app first.", Toast.LENGTH_SHORT).show()
+                showDictionarySettingsSheet = true
+            }
+        }
+    }
+
     val summaryCacheManager = remember(context) { SummaryCacheManager(context) }
     var showRecapPopup by remember { mutableStateOf(false) }
     var recapResult by remember { mutableStateOf<SummarizationResult?>(null) }
@@ -585,17 +665,9 @@ fun EpubReaderHost(
 
     var webViewRefForTts by remember { mutableStateOf<WebView?>(null) }
 
-    // Dictionary
-    var showAiDefinitionPopup by remember { mutableStateOf(false) }
-    var selectedTextForAi by remember { mutableStateOf<String?>(null) }
-    var aiDefinitionResult by remember { mutableStateOf<AiDefinitionResult?>(null) }
-    var isAiDefinitionLoading by remember { mutableStateOf(false) }
-
     var showSummarizationPopup by remember { mutableStateOf(false) }
     var summarizationResult by remember { mutableStateOf<SummarizationResult?>(null) }
     var isSummarizationLoading by remember { mutableStateOf(false) }
-    var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
-    var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
 
     val epubSearcher = remember(epubBook) { createEpubSearcher(epubBook) }
 
@@ -2101,32 +2173,7 @@ fun EpubReaderHost(
                                                 }
                                             },
                                             onWordSelectedForAiDefinition = { text ->
-                                                val wordCount = countWords(text)
-                                                if (isProUser || wordCount <= 1) {
-                                                    Timber.d("Text selected for AI definition: $text"
-                                                    )
-                                                    selectedTextForAi = text
-                                                    showAiDefinitionPopup = true
-                                                    scope.launch {
-                                                        isAiDefinitionLoading = true
-                                                        aiDefinitionResult = null
-                                                        fetchAiDefinition(
-                                                            text = text,
-                                                            onUpdate = { chunk ->
-                                                                val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                                                aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
-                                                            },
-                                                            onError = { error ->
-                                                                aiDefinitionResult = AiDefinitionResult(error = error)
-                                                            },
-                                                            onFinish = {
-                                                                isAiDefinitionLoading = false
-                                                            }
-                                                        )
-                                                    }
-                                                } else {
-                                                    showDictionaryUpsellDialog = true
-                                                }
+                                                onDictionaryLookup(text)
                                             },
                                             onContentReadyForSummarization = { content ->
                                                 Timber.d("Content received for summarization")
@@ -2461,32 +2508,7 @@ fun EpubReaderHost(
                                     showDictionaryUpsellDialog = true
                                 },
                                 onWordSelectedForAiDefinition = { text ->
-                                    val wordCount = countWords(text)
-                                    if (isProUser || wordCount <= 1) {
-                                        Timber.d("Text selected for AI definition: $text"
-                                        )
-                                        selectedTextForAi = text
-                                        showAiDefinitionPopup = true
-                                        scope.launch {
-                                            isAiDefinitionLoading = true
-                                            aiDefinitionResult = null
-                                            fetchAiDefinition(
-                                                text = text,
-                                                onUpdate = { chunk ->
-                                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                                    aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
-                                                },
-                                                onError = { error ->
-                                                    aiDefinitionResult = AiDefinitionResult(error = error)
-                                                },
-                                                onFinish = {
-                                                    isAiDefinitionLoading = false
-                                                }
-                                            )
-                                        }
-                                    } else {
-                                        showDictionaryUpsellDialog = true
-                                    }
+                                    onDictionaryLookup(text)
                                 },
                                 userHighlights = userHighlights.filter { it.chapterIndex == (currentChapterInPaginatedMode ?: -1) },
                                 onHighlightCreated = { cfi, text, colorId ->
@@ -2992,6 +3014,7 @@ fun EpubReaderHost(
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
+                    onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
                     onToggleReflow = onToggleReflow,
                 )
@@ -3322,9 +3345,16 @@ fun EpubReaderHost(
                     },
                     showDictionaryUpsellDialog = showDictionaryUpsellDialog,
                     onDismissDictionaryUpsell = { showDictionaryUpsellDialog = false },
-
                     onNavigateToPro = onNavigateToPro,
-                    isTtsSessionActive = isTtsSessionActive
+                    isTtsSessionActive = isTtsSessionActive,
+                    onOpenExternalDictionary = { text ->
+                        if (selectedDictPackage != null) {
+                            ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                        } else {
+                            Toast.makeText(context, "Select an offline dictionary first.", Toast.LENGTH_SHORT).show()
+                            showDictionarySettingsSheet = true
+                        }
+                    }
                 )
 
                 if (isNavigatingToBookmark) {
@@ -3480,6 +3510,31 @@ fun EpubReaderHost(
                     ttsController.changeSpeaker(newSpeaker)
                 },
                 isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+            )
+        }
+
+        if (showDictionarySettingsSheet) {
+            DictionarySettingsSheet(
+                isVisible = true,
+                onDismiss = { showDictionarySettingsSheet = false },
+                isProUser = isProUser,
+                useOnlineDictionary = useOnlineDictionary,
+                onToggleOnlineDictionary = { newState ->
+                    useOnlineDictionary = newState
+                    saveUseOnlineDict(context, newState)
+                },
+                selectedPackageName = selectedDictPackage,
+                onSelectPackage = { pkg ->
+                    selectedDictPackage = pkg
+                    saveExternalDictPackage(context, pkg)
+                    // If user selects an app, we usually assume they want to use it
+                    if (!isProUser) {
+                        // OSS always offline
+                    } else if (useOnlineDictionary) {
+                        // Pro user selected an app but is currently in "Online" mode.
+                        // We leave it as Online, the app selection is for the "Open in app" fallback button
+                    }
+                }
             )
         }
 

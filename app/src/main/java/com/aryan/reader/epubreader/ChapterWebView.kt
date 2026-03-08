@@ -975,7 +975,7 @@ fun ChapterWebView(
                         }
 
                         // 3. Dictionary Option (Preserving Logic)
-                        if (!isOss && state.selectedText.length <= 2000) {
+                        if (state.selectedText.length <= 2000) {
                             HorizontalDivider()
                             Row(
                                 modifier = Modifier
@@ -983,12 +983,7 @@ fun ChapterWebView(
                                     .clickable {
                                         val textToDefine = state.selectedText
                                         if (textToDefine.isNotBlank()) {
-                                            val wordCount = countWords(textToDefine)
-                                            if (isProUser || wordCount <= 1) {
-                                                onWordSelectedForAiDefinition(textToDefine)
-                                            } else {
-                                                onShowDictionaryUpsellDialog()
-                                            }
+                                            onWordSelectedForAiDefinition(textToDefine)
                                         }
                                         customMenuState = null
                                     }
