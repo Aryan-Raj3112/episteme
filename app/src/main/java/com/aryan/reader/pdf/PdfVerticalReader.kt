@@ -222,7 +222,8 @@ internal fun PdfVerticalReader(
     isScrollLocked: Boolean = false,
     autoScrollSpeed: Float = 1.0f,
     onInteractionListener: () -> Unit = {},
-    isStylusOnlyMode: Boolean = false
+    isStylusOnlyMode: Boolean = false,
+    isHighlighterSnapEnabled: Boolean = false
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -748,7 +749,13 @@ internal fun PdfVerticalReader(
             }
         }
 
-        val globalDrawingModifier = Modifier.pointerInput(isEditMode, layoutInfo, selectedTool, isStylusOnlyMode) {
+        val globalDrawingModifier = Modifier.pointerInput(
+            isEditMode,
+            layoutInfo,
+            selectedTool,
+            isStylusOnlyMode,
+            isHighlighterSnapEnabled
+        ) {
             if (!isEditMode) return@pointerInput
             if (selectedTool == InkType.TEXT) return@pointerInput
 
@@ -864,7 +871,14 @@ internal fun PdfVerticalReader(
                         onDoubleTapToZoom(offset)
                     })
                 }
-                .pointerInput(totalDocHeight, isEditMode, selectedTool, isScrollLocked, isStylusOnlyMode) {
+                .pointerInput(
+                    totalDocHeight,
+                    isEditMode,
+                    selectedTool,
+                    isScrollLocked,
+                    isStylusOnlyMode,
+                    isHighlighterSnapEnabled
+                ) {
                     val tracker = VelocityTracker()
                     val decay = exponentialDecay<Float>()
                     val touchSlop = viewConfiguration.touchSlop

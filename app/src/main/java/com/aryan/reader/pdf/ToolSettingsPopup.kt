@@ -49,6 +49,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -103,7 +105,9 @@ fun ToolSettingsPopup(
     onColorChanged: (Color) -> Unit,
     onThicknessChanged: (Float) -> Unit,
     onPaletteChange: (List<Color>) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isHighlighterSnapEnabled: Boolean = false,
+    onSnapToggle: (Boolean) -> Unit = {}
 ) {
     val isHighlighter = selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
 
@@ -157,10 +161,9 @@ fun ToolSettingsPopup(
         tonalElevation = 0.dp
     ) {
         Column(
-            modifier = Modifier.padding(20.dp), // Reduced padding
+            modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Pen Type Selector
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -179,7 +182,8 @@ fun ToolSettingsPopup(
                             inkColor = highlighterColor,
                             isSelected = selectedTool == InkType.HIGHLIGHTER,
                             strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER) }
+                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER) },
+                            isSnappingEnabled = isHighlighterSnapEnabled
                         )
 
                         PenItem(
@@ -189,7 +193,8 @@ fun ToolSettingsPopup(
                             inkColor = highlighterRoundColor,
                             isSelected = selectedTool == InkType.HIGHLIGHTER_ROUND,
                             strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER_ROUND) }
+                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER_ROUND) },
+                            isSnappingEnabled = isHighlighterSnapEnabled
                         )
                     } else {
                         PenItem(
@@ -223,6 +228,32 @@ fun ToolSettingsPopup(
             }
 
             Spacer(Modifier.height(16.dp))
+
+            if (isHighlighter) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Straight Line",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = isHighlighterSnapEnabled,
+                        onCheckedChange = onSnapToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = activeColor.copy(alpha = 1f),
+                            uncheckedThumbColor = Color.Gray,
+                            uncheckedTrackColor = Color(0xFF424242)
+                        ),
+                        modifier = Modifier.scale(0.8f)
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
 
             // THICKNESS SLIDER
             StyledPropertySlider(
@@ -811,7 +842,8 @@ private fun PenItem(
     strokeWidth: Float,
     onClick: () -> Unit,
     forcedInkType: InkType? = null,
-    inkColor: Color? = null
+    inkColor: Color? = null,
+    isSnappingEnabled: Boolean = false
 ) {
     val scale by animateFloatAsState(
         targetValue = if (isSelected) 1.15f else 0.9f, label = "scale"
@@ -834,7 +866,8 @@ private fun PenItem(
             isSelected = isSelected,
             strokeWidth = strokeWidth,
             forcedInkType = forcedInkType,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            isSnappingEnabled = isSnappingEnabled
         )
     }
 }

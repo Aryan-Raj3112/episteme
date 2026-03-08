@@ -89,7 +89,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
@@ -981,6 +980,8 @@ fun PdfViewerScreen(
 
     var showToolSettings by remember { mutableStateOf(false) }
 
+    val isHighlighterSnapEnabled = toolSettings.isHighlighterSnapEnabled
+
     val selectedTool = toolSettings.getActiveTool()
 
     val lastPenTool = toolSettings.getLastPenTool()
@@ -998,6 +999,9 @@ fun PdfViewerScreen(
 
     val isCurrentToolHighlighter =
         selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
+
+    val currentSnapEnabled by rememberUpdatedState(isHighlighterSnapEnabled)
+    val currentIsHighlighter by rememberUpdatedState(isCurrentToolHighlighter)
 
     val penPalette = remember(toolSettings.penPaletteArgb) { toolSettings.getPenPalette() }
     val highlighterPalette =
@@ -1268,6 +1272,36 @@ fun PdfViewerScreen(
                 onBookmarksChanged(result.bookmarksJson)
 
                 snackbarHostState.showSnackbar("Page added at ${targetIndex + 1}")
+            }
+        }
+    }
+
+    val calculateSnappedPoint = remember(pageAspectRatios) {
+        { pageIndex: Int, currentPoint: PdfPoint, startPoint: PdfPoint? ->
+            if (startPoint == null) {
+                currentPoint
+            } else {
+                val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+
+                val dx = (currentPoint.x - startPoint.x) * aspectRatio
+                val dy = (currentPoint.y - startPoint.y)
+
+                val angleRad = kotlin.math.atan2(dy, dx)
+                val angleDeg = (angleRad * 180 / kotlin.math.PI)
+                val absAngle = kotlin.math.abs(angleDeg)
+
+                val threshold = 10.0
+
+                val isHorizontal = absAngle < threshold || kotlin.math.abs(absAngle - 180.0) < threshold
+                val isVertical = kotlin.math.abs(absAngle - 90.0) < threshold
+
+                if (isHorizontal) {
+                    currentPoint.copy(y = startPoint.y)
+                } else if (isVertical) {
+                    currentPoint.copy(x = startPoint.x)
+                } else {
+                    currentPoint
+                }
             }
         }
     }
@@ -2095,13 +2129,42 @@ fun PdfViewerScreen(
     }
 
     fun isAnnotationHit(
-        annotation: PdfAnnotation, hitPoint: PdfPoint, threshold: Float = 0.05f
+        annotation: PdfAnnotation,
+        hitPoint: PdfPoint,
+        pageAspectRatio: Float,
+        threshold: Float = 0.025f
     ): Boolean {
-        return annotation.points.any { p ->
-            val dx = p.x - hitPoint.x
-            val dy = p.y - hitPoint.y
-            (dx * dx + dy * dy) < (threshold * threshold)
+        if (annotation.points.isEmpty()) return false
+
+        if (annotation.points.size == 1) {
+            val p = annotation.points[0]
+            val dx = (p.x - hitPoint.x) * pageAspectRatio
+            val dy = (p.y - hitPoint.y)
+            return (dx * dx + dy * dy) < (threshold * threshold)
         }
+
+        for (i in 0 until annotation.points.size - 1) {
+            val a = annotation.points[i]
+            val b = annotation.points[i + 1]
+
+            val pax = (hitPoint.x - a.x) * pageAspectRatio
+            val pay = (hitPoint.y - a.y)
+            val bax = (b.x - a.x) * pageAspectRatio
+            val bay = (b.y - a.y)
+
+            val segmentLenSq = (bax * bax + bay * bay).coerceAtLeast(1e-6f)
+            val t = (pax * bax + pay * bay) / segmentLenSq
+            val tClamped = t.coerceIn(0f, 1f)
+
+            val closestX = bax * tClamped
+            val closestY = bay * tClamped
+
+            val distSq = (pax - closestX) * (pax - closestX) + (pay - closestY) * (pay - closestY)
+
+            if (distSq < (threshold * threshold)) return true
+        }
+
+        return false
     }
 
     fun startTts(pageToReadOverride: Int? = null) {
@@ -3407,10 +3470,10 @@ fun PdfViewerScreen(
                                                     { point: PdfPoint ->
                                                         if (currentSelectedTool == InkType.TEXT) {
                                                         } else if (currentSelectedTool == InkType.ERASER) {
-                                                            val existing =
-                                                                allAnnotations[pageIndex] ?: emptyList()
+                                                            val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                                            val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point)
+                                                                isAnnotationHit(it, point, aspectRatio)
                                                             }
                                                             if (toRemove.isNotEmpty()) {
                                                                 val batch =
@@ -3427,10 +3490,13 @@ fun PdfViewerScreen(
                                                                     allAnnotations + (pageIndex to newList)
                                                             }
                                                         } else {
-                                                            val pointWithTime = point.copy(
-                                                                timestamp = System.currentTimeMillis()
-                                                            )
-                                                            drawingState.onDraw(pointWithTime)
+                                                            if (currentIsHighlighter && currentSnapEnabled) {
+                                                                val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
+                                                                val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
+                                                                drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                                                            } else {
+                                                                drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -3451,13 +3517,10 @@ fun PdfViewerScreen(
                                                             if (currentSelectedTool == InkType.TEXT) {
                                                             } else if (currentSelectedTool == InkType.ERASER) {
                                                                 erasedAnnotationsFromStroke.clear()
-
-                                                                val existing = allAnnotations[pageIndex]
-                                                                    ?: emptyList()
+                                                                val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                                                val existing = allAnnotations[pageIndex] ?: emptyList()
                                                                 val toRemove = existing.filter {
-                                                                    isAnnotationHit(
-                                                                        it, point
-                                                                    )
+                                                                    isAnnotationHit(it, point, aspectRatio)
                                                                 }
                                                                 if (toRemove.isNotEmpty()) {
                                                                     val batch =
@@ -3581,6 +3644,7 @@ fun PdfViewerScreen(
                                                 },
                                                 richTextController = richTextController,
                                                 isStylusOnlyMode = isStylusOnlyMode,
+                                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                                 isEditMode = isDrawingActive,
                                                 textBoxes = textBoxes.filter { it.pageIndex == pageIndex },
                                                 selectedTextBoxId = selectedTextBoxId,
@@ -3791,10 +3855,10 @@ fun PdfViewerScreen(
                                                     } else if (currentSelectedTool == InkType.ERASER) {
                                                         erasedAnnotationsFromStroke.clear()
 
-                                                        val existing =
-                                                            allAnnotations[pageIndex] ?: emptyList()
+                                                        val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                                        val existing = allAnnotations[pageIndex] ?: emptyList()
                                                         val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point)
+                                                            isAnnotationHit(it, point, aspectRatio)
                                                         }
                                                         if (toRemove.isNotEmpty()) {
                                                             val batch =
@@ -3826,13 +3890,13 @@ fun PdfViewerScreen(
                                             }
                                         }
 
-                                    val onDrawStable = remember {
+                                    val onDrawStable = remember(isHighlighterSnapEnabled, isCurrentToolHighlighter, calculateSnappedPoint) {
                                         { pageIndex: Int, point: PdfPoint ->
                                             if (currentSelectedTool == InkType.ERASER) {
-                                                val existing =
-                                                    allAnnotations[pageIndex] ?: emptyList()
+                                                val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                                val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point)
+                                                    isAnnotationHit(it, point, aspectRatio)
                                                 }
                                                 if (toRemove.isNotEmpty()) {
                                                     val batch =
@@ -3846,10 +3910,13 @@ fun PdfViewerScreen(
                                                         allAnnotations + (pageIndex to newList)
                                                 }
                                             } else {
-                                                val pointWithTime = point.copy(
-                                                    timestamp = System.currentTimeMillis()
-                                                )
-                                                drawingState.onDraw(pointWithTime)
+                                                if (currentIsHighlighter && currentSnapEnabled) {
+                                                    val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
+                                                    val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
+                                                    drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                                                } else {
+                                                    drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                                                }
                                             }
                                         }
                                     }
@@ -3898,6 +3965,7 @@ fun PdfViewerScreen(
                                             allAnnotations = allAnnotationsProvider,
                                             drawingState = drawingState,
                                             onDrawStart = onDrawStartStable,
+                                            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                             onDraw = onDrawStable,
                                             onDrawEnd = {
                                                 val finalAnnotation = drawingState.onDrawEnd()
@@ -5198,7 +5266,10 @@ fun PdfViewerScreen(
                                     } else {
                                         annotationSettingsRepo.updatePenPalette(newPalette)
                                     }
-                                })
+                                },
+                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                                onSnapToggle = { annotationSettingsRepo.updateHighlighterSnap(it) }
+                            )
                         }
 
                         snapPreviewLocation?.let { location ->
@@ -5357,7 +5428,7 @@ fun PdfViewerScreen(
                                         saveStylusOnlyMode(context, isStylusOnlyMode)
                                     },
                                     onToolClick = { clickedTool ->
-                                        if (clickedTool == InkType.ERASER) {
+                                        if (clickedTool == InkType.ERASER || clickedTool == InkType.TEXT) {
                                             annotationSettingsRepo.updateSelectedTool(
                                                 clickedTool
                                             )

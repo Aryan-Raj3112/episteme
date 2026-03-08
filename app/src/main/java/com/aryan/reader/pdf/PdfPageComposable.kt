@@ -417,7 +417,8 @@ internal fun PdfPageComposable(
     draggingBoxId: String? = null,
     isScrollLocked: Boolean = false,
     isVisible: Boolean = true,
-    isStylusOnlyMode: Boolean = false
+    isStylusOnlyMode: Boolean = false,
+    isHighlighterSnapEnabled: Boolean = false
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
     val pdfDocumentItem = pdfDocument.item
@@ -2608,7 +2609,8 @@ internal fun PdfPageComposable(
                 isScrolling,
                 isVerticalScroll,
                 selectedTool,
-                isStylusOnlyMode
+                isStylusOnlyMode,
+                isHighlighterSnapEnabled
             ) {
                 val canDraw = isEditMode && selectedTool != InkType.TEXT && !isScrolling && !isVerticalScroll && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0
 
@@ -4610,6 +4612,16 @@ class PdfDrawingState {
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
+    }
+
+    fun updateDrag(point: PdfPoint) {
+        if (currentPoints.isNotEmpty()) {
+            val start = currentPoints.first()
+            currentPoints.clear()
+            currentPoints.add(start)
+            currentPoints.add(point)
+            currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
+        }
     }
 }
 

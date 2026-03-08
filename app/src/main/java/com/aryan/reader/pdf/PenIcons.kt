@@ -60,7 +60,8 @@ fun PenIcon(
     isSelected: Boolean = false,
     strokeWidth: Float = 0.005f,
     forcedInkType: InkType? = null,
-    inkColor: Color? = null
+    inkColor: Color? = null,
+    isSnappingEnabled: Boolean = false
 ) {
     val animatedColor by animateColorAsState(targetValue = color, label = "color")
 
@@ -129,10 +130,11 @@ fun PenIcon(
             drawInkSquiggle(
                 type = type,
                 forcedInkType = forcedInkType,
-                color = animatedInkColor, // Use the specific ink color
+                color = animatedInkColor,
                 progress = inkProgress,
                 startPoint = Offset(tipX, tipY),
-                baseStrokeWidth = strokeWidth
+                baseStrokeWidth = strokeWidth,
+                isStraight = isSnappingEnabled
             )
         }
     }
@@ -413,7 +415,8 @@ private fun DrawScope.drawInkSquiggle(
     color: Color,
     progress: Float,
     startPoint: Offset,
-    baseStrokeWidth: Float
+    baseStrokeWidth: Float,
+    isStraight: Boolean = false
 ) {
     val x = startPoint.x
     val y = startPoint.y - 2f
@@ -422,13 +425,17 @@ private fun DrawScope.drawInkSquiggle(
 
         if (type == PenType.HIGHLIGHTER || type == PenType.HIGHLIGHTER_ROUND) {
             val waveWidth = 70f
-            val amplitude = 20f
 
-            cubicTo(
-                x + waveWidth * 0.35f, y - amplitude,
-                x + waveWidth * 0.65f, y + amplitude,
-                x + waveWidth, y
-            )
+            if (isStraight) {
+                lineTo(x + waveWidth, y)
+            } else {
+                val amplitude = 20f
+                cubicTo(
+                    x + waveWidth * 0.35f, y - amplitude,
+                    x + waveWidth * 0.65f, y + amplitude,
+                    x + waveWidth, y
+                )
+            }
         } else {
             cubicTo(
                 x + 35f, y - 40f,

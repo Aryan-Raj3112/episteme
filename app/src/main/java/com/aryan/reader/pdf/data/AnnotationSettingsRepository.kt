@@ -74,7 +74,8 @@ data class AnnotationToolSettings(
         "#8C64B5F6".toColorInt(), // Blue
         "#8CE1BEE7".toColorInt(), // Purple
     ),
-    val textStyle: TextStyleConfig = TextStyleConfig()
+    val textStyle: TextStyleConfig = TextStyleConfig(),
+    val isHighlighterSnapEnabled: Boolean = false
 ) {
     fun getActiveTool(): InkType = try {
         InkType.valueOf(selectedToolName)
@@ -178,6 +179,10 @@ class AnnotationSettingsRepository(context: Context) {
 
     fun updateHighlighterPalette(colors: List<Color>) {
         saveSettings(_settings.value.copy(highlighterPaletteArgb = colors.map { it.toArgb() }))
+    }
+
+    fun updateHighlighterSnap(enabled: Boolean) {
+        saveSettings(_settings.value.copy(isHighlighterSnapEnabled = enabled))
     }
 
     fun updateTextStyle(style: TextStyleConfig) {
