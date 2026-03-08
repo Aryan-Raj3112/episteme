@@ -355,7 +355,8 @@ data class PageSelectionData(
     val allTextPageHighlightColor: Color,
     val ttsHighlightColor: Color,
     val selectionHighlightColor: Color,
-    val pageIndex: Int
+    val pageIndex: Int,
+    val userHighlightScreenRects: StableHolder<List<Pair<PdfUserHighlight, List<Rect>>>>,
 )
 
 @Suppress("unused")
@@ -418,7 +419,11 @@ internal fun PdfPageComposable(
     isScrollLocked: Boolean = false,
     isVisible: Boolean = true,
     isStylusOnlyMode: Boolean = false,
-    isHighlighterSnapEnabled: Boolean = false
+    isHighlighterSnapEnabled: Boolean = false,
+    userHighlights: List<PdfUserHighlight> = emptyList(),
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
+    onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
+    onHighlightDelete: (String) -> Unit = {},
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
     val pdfDocumentItem = pdfDocument.item
@@ -649,6 +654,39 @@ internal fun PdfPageComposable(
     var pageLinks by remember { mutableStateOf<List<PageLink>>(emptyList()) }
     val linkHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
     val linkVerticalPaddingPx = remember(density) { with(density) { 10.dp.toPx().toInt() } }
+
+    var userHighlightScreenRects by remember { mutableStateOf<List<Pair<PdfUserHighlight, List<Rect>>>>(emptyList()) }
+
+    LaunchedEffect(userHighlights, actualBitmapWidthPx, actualBitmapHeightPx, currentPageRotation, virtualPage) {
+        if (!isPdfPage || actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0 || userHighlights.isEmpty()) {
+            userHighlightScreenRects = emptyList()
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                pdfDocumentItem.openPage(pdfPageIndex).use { page ->
+                    val mapped = userHighlights.map { highlight ->
+                        val screenRects = highlight.bounds.mapNotNull { pdfRectF ->
+                            page.mapRectToDevice(
+                                startX = 0,
+                                startY = 0,
+                                sizeX = actualBitmapWidthPx,
+                                sizeY = actualBitmapHeightPx,
+                                rotate = currentPageRotation,
+                                coords = pdfRectF
+                            ).takeIf { it.width() > 0 && it.height() > 0 }
+                        }
+                        highlight to screenRects
+                    }
+                    withContext(Dispatchers.Main) {
+                        userHighlightScreenRects = mapped
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to map user highlights to screen rects")
+            }
+        }
+    }
 
     LaunchedEffect(pageIndex) {
         scale = 1f
@@ -2241,7 +2279,8 @@ internal fun PdfPageComposable(
                 isVerticalScroll,
                 isEditMode,
                 selectedTool,
-                isStylusOnlyMode
+                isStylusOnlyMode,
+                userHighlightScreenRects
             ) {
                 val isTapDetectionAllowed = !isEditMode ||
                         selectedTool == InkType.TEXT ||
@@ -2250,13 +2289,43 @@ internal fun PdfPageComposable(
                 if (!isTapDetectionAllowed) return@pointerInput
 
                 detectTapGestures(onTap = { tapOffset ->
-                    Timber.d(
-                        "PdfPageComposable: onTap detected at $tapOffset. isVerticalScroll=$isVerticalScroll"
-                    )
-
                     val tapInContentCoords = screenToContentCoordinates(tapOffset)
                     val tapXInBitmap = tapInContentCoords.x
                     val tapYInBitmap = tapInContentCoords.y
+                    Timber.d(
+                        "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})"
+                    )
+
+                    var tappedRect: Rect? = null
+                    val hitHighlightPair = userHighlightScreenRects.findLast { pair ->
+                        val hit = pair.second.find { r ->
+                            r.contains(tapXInBitmap.toInt(), tapYInBitmap.toInt())
+                        }
+                        if (hit != null) {
+                            tappedRect = hit
+                            true
+                        } else false
+                    }
+
+                    if (hitHighlightPair != null && tappedRect != null) {
+                        val hitHighlight = hitHighlightPair.first
+                        val anchorRect = android.graphics.Rect(
+                            tappedRect.left,
+                            tappedRect.top,
+                            tappedRect.right,
+                            tappedRect.bottom
+                        )
+
+                        customMenuState = CustomPdfMenuState(
+                            selectedText = hitHighlight.text,
+                            anchorRect = anchorRect,
+                            charRange = hitHighlight.range,
+                            isExistingHighlight = true,
+                            highlightId = hitHighlight.id
+                        )
+                        return@detectTapGestures
+                    }
+
                     Timber.d(
                         "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})"
                     )
@@ -3257,7 +3326,8 @@ internal fun PdfPageComposable(
                         mergedSearchAllRects,
                         searchHighlightMode,
                         searchFocusedColor,
-                        searchAllColor
+                        searchAllColor,
+                        userHighlightScreenRects
                     ) {
                         PageSelectionData(
                             pageLinks = StableHolder(pageLinks),
@@ -3281,6 +3351,7 @@ internal fun PdfPageComposable(
                             mergedSearchFocusedRects = StableHolder(mergedSearchFocusedRects),
                             mergedSearchAllRects = StableHolder(mergedSearchAllRects),
                             searchHighlightMode = searchHighlightMode,
+                            userHighlightScreenRects = StableHolder(userHighlightScreenRects),
                         )
                     }
 
@@ -3306,6 +3377,9 @@ internal fun PdfPageComposable(
                         startHandlePos = startHandleContentPosition.value,
                         endHandlePos = endHandleContentPosition.value,
                         teardropWidthPx = teardropWidthPxState.value,
+                        onHighlightAdd = onHighlightAdd,
+                        onHighlightUpdate = onHighlightUpdate,
+                        onHighlightDelete = onHighlightDelete,
                         teardropHeightPx = teardropHeightPxState.value,
                         activeDraggingHandle = activeDraggingHandle,
                         showMagnifier = showMagnifier,
@@ -3594,6 +3668,7 @@ private fun PdfHighlightsLayer(
     searchHighlightMode: SearchHighlightMode,
     ocrHoverHighlights: List<RectF>,
     mergedSelectionRects: List<Rect>,
+    userHighlightScreenRects: List<Pair<PdfUserHighlight, List<Rect>>>,
     centeringOffsetX: Float,
     centeringOffsetY: Float,
     linkHighlightColor: Color,
@@ -3737,6 +3812,19 @@ private fun PdfHighlightsLayer(
                         topLeft = Offset(lineRect.left.toFloat(), lineRect.top.toFloat()),
                         size = Size(lineRect.width().toFloat(), lineRect.height().toFloat())
                     )
+                }
+            }
+
+            // 9. Persistent User Highlights
+            userHighlightScreenRects.forEach { (highlight, screenRects) ->
+                screenRects.forEach { r ->
+                    if (isVisible(r)) {
+                        drawRect(
+                            color = highlight.color.color.copy(alpha = 0.4f),
+                            topLeft = Offset(r.left.toFloat(), r.top.toFloat()),
+                            size = Size(r.width().toFloat(), r.height().toFloat())
+                        )
+                    }
                 }
             }
         }
@@ -4093,6 +4181,7 @@ private fun PdfPageSelectionsLayer(
     searchHighlightMode: SearchHighlightMode,
     ocrHoverHighlights: List<RectF>,
     mergedSelectionRects: List<Rect>,
+    userHighlightScreenRects: List<Pair<PdfUserHighlight, List<Rect>>>,
     centeringOffsetX: Float,
     centeringOffsetY: Float,
     linkHighlightColor: Color,
@@ -4101,7 +4190,10 @@ private fun PdfPageSelectionsLayer(
     ttsHighlightColor: Color,
     selectionHighlightColor: Color
 ) {
-    SideEffect { Timber.tag("PdfDrawPerf").v("SELECTIONS LAYER: Recomposing") }
+    SideEffect {
+        Timber.tag("PdfDrawPerf").v("SELECTIONS LAYER: Recomposing")
+        Timber.tag("PdfHighlightDebug").v("PdfPageSelectionsLayer Recomposing. userHighlights count: ${userHighlightScreenRects.size}")
+    }
     val highlightStart = System.nanoTime()
 
     PdfHighlightsLayer(
@@ -4116,6 +4208,7 @@ private fun PdfPageSelectionsLayer(
         searchHighlightMode = searchHighlightMode,
         ocrHoverHighlights = ocrHoverHighlights,
         mergedSelectionRects = mergedSelectionRects,
+        userHighlightScreenRects = userHighlightScreenRects,
         centeringOffsetX = centeringOffsetX,
         centeringOffsetY = centeringOffsetY,
         linkHighlightColor = linkHighlightColor,
@@ -4182,7 +4275,10 @@ private fun PdfPageRenderer(
     onTextBoxDrag: (Offset) -> Unit,
     onTextBoxDragEnd: () -> Unit,
     onDragPageTurn: (Int) -> Unit,
-    draggingBoxId: String? = null
+    draggingBoxId: String? = null,
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit,
+    onHighlightUpdate: (String, PdfHighlightColor) -> Unit,
+    onHighlightDelete: (String) -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -4215,6 +4311,7 @@ private fun PdfPageRenderer(
                 searchHighlightMode = selectionData.searchHighlightMode,
                 ocrHoverHighlights = selectionData.ocrHoverHighlights.item,
                 mergedSelectionRects = selectionData.mergedSelectionRects.item,
+                userHighlightScreenRects = selectionData.userHighlightScreenRects.item,
                 centeringOffsetX = selectionData.centeringOffsetX,
                 centeringOffsetY = selectionData.centeringOffsetY,
                 linkHighlightColor = selectionData.linkHighlightColor,
@@ -4559,7 +4656,28 @@ private fun PdfPageRenderer(
                     popupPositionProvider = popupPositionProvider,
                     onCopy = onCopy,
                     onAiDefine = onAiDefine,
-                    onSelectAll = onSelectAll
+                    onSelectAll = onSelectAll,
+                    onColorSelected = { color ->
+                        Timber.tag("PdfHighlightDebug").d("PdfSelectionMenuPopup onColorSelected: $color, isExisting=${state.isExistingHighlight}")
+                        if (state.isExistingHighlight && state.highlightId != null) {
+                            onHighlightUpdate(state.highlightId, color)
+                        } else {
+                            Timber.tag("PdfHighlightDebug").d("Calling onHighlightAdd for page ${selectionData.pageIndex}")
+                            onHighlightAdd(
+                                selectionData.pageIndex,
+                                state.charRange,
+                                state.selectedText,
+                                color
+                            )
+                        }
+                        onMenuDismiss()
+                    },
+                    onDelete = {
+                        if (state.isExistingHighlight && state.highlightId != null) {
+                            onHighlightDelete(state.highlightId)
+                        }
+                        onMenuDismiss()
+                    }
                 )
             }
         }

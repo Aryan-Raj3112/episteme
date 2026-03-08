@@ -223,7 +223,11 @@ internal fun PdfVerticalReader(
     autoScrollSpeed: Float = 1.0f,
     onInteractionListener: () -> Unit = {},
     isStylusOnlyMode: Boolean = false,
-    isHighlighterSnapEnabled: Boolean = false
+    isHighlighterSnapEnabled: Boolean = false,
+    userHighlights: List<PdfUserHighlight> = emptyList(),
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
+    onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
+    onHighlightDelete: (String) -> Unit = {},
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -1481,6 +1485,10 @@ internal fun PdfVerticalReader(
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
+                                    userHighlights = userHighlights.filter { it.pageIndex == page.index },
+                                    onHighlightAdd = onHighlightAdd,
+                                    onHighlightUpdate = onHighlightUpdate,
+                                    onHighlightDelete = onHighlightDelete,
                                     onTextBoxDragStart = { box, localTopLeft, touchOffset ->
                                         val currentZoom = zoomAnimatable.value
                                         val panX = panXAnimatable.value

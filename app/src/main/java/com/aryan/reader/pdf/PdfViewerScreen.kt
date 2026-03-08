@@ -28,6 +28,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import kotlin.math.max
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
@@ -1178,6 +1179,104 @@ fun PdfViewerScreen(
 
     val textBoxes = remember { mutableStateListOf<PdfTextBox>() }
     var selectedTextBoxId by remember { mutableStateOf<String?>(null) }
+
+    val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
+
+    val onHighlightAdd = remember(pdfDocument, currentBookId) {
+        { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor ->
+            Timber.tag("PdfHighlightDebug").d("onHighlightAdd triggered: pageIndex=$pageIndex, range=$range, color=$color, textLength=${text.length}")
+            coroutineScope.launch {
+                val doc = pdfDocument
+                if (doc == null) {
+                    Timber.tag("PdfHighlightDebug").e("onHighlightAdd failed: pdfDocument is null")
+                    return@launch
+                }
+
+                val existingOnPage = userHighlights.filter {
+                    it.pageIndex == pageIndex && it.color == color
+                }
+
+                var newStart = range.first
+                var newEnd = range.second
+                val highlightsToRemove = mutableListOf<PdfUserHighlight>()
+
+                existingOnPage.forEach { h ->
+                    if (max(newStart, h.range.first) <= min(newEnd, h.range.second)) {
+                        newStart = min(newStart, h.range.first)
+                        newEnd = max(newEnd, h.range.second)
+                        highlightsToRemove.add(h)
+                    }
+                }
+
+                userHighlights.removeAll(highlightsToRemove)
+
+                withContext(Dispatchers.IO) {
+                    try {
+                        doc.openPage(pageIndex).use { page ->
+                            page.openTextPage().use { textPage ->
+                                val fullText = textPage.textPageGetText(newStart, newEnd - newStart) ?: text
+                                val rects = textPage.textPageGetRectsForRanges(intArrayOf(newStart, newEnd - newStart))
+
+                                val rawPdfRects = rects?.map { r -> r.rect } ?: emptyList()
+
+                                val newHighlight = PdfUserHighlight(
+                                    pageIndex = pageIndex,
+                                    bounds = rawPdfRects,
+                                    color = color,
+                                    text = fullText,
+                                    range = Pair(newStart, newEnd)
+                                )
+
+                                val pageWidth = page.getPageWidthPoint()
+                                val pageHeight = page.getPageHeightPoint()
+
+                                val normalizedRects = rects?.map { r ->
+                                    val rf = r.rect
+                                    RectF(
+                                        rf.left / pageWidth,
+                                        rf.top / pageHeight,
+                                        rf.right / pageWidth,
+                                        rf.bottom / pageHeight
+                                    )
+                                } ?: emptyList()
+
+                                Timber.tag("PdfHighlightDebug").d("Created PdfUserHighlight with ${normalizedRects.size} rects.")
+
+                                withContext(Dispatchers.Main) {
+                                    userHighlights.add(newHighlight)
+                                    Timber.tag("PdfHighlightDebug").d("Added highlight to userHighlights state. Total highlights: ${userHighlights.size}")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag("PdfHighlightDebug").e(e, "Failed to create highlight")
+                    }
+                }
+            }
+            Unit
+        }
+    }
+
+    val onHighlightUpdate = remember {
+        { id: String, newColor: PdfHighlightColor ->
+            Timber.tag("PdfHighlightDebug").d("onHighlightUpdate triggered: id=$id, newColor=$newColor")
+            val index = userHighlights.indexOfFirst { it.id == id }
+            if (index != -1) {
+                val old = userHighlights[index]
+                userHighlights[index] = old.copy(color = newColor)
+                Timber.tag("PdfHighlightDebug").d("Highlight successfully updated")
+            } else {
+                Timber.tag("PdfHighlightDebug").w("Highlight update failed: ID $id not found")
+            }
+        }
+    }
+
+    val onHighlightDelete = remember {
+        { id: String ->
+            userHighlights.removeAll { it.id == id }
+            Unit
+        }
+    }
 
     val onInsertPage: () -> Unit = {
         coroutineScope.launch {
@@ -3570,12 +3669,10 @@ fun PdfViewerScreen(
                                                         currentPageScale = newScale
                                                     }
                                                 },
-                                                ttsHighlightData = if (pagerState.currentPage == pageIndex) ttsHighlightData
-                                                else null,
+                                                ttsHighlightData = if (pagerState.currentPage == pageIndex) ttsHighlightData else null,
                                                 searchQuery = searchState.searchQuery,
                                                 searchHighlightMode = searchHighlightMode,
-                                                searchResultToHighlight = if (pagerState.currentPage == pageIndex) searchHighlightTarget
-                                                else null,
+                                                searchResultToHighlight = if (pagerState.currentPage == pageIndex) searchHighlightTarget else null,
                                                 ocrHoverHighlights = stableOcrRects,
                                                 modifier = Modifier.fillMaxSize(),
                                                 showAllTextHighlights = showAllTextHighlights,
@@ -3631,6 +3728,10 @@ fun PdfViewerScreen(
                                                 onOcrModelDownloading = {
                                                     isOcrModelDownloading = true
                                                 },
+                                                userHighlights = userHighlights.filter { it.pageIndex == pageIndex },
+                                                onHighlightAdd = onHighlightAdd,
+                                                onHighlightUpdate = onHighlightUpdate,
+                                                onHighlightDelete = onHighlightDelete,
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
                                                         val targetPage =
@@ -3956,6 +4057,10 @@ fun PdfViewerScreen(
                                             onWordSelectedForAiDefinition = onDictionaryLookupStable,
                                             ttsHighlightData = ttsHighlightData,
                                             ttsReadingPage = ttsPageData?.pageIndex,
+                                            userHighlights = userHighlights,
+                                            onHighlightAdd = onHighlightAdd,
+                                            onHighlightUpdate = onHighlightUpdate,
+                                            onHighlightDelete = onHighlightDelete,
                                             onLinkClicked = onLinkClickedStable,
                                             onInternalLinkClicked = onInternalLinkNavStable,
                                             bookmarks = bookmarksHolder,
