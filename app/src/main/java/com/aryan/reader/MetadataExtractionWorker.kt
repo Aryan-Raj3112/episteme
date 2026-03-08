@@ -29,8 +29,12 @@ class MetadataExtractionWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
-        if (!prefs.contains(MainViewModel.KEY_SYNCED_FOLDER_URI)) {
-            Timber.tag("MetadataWorker").w("Folder disconnected. Stopping extraction worker.")
+
+        val hasLegacy = prefs.contains("synced_folder_uri")
+        val hasNew = prefs.contains("synced_folders_list_json")
+
+        if (!hasLegacy && !hasNew) {
+            Timber.tag("MetadataWorker").w("No folders linked. Stopping.")
             return@withContext Result.success()
         }
 
@@ -46,7 +50,7 @@ class MetadataExtractionWorker(
             filesToProcess.forEach { item ->
                 if (isStopped) return@forEach
 
-                if (!prefs.contains(MainViewModel.KEY_SYNCED_FOLDER_URI)) return@forEach
+                if (item.sourceFolderUri == null) return@forEach
 
                 try {
                     val uri = item.uriString?.toUri() ?: return@forEach

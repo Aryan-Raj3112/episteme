@@ -60,7 +60,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -154,7 +153,7 @@ fun LibraryScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         uri?.let {
-            viewModel.setSyncedFolder(it)
+            viewModel.addSyncedFolder(it)
         }
     }
 
@@ -264,9 +263,11 @@ fun LibraryScreen(
             onScanNowClick = viewModel::scanSyncedFolder,
             onSyncMetadataClick = viewModel::syncFolderMetadata,
             onSelectSyncFolderClick = onSelectSyncFolderClick,
-            onDisconnectSyncFolderClick = viewModel::disconnectSyncedFolder,
+            syncedFolders = uiState.syncedFolders,
+            onAddFolderClick = { uri -> viewModel.addSyncedFolder(uri) },
+            onRemoveFolderClick = { folder -> viewModel.removeSyncedFolder(folder) },
+            onDisconnectSyncFolderClick = viewModel::disconnectAllSyncedFolders,
             downloadingBookIds = uiState.downloadingBookIds,
-            syncedFolderUri = uiState.syncedFolderUri,
             lastFolderScanTime = uiState.lastFolderScanTime,
             isLoading = uiState.isLoading
         )
@@ -461,9 +462,11 @@ fun LibraryScreenContent(
     onSelectSyncFolderClick: () -> Unit,
     onDisconnectSyncFolderClick: () -> Unit,
     downloadingBookIds: Set<String>,
-    syncedFolderUri: String?,
     lastFolderScanTime: Long?,
     isLoading: Boolean,
+    syncedFolders: List<SyncedFolder>,
+    onAddFolderClick: (android.net.Uri) -> Unit,
+    onRemoveFolderClick: (SyncedFolder) -> Unit,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
@@ -666,13 +669,11 @@ fun LibraryScreenContent(
                 }
                 2 -> {
                     FolderSyncScreen(
-                        syncedFolderUri = syncedFolderUri,
-                        lastScanTime = lastFolderScanTime,
-                        onSelectFolderClick = onSelectSyncFolderClick,
+                        syncedFolders = syncedFolders,
+                        onAddFolderClick = onAddFolderClick,
+                        onRemoveFolderClick = onRemoveFolderClick,
                         onScanNowClick = onScanNowClick,
                         onSyncMetadataClick = onSyncMetadataClick,
-                        onChangeFolderClick = onSelectSyncFolderClick,
-                        onDisconnectClick = onDisconnectSyncFolderClick,
                         isLoading = isLoading
                     )
                 }
@@ -1382,182 +1383,43 @@ private fun getDisplayPathFromUri(context: Context, uriString: String): String {
 
 @Composable
 private fun FolderSyncScreen(
-    syncedFolderUri: String?,
-    lastScanTime: Long?,
-    onSelectFolderClick: () -> Unit,
+    syncedFolders: List<SyncedFolder>,
+    onAddFolderClick: (android.net.Uri) -> Unit,
+    onRemoveFolderClick: (SyncedFolder) -> Unit,
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
-    onChangeFolderClick: () -> Unit,
-    onDisconnectClick: () -> Unit,
     isLoading: Boolean
 ) {
-    val context = LocalContext.current
-
-    if (syncedFolderUri == null) {
-        EmptyState(
-            title = "Sync Local Folder",
-            message = "Connect a folder to create a live library. Episteme will automatically monitor your files for new additions and keep your reading progress and other book metadata in sync with your folder.",
-            onSelectFileClick = onSelectFolderClick,
-            primaryButtonText = "Select Folder",
-            modifier = Modifier.fillMaxSize()
-        )
-    } else {
-        val folderPath = remember(syncedFolderUri) {
-            getDisplayPathFromUri(context, syncedFolderUri)
+    val pickFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let {
+            onAddFolderClick(it)
         }
+    }
 
-        // Calculate times
-        val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
+    LocalContext.current
 
-        val lastScanText = remember(lastScanTime) {
-            if (lastScanTime == null || lastScanTime == 0L) "Never"
-            else dateFormat.format(Date(lastScanTime))
-        }
-
-        val nextScanText = remember(lastScanTime) {
-            if (lastScanTime == null || lastScanTime == 0L) "Pending first scan..."
-            else {
-                // Adding 4 hours (4 * 60 * 60 * 1000) to match the Worker interval
-                val nextTime = lastScanTime + (4 * 60 * 60 * 1000)
-                dateFormat.format(Date(nextTime))
+    Scaffold(
+        floatingActionButton = {
+            if (syncedFolders.size < 3) {
+                ExtendedFloatingActionButton(
+                    text = { Text("Add Folder") },
+                    icon = { Icon(Icons.Default.Add, "Add") },
+                    onClick = { pickFolderLauncher.launch(null) }
+                )
             }
         }
-
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(padding)
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Status Dashboard Card
-            androidx.compose.material3.ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Header Row with Status
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.FolderSpecial,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = "Active Sync",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        // Status Indicator
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            shape = androidx.compose.foundation.shape.CircleShape
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (isLoading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(12.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Scanning...",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .background(
-                                                Color(0xFF4CAF50), // Green for active
-                                                androidx.compose.foundation.shape.CircleShape
-                                            )
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Monitoring",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    // Folder Path
-                    Column {
-                        Text(
-                            text = "LOCATION",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = folderPath,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Times Grid
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "LAST CHECK",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(text = lastScanText, style = MaterialTheme.typography.bodySmall)
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "NEXT AUTO SYNC",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(text = nextScanText, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-
-            // 2. Main Actions
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "Actions",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-
+            // Global Actions Header
+            if (syncedFolders.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1568,13 +1430,13 @@ private fun FolderSyncScreen(
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        if (isLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
+                        }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scan Files")
+                        Text(if (isLoading) "Scanning..." else "Scan All")
                     }
 
                     androidx.compose.material3.OutlinedButton(
@@ -1583,45 +1445,121 @@ private fun FolderSyncScreen(
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.sync),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(painterResource(id = R.drawable.sync), null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Sync Data")
+                        Text("Sync Meta")
+                    }
+                }
+            } else {
+                EmptyState(
+                    title = "Sync Local Folders",
+                    message = "Connect local folders to create a live library. Episteme will monitor files and sync progress.",
+                    onSelectFileClick = { pickFolderLauncher.launch(null) },
+                    primaryButtonText = "Select Folder",
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // List of Folders
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 80.dp) // Space for FAB
+            ) {
+                items(syncedFolders, key = { it.uriString }) { folder ->
+                    FolderCard(folder, onRemoveFolderClick)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderCard(
+    folder: SyncedFolder,
+    onRemoveClick: (SyncedFolder) -> Unit
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
+    val lastScanText = if (folder.lastScanTime == 0L) "Never" else dateFormat.format(Date(folder.lastScanTime))
+
+    androidx.compose.material3.ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = Icons.Default.FolderSpecial,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = folder.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Default.MoreVert, "Options")
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Remove Folder") },
+                            onClick = {
+                                showMenu = false
+                                onRemoveClick(folder)
+                            },
+                            colors = androidx.compose.material3.MenuDefaults.itemColors(
+                                textColor = MaterialTheme.colorScheme.error
+                            )
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-            Column {
-                HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp))
+            // Details
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "LAST SYNC",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(text = lastScanText, style = MaterialTheme.typography.bodySmall)
+                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onChangeFolderClick, enabled = !isLoading) {
-                        Text("Change Folder")
-                    }
-
-                    TextButton(
-                        onClick = onDisconnectClick,
-                        enabled = !isLoading,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
+                // You could add Book Count here if we queried it from DB
+                // For now, let's just show Status
+                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "STATUS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(Color(0xFF4CAF50), androidx.compose.foundation.shape.CircleShape)
                         )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Disconnect")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Active", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
