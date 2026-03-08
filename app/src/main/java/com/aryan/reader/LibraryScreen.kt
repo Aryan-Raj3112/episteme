@@ -1044,7 +1044,7 @@ private fun ShelfCover(shelf: Shelf) {
     ) {
         if (booksForCovers.size <= 1) {
             val imageModel = remember(shelf.topBook?.coverImagePath) {
-                shelf.topBook?.coverImagePath?.let { File(it) }?.takeIf { it.exists() } ?: placeholder
+                shelf.topBook?.coverImagePath?.let { File(it) } ?: placeholder
             }
             AsyncImage(
                 model = ImageRequest.Builder(context)
@@ -1067,7 +1067,7 @@ private fun ShelfCover(shelf: Shelf) {
             ) {
                 booksForCovers.forEachIndexed { index, book ->
                     val imageModel = remember(book.coverImagePath) {
-                        book.coverImagePath?.let { File(it) }?.takeIf { it.exists() } ?: placeholder
+                        book.coverImagePath?.let { File(it) } ?: placeholder
                     }
                     Surface(
                         shape = MaterialTheme.shapes.small,
@@ -1160,7 +1160,7 @@ private fun LibraryListItem(
         FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {
-        item.coverImagePath?.let { File(it) }?.takeIf { it.exists() } ?: placeholder
+        item.coverImagePath?.let { File(it) } ?: placeholder
     }
 
     Surface(

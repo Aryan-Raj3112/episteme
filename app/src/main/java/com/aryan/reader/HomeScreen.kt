@@ -474,7 +474,7 @@ private fun RecentFilesContent(
                 androidx.compose.material3.Button(onClick = onSelectFileClick) {
                     Text("Select File")
                 }
-                androidx.compose.material3.OutlinedButton(onClick = onNavigateToFolderSync) {
+                androidx.compose.material3.Button(onClick = onNavigateToFolderSync) {
                     Text("Sync Folder")
                 }
             }
@@ -552,7 +552,7 @@ fun RecentFileCard(
         FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {
-        item.coverImagePath?.let { File(it) }?.takeIf { it.exists() } ?: placeholder
+        item.coverImagePath?.let { File(it) } ?: placeholder
     }
 
     Surface(
@@ -584,7 +584,7 @@ fun RecentFileCard(
                             .align(Alignment.TopEnd)
                             .padding(8.dp)
                             .background(
-                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
                                 shape = CircleShape
                             )
                             .padding(4.dp)
