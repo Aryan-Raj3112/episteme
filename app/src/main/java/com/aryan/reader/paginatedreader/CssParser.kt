@@ -385,6 +385,26 @@ object CssParser {
         var marginBottomStr: String? = null
         var marginLeftStr: String? = null
 
+        var borderTopWidth: Dp? = null
+        var borderRightWidth: Dp? = null
+        var borderBottomWidth: Dp? = null
+        var borderLeftWidth: Dp? = null
+
+        var borderTopStyle: String? = null
+        var borderRightStyle: String? = null
+        var borderBottomStyle: String? = null
+        var borderLeftStyle: String? = null
+
+        var borderTopColor: Color? = null
+        var borderRightColor: Color? = null
+        var borderBottomColor: Color? = null
+        var borderLeftColor: Color? = null
+
+        var borderTopLeftRadius: Dp = 0.dp
+        var borderTopRightRadius: Dp = 0.dp
+        var borderBottomRightRadius: Dp = 0.dp
+        var borderBottomLeftRadius: Dp = 0.dp
+
         splitDeclarations(properties).filter { it.isNotBlank() }.forEach { prop ->
             val parts = prop.split(':', limit = 2).map { it.trim() }
             if (parts.size == 2) {
@@ -401,7 +421,6 @@ object CssParser {
                     valueWithImportant
                 }
 
-                // Helper to update border props ONLY if this border is significant
                 fun updateUnifiedBorder(
                     widthStr: String?,
                     colorStr: String?,
@@ -410,12 +429,6 @@ object CssParser {
                     val parsedWidth = widthStr?.let { parseCssSizeToDp(it, baseFontSizeSp, density, containerWidthPx) } ?: 0.dp
                     val parsedColor = colorStr?.let { parseColor(it) }?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false) }
 
-                    // We update the unified style if:
-                    // 1. We found a width larger than what we've seen (prioritize visible borders)
-                    // 2. Or we haven't seen any width yet and this is the first definition
-                    // 3. Or the specific property is just setting style/color and we want to take the last one defined (standard CSS cascade behavior for same-specificity)
-                    // However, for separate sides (left vs bottom), we strictly prioritize the one with width.
-
                     val isExplicitWidth = widthStr != null
 
                     if (parsedWidth > maxBorderWidthFound) {
@@ -423,19 +436,15 @@ object CssParser {
                         if (parsedColor != null) finalBorderColor = parsedColor
                         if (styleStr != null) finalBorderStyle = styleStr
                     } else if (parsedWidth == maxBorderWidthFound && maxBorderWidthFound > 0.dp) {
-                        // If equal non-zero width, let last defined win (cascade)
                         if (parsedColor != null) finalBorderColor = parsedColor
                         if (styleStr != null) finalBorderStyle = styleStr
                     } else if (!isExplicitWidth) {
-                        // Just updating color or style without width
                         if (parsedColor != null) finalBorderColor = parsedColor
                         if (styleStr != null) finalBorderStyle = styleStr
                     }
                 }
 
                 when (key) {
-                    // ... [Keep existing cases for font-family, font-size, font-weight, font-style, color, text-align, line-height, text-indent, text-decoration, letter-spacing, text-transform, font-variant, margin, margin-*, padding, padding-*, width, max-width, height, background-color] ...
-
                     "font-family" -> {
                         fontFamilies = value.split(',')
                             .map { it.trim().removeSurrounding("\"").removeSurrounding("'").lowercase() }
@@ -581,40 +590,78 @@ object CssParser {
                         backgroundColor = this@CssParser.adaptColorForTheme(originalColor, isDarkTheme, isBackground = true)
                     }
 
-                    // Border Properties - Logic Updated
-                    "border-width" -> updateUnifiedBorder(value, null, null)
-                    "border-color" -> updateUnifiedBorder(null, value, null)
-                    "border-style" -> updateUnifiedBorder(null, null, value)
+                    // Border Properties
+                    "border-width" -> {
+                        val widths = parseShorthand4(value, baseFontSizeSp, density, containerWidthPx)
+                        borderTopWidth = widths[0]; borderRightWidth = widths[1]; borderBottomWidth = widths[2]; borderLeftWidth = widths[3]
+                    }
+                    "border-style" -> {
+                        val styles = parseShorthand4Strings(value)
+                        borderTopStyle = styles[0]; borderRightStyle = styles[1]; borderBottomStyle = styles[2]; borderLeftStyle = styles[3]
+                    }
+                    "border-color" -> {
+                        val colors = parseShorthand4Colors(value)
+                        borderTopColor = colors[0]; borderRightColor = colors[1]; borderBottomColor = colors[2]; borderLeftColor = colors[3]
+                    }
 
-                    "border-top-width", "border-bottom-width", "border-left-width", "border-right-width" -> {
-                        updateUnifiedBorder(value, null, null)
+                    "border-top-width" -> borderTopWidth = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-right-width" -> borderRightWidth = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-bottom-width" -> borderBottomWidth = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-left-width" -> borderLeftWidth = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+
+                    "border-top-style" -> borderTopStyle = value
+                    "border-right-style" -> borderRightStyle = value
+                    "border-bottom-style" -> borderBottomStyle = value
+                    "border-left-style" -> borderLeftStyle = value
+
+                    "border-top-color" -> borderTopColor = parseColor(value)
+                    "border-right-color" -> borderRightColor = parseColor(value)
+                    "border-bottom-color" -> borderBottomColor = parseColor(value)
+                    "border-left-color" -> borderLeftColor = parseColor(value)
+
+                    "border-top" -> {
+                        val (w, s, c) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+                        if (w != null) borderTopWidth = w
+                        if (s != null) borderTopStyle = s
+                        if (c != null) borderTopColor = c
                     }
-                    "border-top-color", "border-bottom-color", "border-left-color", "border-right-color" -> {
-                        updateUnifiedBorder(null, value, null)
+                    "border-right" -> {
+                        val (w, s, c) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+                        if (w != null) borderRightWidth = w
+                        if (s != null) borderRightStyle = s
+                        if (c != null) borderRightColor = c
                     }
-                    "border-top-style", "border-bottom-style", "border-left-style", "border-right-style" -> {
-                        updateUnifiedBorder(null, null, value)
+                    "border-bottom" -> {
+                        val (w, s, c) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+                        if (w != null) borderBottomWidth = w
+                        if (s != null) borderBottomStyle = s
+                        if (c != null) borderBottomColor = c
+                    }
+                    "border-left" -> {
+                        val (w, s, c) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+                        if (w != null) borderLeftWidth = w
+                        if (s != null) borderLeftStyle = s
+                        if (c != null) borderLeftColor = c
                     }
 
-                    "border-bottom", "border-top", "border-left", "border-right", "border" -> {
-                        val borderParts = value.split(" ").filter { it.isNotBlank() }
-                        var widthVal: String? = null
-                        var colorVal: String? = null
-                        var styleVal: String? = null
-
-                        borderParts.forEach { part ->
-                            val parsedWidth = parseCssSizeToDp(part, baseFontSizeSp, density, containerWidthPx)
-                            if (parsedWidth > 0.dp || part == "0" || part == "0px" || BORDER_WIDTH_KEYWORDS.containsKey(part)) {
-                                widthVal = part
-                            } else if (part in listOf("solid", "dotted", "dashed", "double", "groove", "ridge", "inset", "outset")) {
-                                styleVal = part
-                            } else if (parseColor(part) != null) {
-                                colorVal = part
-                            }
-                        }
-                        updateUnifiedBorder(widthVal, colorVal, styleVal)
+                    "border" -> {
+                        val (w, s, c) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+                        if (w != null) { borderTopWidth = w; borderRightWidth = w; borderBottomWidth = w; borderLeftWidth = w }
+                        if (s != null) { borderTopStyle = s; borderRightStyle = s; borderBottomStyle = s; borderLeftStyle = s }
+                        if (c != null) { borderTopColor = c; borderRightColor = c; borderBottomColor = c; borderLeftColor = c }
                     }
-                    // End Border Properties
+
+                    "border-radius" -> {
+                        val radii = parseShorthand4(value, baseFontSizeSp, density, containerWidthPx)
+                        borderTopLeftRadius = radii[0]
+                        borderTopRightRadius = radii[1]
+                        borderBottomRightRadius = radii[2]
+                        borderBottomLeftRadius = radii[3]
+                    }
+                    "border-top-left-radius" -> borderTopLeftRadius = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-top-right-radius" -> borderTopRightRadius = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-bottom-right-radius" -> borderBottomRightRadius = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "border-bottom-left-radius" -> borderBottomLeftRadius = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
 
                     "border-collapse" -> {
                         if (value in listOf("collapse", "separate")) {
@@ -624,9 +671,6 @@ object CssParser {
                     "border-spacing" -> {
                         borderSpacing = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
                     }
-                    "border-radius" -> borderRadius = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
-
-                    // ... [Keep existing cases for list-style-*, page-break-*, display, flex-*, filter, box-sizing, content, position, top/left/etc, float, hyphens, etc] ...
 
                     "list-style-type" -> {
                         listStyleType = value
@@ -727,7 +771,6 @@ object CssParser {
             null
         }
 
-        // Updated: Use the maxBorderWidthFound and corresponding colors
         val finalBorder = if (maxBorderWidthFound > 0.dp && finalBorderStyle != null) {
             val borderColor = finalBorderColor ?: spanStyle.color.takeIf { it.isSpecified } ?: Color.Black
             BorderStyle(
@@ -737,9 +780,35 @@ object CssParser {
             )
         } else null
 
+        fun makeBorder(width: Dp?, style: String?, color: Color?): BorderStyle? {
+            val finalWidth = width ?: if (style != null && style != "none" && style != "hidden") 3.dp else 0.dp
+            val finalStyle = style ?: "none"
+            val finalColor = color ?: spanStyle.color.takeIf { it.isSpecified } ?: Color.Black
+
+            val adaptedColor = this@CssParser.adaptColorForTheme(finalColor, isDarkTheme, isBackground = false)
+
+            if (finalWidth > 0.dp && finalStyle != "none" && finalStyle != "hidden") {
+                return BorderStyle(finalWidth, adaptedColor, finalStyle)
+            }
+            return null
+        }
+
+        val finalBorderTop = makeBorder(borderTopWidth, borderTopStyle, borderTopColor)
+        val finalBorderRight = makeBorder(borderRightWidth, borderRightStyle, borderRightColor)
+        val finalBorderBottom = makeBorder(borderBottomWidth, borderBottomStyle, borderBottomColor)
+        val finalBorderLeft = makeBorder(borderLeftWidth, borderLeftStyle, borderLeftColor)
+
         val blockStyle = BlockStyle(
             margin = margin, padding = padding, width = width, maxWidth = maxWidth, height = height,
-            backgroundColor = backgroundColor, border = finalBorder,
+            backgroundColor = backgroundColor,
+            borderTop = finalBorderTop,
+            borderRight = finalBorderRight,
+            borderBottom = finalBorderBottom,
+            borderLeft = finalBorderLeft,
+            borderTopLeftRadius = borderTopLeftRadius,
+            borderTopRightRadius = borderTopRightRadius,
+            borderBottomRightRadius = borderBottomRightRadius,
+            borderBottomLeftRadius = borderBottomLeftRadius,
             listStyleType = listStyleType,
             listStyleImage = listStyleImage,
             pageBreakInsideAvoid = pageBreakInsideAvoid,
@@ -759,10 +828,73 @@ object CssParser {
             horizontalAlign = finalHorizontalAlign,
             filter = filter,
             borderCollapse = borderCollapse,
-            borderSpacing = borderSpacing,
-            borderRadius = borderRadius
+            borderSpacing = borderSpacing
         )
         return CssStyle(spanStyle, paragraphStyle, blockStyle, fontFamilies, display, fontSize, textTransform, boxSizing, content, hyphens, fontVariantNumeric, textEmphasis)
+    }
+
+    private fun parseShorthand4(value: String, baseFontSize: Float, density: Float, containerWidth: Int): List<Dp> {
+        val parts = value.split(' ').filter { it.isNotBlank() }
+        val dps = parts.map { parseCssSizeToDp(it, baseFontSize, density, containerWidth) }
+        return when (dps.size) {
+            1 -> listOf(dps[0], dps[0], dps[0], dps[0])
+            2 -> listOf(dps[0], dps[1], dps[0], dps[1]) // Top/Bottom, Left/Right
+            3 -> listOf(dps[0], dps[1], dps[2], dps[1]) // Top, Left/Right, Bottom
+            4 -> listOf(dps[0], dps[1], dps[2], dps[3]) // Top, Right, Bottom, Left
+            else -> listOf(0.dp, 0.dp, 0.dp, 0.dp)
+        }
+    }
+
+    private fun parseShorthand4Strings(value: String): List<String?> {
+        val parts = value.split(' ').filter { it.isNotBlank() }
+        return when (parts.size) {
+            1 -> listOf(parts[0], parts[0], parts[0], parts[0])
+            2 -> listOf(parts[0], parts[1], parts[0], parts[1])
+            3 -> listOf(parts[0], parts[1], parts[2], parts[1])
+            4 -> listOf(parts[0], parts[1], parts[2], parts[3])
+            else -> listOf(null, null, null, null)
+        }
+    }
+
+    private fun parseShorthand4Colors(value: String): List<Color?> {
+        if (value.contains("(") || value.contains(",")) {
+            val c = parseColor(value)
+            return listOf(c, c, c, c)
+        }
+        val parts = value.split(' ').filter { it.isNotBlank() }
+        val colors = parts.map { parseColor(it) }
+        return when (colors.size) {
+            1 -> listOf(colors[0], colors[0], colors[0], colors[0])
+            2 -> listOf(colors[0], colors[1], colors[0], colors[1])
+            3 -> listOf(colors[0], colors[1], colors[2], colors[1])
+            4 -> listOf(colors[0], colors[1], colors[2], colors[3])
+            else -> listOf(null, null, null, null)
+        }
+    }
+
+    private fun parseBorderShorthand(value: String, baseFontSize: Float, density: Float, containerWidth: Int): Triple<Dp?, String?, Color?> {
+        val parts = value.split(" ").filter { it.isNotBlank() }
+        var w: Dp? = null
+        var s: String? = null
+        var c: Color? = null
+
+        val keywords = mapOf("thin" to 1.dp, "medium" to 3.dp, "thick" to 5.dp)
+
+        parts.forEach { part ->
+            val lower = part.lowercase()
+            if (keywords.containsKey(lower)) {
+                w = keywords[lower]
+            } else if (lower.endsWith("px") || lower.endsWith("em") || lower.endsWith("rem") || lower.endsWith("%") || lower.first().isDigit()) {
+                val parsed = parseCssSizeToDp(part, baseFontSize, density, containerWidth)
+                if (parsed > 0.dp || part == "0") w = parsed
+            } else if (lower in listOf("solid", "dashed", "dotted", "double", "none", "hidden", "groove", "ridge", "inset", "outset")) {
+                s = lower
+            } else {
+                val parsedColor = parseColor(part)
+                if (parsedColor != null) c = parsedColor
+            }
+        }
+        return Triple(w, s, c)
     }
 
     // ADD the parseCssSizeToDp function here at the bottom of the object or file

@@ -288,11 +288,11 @@ class SuspendingAndroidBlockMeasurementProvider(
         var splitRowIndex = -1
 
         val decorationTop = with(density) {
-            block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+            block.style.padding.top.toPx() + (block.style.borderTop?.width?.toPx() ?: 0f)
         }.roundToInt()
 
         val decorationBottom = with(density) {
-            block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+            block.style.padding.bottom.toPx() + (block.style.borderBottom?.width?.toPx() ?: 0f)
         }.roundToInt()
 
         Timber.tag("PAGINATION_DEBUG").d("SplitTable: avail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom")
@@ -313,7 +313,8 @@ class SuspendingAndroidBlockMeasurementProvider(
                 }
                 val cellDecoration = with(density) {
                     cell.style.blockStyle.padding.top.toPx() + cell.style.blockStyle.padding.bottom.toPx() +
-                            (cell.style.blockStyle.border?.width?.toPx() ?: 0f) * 2
+                            (cell.style.blockStyle.borderTop?.width?.toPx() ?: 0f) +
+                            (cell.style.blockStyle.borderBottom?.width?.toPx() ?: 0f)
                 }.roundToInt()
                 maxRowHeight = maxOf(maxRowHeight, cellHeight + cellDecoration)
             }
@@ -344,11 +345,11 @@ class SuspendingAndroidBlockMeasurementProvider(
         var splitChildIndex = -1
 
         val decorationTop = with(density) {
-            block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+            block.style.padding.top.toPx() + (block.style.borderTop?.width?.toPx() ?: 0f)
         }.roundToInt()
 
         val decorationBottom = with(density) {
-            block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+            block.style.padding.bottom.toPx() + (block.style.borderBottom?.width?.toPx() ?: 0f)
         }.roundToInt()
 
         currentHeight += decorationTop
@@ -677,10 +678,9 @@ private suspend fun measureBlockHeight(
     with(density) {
         verticalPaddingPx = block.style.padding.top.toPx() + block.style.padding.bottom.toPx()
         horizontalPaddingPx = block.style.padding.left.toPx() + block.style.padding.right.toPx()
-        block.style.border?.let {
-            verticalBorderPx = it.width.toPx() * 2
-            horizontalBorderPx = it.width.toPx() * 2
-        }
+
+        verticalBorderPx = (block.style.borderTop?.width?.toPx() ?: 0f) + (block.style.borderBottom?.width?.toPx() ?: 0f)
+        horizontalBorderPx = (block.style.borderLeft?.width?.toPx() ?: 0f) + (block.style.borderRight?.width?.toPx() ?: 0f)
     }
 
     val isBorderBox = block.style.boxSizing == "border-box"
@@ -817,7 +817,8 @@ private suspend fun measureBlockHeight(
                     var cellDecorationHeight = 0f
                     with(density) {
                         cellDecorationHeight = cellBlockStyle.padding.top.toPx() + cellBlockStyle.padding.bottom.toPx()
-                        cellBlockStyle.border?.let { cellDecorationHeight += it.width.toPx() * 2 }
+                        cellDecorationHeight += (cellBlockStyle.borderTop?.width?.toPx() ?: 0f)
+                        cellDecorationHeight += (cellBlockStyle.borderBottom?.width?.toPx() ?: 0f)
                     }
                     maxRowHeight = maxOf(maxRowHeight, (cellContentHeight + cellDecorationHeight).roundToInt())
                 }
@@ -1002,11 +1003,11 @@ private suspend fun splitParagraphBlock(
     if (text.isEmpty()) return null
 
     val decorationTop = with(density) {
-        block.style.padding.top.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+        block.style.padding.top.toPx() + (block.style.borderTop?.width?.toPx() ?: 0f)
     }.roundToInt()
 
     val decorationBottom = with(density) {
-        block.style.padding.bottom.toPx() + (block.style.border?.width?.toPx() ?: 0f)
+        block.style.padding.bottom.toPx() + (block.style.borderBottom?.width?.toPx() ?: 0f)
     }.roundToInt()
 
     val availableTextHeight = availableHeight - decorationTop - decorationBottom

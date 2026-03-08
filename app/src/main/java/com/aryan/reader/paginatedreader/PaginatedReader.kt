@@ -88,11 +88,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -100,6 +100,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -1588,25 +1589,9 @@ internal fun PaginatedReaderContent(
 
                                             val styleModifier = alignModifier
                                                 .then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
-                                                .then(
-                                                    if (block.style.borderRadius > 0.dp) Modifier.clip(RoundedCornerShape(block.style.borderRadius))
-                                                    else Modifier
-                                                )
-                                                .then(
-                                                    if (block.style.backgroundColor.isSpecified) {
-                                                        Modifier.background(
-                                                            block.style.backgroundColor,
-                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
-                                                        )
-                                                    } else Modifier
-                                                )
-                                                .then(
-                                                    block.style.border?.let { border ->
-                                                        Modifier.border(
-                                                            BorderStroke(border.width, border.color),
-                                                            shape = if (block.style.borderRadius > 0.dp) RoundedCornerShape(block.style.borderRadius) else androidx.compose.ui.graphics.RectangleShape
-                                                        )
-                                                    } ?: Modifier
+                                                .drawCssBorders(
+                                                    blockStyle = block.style,
+                                                    density = density
                                                 )
 
                                             val diagnosticModifier = Modifier
@@ -1636,12 +1621,11 @@ internal fun PaginatedReaderContent(
                                                 .then(styleModifier)
 
                                             Box(modifier = diagnosticModifier) {
-                                                val borderWidth = block.style.border?.width ?: 0.dp
                                                 val paddingModifier = Modifier.padding(
-                                                    start = block.style.padding.left.coerceAtLeast(0.dp) + borderWidth,
-                                                    top = block.style.padding.top.coerceAtLeast(0.dp) + borderWidth,
-                                                    end = block.style.padding.right.coerceAtLeast(0.dp) + borderWidth,
-                                                    bottom = block.style.padding.bottom.coerceAtLeast(0.dp) + borderWidth
+                                                    start = block.style.padding.left.coerceAtLeast(0.dp) + (block.style.borderLeft?.width ?: 0.dp),
+                                                    top = block.style.padding.top.coerceAtLeast(0.dp) + (block.style.borderTop?.width ?: 0.dp),
+                                                    end = block.style.padding.right.coerceAtLeast(0.dp) + (block.style.borderRight?.width ?: 0.dp),
+                                                    bottom = block.style.padding.bottom.coerceAtLeast(0.dp) + (block.style.borderBottom?.width ?: 0.dp)
                                                 ).then(
                                                     if (block.style.horizontalAlign != "center") widthModifier else Modifier.fillMaxWidth()
                                                 )
@@ -2322,61 +2306,16 @@ internal fun PaginatedReaderContent(
                                                     }
 
                                                     is SpacerBlock -> {
-                                                        val border = block.style.border
-                                                        if (border != null && border.width > 0.dp) {
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .height(
-                                                                        border.width
-                                                                    )
-                                                                    .drawBehind {
-                                                                        val strokeWidth =
-                                                                            border.width.toPx()
-                                                                        val pathEffect =
-                                                                            when (border.style) {
-                                                                                "dotted" -> PathEffect.dashPathEffect(
-                                                                                    floatArrayOf(
-                                                                                        strokeWidth,
-                                                                                        strokeWidth * 2f
-                                                                                    ), 0f
-                                                                                )
-
-                                                                                "dashed" -> PathEffect.dashPathEffect(
-                                                                                    floatArrayOf(
-                                                                                        strokeWidth * 3f,
-                                                                                        strokeWidth * 2f
-                                                                                    ), 0f
-                                                                                )
-
-                                                                                else -> null
-                                                                            }
-                                                                        drawLine(
-                                                                            color = border.color,
-                                                                            start = Offset(
-                                                                                0f, strokeWidth / 2f
-                                                                            ),
-                                                                            end = Offset(
-                                                                                size.width,
-                                                                                strokeWidth / 2f
-                                                                            ),
-                                                                            strokeWidth = strokeWidth,
-                                                                            pathEffect = pathEffect
-                                                                        )
-                                                                    })
-                                                        } else {
-                                                            Spacer(Modifier.height(block.height))
-                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(block.height)
+                                                                .drawCssBorders(block.style, density)
+                                                        )
                                                     }
 
                                                     is TableBlock -> {
-                                                        // Table-level margin/background/border/padding
-                                                        // are already
-                                                        // applied by the outer Box wrapper. Only set
-                                                        // width here.
-                                                        val tableModifier = paddingModifier
-
-                                                        Column(modifier = tableModifier) {
+                                                        Column(modifier = paddingModifier) {
                                                             block.rows.forEach { tableRow ->
                                                                 Row(
                                                                     Modifier
@@ -2428,14 +2367,7 @@ internal fun PaginatedReaderContent(
                                                                                         Modifier
                                                                                     }
                                                                                 )
-                                                                                .then(cellStyle.border?.let { border ->
-                                                                                    Modifier.border(
-                                                                                        BorderStroke(
-                                                                                            border.width,
-                                                                                            border.color
-                                                                                        )
-                                                                                    )
-                                                                                } ?: Modifier)
+                                                                                .drawCssBorders(cellStyle, density)
                                                                                 .padding(
                                                                                     start = cellStyle.padding.left.coerceAtLeast(
                                                                                         0.dp
@@ -2508,23 +2440,11 @@ internal fun PaginatedReaderContent(
                                                                                     }
 
                                                                                     is SpacerBlock -> {
-                                                                                        val spacerModifier =
-                                                                                            if (blockInCell.style.border != null) {
-                                                                                                Modifier
-                                                                                                    .fillMaxWidth()
-                                                                                                    .height(
-                                                                                                        blockInCell.style.border.width
-                                                                                                    )
-                                                                                                    .background(
-                                                                                                        blockInCell.style.border.color
-                                                                                                    )
-                                                                                            } else {
-                                                                                                Modifier.height(
-                                                                                                    blockInCell.height
-                                                                                                )
-                                                                                            }
                                                                                         Spacer(
-                                                                                            modifier = spacerModifier
+                                                                                            modifier = Modifier
+                                                                                                .fillMaxWidth()
+                                                                                                .height(blockInCell.height)
+                                                                                                .drawCssBorders(blockInCell.style, density)
                                                                                         )
                                                                                     }
 
@@ -3311,17 +3231,12 @@ private fun RenderFlexChildBlock(
         }
 
         is SpacerBlock -> {
-            val border = childBlock.style.border
-            if (border != null && border.width > 0.dp) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(border.width)
-                        .background(border.color)
-                )
-            } else {
-                Spacer(Modifier.height(childBlock.height))
-            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(childBlock.height)
+                    .drawCssBorders(childBlock.style, density)
+            )
         }
 
         is TableBlock -> {
@@ -3353,11 +3268,7 @@ private fun RenderFlexChildBlock(
                                     )
                                     else Modifier
                                 )
-                                .then(cellStyle.border?.let {
-                                    Modifier.border(
-                                        BorderStroke(it.width, it.color)
-                                    )
-                                } ?: Modifier)
+                                .drawCssBorders(cellStyle, density)
                                 .padding(
                                     start = cellStyle.padding.left.coerceAtLeast(
                                         0.dp
@@ -3586,4 +3497,161 @@ private fun Modifier.realisticBookPage(
                 drawContent()
             }
         }
+}
+
+@Suppress("KotlinConstantConditions")
+@Composable
+fun Modifier.drawCssBorders(
+    blockStyle: BlockStyle,
+    @Suppress("unused") density: Density
+): Modifier = this.drawBehind {
+    val topWidth = blockStyle.borderTop?.width?.toPx() ?: 0f
+    val rightWidth = blockStyle.borderRight?.width?.toPx() ?: 0f
+    val bottomWidth = blockStyle.borderBottom?.width?.toPx() ?: 0f
+    val leftWidth = blockStyle.borderLeft?.width?.toPx() ?: 0f
+
+    val tlRadius = blockStyle.borderTopLeftRadius.toPx()
+    val trRadius = blockStyle.borderTopRightRadius.toPx()
+    val brRadius = blockStyle.borderBottomRightRadius.toPx()
+    val blRadius = blockStyle.borderBottomLeftRadius.toPx()
+
+    if (blockStyle.backgroundColor.isSpecified && blockStyle.backgroundColor != Color.Transparent) {
+        val bgPath = Path().apply {
+            addRoundRect(
+                androidx.compose.ui.geometry.RoundRect(
+                    rect = size.toRect(),
+                    topLeft = androidx.compose.ui.geometry.CornerRadius(tlRadius, tlRadius),
+                    topRight = androidx.compose.ui.geometry.CornerRadius(trRadius, trRadius),
+                    bottomRight = androidx.compose.ui.geometry.CornerRadius(brRadius, brRadius),
+                    bottomLeft = androidx.compose.ui.geometry.CornerRadius(blRadius, blRadius)
+                )
+            )
+        }
+        drawPath(bgPath, color = blockStyle.backgroundColor, style = Fill)
+    }
+
+    // 2. Helper for PathEffects
+    fun getPathEffect(style: String?, width: Float): PathEffect? {
+        return when (style) {
+            "dashed" -> PathEffect.dashPathEffect(floatArrayOf(width * 3f, width * 2f), 0f)
+            "dotted" -> PathEffect.dashPathEffect(floatArrayOf(width, width), 0f)
+            else -> null
+        }
+    }
+
+    // TOP
+    if (topWidth > 0f && blockStyle.borderTop != null) {
+        val color = blockStyle.borderTop.color
+        val effect = getPathEffect(blockStyle.borderTop.style, topWidth)
+        val offset = topWidth / 2f
+
+        val startX = if (tlRadius > 0) tlRadius else 0f
+        val endX = if (trRadius > 0) size.width - trRadius else size.width
+
+        drawLine(
+            color = color,
+            start = Offset(startX, offset),
+            end = Offset(endX, offset),
+            strokeWidth = topWidth,
+            pathEffect = effect
+        )
+    }
+
+    // BOTTOM
+    if (bottomWidth > 0f && blockStyle.borderBottom != null) {
+        val color = blockStyle.borderBottom.color
+        val effect = getPathEffect(blockStyle.borderBottom.style, bottomWidth)
+        val offset = size.height - (bottomWidth / 2f)
+
+        val startX = if (blRadius > 0) blRadius else 0f
+        val endX = if (brRadius > 0) size.width - brRadius else size.width
+
+        drawLine(
+            color = color,
+            start = Offset(startX, offset),
+            end = Offset(endX, offset),
+            strokeWidth = bottomWidth,
+            pathEffect = effect
+        )
+    }
+
+    // LEFT
+    if (leftWidth > 0f && blockStyle.borderLeft != null) {
+        val color = blockStyle.borderLeft.color
+        val effect = getPathEffect(blockStyle.borderLeft.style, leftWidth)
+        val offset = leftWidth / 2f
+
+        val startY = if (tlRadius > 0) tlRadius else 0f
+        val endY = if (blRadius > 0) size.height - blRadius else size.height
+
+        drawLine(
+            color = color,
+            start = Offset(offset, startY),
+            end = Offset(offset, endY),
+            strokeWidth = leftWidth,
+            pathEffect = effect
+        )
+    }
+
+    // RIGHT
+    if (rightWidth > 0f && blockStyle.borderRight != null) {
+        val color = blockStyle.borderRight.color
+        val effect = getPathEffect(blockStyle.borderRight.style, rightWidth)
+        val offset = size.width - (rightWidth / 2f)
+
+        val startY = if (trRadius > 0) trRadius else 0f
+        val endY = if (brRadius > 0) size.height - brRadius else size.height
+
+        drawLine(
+            color = color,
+            start = Offset(offset, startY),
+            end = Offset(offset, endY),
+            strokeWidth = rightWidth,
+            pathEffect = effect
+        )
+    }
+
+    if (tlRadius > 0f && topWidth > 0f && leftWidth > 0f && blockStyle.borderTop != null) {
+        drawArc(
+            color = blockStyle.borderTop.color,
+            startAngle = 180f, sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(leftWidth/2f, topWidth/2f),
+            size = androidx.compose.ui.geometry.Size(tlRadius * 2 - leftWidth, tlRadius * 2 - topWidth),
+            style = Stroke(width = topWidth)
+        )
+    }
+
+    if (trRadius > 0f && topWidth > 0f && rightWidth > 0f && blockStyle.borderTop != null) {
+        drawArc(
+            color = blockStyle.borderTop.color,
+            startAngle = 270f, sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(size.width - (trRadius * 2) + (rightWidth/2f), topWidth/2f),
+            size = androidx.compose.ui.geometry.Size(trRadius * 2 - rightWidth, trRadius * 2 - topWidth),
+            style = Stroke(width = topWidth)
+        )
+    }
+
+    if (brRadius > 0f && bottomWidth > 0f && rightWidth > 0f && blockStyle.borderBottom != null) {
+        drawArc(
+            color = blockStyle.borderBottom.color,
+            startAngle = 0f, sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(size.width - (brRadius * 2) + (rightWidth/2f), size.height - (brRadius * 2) + (bottomWidth/2f)),
+            size = androidx.compose.ui.geometry.Size(brRadius * 2 - rightWidth, brRadius * 2 - bottomWidth),
+            style = Stroke(width = bottomWidth)
+        )
+    }
+
+    if (blRadius > 0f && bottomWidth > 0f && leftWidth > 0f && blockStyle.borderBottom != null) {
+        drawArc(
+            color = blockStyle.borderBottom.color,
+            startAngle = 90f, sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(leftWidth/2f, size.height - (blRadius * 2) + (bottomWidth/2f)),
+            size = androidx.compose.ui.geometry.Size(blRadius * 2 - leftWidth, blRadius * 2 - bottomWidth),
+            style = Stroke(width = bottomWidth)
+        )
+    }
 }

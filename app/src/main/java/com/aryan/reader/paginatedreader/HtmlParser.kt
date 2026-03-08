@@ -256,9 +256,15 @@ private class SemanticHtmlParser(
         val result = when (val tagName = element.tagName().lowercase()) {
             "div", "header", "section", "article", "aside", "main", "footer", "nav", "figure" -> {
                 val hasBoxStyles = elementStyle.blockStyle.backgroundColor.isSpecified ||
-                        elementStyle.blockStyle.border != null ||
+                        elementStyle.blockStyle.borderTop != null ||
+                        elementStyle.blockStyle.borderRight != null ||
+                        elementStyle.blockStyle.borderBottom != null ||
+                        elementStyle.blockStyle.borderLeft != null ||
                         elementStyle.blockStyle.padding != BoxBorders() ||
-                        elementStyle.blockStyle.borderRadius > 0.dp
+                        elementStyle.blockStyle.borderTopLeftRadius > 0.dp ||
+                        elementStyle.blockStyle.borderTopRightRadius > 0.dp ||
+                        elementStyle.blockStyle.borderBottomRightRadius > 0.dp ||
+                        elementStyle.blockStyle.borderBottomLeftRadius > 0.dp
 
                 if (hasBoxStyles) {
                     val children = element.children().flatMap { child ->

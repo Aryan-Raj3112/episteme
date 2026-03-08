@@ -221,11 +221,20 @@ class ContentStyler(
             } else {
                 original.backgroundColor
             }
-            val newBorder = original.border?.let {
-                val newBorderColor = CssParser.adaptColorForTheme(it.color, isDarkTheme, isBackground = false)
-                it.copy(color = newBorderColor)
+
+            fun themeBorder(b: BorderStyle?): BorderStyle? {
+                if (b == null) return null
+                val newColor = CssParser.adaptColorForTheme(b.color, isDarkTheme, isBackground = false)
+                return b.copy(color = newColor)
             }
-            original.copy(backgroundColor = newBgColor, border = newBorder)
+
+            original.copy(
+                backgroundColor = newBgColor,
+                borderTop = themeBorder(original.borderTop),
+                borderRight = themeBorder(original.borderRight),
+                borderBottom = themeBorder(original.borderBottom),
+                borderLeft = themeBorder(original.borderLeft)
+            )
         }
 
         return style.copy(spanStyle = newSpanStyle, blockStyle = newBlockStyle)
