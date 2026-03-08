@@ -345,16 +345,15 @@ fun HomeScreen(
                                     onRefresh = { viewModel.refreshLibrary() },
                                     isRefreshing = uiState.isRefreshing,
                                     isSyncEnabled = uiState.isSyncEnabled,
-                                    hasSyncedFolder = uiState.syncedFolderUri != null
+                                    hasSyncedFolder = uiState.syncedFolders.isNotEmpty()
                                 )
                             }
                         }
 
-                        // Loading Indicator Overlay
                         if (uiState.isLoading) {
                             Surface(
                                 modifier = Modifier.fillMaxSize(),
-                                color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f) // Semi-transparent overlay
+                                color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f)
                             ) {
                                 Box(
                                     modifier = Modifier.fillMaxSize(),

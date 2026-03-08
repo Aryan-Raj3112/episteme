@@ -30,6 +30,7 @@ import android.content.SharedPreferences
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -133,6 +134,12 @@ data class DeviceLimitReachedState(
     val isLimitReached: Boolean = false, val registeredDevices: List<DeviceItem> = emptyList()
 )
 
+data class SyncedFolder(
+    val uriString: String,
+    val name: String,
+    val lastScanTime: Long
+)
+
 data class Shelf(val name: String, val books: List<RecentFileItem>) {
     val bookCount: Int
         get() = books.size
@@ -185,7 +192,7 @@ data class ReaderScreenState(
     val isRequestingDrivePermission: Boolean = false,
     val downloadingBookIds: Set<String> = emptySet(),
     val uploadingBookIds: Set<String> = emptySet(),
-    val syncedFolderUri: String? = null,
+    val syncedFolders: List<SyncedFolder> = emptyList(),
     val lastFolderScanTime: Long? = null,
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
@@ -269,7 +276,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
             isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
-            syncedFolderUri = prefs.getString(KEY_SYNCED_FOLDER_URI, null),
+            syncedFolders = loadSyncedFoldersFromPrefs(),
             lastFolderScanTime = if (prefs.contains(KEY_LAST_FOLDER_SCAN_TIME)) prefs.getLong(
                 KEY_LAST_FOLDER_SCAN_TIME,
                 0L
@@ -453,7 +460,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ): PageModificationResult = withContext(Dispatchers.Default) {
         Timber.d("Removing page at index $removeIndex for book $bookId")
 
-        // 1. Update Layout
         val newLayout = currentLayout.toMutableList()
         if (removeIndex in newLayout.indices) {
             newLayout.removeAt(removeIndex)
@@ -463,7 +469,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        // 2. Shift Annotations (Delete for removed page, decrement for pages > removed)
         val newAnnotations = mutableMapOf<Int, List<PdfAnnotation>>()
         currentAnnotations.forEach { (pageIdx, annots) ->
             if (pageIdx != removeIndex) {
@@ -473,7 +478,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        // 3. Shift Bookmarks
         val newTotalPages = newLayout.size
         val newBookmarksJson = try {
             if (currentBookmarksJson.isNotBlank()) {
@@ -504,7 +508,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             currentBookmarksJson
         }
 
-        // 4. Save Layout persistently
         pageLayoutRepository.saveLayout(bookId, newLayout)
 
         PageModificationResult(newLayout, newAnnotations, newBookmarksJson)
@@ -528,9 +531,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val isMigrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
 
-        if (_internalState.value.syncedFolderUri != null) {
+        if (_internalState.value.syncedFolders.isNotEmpty()) {
             if (isMigrationCompleted) {
-                Timber.d("App Start: Triggering local folder metadata-only sync.")
                 syncFolderMetadata()
             } else {
                 Timber.d("App Start: Skipping sync. Waiting for migration/detachment logic.")
@@ -586,10 +588,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         }
-        val folderUri = _internalState.value.syncedFolderUri
         val migrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
 
-        if (folderUri != null && !migrationCompleted) {
+        val hasFolders = _internalState.value.syncedFolders.isNotEmpty()
+        if (hasFolders && !migrationCompleted) {
             Timber.tag("FolderSync").d("First time after refactor: Showing migration dialog.")
             _internalState.update { it.copy(showFolderMigrationDialog = true) }
         }
@@ -606,6 +608,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             scanSyncedFolder()
         }
+    }
+
+    private fun getDisplayPathFromUri(context: Context, uriString: String): String {
+        val uri = uriString.toUri()
+        val fallbackName = DocumentFile.fromTreeUri(context, uri)?.name ?: "Unknown Folder"
+        if (DocumentsContract.isTreeUri(uri) && DocumentsContract.getTreeDocumentId(uri).isNotEmpty()) {
+            val documentId = DocumentsContract.getTreeDocumentId(uri)
+            val split = documentId.split(":")
+            if (split.size > 1) {
+                return split[1]
+            }
+        }
+        return fallbackName
     }
 
     private val fontsRepository = FontsRepository(appContext)
@@ -1268,20 +1283,83 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun setSyncedFolder(folderUri: Uri) {
+    private fun loadSyncedFoldersFromPrefs(): List<SyncedFolder> {
+        val jsonString = prefs.getString(KEY_SYNCED_FOLDERS_JSON, null)
+        val folders = mutableListOf<SyncedFolder>()
+
+        if (jsonString == null && prefs.contains(KEY_SYNCED_FOLDER_URI)) {
+            val oldUri = prefs.getString(KEY_SYNCED_FOLDER_URI, null)
+            val oldTime = prefs.getLong(KEY_LAST_FOLDER_SCAN_TIME, 0L)
+            if (oldUri != null) {
+                val name = getDisplayPathFromUri(appContext, oldUri)
+                val migrated = SyncedFolder(oldUri, name, oldTime)
+                folders.add(migrated)
+                saveSyncedFoldersToPrefs(folders)
+
+                prefs.edit {
+                    remove(KEY_SYNCED_FOLDER_URI)
+                    remove(KEY_LAST_FOLDER_SCAN_TIME)
+                }
+            }
+        } else if (jsonString != null) {
+            try {
+                val jsonArray = JSONArray(jsonString)
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    folders.add(
+                        SyncedFolder(
+                            uriString = obj.getString("uri"),
+                            name = obj.getString("name"),
+                            lastScanTime = obj.optLong("lastScanTime", 0L)
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to parse synced folders JSON")
+            }
+        }
+        return folders
+    }
+
+    private fun saveSyncedFoldersToPrefs(folders: List<SyncedFolder>) {
+        val jsonArray = JSONArray()
+        folders.forEach { folder ->
+            val obj = JSONObject()
+            obj.put("uri", folder.uriString)
+            obj.put("name", folder.name)
+            obj.put("lastScanTime", folder.lastScanTime)
+            jsonArray.put(obj)
+        }
+        prefs.edit { putString(KEY_SYNCED_FOLDERS_JSON, jsonArray.toString()) }
+    }
+
+    fun addSyncedFolder(folderUri: Uri) {
+        val currentFolders = _internalState.value.syncedFolders
+
+        if (currentFolders.size >= MAX_FOLDER_LIMIT) {
+            showBanner("Limit reached: Maximum $MAX_FOLDER_LIMIT folders allowed.", isError = true)
+            return
+        }
+
+        if (currentFolders.any { it.uriString == folderUri.toString() }) {
+            showBanner("This folder is already synced.", isError = true)
+            return
+        }
+
         viewModelScope.launch {
             try {
                 appContext.contentResolver.takePersistableUriPermission(
-                    folderUri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    folderUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                Timber.d("Persistable URI permission taken for folder: $folderUri")
-                prefs.edit {
-                    putString(KEY_SYNCED_FOLDER_URI, folderUri.toString())
-                    putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true)
-                }
+
+                val name = getDisplayPathFromUri(appContext, folderUri.toString())
+                val newFolder = SyncedFolder(folderUri.toString(), name, 0L)
+                val newStats = currentFolders + newFolder
+
+                saveSyncedFoldersToPrefs(newStats)
 
                 _internalState.update { it.copy(
-                    syncedFolderUri = folderUri.toString(),
+                    syncedFolders = newStats,
                     showFolderMigrationDialog = false
                 ) }
 
@@ -1289,22 +1367,46 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val workManager = WorkManager.getInstance(appContext)
                 val constraints = Constraints.Builder().setRequiresBatteryNotLow(true).build()
-
-                val syncRequest =
-                    PeriodicWorkRequestBuilder<FolderSyncWorker>(4, TimeUnit.HOURS).setConstraints(
-                        constraints
-                    ).build()
-
+                val syncRequest = PeriodicWorkRequestBuilder<FolderSyncWorker>(4, TimeUnit.HOURS)
+                    .setConstraints(constraints)
+                    .build()
                 workManager.enqueueUniquePeriodicWork(
-                    FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.REPLACE, syncRequest
+                    FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, syncRequest
                 )
-                Timber.d("Scheduled periodic folder sync worker.")
+
+                showBanner("Folder added: $name")
+
             } catch (e: SecurityException) {
-                Timber.e(e, "Failed to take persistable URI permission for $folderUri")
-                _internalState.update {
-                    it.copy(errorMessage = "Could not get permission for the selected folder.")
-                }
+                Timber.e(e, "Failed to take permissions for $folderUri")
+                showBanner("Failed to access folder permissions.", isError = true)
             }
+        }
+    }
+
+    fun removeSyncedFolder(folder: SyncedFolder) {
+        viewModelScope.launch {
+            val currentFolders = _internalState.value.syncedFolders.toMutableList()
+            currentFolders.removeAll { it.uriString == folder.uriString }
+
+            saveSyncedFoldersToPrefs(currentFolders)
+            _internalState.update { it.copy(syncedFolders = currentFolders) }
+
+            // Cleanup
+            recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
+            try {
+                appContext.contentResolver.releasePersistableUriPermission(
+                    folder.uriString.toUri(),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                Timber.w("Failed to release permissions: ${e.message}")
+            }
+
+            if (currentFolders.isEmpty()) {
+                WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+            }
+
+            showBanner("Folder removed.")
         }
     }
 
@@ -1317,8 +1419,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun triggerFolderSyncWorker(metadataOnly: Boolean) {
-        @Suppress("UnusedVariable", "Unused") val folderUriString = _internalState.value.syncedFolderUri ?: return
-        Timber.tag("FolderSync").d("Requesting folder sync (metadataOnly=$metadataOnly)")
+        val folders = _internalState.value.syncedFolders
+        if (folders.isEmpty()) return
+
+        Timber.tag("FolderSync").d("Requesting folder sync for ${folders.size} folders (metadataOnly=$metadataOnly)")
 
         val workManager = WorkManager.getInstance(appContext)
         val data = androidx.work.Data.Builder()
@@ -1369,35 +1473,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun disconnectSyncedFolder() {
+    fun disconnectAllSyncedFolders() {
         viewModelScope.launch {
-            val folderUriString = _internalState.value.syncedFolderUri
-
-            Timber.tag("FolderSync").d("Cancelling all folder sync workers...")
-            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
-            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
-            WorkManager.getInstance(appContext).cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+            val folders = _internalState.value.syncedFolders
+            folders.forEach { folder ->
+                recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
+                try {
+                    appContext.contentResolver.releasePersistableUriPermission(
+                        folder.uriString.toUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+            }
 
             prefs.edit {
+                remove(KEY_SYNCED_FOLDERS_JSON)
                 remove(KEY_SYNCED_FOLDER_URI)
-                remove(KEY_LAST_FOLDER_SCAN_TIME)
             }
-            _internalState.update { it.copy(syncedFolderUri = null, lastFolderScanTime = null) }
+            _internalState.update { it.copy(syncedFolders = emptyList()) }
 
-            if (folderUriString != null) {
-                Timber.tag("FolderSync").d("Disconnecting folder. Removing all associated books from DB.")
-                recentFilesRepository.deleteFilesBySourceFolder(folderUriString)
-
-                try {
-                    val uri = folderUriString.toUri()
-                    val contentResolver = appContext.contentResolver
-                    val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    contentResolver.releasePersistableUriPermission(uri, takeFlags)
-                    Timber.tag("FolderSync").d("Released permission for: $uri")
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to release permission")
-                }
-            }
+            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
         }
     }
 
@@ -2640,11 +2734,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshLibrary() {
         val syncEnabled = _internalState.value.isSyncEnabled
-        val hasFolder = _internalState.value.syncedFolderUri != null // Check for URI instead of toggle
+        val hasFolder = _internalState.value.syncedFolders.isNotEmpty()
 
         if (!syncEnabled && !hasFolder) {
             Timber.d("Refresh skipped: No sync methods active.")
-            _internalState.update { it.copy(isRefreshing = false) } // Ensure indicator retracts immediately
+            _internalState.update { it.copy(isRefreshing = false) }
             return
         }
 
@@ -2657,14 +2751,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 if (hasFolder) {
-                    // This triggers the worker which we observe above to clear isRefreshing
                     syncFolderMetadata()
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Refresh failed")
                 _internalState.update { it.copy(isRefreshing = false) }
             } finally {
-                // If folder sync isn't running, we must close the indicator here
                 if (!hasFolder) {
                     _internalState.update { it.copy(isRefreshing = false) }
                 }
@@ -3346,8 +3438,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_SYNC_TIMESTAMP = "last_sync_timestamp"
         private const val KEY_MIGRATION_CHECKED_UIDS = "migration_checked_uids"
         private const val KEY_INSTALLATION_ID = "installation_id"
+        private const val KEY_APP_OPEN_COUNT = "app_open_count"
         internal const val KEY_SYNCED_FOLDER_URI = "synced_folder_uri"
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
-        private const val KEY_APP_OPEN_COUNT = "app_open_count"
+        private const val KEY_SYNCED_FOLDERS_JSON = "synced_folders_list_json"
+        private const val MAX_FOLDER_LIMIT = 3
     }
 }

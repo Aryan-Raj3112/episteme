@@ -184,6 +184,71 @@ object LocalSyncUtils {
         }
     }
 
+    suspend fun preloadAnnotationSidecars(
+        context: Context,
+        rootTree: DocumentFile
+    ): Map<String, Pair<Long, String>> = withContext(Dispatchers.IO) {
+        val results = mutableMapOf<String, Pair<Long, String>>()
+
+        try {
+            val allFiles = rootTree.listFiles()
+
+            val annotationFiles = allFiles.filter { file ->
+                val name = file.name ?: ""
+                name.contains(ANNOTATION_SUFFIX) && name.endsWith(".json") && !name.endsWith(".tmp")
+            }
+
+            val filesByBookId = annotationFiles.groupBy { file ->
+                val name = file.name ?: ""
+                var temp = name.substringBeforeLast(".json")
+                if (temp.contains(".sync-conflict")) {
+                    temp = temp.substringBefore(".sync-conflict")
+                }
+                if (temp.endsWith(ANNOTATION_SUFFIX)) {
+                    temp = temp.substring(0, temp.length - ANNOTATION_SUFFIX.length)
+                }
+                if (temp.startsWith(".")) {
+                    temp = temp.substring(1)
+                }
+                temp
+            }
+
+            filesByBookId.forEach { (bookId, files) ->
+                if (bookId.isNotBlank()) {
+                    var bestTs = -1L
+                    var bestData: String? = null
+
+                    for (file in files) {
+                        try {
+                            val content = context.contentResolver.openInputStream(file.uri)?.use {
+                                it.bufferedReader().readText()
+                            } ?: continue
+
+                            val json = JSONObject(content)
+                            val ts = json.optLong("timestamp", 0L)
+                            val data = json.optJSONObject("data")?.toString()
+
+                            if (data != null && ts > bestTs) {
+                                bestTs = ts
+                                bestData = data
+                            }
+                        } catch (e: Exception) {
+                            Timber.tag("FolderAnnotationSync").e(e, "Error parsing preloaded file: ${file.name}")
+                        }
+                    }
+
+                    if (bestData != null) {
+                        results[bookId] = Pair(bestTs, bestData)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Timber.tag("FolderAnnotationSync").e(e, "Error preloading annotation sidecars")
+        }
+
+        return@withContext results
+    }
+
     suspend fun getAnnotationSidecar(
         context: Context,
         sourceFolderUri: Uri,
