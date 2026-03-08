@@ -359,6 +359,7 @@ fun EpubReaderScreen(
     )
 }
 
+@Suppress("ControlFlowWithEmptyBody")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt")
 @androidx.annotation.OptIn(UnstableApi::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -3514,7 +3515,7 @@ fun EpubReaderHost(
         }
 
         if (showDictionarySettingsSheet) {
-            DictionarySettingsSheet(
+            DictionarySettingsDialog(
                 isVisible = true,
                 onDismiss = { showDictionarySettingsSheet = false },
                 isProUser = isProUser,
@@ -3527,13 +3528,6 @@ fun EpubReaderHost(
                 onSelectPackage = { pkg ->
                     selectedDictPackage = pkg
                     saveExternalDictPackage(context, pkg)
-                    // If user selects an app, we usually assume they want to use it
-                    if (!isProUser) {
-                        // OSS always offline
-                    } else if (useOnlineDictionary) {
-                        // Pro user selected an app but is currently in "Online" mode.
-                        // We leave it as Online, the app selection is for the "Open in app" fallback button
-                    }
                 }
             )
         }

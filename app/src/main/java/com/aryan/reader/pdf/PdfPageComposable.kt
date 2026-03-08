@@ -4557,9 +4557,7 @@ private fun PdfPageRenderer(
                     popupPositionProvider = popupPositionProvider,
                     onCopy = onCopy,
                     onAiDefine = onAiDefine,
-                    onSelectAll = onSelectAll,
-                    isProUser = isProUser,
-                    onShowUpsellDialog = onShowUpsellDialog
+                    onSelectAll = onSelectAll
                 )
             }
         }

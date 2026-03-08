@@ -240,7 +240,7 @@ import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
-import com.aryan.reader.epubreader.DictionarySettingsSheet
+import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -4387,7 +4387,7 @@ fun PdfViewerScreen(
 
                                 IconButton(onClick = { showDictionarySettingsSheet = true }) {
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                                        painter = painterResource(id = R.drawable.dictionary),
                                         contentDescription = "Dictionary Settings",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -4501,11 +4501,7 @@ fun PdfViewerScreen(
                                                 showMoreMenu = false
                                                 isAutoScrollModeActive = true
                                                 isAutoScrollPlaying = true
-                                                showBars = if (isMusicianMode) {
-                                                    false
-                                                } else {
-                                                    true
-                                                }
+                                                showBars = !isMusicianMode
                                             }
                                         )
 
@@ -5932,7 +5928,7 @@ fun PdfViewerScreen(
                 }
 
                 if (showDictionarySettingsSheet) {
-                    DictionarySettingsSheet(
+                    DictionarySettingsDialog(
                         isVisible = true,
                         onDismiss = { showDictionarySettingsSheet = false },
                         isProUser = isProUser,

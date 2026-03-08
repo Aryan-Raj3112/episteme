@@ -129,9 +129,7 @@ internal fun PdfSelectionMenuPopup(
     popupPositionProvider: PopupPositionProvider,
     onCopy: (String) -> Unit,
     onAiDefine: (String) -> Unit,
-    onSelectAll: () -> Unit,
-    isProUser: Boolean,
-    onShowUpsellDialog: () -> Unit,
+    onSelectAll: () -> Unit
 ) {
     Popup(
         popupPositionProvider = popupPositionProvider,
@@ -157,11 +155,7 @@ internal fun PdfSelectionMenuPopup(
                 }
                 if (menuState.selectedText.length <= 2000) {
                     TextButton(onClick = {
-                        if (isProUser || countWords(menuState.selectedText) <= 1) {
-                            onAiDefine(menuState.selectedText)
-                        } else {
-                            onShowUpsellDialog()
-                        }
+                        onAiDefine(menuState.selectedText)
                     }) {
                         Text("Dictionary")
                     }

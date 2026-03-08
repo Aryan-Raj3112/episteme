@@ -194,7 +194,7 @@ fun EpubReaderTopBar(
                     )
                     IconButton(onClick = onOpenDictionarySettings) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                            painter = painterResource(id = R.drawable.dictionary),
                             contentDescription = "Dictionary Settings"
                         )
                     }

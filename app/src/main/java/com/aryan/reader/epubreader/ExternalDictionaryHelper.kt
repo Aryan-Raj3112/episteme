@@ -1,5 +1,7 @@
+// ExternalDictionaryHelper.kt
 package com.aryan.reader.epubreader
 
+import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,11 +17,16 @@ data class ExternalDictionaryApp(
 )
 
 object ExternalDictionaryHelper {
+    const val GOOGLE_SEARCH_PKG = "app.internal.google_search"
+
     private val PACKAGE_BLOCKLIST = setOf(
         "com.samsung.android.samsungpassautofill",
         "com.samsung.android.samsungpass",
         "com.samsung.android.app.pass",
-        "com.google.android.gms"
+        "com.google.android.gms",
+        "com.truecaller",
+        "com.adobe.reader",
+        "com.reddit.frontpage"
     )
 
     fun getAvailableDictionaries(context: Context): List<ExternalDictionaryApp> {
@@ -58,12 +65,33 @@ object ExternalDictionaryHelper {
             }
         }
 
-        return apps.sortedBy { it.label }
+        val sortedApps = apps.sortedBy { it.label }.toMutableList()
+
+        // Inject Google Search at the top
+        sortedApps.add(
+            0,
+            ExternalDictionaryApp(
+                label = "Search",
+                packageName = GOOGLE_SEARCH_PKG,
+                icon = null
+            )
+        )
+
+        return sortedApps
     }
 
     fun launchDictionary(context: Context, packageName: String, query: String) {
         val pm = context.packageManager
         try {
+            if (packageName == GOOGLE_SEARCH_PKG) {
+                val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                    putExtra(SearchManager.QUERY, query)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(searchIntent)
+                return
+            }
+
             val processTextIntent = Intent(Intent.ACTION_PROCESS_TEXT).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_PROCESS_TEXT, query)
