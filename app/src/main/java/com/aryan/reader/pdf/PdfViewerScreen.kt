@@ -29,19 +29,12 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material.icons.filled.MenuBook
-import android.widget.Toast
-import com.aryan.reader.epubreader.DictionarySettingsSheet
-import com.aryan.reader.epubreader.ExternalDictionaryHelper
-import com.aryan.reader.epubreader.ExternalDictionaryApp
-import androidx.compose.material3.SnackbarResult
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
-import androidx.compose.foundation.border
 import android.util.Base64
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -60,6 +53,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -139,8 +133,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -244,6 +240,8 @@ import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
+import com.aryan.reader.epubreader.DictionarySettingsSheet
+import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -315,7 +313,7 @@ private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 
 private fun loadUseOnlineDict(context: Context): Boolean {
-    if (BuildConfig.FLAVOR == "oss") return false
+    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss") return false
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
 }
@@ -1874,7 +1872,13 @@ fun PdfViewerScreen(
         { isLoading: Boolean -> isHighlightingLoading = isLoading }
     }
 
-    val onShowDictionaryUpsellDialogStable = remember { { showDictionaryUpsellDialog = true } }
+    val onShowDictionaryUpsellDialogStable = remember(useOnlineDictionary) {
+        {
+            if (useOnlineDictionary) {
+                showDictionaryUpsellDialog = true
+            }
+        }
+    }
 
     val onDictionaryLookupStable = remember(isProUser, executeWithOcrCheck, useOnlineDictionary, selectedDictPackage) {
         { text: String ->
@@ -3516,7 +3520,9 @@ fun PdfViewerScreen(
                                                 onSingleTap = onSingleTapStable,
                                                 isProUser = isProUser,
                                                 onShowDictionaryUpsellDialog = {
-                                                    showDictionaryUpsellDialog = true
+                                                    if (useOnlineDictionary) {
+                                                        showDictionaryUpsellDialog = true
+                                                    }
                                                 },
                                                 onWordSelectedForAiDefinition = onDictionaryLookupStable,
                                                 onOcrStateChange = onOcrStateChange,
@@ -3974,7 +3980,7 @@ fun PdfViewerScreen(
                 }
 
                 if (isMusicianMode && isAutoScrollModeActive) {
-                    val density = LocalDensity.current
+                    @Suppress("UnusedVariable", "Unused") val density = LocalDensity.current
 
                     var leftPulseTrigger by remember { mutableLongStateOf(0L) }
                     var rightPulseTrigger by remember { mutableLongStateOf(0L) }

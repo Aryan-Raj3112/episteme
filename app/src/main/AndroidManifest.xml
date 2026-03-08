@@ -11,6 +11,26 @@
         </intent>
     </queries>
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="colordict.intent.action.SEARCH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+
+        <package android:name="it.t_arn.aard2" />
+        <package android:name="io.github.mvasilev.dictionary" />
+        <package android:name="com.github.tngande.ossdict" />
+        <package android:name="com.gaurav.lookup" />
+        <package android:name="com.randallbaltazar.lookup" />
+    </queries>
+
     <application
         android:name=".MyApplication"
         android:allowBackup="true"

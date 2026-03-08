@@ -1,6 +1,5 @@
 package com.aryan.reader.epubreader
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -16,83 +15,46 @@ data class ExternalDictionaryApp(
 )
 
 object ExternalDictionaryHelper {
-
-    // Known package names for specific integrations
-    private const val PKG_COLORDICT = "com.socialnmobile.colordict"
-    private const val PKG_GOLDENDICT = "mobi.goldendict.android"
-    private const val PKG_GOLDENDICT_FREE = "mobi.goldendict.android.free"
-    private const val PKG_AARD2 = "it.t_arn.aard2"
-    private const val PKG_LIVIO = "livio.pack.lang.en_US"
-    private const val PKG_GOOGLE_TRANSLATE = "com.google.android.apps.translate"
-
-    private const val PKG_OSS_DICT_FDROID = "io.github.mvasilev.dictionary"
+    private val PACKAGE_BLOCKLIST = setOf(
+        "com.samsung.android.samsungpassautofill",
+        "com.samsung.android.samsungpass",
+        "com.samsung.android.app.pass",
+        "com.google.android.gms"
+    )
 
     fun getAvailableDictionaries(context: Context): List<ExternalDictionaryApp> {
         val pm = context.packageManager
         val apps = mutableListOf<ExternalDictionaryApp>()
+        val addedPackages = mutableSetOf<String>()
 
-        val intent = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
-        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
+        val processTextIntent = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+        val textResolvers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.queryIntentActivities(processTextIntent, PackageManager.ResolveInfoFlags.of(0))
         } else {
-            @Suppress("DEPRECATION")
-            pm.queryIntentActivities(intent, 0)
+            @Suppress("DEPRECATION") pm.queryIntentActivities(processTextIntent, 0)
+        }
+
+        textResolvers.forEach { ri ->
+            val pkg = ri.activityInfo.packageName
+            if (!PACKAGE_BLOCKLIST.contains(pkg) && addedPackages.add(pkg)) {
+                apps.add(ExternalDictionaryApp(
+                    label = ri.loadLabel(pm).toString(),
+                    packageName = pkg,
+                    icon = ri.loadIcon(pm)
+                ))
+            }
         }
 
         val colorDictIntent = Intent("colordict.intent.action.SEARCH")
-        val colorDictInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.queryIntentServices(colorDictIntent, PackageManager.ResolveInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            pm.queryIntentServices(colorDictIntent, 0)
-        }
-
-        val addedPackages = mutableSetOf<String>()
-
-        resolveInfos.forEach { ri ->
-            if (addedPackages.add(ri.activityInfo.packageName)) {
-                apps.add(
-                    ExternalDictionaryApp(
-                        label = ri.loadLabel(pm).toString(),
-                        packageName = ri.activityInfo.packageName,
-                        icon = ri.loadIcon(pm)
-                    )
-                )
-            }
-        }
-
-        colorDictInfos.forEach { ri ->
-            if (addedPackages.add(ri.serviceInfo.packageName)) {
-                apps.add(
-                    ExternalDictionaryApp(
-                        label = ri.loadLabel(pm).toString(),
-                        packageName = ri.serviceInfo.packageName,
-                        icon = ri.loadIcon(pm)
-                    )
-                )
-            }
-        }
-
-        val manualList = listOf(PKG_AARD2, PKG_OSS_DICT_FDROID, "com.github.tngande.ossdict")
-        manualList.forEach { pkg ->
-            if (!addedPackages.contains(pkg)) {
-                try {
-                    val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        pm.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0))
-                    } else {
-                        pm.getApplicationInfo(pkg, 0)
-                    }
-                    apps.add(
-                        ExternalDictionaryApp(
-                            label = pm.getApplicationLabel(info).toString(),
-                            packageName = pkg,
-                            icon = pm.getApplicationIcon(info)
-                        )
-                    )
-                    addedPackages.add(pkg)
-                } catch (_: PackageManager.NameNotFoundException) {
-                    // Not installed
-                }
+        val colorResolvers = pm.queryIntentActivities(colorDictIntent, 0)
+        colorResolvers.forEach { ri ->
+            val pkg = ri.activityInfo.packageName
+            if (!PACKAGE_BLOCKLIST.contains(pkg) && addedPackages.add(pkg)) {
+                apps.add(ExternalDictionaryApp(
+                    label = ri.loadLabel(pm).toString(),
+                    packageName = pkg,
+                    icon = ri.loadIcon(pm)
+                ))
             }
         }
 
@@ -100,48 +62,46 @@ object ExternalDictionaryHelper {
     }
 
     fun launchDictionary(context: Context, packageName: String, query: String) {
+        val pm = context.packageManager
         try {
-            val dictIntent = Intent("colordict.intent.action.SEARCH")
-            dictIntent.putExtra("EXTRA_QUERY", query)
-            dictIntent.putExtra("EXTRA_FULLSCREEN", false)
-            dictIntent.setPackage(packageName)
-
-            val pm = context.packageManager
-            val serviceInfo = pm.resolveService(dictIntent, 0)
-
-            if (serviceInfo != null) {
-                launchGenericSend(context, packageName, query)
-            } else {
-                if (dictIntent.resolveActivity(pm) != null) {
-                    dictIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(dictIntent)
-                    return
-                }
-
-                if (packageName == PKG_AARD2) {
-                    val aardIntent = Intent("aard2.lookup")
-                    aardIntent.putExtra("query", query)
-                    aardIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(aardIntent)
-                    return
-                }
-
-                val processTextIntent = Intent(Intent.ACTION_PROCESS_TEXT)
-                processTextIntent.setType("text/plain")
-                processTextIntent.putExtra(Intent.EXTRA_PROCESS_TEXT, query)
-                processTextIntent.setPackage(packageName)
-                processTextIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-                if (processTextIntent.resolveActivity(pm) != null) {
-                    context.startActivity(processTextIntent)
-                    return
-                }
-
-                launchGenericSend(context, packageName, query)
+            val processTextIntent = Intent(Intent.ACTION_PROCESS_TEXT).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_PROCESS_TEXT, query)
+                putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+                setPackage(packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+
+            if (processTextIntent.resolveActivity(pm) != null) {
+                context.startActivity(processTextIntent)
+                return
+            }
+
+            val dictIntent = Intent("colordict.intent.action.SEARCH").apply {
+                putExtra("EXTRA_QUERY", query)
+                setPackage(packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            if (dictIntent.resolveActivity(pm) != null) {
+                context.startActivity(dictIntent)
+                return
+            }
+
+            if (packageName == "it.t_arn.aard2") {
+                val aardIntent = Intent("aard2.lookup").apply {
+                    putExtra("query", query)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(aardIntent)
+                return
+            }
+
+            launchGenericSend(context, packageName, query)
+
         } catch (e: Exception) {
-            Timber.e(e, "Failed to launch dictionary")
-            Toast.makeText(context, "Could not launch dictionary: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Timber.e(e, "Failed to launch dictionary app: $packageName")
+            Toast.makeText(context, "Error opening dictionary", Toast.LENGTH_SHORT).show()
         }
     }
 
