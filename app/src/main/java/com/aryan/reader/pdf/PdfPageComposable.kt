@@ -3685,8 +3685,9 @@ private fun PdfHighlightsLayer(
             fun isVisible(r: Rect): Boolean {
                 val left = r.left + centeringOffsetX
                 val right = r.right + centeringOffsetX
+                val top = r.top + centeringOffsetY
                 val bottom = r.bottom + centeringOffsetY
-                return left < size.width && right < size.height && right > 0 && bottom > 0
+                return left < size.width && right > 0 && top < size.height && bottom > 0
             }
 
             // 1. Page Links

@@ -933,13 +933,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val outputStream = appContext.contentResolver.openOutputStream(destUri)
                 if (outputStream != null) {
                     PdfExporter.exportAnnotatedPdf(
-                        appContext,
-                        sourceUri,
-                        outputStream,
-                        virtualPages,
-                        annotations,
-                        richTextPageLayouts,
-                        textBoxes
+                        context = appContext,
+                        sourceUri = sourceUri,
+                        destStream = outputStream,
+                        virtualPages = virtualPages,
+                        inkAnnotations = annotations,
+                        richTextPageLayouts = richTextPageLayouts,
+                        textBoxes = textBoxes,
+                        highlights = highlights
                     )
                     showBanner("PDF saved successfully.")
                 } else {
@@ -1014,13 +1015,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val virtualPages = pageLayoutRepository.getLayoutOrNull(resolvedBookId)
 
                     PdfExporter.exportAnnotatedPdf(
-                        appContext,
-                        sourceUri,
-                        outputStream,
-                        virtualPages,
-                        annotations,
-                        richTextPageLayouts,
-                        textBoxes
+                        context = appContext,
+                        sourceUri = sourceUri,
+                        destStream = outputStream,
+                        virtualPages = virtualPages,
+                        inkAnnotations = annotations,
+                        richTextPageLayouts = richTextPageLayouts,
+                        textBoxes = textBoxes,
+                        highlights = highlights
                     )
                 } else {
                     appContext.contentResolver.openInputStream(sourceUri)?.use { input ->

@@ -177,6 +177,8 @@ object PdfExporter {
                         if (sourceDocument.numberOfPages > 0) sourceDocument.getPage(0) else null
                 val fontCache = PdfBoxFontCache(destDocument, context)
 
+                Timber.tag("PdfExportDebug").i("Starting export. Total highlights received: ${highlights?.size ?: 0}")
+
                 pagesToProcess.forEachIndexed { virtualIndex, vPage ->
                     val pageToDecorate: PDPage =
                         when (vPage) {
@@ -212,9 +214,11 @@ object PdfExporter {
                     val lowerLeftY = cropBox.lowerLeftY
 
                     val pageHighlights = highlights?.filter { it.pageIndex == virtualIndex }
+                    Timber.tag("PdfExportDebug").d("Page $virtualIndex: Found ${pageHighlights?.size ?: 0} highlights to draw.")
+
                     if (!pageHighlights.isNullOrEmpty()) {
                         PDPageContentStream(destDocument, pageToDecorate, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
-                            drawHighlights(cs, pageHighlights, pageWidth, pageHeight, lowerLeftY)
+                            drawHighlights(cs, pageHighlights)
                         }
                     }
 
@@ -278,8 +282,9 @@ object PdfExporter {
                     }
                 }
                 destDocument.save(destStream)
+                Timber.tag("PdfExportDebug").i("Export document saved successfully.")
             } catch (e: Exception) {
-                Timber.e(e, "Export failed")
+                Timber.tag("PdfExportDebug").e(e, "Export failed during processing")
                 throw e
             } finally {
                 sourceDocument?.close()
@@ -471,10 +476,7 @@ object PdfExporter {
 
     private fun drawHighlights(
         cs: PDPageContentStream,
-        highlights: List<PdfUserHighlight>,
-        pageWidth: Float,
-        pageHeight: Float,
-        lowerLeftY: Float
+        highlights: List<PdfUserHighlight>
     ) {
         val gs = PDExtendedGraphicsState()
         gs.blendMode = BlendMode.MULTIPLY
@@ -488,8 +490,8 @@ object PdfExporter {
             cs.setNonStrokingColor(r, g, b)
 
             for (rect in highlight.bounds) {
-                val x = rect.left
-                val y = lowerLeftY + pageHeight - rect.top
+                val x = minOf(rect.left, rect.right)
+                val y = minOf(rect.top, rect.bottom)
                 val w = kotlin.math.abs(rect.right - rect.left)
                 val h = kotlin.math.abs(rect.top - rect.bottom)
 
@@ -498,6 +500,7 @@ object PdfExporter {
             }
         }
 
+        // Reset graphics state
         val resetState = PDExtendedGraphicsState()
         resetState.blendMode = BlendMode.NORMAL
         resetState.nonStrokingAlphaConstant = 1.0f

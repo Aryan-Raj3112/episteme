@@ -411,3 +411,50 @@ internal fun preprocessTextForTts(rawText: String): ProcessedText {
     }
     return ProcessedText(cleanTextBuilder.toString().trim(), indexMap)
 }
+
+internal fun mergePdfRectsIntoLines(rects: List<RectF>): List<RectF> {
+    if (rects.isEmpty()) return emptyList()
+
+    val normalized = rects.map { r ->
+        floatArrayOf(
+            minOf(r.left, r.right),
+            minOf(r.top, r.bottom),
+            maxOf(r.left, r.right),
+            maxOf(r.top, r.bottom)
+        )
+    }
+
+    val sorted = normalized.sortedWith(compareBy({ -it[3] }, { it[0] }))
+
+    val merged = mutableListOf<FloatArray>()
+    var current: FloatArray? = null
+
+    for (r in sorted) {
+        if (current == null) {
+            current = r.clone()
+        } else {
+            val cMinY = current[1]
+            val cMaxY = current[3]
+            val rMinY = r[1]
+            val rMaxY = r[3]
+
+            val overlapHeight = minOf(cMaxY, rMaxY) - maxOf(cMinY, rMinY)
+            val minHeight = minOf(cMaxY - cMinY, rMaxY - rMinY)
+
+            if (overlapHeight > 0 && overlapHeight >= minHeight * 0.1f) {
+                current[0] = minOf(current[0], r[0])
+                current[1] = minOf(current[1], r[1])
+                current[2] = maxOf(current[2], r[2])
+                current[3] = maxOf(current[3], r[3])
+            } else {
+                merged.add(current)
+                current = r.clone()
+            }
+        }
+    }
+    current?.let { merged.add(it) }
+
+    return merged.map { m ->
+        RectF(m[0], m[3], m[2], m[1])
+    }
+}

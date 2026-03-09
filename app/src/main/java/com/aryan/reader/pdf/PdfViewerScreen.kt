@@ -1185,7 +1185,7 @@ fun PdfViewerScreen(
 
     val onHighlightAdd = remember(pdfDocument, currentBookId) {
         { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor ->
-            Timber.tag("PdfHighlightDebug").d("onHighlightAdd triggered: pageIndex=$pageIndex, range=$range, color=$color, textLength=${text.length}")
+            Timber.tag("PdfExportDebug").i("onHighlightAdd: Adding persistent highlight. Page: $pageIndex, Text: ${text.take(20)}...")
             coroutineScope.launch {
                 val doc = pdfDocument
                 if (doc == null) {
@@ -1219,33 +1219,19 @@ fun PdfViewerScreen(
                                 val rects = textPage.textPageGetRectsForRanges(intArrayOf(newStart, newEnd - newStart))
 
                                 val rawPdfRects = rects?.map { r -> r.rect } ?: emptyList()
+                                val mergedPdfRects = mergePdfRectsIntoLines(rawPdfRects)
 
                                 val newHighlight = PdfUserHighlight(
                                     pageIndex = pageIndex,
-                                    bounds = rawPdfRects,
+                                    bounds = mergedPdfRects,
                                     color = color,
                                     text = fullText,
                                     range = Pair(newStart, newEnd)
                                 )
 
-                                val pageWidth = page.getPageWidthPoint()
-                                val pageHeight = page.getPageHeightPoint()
-
-                                val normalizedRects = rects?.map { r ->
-                                    val rf = r.rect
-                                    RectF(
-                                        rf.left / pageWidth,
-                                        rf.top / pageHeight,
-                                        rf.right / pageWidth,
-                                        rf.bottom / pageHeight
-                                    )
-                                } ?: emptyList()
-
-                                Timber.tag("PdfHighlightDebug").d("Created PdfUserHighlight with ${normalizedRects.size} rects.")
-
                                 withContext(Dispatchers.Main) {
                                     userHighlights.add(newHighlight)
-                                    Timber.tag("PdfHighlightDebug").d("Added highlight to userHighlights state. Total highlights: ${userHighlights.size}")
+                                    Timber.tag("PdfExportDebug").d("userHighlights now contains ${userHighlights.size} items.")
                                 }
                             }
                         }
@@ -1902,11 +1888,9 @@ fun PdfViewerScreen(
                         coroutineScope.launch {
                             val currentRichTextLayouts = richTextController?.pageLayouts
 
-                            Timber.tag("PdfExportDebug").i("*** EXPORT TRIGGERED FROM VIEWER ***")
-                            if (currentRichTextLayouts != null) {
-                                Timber.tag("PdfExportDebug").i(
-                                    "Passing ${currentRichTextLayouts.size} rich text pages."
-                                )
+                            Timber.tag("PdfExportDebug").i("SAVE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                            if (userHighlights.isEmpty()) {
+                                Timber.tag("PdfExportDebug").w("Warning: userHighlights is EMPTY during save.")
                             }
 
                             viewModel.savePdfWithAnnotations(
@@ -1919,8 +1903,6 @@ fun PdfViewerScreen(
                                 bookId = currentBookId!!
                             )
                         }
-                    } else {
-                        Timber.tag("PdfExportDebug").e("Cannot export: currentBookId is null")
                     }
                 }
 
@@ -6225,6 +6207,7 @@ fun PdfViewerScreen(
                                 onClick = {
                                     showShareDialog = false
                                     isShareLoading = true
+                                    Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
                                     val filename = getSuggestedFilename(
                                         originalFileName, isAnnotated = true
                                     )
