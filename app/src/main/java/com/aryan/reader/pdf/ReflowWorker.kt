@@ -20,29 +20,49 @@ class ReflowWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val bookId = inputData.getString(KEY_BOOK_ID) ?: return@withContext Result.failure()
-        val pdfUriString = inputData.getString(KEY_PDF_URI) ?: return@withContext Result.failure()
+        val workStartTime = System.currentTimeMillis()
+        Timber.tag("PdfToMdPerf").d("=== ReflowWorker START ===")
+
+        val bookId = inputData.getString(KEY_BOOK_ID) ?: run {
+            Timber.tag("PdfToMdPerf").e("FAILURE: KEY_BOOK_ID is null")
+            return@withContext Result.failure()
+        }
+
+        val pdfUriString = inputData.getString(KEY_PDF_URI) ?: run {
+            Timber.tag("PdfToMdPerf").e("FAILURE: KEY_PDF_URI is null | bookId=$bookId")
+            return@withContext Result.failure()
+        }
         val originalTitle = inputData.getString(KEY_ORIGINAL_TITLE) ?: "Document"
         val reflowBookId = "${bookId}_reflow"
+
+        Timber.tag("PdfToMdPerf").d("Input data | bookId=$bookId | reflowBookId=$reflowBookId | pdfUri=$pdfUriString | originalTitle=$originalTitle")
 
         val destFile = File(applicationContext.filesDir, "${bookId}_reflow.md")
         val pdfUri = pdfUriString.toUri()
 
-        Timber.tag("ReflowWorker").d("Starting background reflow for $originalTitle.")
+        Timber.tag("PdfToMdPerf").d("Dest file path: ${destFile.absolutePath} | exists=${destFile.exists()}")
+        Timber.tag("PdfToMdPerf").d("Starting PdfToMarkdownGenerator.generateMarkdownFile...")
+        val genStartTime = System.currentTimeMillis()
 
-        // Delegate entire process to Generator (it now handles the loop and progress)
         val success = PdfToMarkdownGenerator.generateMarkdownFile(
             applicationContext,
             pdfUri,
             destFile,
-            startPage = 1 // Always start from beginning for full regeneration
+            startPage = 1
         ) { progress ->
-            // Report progress
+            if ((progress * 10).toInt() % 1 == 0) {
+                Timber.tag("PdfToMdPerf").d("Progress: ${(progress * 100).toInt()}%")
+            }
             setProgressAsync(workDataOf(KEY_PROGRESS to progress))
         }
 
+        Timber.tag("PdfToMdPerf").d("generateMarkdownFile completed | success=$success | time=${System.currentTimeMillis() - genStartTime}ms")
+
         if (success && destFile.exists()) {
-            Timber.tag("ReflowWorker").d("Reflow complete. Importing to database.")
+            val fileSizeKB = destFile.length() / 1024
+            Timber.tag("PdfToMdPerf").d("Reflow SUCCESS | outputFileSize=${fileSizeKB}KB")
+            Timber.tag("PdfToMdPerf").d("Starting database import...")
+            val dbStartTime = System.currentTimeMillis()
 
             val repo = RecentFilesRepository(applicationContext)
 
@@ -63,13 +83,16 @@ class ReflowWorker(
             )
 
             repo.addRecentFile(newItem)
+            Timber.tag("PdfToMdPerf").d("Database import completed in ${System.currentTimeMillis() - dbStartTime}ms")
 
-            // 100% Progress
             setProgressAsync(workDataOf(KEY_PROGRESS to 1.0f))
 
+            val totalTime = System.currentTimeMillis() - workStartTime
+            Timber.tag("PdfToMdPerf").d("=== ReflowWorker SUCCESS === | totalTime=${totalTime}ms | totalTimeSec=${totalTime / 1000}s")
             return@withContext Result.success()
         } else {
-            Timber.e("Reflow failed or was incomplete.")
+            val totalTime = System.currentTimeMillis() - workStartTime
+            Timber.tag("PdfToMdPerf").e("=== ReflowWorker FAILURE === | success=$success | fileExists=${destFile.exists()} | totalTime=${totalTime}ms")
             return@withContext Result.failure()
         }
     }

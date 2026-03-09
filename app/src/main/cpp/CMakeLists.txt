@@ -65,12 +65,12 @@ set_target_properties(mobi PROPERTIES C_VISIBILITY_PRESET default)
 # FINAL NATIVE LIBRARY FOR THE APP
 # ===================================================================
 # 6. Define our final JNI wrapper library.
-#    This single .so file will be loaded by the Android app.
 add_library(
         native-lib
         SHARED
         Woff2Converter.cpp
-        mobi_jni_bridge.c  # The placeholder file you created
+        mobi_jni_bridge.c
+        pdfium_bridge.cpp  # Add this new file
 )
 
 # 7. Tell our library where to find all necessary header files.
@@ -88,8 +88,9 @@ find_library(z-lib z)
 target_link_libraries(
         native-lib
         PRIVATE
-        woff2dec      # From woff2
-        mobi          # From libmobi
+        woff2dec
+        mobi
         ${log-lib}
-        ${z-lib}      # libmobi requires zlib
+        ${z-lib}
+        dl
 )

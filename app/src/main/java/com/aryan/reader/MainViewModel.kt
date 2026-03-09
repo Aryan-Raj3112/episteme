@@ -2359,6 +2359,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     fun generateAndImportReflowFile(pdfBookId: String, pdfUri: Uri, originalTitle: String) {
+        Timber.tag("PdfToMdPerf").d("generateAndImportReflowFile START | pdfBookId=$pdfBookId | pdfUri=$pdfUri")
         val reflowBookId = "${pdfBookId}_reflow"
 
         viewModelScope.launch {
@@ -2388,8 +2389,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ExistingWorkPolicy.KEEP,
                 request
             )
-
-            showBanner("Text view generation started in background.")
         }
     }
 
