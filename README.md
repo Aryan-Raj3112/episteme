@@ -80,3 +80,11 @@ This project is made possible by the Android open-source ecosystem:
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See the [LICENSE](LICENSE) file for details.
+
+## Support
+
+If you find Episteme Reader useful and want to support its development, consider sponsoring.
+
+<a href="https://github.com/sponsors/Aryan-Raj3112">
+  <img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-%23db61a2?logo=github" alt="Sponsor on GitHub"/>
+</a>

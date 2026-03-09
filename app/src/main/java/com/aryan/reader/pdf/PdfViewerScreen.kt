@@ -94,6 +94,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -1316,6 +1317,18 @@ fun PdfViewerScreen(
                     textBoxes.addAll(shiftedBoxes)
                 }
 
+                val shiftedHighlights = userHighlights.map { highlight ->
+                    if (highlight.pageIndex >= targetIndex) {
+                        highlight.copy(pageIndex = highlight.pageIndex + 1)
+                    } else {
+                        highlight
+                    }
+                }
+                if (shiftedHighlights != userHighlights.toList()) {
+                    userHighlights.clear()
+                    userHighlights.addAll(shiftedHighlights)
+                }
+
                 val tempNewPage = VirtualPage.BlankPage(generateShortId(), refWidth, refHeight, wasManuallyAdded = true)
                 val optimisticPages = virtualPages.toMutableList()
                 optimisticPages.add(targetIndex, tempNewPage)
@@ -1397,7 +1410,6 @@ fun PdfViewerScreen(
             if (currentBookId != null && currentPage in virtualPages.indices) {
                 Timber.tag("RichTextMigration").i("DELETE: User requested deletion of page at index $currentPage")
 
-                // Update text boxes: remove those on current page, shift those after
                 val boxesToKeep = textBoxes.filter { it.pageIndex != currentPage }
                 val shiftedBoxes = boxesToKeep.map { box ->
                     if (box.pageIndex > currentPage) {
@@ -1408,6 +1420,17 @@ fun PdfViewerScreen(
                 }
                 textBoxes.clear()
                 textBoxes.addAll(shiftedBoxes)
+
+                val highlightsToKeep = userHighlights.filter { it.pageIndex != currentPage }
+                val shiftedHighlights = highlightsToKeep.map { highlight ->
+                    if (highlight.pageIndex > currentPage) {
+                        highlight.copy(pageIndex = highlight.pageIndex - 1)
+                    } else {
+                        highlight
+                    }
+                }
+                userHighlights.clear()
+                userHighlights.addAll(shiftedHighlights)
 
                 val objectList = bookmarks.map { bookmark ->
                     JSONObject().apply {
@@ -1584,7 +1607,8 @@ fun PdfViewerScreen(
                 currentLastIndex > highestRequiredTextPageIndex &&
                 !hasTextOnPage(currentLastIndex) &&
                 allAnnotations[currentLastIndex].isNullOrEmpty() &&
-                textBoxes.none { it.pageIndex == currentLastIndex } // Check for text boxes
+                textBoxes.none { it.pageIndex == currentLastIndex } &&
+                userHighlights.none { it.pageIndex == currentLastIndex }
             ) {
                 Timber.tag("RichTextFlow").i("Auto-pruning empty page at index $currentLastIndex.")
                 pageRemoved = true
@@ -3152,7 +3176,7 @@ fun PdfViewerScreen(
     ModalNavigationDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
-                val drawerPagerState = rememberPagerState(pageCount = { 2 })
+                val drawerPagerState = rememberPagerState(pageCount = { 3 })
                 val drawerScope = rememberCoroutineScope()
 
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -3171,6 +3195,16 @@ fun PdfViewerScreen(
                             },
                             text = { Text("Bookmarks") },
                             modifier = Modifier.testTag("BookmarksTab")
+                        )
+                        Tab(
+                            selected = drawerPagerState.currentPage == 2,
+                            onClick = {
+                                drawerScope.launch {
+                                    drawerPagerState.animateScrollToPage(2)
+                                }
+                            },
+                            text = { Text("Highlights") },
+                            modifier = Modifier.testTag("HighlightsTab")
                         )
                     }
 
@@ -3404,6 +3438,101 @@ fun PdfViewerScreen(
                                                     showDeleteConfirmDialogFor = null
                                                 }) { Text("Cancel") }
                                         })
+                                    }
+                                }
+                            }
+                            2 -> { // Highlights Page
+                                if (userHighlights.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "You haven't added any highlights yet.",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else {
+                                    var showDeleteConfirmDialogFor by remember {
+                                        mutableStateOf<PdfUserHighlight?>(null)
+                                    }
+                                    val sortedHighlights = remember(userHighlights.toList()) {
+                                        userHighlights.sortedBy { it.pageIndex }
+                                    }
+
+                                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                        itemsIndexed(
+                                            items = sortedHighlights,
+                                            key = { _, highlight -> highlight.id }
+                                        ) { _, highlight ->
+                                            ListItem(
+                                                headlineContent = {
+                                                    Text(
+                                                        text = highlight.text.ifBlank { "Highlighted section" },
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier
+                                                            .background(
+                                                                color = highlight.color.color.copy(alpha = 0.3f),
+                                                                shape = RoundedCornerShape(4.dp)
+                                                            )
+                                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                },
+                                                supportingContent = {
+                                                    Text(
+                                                        "Page ${highlight.pageIndex + 1}",
+                                                        style = MaterialTheme.typography.bodySmall
+                                                    )
+                                                },
+                                                trailingContent = {
+                                                    IconButton(
+                                                        onClick = { showDeleteConfirmDialogFor = highlight }
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = "Delete highlight",
+                                                            tint = MaterialTheme.colorScheme.error
+                                                        )
+                                                    }
+                                                },
+                                                modifier = Modifier.clickable {
+                                                    coroutineScope.launch {
+                                                        drawerState.close()
+                                                        if (displayMode == DisplayMode.PAGINATION) {
+                                                            pagerState.scrollToPage(highlight.pageIndex)
+                                                        } else {
+                                                            verticalReaderState.scrollToPage(highlight.pageIndex)
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                            HorizontalDivider()
+                                        }
+                                    }
+
+                                    showDeleteConfirmDialogFor?.let { highlightToDelete ->
+                                        AlertDialog(
+                                            onDismissRequest = { showDeleteConfirmDialogFor = null },
+                                            title = { Text("Delete Highlight?") },
+                                            text = { Text("Are you sure you want to permanently delete this highlight?") },
+                                            confirmButton = {
+                                                TextButton(
+                                                    onClick = {
+                                                        userHighlights.removeAll { it.id == highlightToDelete.id }
+                                                        showDeleteConfirmDialogFor = null
+                                                    }
+                                                ) { Text("Delete") }
+                                            },
+                                            dismissButton = {
+                                                TextButton(
+                                                    onClick = { showDeleteConfirmDialogFor = null }
+                                                ) { Text("Cancel") }
+                                            }
+                                        )
                                     }
                                 }
                             }

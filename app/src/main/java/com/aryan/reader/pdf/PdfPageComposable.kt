@@ -2292,14 +2292,23 @@ internal fun PdfPageComposable(
                     val tapInContentCoords = screenToContentCoordinates(tapOffset)
                     val tapXInBitmap = tapInContentCoords.x
                     val tapYInBitmap = tapInContentCoords.y
+
+                    val hitTolerance = with(density) { 16.dp.toPx() } / inputScale
+
                     Timber.d(
-                        "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})"
+                        "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()}) with tolerance $hitTolerance"
                     )
 
                     var tappedRect: Rect? = null
                     val hitHighlightPair = userHighlightScreenRects.findLast { pair ->
                         val hit = pair.second.find { r ->
-                            r.contains(tapXInBitmap.toInt(), tapYInBitmap.toInt())
+                            val hitLeft = r.left - hitTolerance
+                            val hitTop = r.top - hitTolerance
+                            val hitRight = r.right + hitTolerance
+                            val hitBottom = r.bottom + hitTolerance
+
+                            tapXInBitmap in hitLeft..hitRight &&
+                                    tapYInBitmap >= hitTop && tapYInBitmap <= hitBottom
                         }
                         if (hit != null) {
                             tappedRect = hit
