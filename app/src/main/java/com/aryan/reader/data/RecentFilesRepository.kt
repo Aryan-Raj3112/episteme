@@ -52,6 +52,7 @@ class RecentFilesRepository(private val context: Context) {
     private val pdfRichTextRepository = PdfRichTextRepository(context)
     private val pageLayoutRepository = PageLayoutRepository(context)
     private val pdfTextBoxRepository = PdfTextBoxRepository(context)
+    private val pdfHighlightRepository = com.aryan.reader.pdf.data.PdfHighlightRepository(context)
 
     init {
         if (!coverCacheDir.exists()) {
@@ -87,6 +88,7 @@ class RecentFilesRepository(private val context: Context) {
             coverCacheDir.deleteRecursively()
         }
         coverCacheDir.mkdirs()
+        pdfHighlightRepository.clearAll()
         Timber.d("Cleared all local book data and cover cache.")
     }
 
@@ -182,15 +184,17 @@ class RecentFilesRepository(private val context: Context) {
         val richTextFile = pdfRichTextRepository.getFileForSync(bookId)
         val layoutFile = pageLayoutRepository.getLayoutFile(bookId)
         val textBoxFile = pdfTextBoxRepository.getFileForSync(bookId)
+        val highlightFile = pdfHighlightRepository.getFileForSync(bookId)
 
         val hasInk = inkFile?.exists() == true
         val hasRichText = richTextFile.exists()
         val hasLayout = layoutFile.exists()
         val hasTextBoxes = textBoxFile.exists()
+        val hasHighlights = highlightFile.exists()
 
-        Timber.tag("FolderAnnotationSync").d("File checks -> hasInk: $hasInk, hasRichText: $hasRichText, hasLayout: $hasLayout, hasTextBoxes: $hasTextBoxes")
+        Timber.tag("FolderAnnotationSync").d("File checks -> hasInk: $hasInk, hasRichText: $hasRichText, hasLayout: $hasLayout, hasTextBoxes: $hasTextBoxes, hasHighlights: $hasHighlights")
 
-        if (!hasInk && !hasRichText && !hasLayout && !hasTextBoxes) {
+        if (!hasInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
             Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
             return@withContext
         }
@@ -214,13 +218,15 @@ class RecentFilesRepository(private val context: Context) {
         if (hasRichText) putJsonSafe("text", richTextFile)
         if (hasLayout) putJsonSafe("layout", layoutFile)
         if (hasTextBoxes) putJsonSafe("textBoxes", textBoxFile)
+        if (hasHighlights) putJsonSafe("highlights", highlightFile)
 
         val tsInk = if(hasInk) inkFile.lastModified() else 0L
         val tsText = if(hasRichText) richTextFile.lastModified() else 0L
         val tsLayout = if(hasLayout) layoutFile.lastModified() else 0L
         val tsBox = if(hasTextBoxes) textBoxFile.lastModified() else 0L
+        val tsHighlight = if(hasHighlights) highlightFile.lastModified() else 0L
 
-        val maxFileTs = maxOf(tsInk, tsText, tsLayout, tsBox)
+        val maxFileTs = maxOf(tsInk, tsText, tsLayout, tsBox, tsHighlight)
         val finalTs = maxOf(maxFileTs, System.currentTimeMillis())
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
@@ -263,6 +269,9 @@ class RecentFilesRepository(private val context: Context) {
             // 4. Text Boxes
             writeSafe("textBoxes", pdfTextBoxRepository.getFileForSync(bookId))
 
+            // 5. Highlights
+            writeSafe("highlights", pdfHighlightRepository.getFileForSync(bookId))
+
             Timber.tag("FolderAnnotationSync").i("Successfully imported annotation bundle for $bookId from folder.")
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Failed to import annotation bundle for $bookId")
@@ -292,10 +301,6 @@ class RecentFilesRepository(private val context: Context) {
 
     suspend fun getFolderBooksWithoutCovers(): List<RecentFileItem> = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
-    }
-
-    suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean) = withContext(Dispatchers.IO) {
-        recentFileDao.updateReflowPreference(bookId, isPreferred)
     }
 
     suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {

@@ -69,10 +69,12 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PdfExporter
+import com.aryan.reader.pdf.PdfUserHighlight
 import com.aryan.reader.pdf.ReflowWorker
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
+import com.aryan.reader.pdf.data.PdfHighlightRepository
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
@@ -232,6 +234,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val pageLayoutRepository = PageLayoutRepository(appContext)
     private val pdfRichTextRepository = com.aryan.reader.pdf.PdfRichTextRepository(appContext)
     private val pdfTextBoxRepository = PdfTextBoxRepository(appContext)
+    private val pdfHighlightRepository = PdfHighlightRepository(appContext)
 
     data class PageModificationResult(
         val layout: List<VirtualPage>,
@@ -918,6 +921,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         annotations: Map<Int, List<PdfAnnotation>>,
         richTextPageLayouts: List<com.aryan.reader.pdf.PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
+        highlights: List<PdfUserHighlight>? = null,
         bookId: String
     ) {
         viewModelScope.launch {
@@ -978,6 +982,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         annotations: Map<Int, List<PdfAnnotation>>,
         richTextPageLayouts: List<com.aryan.reader.pdf.PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
+        highlights: List<PdfUserHighlight>? = null,
         includeAnnotations: Boolean,
         filename: String,
         bookId: String? = null
@@ -1068,18 +1073,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val deviceId = getInstallationId()
                 Timber.tag("AnnotationSync").d("Preparing to sync book: ${book.bookId}")
 
-                // --- CHANGED BLOCK START ---
-                // Gather files from all three repositories
                 val inkFile = pdfAnnotationRepository.getAnnotationFileForSync(book.bookId)
                 val richTextFile = pdfRichTextRepository.getFileForSync(book.bookId)
                 val layoutFile = pageLayoutRepository.getLayoutFile(book.bookId)
                 val textBoxFile = pdfTextBoxRepository.getFileForSync(book.bookId)
+                val highlightFile = pdfHighlightRepository.getFileForSync(book.bookId)
 
                 val hasInk = inkFile?.exists() == true
                 val hasRichText = richTextFile.exists()
                 val hasLayout = layoutFile.exists()
                 val hasTextBoxes = textBoxFile.exists()
-                val hasAnyData = hasInk || hasRichText || hasLayout || hasTextBoxes
+                val hasHighlights = highlightFile.exists()
+                val hasAnyData = hasInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
 
                 if (hasAnyData) {
                     if (googleDriveRepository.hasDrivePermissions(appContext)) {
@@ -1123,6 +1128,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     bundleJson.put("textBoxes", JSONArray(tbContent))
                                 } catch (e: Exception) {
                                     Timber.e(e, "Failed to parse local text box file")
+                                }
+                            }
+
+                            if (hasHighlights) {
+                                try {
+                                    val hlContent = highlightFile.readText()
+                                    bundleJson.put("highlights", JSONArray(hlContent))
+                                } catch (e: Exception) {
+                                    Timber.e(e, "Failed to parse local highlights file")
                                 }
                             }
 
@@ -2091,11 +2105,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val richTextFile = pdfRichTextRepository.getFileForSync(bookId)
                 val layoutFile = pageLayoutRepository.getLayoutFile(bookId)
                 val textBoxFile = pdfTextBoxRepository.getFileForSync(bookId)
+                val highlightFile = pdfHighlightRepository.getFileForSync(bookId)
 
-                // Ensure directories exist
                 inkFile.parentFile?.mkdirs()
                 richTextFile.parentFile?.mkdirs()
                 layoutFile.parentFile?.mkdirs()
+                highlightFile.parentFile?.mkdirs()
 
                 if (isBundle) {
                     val bundle = JSONObject(jsonString)
@@ -2127,6 +2142,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         textBoxFile.writeText(bundle.getJSONArray("textBoxes").toString())
                     } else {
                         if (textBoxFile.exists()) textBoxFile.delete()
+                    }
+
+                    // 5. Highlights
+                    if (bundle.has("highlights")) {
+                        highlightFile.writeText(bundle.getJSONArray("highlights").toString())
+                    } else {
+                        if (highlightFile.exists()) highlightFile.delete()
                     }
 
                     Timber.tag("AnnotationSync").d("Unpacked unified bundle.")

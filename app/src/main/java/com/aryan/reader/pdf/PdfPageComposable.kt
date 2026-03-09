@@ -4460,7 +4460,7 @@ private fun PdfPageRenderer(
                             staticData.targetHeight.toDp()
                         })) {
                         Text(
-                            text = "${selectionData.pageIndex + 1}\\$totalPages",
+                            text = "${selectionData.pageIndex + 1}/$totalPages",
                             color = pageNumColor.copy(alpha = 0.5f),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 12.sp, fontWeight = FontWeight.Bold

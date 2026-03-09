@@ -1014,6 +1014,7 @@ fun PdfViewerScreen(
     val pdfTextRepository = remember(context) { PdfTextRepository(context) }
     val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
     val textBoxRepository = remember(context) { PdfTextBoxRepository(context) }
+    val highlightRepository = remember(context) { com.aryan.reader.pdf.data.PdfHighlightRepository(context) }
 
     var allAnnotations by remember { mutableStateOf<Map<Int, List<PdfAnnotation>>>(emptyMap()) }
 
@@ -1862,6 +1863,10 @@ fun PdfViewerScreen(
             val loadedBoxes = textBoxRepository.loadTextBoxes(currentBookId!!)
             textBoxes.clear()
             textBoxes.addAll(loadedBoxes)
+
+            val loadedHighlights = highlightRepository.loadHighlights(currentBookId!!)
+            userHighlights.clear()
+            userHighlights.addAll(loadedHighlights)
         }
     }
 
@@ -1871,6 +1876,16 @@ fun PdfViewerScreen(
             withContext(Dispatchers.IO) {
                 Timber.d("Auto-saving text boxes locally for book $currentBookId")
                 textBoxRepository.saveTextBoxes(currentBookId!!, textBoxes.toList())
+            }
+        }
+    }
+
+    LaunchedEffect(userHighlights.toList()) {
+        if (currentBookId != null) {
+            delay(1000)
+            withContext(Dispatchers.IO) {
+                Timber.d("Auto-saving highlights locally for book $currentBookId")
+                highlightRepository.saveHighlights(currentBookId!!, userHighlights.toList())
             }
         }
     }
@@ -1900,6 +1915,7 @@ fun PdfViewerScreen(
                                 annotations = allAnnotations,
                                 richTextPageLayouts = currentRichTextLayouts,
                                 textBoxes = textBoxes.toList(),
+                                highlights = userHighlights.toList(),
                                 bookId = currentBookId!!
                             )
                         }
@@ -1979,6 +1995,7 @@ fun PdfViewerScreen(
                         if (currentBookId != null) {
                             annotationRepository.saveAnnotations(currentBookId!!, allAnnotations)
                             textBoxRepository.saveTextBoxes(currentBookId!!, textBoxes.toList())
+                            highlightRepository.saveHighlights(currentBookId!!, userHighlights.toList())
                         }
 
                         val objectList = bookmarks.map { bookmark ->
@@ -6220,6 +6237,7 @@ fun PdfViewerScreen(
                                             annotations = allAnnotations,
                                             richTextPageLayouts = currentRichTextLayouts,
                                             textBoxes = textBoxes.toList(),
+                                            highlights = userHighlights.toList(),
                                             includeAnnotations = true,
                                             filename = filename,
                                             bookId = currentBookId

@@ -19,12 +19,15 @@
  */
 package com.aryan.reader.pdf.data
 
+import android.graphics.RectF
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.pdf.AnnotationType
 import com.aryan.reader.pdf.InkType
+import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.pdf.PdfPoint
+import com.aryan.reader.pdf.PdfUserHighlight
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -199,6 +202,69 @@ object TextBoxSerializer {
                         isStrikeThrough = obj.optBoolean("isStrikeThrough", false),
                         fontPath = obj.optString("fontPath", null).takeIf { !it.isNullOrBlank() },
                         fontName = obj.optString("fontName", null).takeIf { !it.isNullOrBlank() }
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return result
+    }
+}
+
+object HighlightSerializer {
+    fun toJson(highlights: List<PdfUserHighlight>): String {
+        val rootArray = JSONArray()
+        highlights.forEach { h ->
+            val obj = JSONObject()
+            obj.put("id", h.id)
+            obj.put("pageIndex", h.pageIndex)
+            obj.put("color", h.color.name)
+            obj.put("text", h.text)
+            obj.put("rangeStart", h.range.first)
+            obj.put("rangeEnd", h.range.second)
+
+            val boundsArray = JSONArray()
+            h.bounds.forEach { r ->
+                val rObj = JSONObject()
+                rObj.put("left", r.left.toDouble())
+                rObj.put("top", r.top.toDouble())
+                rObj.put("right", r.right.toDouble())
+                rObj.put("bottom", r.bottom.toDouble())
+                boundsArray.put(rObj)
+            }
+            obj.put("bounds", boundsArray)
+            rootArray.put(obj)
+        }
+        return rootArray.toString()
+    }
+
+    fun fromJson(json: String): List<PdfUserHighlight> {
+        val result = mutableListOf<PdfUserHighlight>()
+        if (json.isBlank()) return result
+        try {
+            val rootArray = JSONArray(json)
+            for (i in 0 until rootArray.length()) {
+                val obj = rootArray.getJSONObject(i)
+                val boundsArray = obj.getJSONArray("bounds")
+                val bounds = mutableListOf<RectF>()
+                for (j in 0 until boundsArray.length()) {
+                    val rObj = boundsArray.getJSONObject(j)
+                    bounds.add(RectF(
+                        rObj.getDouble("left").toFloat(),
+                        rObj.getDouble("top").toFloat(),
+                        rObj.getDouble("right").toFloat(),
+                        rObj.getDouble("bottom").toFloat()
+                    ))
+                }
+                result.add(
+                    PdfUserHighlight(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        pageIndex = obj.getInt("pageIndex"),
+                        bounds = bounds,
+                        color = try { PdfHighlightColor.valueOf(obj.getString("color")) } catch(_: Exception) { PdfHighlightColor.YELLOW },
+                        text = obj.optString("text", ""),
+                        range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0))
                     )
                 )
             }
