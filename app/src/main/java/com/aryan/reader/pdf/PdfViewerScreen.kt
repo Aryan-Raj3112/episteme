@@ -18,7 +18,7 @@
  * mail: epistemereader@gmail.com
  */
 // PdfViewerScreen.kt
-@file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
+@file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH", "Unused", "UnusedVariable")
 
 package com.aryan.reader.pdf
 
@@ -27,6 +27,9 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import android.graphics.Bitmap
 import kotlin.math.max
 import android.graphics.RectF
@@ -4286,6 +4289,10 @@ fun PdfViewerScreen(
                     var leftPulseTrigger by remember { mutableLongStateOf(0L) }
                     var rightPulseTrigger by remember { mutableLongStateOf(0L) }
 
+                    // --- ADD THESE STATES ---
+                    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
+                    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
+
                     val leftPulseAlpha by animateFloatAsState(
                         targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
                         animationSpec = tween(150), label = "leftPulse"
@@ -4302,6 +4309,7 @@ fun PdfViewerScreen(
 
                         val scrollAmount = boxMaxHeightFloat * 0.75f
 
+                        // Left Region
                         Box(
                             modifier = regionWidth
                                 .then(regionHeight)
@@ -4310,22 +4318,65 @@ fun PdfViewerScreen(
                                 .padding(start = 8.dp)
                                 .background(Color.White.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
                                 .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        Timber.tag("MusicianMode").d("Left region tapped")
-                                        leftPulseTrigger = System.currentTimeMillis()
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        var isLongPress = false
+                                        val job = coroutineScope.launch {
+                                            val startTime = System.currentTimeMillis()
+                                            while (isActive) {
+                                                val elapsed = System.currentTimeMillis() - startTime
+                                                if (elapsed >= 1000) {
+                                                    leftHoldProgress = 0f
+                                                    isLongPress = true
+                                                    leftPulseTrigger = System.currentTimeMillis()
+                                                    triggerAutoScrollTempPause(1000L)
 
-                                        triggerAutoScrollTempPause(600L)
+                                                    coroutineScope.launch {
+                                                        verticalReaderState.scrollToPage(0)
+                                                    }
+                                                    break
+                                                }
+                                                leftHoldProgress = elapsed / 1000f
+                                                delay(16)
+                                            }
+                                        }
 
-                                        coroutineScope.launch {
-                                            verticalReaderState.scrollBy(-scrollAmount)
+                                        val up = waitForUpOrCancellation()
+                                        job.cancel()
+                                        leftHoldProgress = 0f
+
+                                        if (!isLongPress && up != null) {
+                                            up.consume()
+                                            Timber.tag("MusicianMode").d("Left region tapped")
+                                            leftPulseTrigger = System.currentTimeMillis()
+                                            triggerAutoScrollTempPause(600L)
+                                            coroutineScope.launch {
+                                                verticalReaderState.scrollBy(-scrollAmount)
+                                            }
                                         }
                                     }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (leftHoldProgress > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { leftHoldProgress },
+                                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = Color.Transparent,
+                                    strokeWidth = 4.dp
                                 )
-                        )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowUpward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
 
+                        // Right Region
                         Box(
                             modifier = regionWidth
                                 .then(regionHeight)
@@ -4334,22 +4385,63 @@ fun PdfViewerScreen(
                                 .padding(end = 8.dp)
                                 .background(Color.White.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
                                 .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        Timber.tag("MusicianMode").d("Right region tapped")
-                                        rightPulseTrigger = System.currentTimeMillis() // Trigger flash
+                                .pointerInput(totalPages) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        var isLongPress = false
+                                        val job = coroutineScope.launch {
+                                            val startTime = System.currentTimeMillis()
+                                            while (isActive) {
+                                                val elapsed = System.currentTimeMillis() - startTime
+                                                if (elapsed >= 1000) {
+                                                    rightHoldProgress = 0f
+                                                    isLongPress = true
+                                                    rightPulseTrigger = System.currentTimeMillis()
+                                                    triggerAutoScrollTempPause(1000L)
 
-                                        // Pause loop to allow smooth scroll
-                                        triggerAutoScrollTempPause(600L)
+                                                    coroutineScope.launch {
+                                                        verticalReaderState.scrollToPage(totalPages - 1)
+                                                    }
+                                                    break
+                                                }
+                                                rightHoldProgress = elapsed / 1000f
+                                                delay(16)
+                                            }
+                                        }
 
-                                        coroutineScope.launch {
-                                            verticalReaderState.scrollBy(scrollAmount)
+                                        val up = waitForUpOrCancellation()
+                                        job.cancel()
+                                        rightHoldProgress = 0f
+
+                                        if (!isLongPress && up != null) {
+                                            up.consume()
+                                            Timber.tag("MusicianMode").d("Right region tapped")
+                                            rightPulseTrigger = System.currentTimeMillis()
+                                            triggerAutoScrollTempPause(600L)
+                                            coroutineScope.launch {
+                                                verticalReaderState.scrollBy(scrollAmount)
+                                            }
                                         }
                                     }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (rightHoldProgress > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { rightHoldProgress },
+                                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = Color.Transparent,
+                                    strokeWidth = 4.dp
                                 )
-                        )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDownward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                 }
 

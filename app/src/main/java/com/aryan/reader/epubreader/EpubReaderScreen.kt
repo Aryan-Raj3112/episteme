@@ -18,7 +18,9 @@
  * mail: epistemereader@gmail.com
  */
 // EpubReaderScreen.kt
-@file:OptIn(ExperimentalSerializationApi::class) @file:Suppress("VariableNeverRead")
+@file:OptIn(ExperimentalSerializationApi::class) @file:Suppress("VariableNeverRead",
+    "UnusedVariable", "Unused"
+)
 
 package com.aryan.reader.epubreader
 
@@ -29,6 +31,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.media.AudioManager
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import android.net.Uri
 import android.os.Build
 import android.webkit.WebView
@@ -50,7 +55,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -65,6 +69,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
@@ -72,6 +77,8 @@ import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -112,6 +119,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -285,7 +293,7 @@ private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 
 private fun loadUseOnlineDict(context: Context): Boolean {
-    if (BuildConfig.FLAVOR == "oss") return false
+    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss") return false
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
 }
@@ -403,7 +411,6 @@ fun EpubReaderHost(
 
     var showJustifyWarningDialog by remember { mutableStateOf(false) }
     var isNavigatingByToc by remember { mutableStateOf(false) }
-    var currentTextAlign by remember { mutableStateOf(loadTextAlign(context)) }
 
     var chunkTargetOverride by remember { mutableStateOf<Int?>(null) }
 
@@ -560,7 +567,7 @@ fun EpubReaderHost(
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
     var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
 
-    val onDictionaryLookup = { word: String ->
+    @Suppress("KotlinConstantConditions") val onDictionaryLookup = { word: String ->
         val isOss = BuildConfig.FLAVOR == "oss"
         val effectiveUseOnline = !isOss && useOnlineDictionary
 
@@ -759,13 +766,17 @@ fun EpubReaderHost(
         }
     }
 
-    var currentFontSizeEm by remember { mutableFloatStateOf(loadFontSize(context)) }
-    var currentLineHeight by remember { mutableFloatStateOf(loadLineHeight(context)) }
     var showFormatAdjustmentBars by remember { mutableStateOf(false) }
 
-    val (initialFont, initialCustomPath) = remember { loadFontSelection(context) }
-    var currentFontFamily by remember { mutableStateOf(initialFont) }
-    var currentCustomFontPath by remember { mutableStateOf(initialCustomPath) }
+    var isFormatLocal by remember { mutableStateOf(loadFormatIsLocal(context, bookId)) }
+    val initialFormatSettings = remember(isFormatLocal) { loadFormatSettings(context, bookId, isFormatLocal) }
+
+    var currentFontSizeEm by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.fontSize) }
+    var currentLineHeight by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.lineHeight) }
+    var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
+    var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
+    var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
+
     val activeFontFamily = remember(currentFontFamily, currentCustomFontPath) {
         getComposeFontFamily(
             font = currentFontFamily,
@@ -777,15 +788,16 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign) {
-        saveReaderSettings(
-            context,
-            currentFontSizeEm,
-            currentLineHeight,
-            currentFontFamily,
-            currentCustomFontPath,
-            currentTextAlign
-        )
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+        if (isFormatLocal) {
+            saveLocalReaderSettings(
+                context, bookId, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+            )
+        } else {
+            saveReaderSettings(
+                context, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+            )
+        }
     }
 
     LaunchedEffect(bannerMessage) {
@@ -2842,9 +2854,11 @@ fun EpubReaderHost(
                 if (isMusicianMode && isAutoScrollModeActive) {
                     val density = LocalDensity.current
 
-                    // States for visual feedback
                     var leftPulseTrigger by remember { mutableLongStateOf(0L) }
                     var rightPulseTrigger by remember { mutableLongStateOf(0L) }
+
+                    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
+                    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
 
                     val leftPulseAlpha by animateFloatAsState(
                         targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
@@ -2867,24 +2881,67 @@ fun EpubReaderHost(
                                 .align(Alignment.TopStart)
                                 .offset(y = topOffset)
                                 .padding(start = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp)) // Pulse
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
                                 .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        leftPulseTrigger = System.currentTimeMillis()
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        var isLongPress = false
+                                        val job = scope.launch {
+                                            val startTime = System.currentTimeMillis()
+                                            while (isActive) {
+                                                val elapsed = System.currentTimeMillis() - startTime
+                                                if (elapsed >= 1000) {
+                                                    leftHoldProgress = 0f
+                                                    isLongPress = true
+                                                    leftPulseTrigger = System.currentTimeMillis()
+                                                    triggerAutoScrollTempPause(1000L)
 
-                                        // Pause loop to allow smooth scroll
-                                        triggerAutoScrollTempPause(600L)
+                                                    scope.launch {
+                                                        webViewRefForTts?.evaluateJavascript(
+                                                            "window.scrollTo({ top: 0, behavior: 'auto' });", null
+                                                        )
+                                                    }
+                                                    break
+                                                }
+                                                leftHoldProgress = elapsed / 1000f
+                                                delay(16)
+                                            }
+                                        }
 
-                                        val amount = (currentClientHeightValue * 0.75f).toInt()
-                                        webViewRefForTts?.evaluateJavascript(
-                                            "window.scrollBy({ top: -${amount}, behavior: 'smooth' });", null
-                                        )
+                                        val up = waitForUpOrCancellation()
+                                        job.cancel()
+                                        leftHoldProgress = 0f
+
+                                        if (!isLongPress && up != null) {
+                                            up.consume()
+                                            leftPulseTrigger = System.currentTimeMillis()
+                                            triggerAutoScrollTempPause(600L)
+                                            val amount = (currentClientHeightValue * 0.75f).toInt()
+                                            webViewRefForTts?.evaluateJavascript(
+                                                "window.scrollBy({ top: -${amount}, behavior: 'smooth' });", null
+                                            )
+                                        }
                                     }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (leftHoldProgress > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { leftHoldProgress },
+                                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    trackColor = Color.Transparent,
+                                    strokeWidth = 4.dp
                                 )
-                        )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowUpward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
 
                         // Right Region
                         Box(
@@ -2893,23 +2950,67 @@ fun EpubReaderHost(
                                 .align(Alignment.TopEnd)
                                 .offset(y = topOffset)
                                 .padding(end = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp)) // Pulse
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
                                 .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        rightPulseTrigger = System.currentTimeMillis()
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        var isLongPress = false
+                                        val job = scope.launch {
+                                            val startTime = System.currentTimeMillis()
+                                            while (isActive) {
+                                                val elapsed = System.currentTimeMillis() - startTime
+                                                if (elapsed >= 1000) {
+                                                    rightHoldProgress = 0f
+                                                    isLongPress = true
+                                                    rightPulseTrigger = System.currentTimeMillis()
+                                                    triggerAutoScrollTempPause(1000L)
 
-                                        triggerAutoScrollTempPause(600L)
+                                                    scope.launch {
+                                                        webViewRefForTts?.evaluateJavascript(
+                                                            "window.scrollTo({ top: document.body.scrollHeight, behavior: 'auto' });", null
+                                                        )
+                                                    }
+                                                    break
+                                                }
+                                                rightHoldProgress = elapsed / 1000f
+                                                delay(16)
+                                            }
+                                        }
 
-                                        val amount = (currentClientHeightValue * 0.75f).toInt()
-                                        webViewRefForTts?.evaluateJavascript(
-                                            "window.scrollBy({ top: ${amount}, behavior: 'smooth' });", null
-                                        )
+                                        val up = waitForUpOrCancellation()
+                                        job.cancel()
+                                        rightHoldProgress = 0f
+
+                                        if (!isLongPress && up != null) {
+                                            up.consume()
+                                            rightPulseTrigger = System.currentTimeMillis()
+                                            triggerAutoScrollTempPause(600L)
+                                            val amount = (currentClientHeightValue * 0.75f).toInt()
+                                            webViewRefForTts?.evaluateJavascript(
+                                                "window.scrollBy({ top: ${amount}, behavior: 'smooth' });", null
+                                            )
+                                        }
                                     }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (rightHoldProgress > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { rightHoldProgress },
+                                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    trackColor = Color.Transparent,
+                                    strokeWidth = 4.dp
                                 )
-                        )
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDownward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -3006,11 +3107,7 @@ fun EpubReaderHost(
                     onStartAutoScroll = {
                         isAutoScrollModeActive = true
                         isAutoScrollPlaying = true
-                        showBars = if (isMusicianMode) {
-                            false
-                        } else {
-                            true
-                        }
+                        showBars = !isMusicianMode
                     },
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -3306,8 +3403,16 @@ fun EpubReaderHost(
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding)
+                    isLocalMode = isFormatLocal,
+                    onLocalModeToggle = {
+                        isFormatLocal = it
+                        saveFormatIsLocal(context, bookId, it)
+                    },
+                    onClose = { showFormatAdjustmentBars = false },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = bottomPadding + 16.dp)
+                        .padding(horizontal = 16.dp)
                 )
 
                 EpubReaderAiOverlays(
