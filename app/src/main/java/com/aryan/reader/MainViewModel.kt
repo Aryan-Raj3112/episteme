@@ -2392,6 +2392,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun clearImportedFileCache(bookId: String) {
+        try {
+            val cacheDir = File(appContext.cacheDir, "imported_file_$bookId")
+            if (cacheDir.exists()) {
+                val deleted = cacheDir.deleteRecursively()
+                Timber.tag("FileCleanup").d("Deleted imported cache for $bookId: $deleted")
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to clear imported file cache for $bookId")
+        }
+    }
+
     private fun openBook(
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null
     ) {
@@ -3250,6 +3262,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         idsToDeleteLocally.add(item.bookId)
                         pdfTextRepository.clearBookText(item.bookId)
 
+                        clearImportedFileCache(item.bookId)
+
                         if (item.uriString != null) {
                             try {
                                 val fileUri = item.uriString.toUri()
@@ -3313,6 +3327,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             for (item in managedBooks) {
                                 recentFilesRepository.markAsDeleted(listOf(item.bookId))
                                 pdfTextRepository.clearBookText(item.bookId)
+                                clearImportedFileCache(item.bookId)
 
                                 firestoreRepository.syncBookMetadata(
                                     currentUser.uid, item.toBookMetadata().copy(isDeleted = true), deviceId
@@ -3335,6 +3350,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             Timber.e(e, "Error during permanent deletion")
                             recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
                             managedBooks.forEach { item ->
+                                clearImportedFileCache(item.bookId)
                                 pdfTextRepository.clearBookText(item.bookId)
                             }
                             _internalState.update {
@@ -3343,7 +3359,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     } else {
                         recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
-                        managedBooks.forEach { item -> pdfTextRepository.clearBookText(item.bookId) }
+                        managedBooks.forEach { item ->
+                            clearImportedFileCache(item.bookId)
+                            pdfTextRepository.clearBookText(item.bookId)
+                        }
                     }
                 }
 

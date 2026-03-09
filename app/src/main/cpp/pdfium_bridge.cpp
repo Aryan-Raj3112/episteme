@@ -7,10 +7,12 @@
 
 typedef double (*FPDFText_GetFontSize_t)(void* text_page, int index);
 typedef int (*FPDFText_GetFontWeight_t)(void* text_page, int index);
+typedef int (*FPDFText_GetFontInfo_t)(void* text_page, int index, void* buffer, unsigned long buflen, int* flags);
 
 static void* pdfium_handle = nullptr;
 static FPDFText_GetFontSize_t get_font_size_func = nullptr;
 static FPDFText_GetFontWeight_t get_font_weight_func = nullptr;
+static FPDFText_GetFontInfo_t get_font_info_func = nullptr;
 
 static bool init_pdfium() {
     if (pdfium_handle) return true;
@@ -23,8 +25,9 @@ static bool init_pdfium() {
 
     get_font_size_func = (FPDFText_GetFontSize_t) dlsym(pdfium_handle, "FPDFText_GetFontSize");
     get_font_weight_func = (FPDFText_GetFontWeight_t) dlsym(pdfium_handle, "FPDFText_GetFontWeight");
+    get_font_info_func = (FPDFText_GetFontInfo_t) dlsym(pdfium_handle, "FPDFText_GetFontInfo");
 
-    return get_font_size_func != nullptr && get_font_weight_func != nullptr;
+    return get_font_size_func != nullptr && get_font_weight_func != nullptr && get_font_info_func != nullptr;
 }
 
 extern "C" JNIEXPORT jdouble JNICALL
@@ -62,6 +65,22 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontWeights(JNIEnv *env, jcl
     jint *fill = new jint[count];
     for(int i = 0; i < count; i++) {
         fill[i] = (jint)get_font_weight_func(reinterpret_cast<void*>(textPagePtr), i);
+    }
+    env->SetIntArrayRegion(result, 0, count, fill);
+    delete[] fill;
+    return result;
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontFlags(JNIEnv *env, jclass clazz, jlong textPagePtr, jint count) {
+    if (!init_pdfium() || !get_font_info_func || count <= 0) return nullptr;
+
+    jintArray result = env->NewIntArray(count);
+    jint *fill = new jint[count];
+    for(int i = 0; i < count; i++) {
+        int flags = 0;
+        get_font_info_func(reinterpret_cast<void*>(textPagePtr), i, nullptr, 0, &flags);
+        fill[i] = (jint)flags;
     }
     env->SetIntArrayRegion(result, 0, count, fill);
     delete[] fill;

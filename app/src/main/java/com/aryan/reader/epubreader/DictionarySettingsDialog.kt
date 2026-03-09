@@ -118,7 +118,7 @@ fun DictionarySettingsDialog(
                                         color = if (useOnlineDictionary) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "Contextual definitions powered by AI.",
+                                        text = "Definitions powered by AI.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (useOnlineDictionary) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                                     )

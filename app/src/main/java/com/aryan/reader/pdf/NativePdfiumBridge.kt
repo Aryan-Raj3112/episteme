@@ -10,4 +10,5 @@ object NativePdfiumBridge {
 
     @JvmStatic external fun getPageFontSizes(textPagePtr: Long, count: Int): FloatArray?
     @JvmStatic external fun getPageFontWeights(textPagePtr: Long, count: Int): IntArray?
+    @JvmStatic external fun getPageFontFlags(textPagePtr: Long, count: Int): IntArray?
 }
