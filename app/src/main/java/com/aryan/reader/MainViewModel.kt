@@ -2148,6 +2148,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         isRecent: Boolean,
         sourceFolderUri: String? = null
     ) = withContext(Dispatchers.IO) {
+        val addStart = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[$bookId] addFileToRecent START | type=$type | hasEpubBook=${epubBook != null}")
         val isNewBook = withContext(Dispatchers.IO) {
             recentFilesRepository.getFileByBookId(bookId) == null
         }
@@ -2165,6 +2167,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.MD || type == FileType.TXT || type == FileType.HTML)) {
             Timber.d("Parsing downloaded book for cover/metadata: $displayName")
+            Timber.tag("FileOpenPerf").d("[$bookId] addFileToRecent: Starting metadata parsing (no book provided)")
+            val parseStart = System.currentTimeMillis()
             try {
                 importMutex.withLock {
                     bookForMetadata = withContext(Dispatchers.IO) {
@@ -2188,13 +2192,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     singleFileImporter.importSingleFile(
                                         inputStream,
                                         type,
-                                        originalBookNameHint = displayName
+                                        originalBookNameHint = displayName,
+                                        bookId = bookId
                                     )
                                 }
                             }
                         }
                     }
                 }
+                Timber.tag("FileOpenPerf").d("[$bookId] addFileToRecent: Metadata parsing completed | elapsed=${System.currentTimeMillis() - parseStart}ms")
             } catch (e: Exception) {
                 Timber.e(
                     e,
@@ -2202,6 +2208,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
                 bookForMetadata = null
             }
+            Timber.tag("FileOpenPerf").d("[$bookId] addFileToRecent COMPLETE | totalElapsed=${System.currentTimeMillis() - addStart}ms")
         }
 
         val finalBookMetadata = bookForMetadata
@@ -2389,7 +2396,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private fun openBook(
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null
     ) {
-        Timber.d("Opening book type: $type for bookId: $bookId")
+        val openBookStartTime = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
+
+        try {
+            val cursor = appContext.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
+                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val size = if (sizeIndex != -1) it.getLong(sizeIndex) else -1L
+                    val name = if (nameIndex != -1) it.getString(nameIndex) else "unknown"
+                    Timber.tag("FileOpenPerf").d("[$bookId] File details | name=$name | size=${size} bytes | sizeMB=${size / (1024.0 * 1024)}")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.tag("FileOpenPerf").e(e, "[$bookId] Failed to get file details")
+        }
 
         viewModelScope.launch {
             _internalState.update {
@@ -2416,7 +2439,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     }
 
-                    Timber.d("openBook: Loading PDF. bookId=$bookId ...")
+                    Timber.tag("FileOpenPerf").d("[$bookId] Branch: PDF | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     _internalState.update {
                         it.copy(
                             selectedPdfUri = uri,
@@ -2442,6 +2465,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             recentFilesRepository.syncLocalMetadataToFolder(bookId)
                         }
                     }
+                    Timber.tag("FileOpenPerf").d("[$bookId] Branch: ${type.name} | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     val locator =
                         if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
                             Locator(
@@ -2486,6 +2510,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadSingleFile(uri: Uri, bookId: String, type: FileType, customDisplayName: String? = null) {
+        val loadStart = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile START | type=$type")
         viewModelScope.launch {
             if (!_internalState.value.isLoading) {
                 _internalState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -2497,19 +2523,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         if (inputStream == null) {
                             throw Exception("Could not open input stream for URI")
                         }
-                        // singleFileImporter is now actually an instance of SingleFileImporter (see below)
-                        // You will need to rename the class inside SingleFileImporter.kt
                         singleFileImporter.importSingleFile(
                             inputStream,
                             type,
                             originalBookNameHint = customDisplayName ?: getFileNameFromUri(
                                 uri,
                                 appContext
-                            ) ?: "unknown_doc"
+                            ) ?: "unknown_doc",
+                            bookId = bookId
                         )
                     }
                 }
 
+                Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile: importSingleFile completed | chapters=${epubBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
                 Timber.i("Import successful ($type). Title: ${epubBook.title}")
                 addFileToRecent(
                     uri,
@@ -2522,6 +2548,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }
+                Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile COMPLETE | totalElapsed=${System.currentTimeMillis() - loadStart}ms")
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing file ($type) for URI: $uri")
                 _internalState.update {
@@ -2620,6 +2647,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadEpub(uri: Uri, bookId: String, customDisplayName: String? = null) {
+        val loadStart = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[$bookId] loadEpub START")
         viewModelScope.launch {
             if (!_internalState.value.isLoading) {
                 _internalState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -2641,6 +2670,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
                 Timber.i("EPUB parsing successful. Title: ${epubBook.title}")
+                Timber.tag("FileOpenPerf").d("[$bookId] loadEpub: createEpubBook completed | chapters=${epubBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
                 addFileToRecent(
                     uri,
@@ -2653,6 +2683,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }
+                Timber.tag("FileOpenPerf").d("[$bookId] loadEpub COMPLETE | totalElapsed=${System.currentTimeMillis() - loadStart}ms")
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing EPUB for URI: $uri")
                 _internalState.update {
