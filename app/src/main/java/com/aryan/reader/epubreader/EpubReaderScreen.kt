@@ -411,7 +411,6 @@ fun EpubReaderHost(
 
     var showJustifyWarningDialog by remember { mutableStateOf(false) }
     var isNavigatingByToc by remember { mutableStateOf(false) }
-    var currentTextAlign by remember { mutableStateOf(loadTextAlign(context)) }
 
     var chunkTargetOverride by remember { mutableStateOf<Int?>(null) }
 
@@ -767,13 +766,17 @@ fun EpubReaderHost(
         }
     }
 
-    var currentFontSizeEm by remember { mutableFloatStateOf(loadFontSize(context)) }
-    var currentLineHeight by remember { mutableFloatStateOf(loadLineHeight(context)) }
     var showFormatAdjustmentBars by remember { mutableStateOf(false) }
 
-    val (initialFont, initialCustomPath) = remember { loadFontSelection(context) }
-    var currentFontFamily by remember { mutableStateOf(initialFont) }
-    var currentCustomFontPath by remember { mutableStateOf(initialCustomPath) }
+    var isFormatLocal by remember { mutableStateOf(loadFormatIsLocal(context, bookId)) }
+    val initialFormatSettings = remember(isFormatLocal) { loadFormatSettings(context, bookId, isFormatLocal) }
+
+    var currentFontSizeEm by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.fontSize) }
+    var currentLineHeight by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.lineHeight) }
+    var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
+    var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
+    var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
+
     val activeFontFamily = remember(currentFontFamily, currentCustomFontPath) {
         getComposeFontFamily(
             font = currentFontFamily,
@@ -785,15 +788,16 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign) {
-        saveReaderSettings(
-            context,
-            currentFontSizeEm,
-            currentLineHeight,
-            currentFontFamily,
-            currentCustomFontPath,
-            currentTextAlign
-        )
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+        if (isFormatLocal) {
+            saveLocalReaderSettings(
+                context, bookId, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+            )
+        } else {
+            saveReaderSettings(
+                context, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+            )
+        }
     }
 
     LaunchedEffect(bannerMessage) {
@@ -3399,8 +3403,16 @@ fun EpubReaderHost(
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding)
+                    isLocalMode = isFormatLocal,
+                    onLocalModeToggle = {
+                        isFormatLocal = it
+                        saveFormatIsLocal(context, bookId, it)
+                    },
+                    onClose = { showFormatAdjustmentBars = false },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = bottomPadding + 16.dp)
+                        .padding(horizontal = 16.dp)
                 )
 
                 EpubReaderAiOverlays(

@@ -37,7 +37,7 @@ data class ChapterLoadingResult(
 
 /**
  * loads the chapter HTML, splits it into chunks, and calculates
- * the initial chunk to display based on navigation state (CFI, overrides, etc).
+ * the initial chunk to display based on navigation state (CFI, overrides, etc.).
  */
 suspend fun loadChapterContent(
     epubBook: EpubBook,
@@ -47,10 +47,10 @@ suspend fun loadChapterContent(
     cfiToLoad: String?,
     locatorConverter: LocatorConverter
 ): ChapterLoadingResult = withContext(Dispatchers.IO) {
-    val chapter = epubBook.chapters.getOrNull(chapterIndex)
-    if (chapter == null) {
-        return@withContext ChapterLoadingResult("", emptyList(), 0, false, "Chapter index out of bounds")
-    }
+    val chapter =
+        epubBook.chapters.getOrNull(chapterIndex) ?: return@withContext ChapterLoadingResult(
+            "", emptyList(), 0, false, "Chapter index out of bounds"
+        )
 
     try {
         val fullPath = "${epubBook.extractionBasePath}/${chapter.htmlFilePath}"
@@ -60,11 +60,9 @@ suspend fun loadChapterContent(
             val doc = Jsoup.parse(htmlFile, "UTF-8")
             val head = doc.head().html()
             val bodyChildren = doc.body().children().toList()
-            // Split into chunks of 20 elements
             val chunkedList = bodyChildren.chunked(20).map { chunkOfElements ->
                 chunkOfElements.joinToString(separator = "\n") { it.outerHtml() }
             }
-            // Fallback for empty chapters
             if (chunkedList.isEmpty()) {
                 head to listOf("<body><p>This chapter is empty.</p></body>")
             } else {
