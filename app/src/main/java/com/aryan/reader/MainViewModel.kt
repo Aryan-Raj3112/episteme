@@ -1096,51 +1096,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             val bundleJson = JSONObject()
                             bundleJson.put("version", 2)
 
-                            if (hasInk) {
+                            fun putJsonSafe(key: String, file: File?) {
+                                if (file == null || !file.exists()) return
                                 try {
-                                    val inkContent = inkFile.readText()
-                                    val jsonArray = JSONArray(inkContent)
-                                    bundleJson.put("ink", jsonArray)
+                                    val content = file.readText().trim()
+                                    if (content.startsWith("[")) {
+                                        bundleJson.put(key, JSONArray(content))
+                                    } else if (content.startsWith("{")) {
+                                        bundleJson.put(key, JSONObject(content))
+                                    }
                                 } catch (e: Exception) {
-                                    Timber.e(e, "Failed to parse local ink file")
+                                    Timber.e(e, "Failed to parse local $key file")
                                 }
                             }
 
-                            if (hasRichText) {
-                                try {
-                                    val textContent = richTextFile.readText()
-                                    bundleJson.put("text", JSONArray(textContent))
-                                } catch (e: Exception) {
-                                    Timber.e(e)
-                                }
-                            }
-
-                            if (hasLayout) {
-                                try {
-                                    val layoutContent = layoutFile.readText()
-                                    bundleJson.put("layout", JSONArray(layoutContent))
-                                } catch (e: Exception) {
-                                    Timber.e(e)
-                                }
-                            }
-
-                            if (hasTextBoxes) {
-                                try {
-                                    val tbContent = textBoxFile.readText()
-                                    bundleJson.put("textBoxes", JSONArray(tbContent))
-                                } catch (e: Exception) {
-                                    Timber.e(e, "Failed to parse local text box file")
-                                }
-                            }
-
-                            if (hasHighlights) {
-                                try {
-                                    val hlContent = highlightFile.readText()
-                                    bundleJson.put("highlights", JSONArray(hlContent))
-                                } catch (e: Exception) {
-                                    Timber.e(e, "Failed to parse local highlights file")
-                                }
-                            }
+                            if (hasInk) putJsonSafe("ink", inkFile)
+                            if (hasRichText) putJsonSafe("text", richTextFile)
+                            if (hasLayout) putJsonSafe("layout", layoutFile)
+                            if (hasTextBoxes) putJsonSafe("textBoxes", textBoxFile)
+                            if (hasHighlights) putJsonSafe("highlights", highlightFile)
 
                             val bundleFile =
                                 File(appContext.cacheDir, "sync_bundle_${book.bookId}.json")
@@ -1155,7 +1129,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 Timber.tag("AnnotationSync")
                                     .d("Bundle upload SUCCESS. ID: ${uploaded.id}")
                             } else {
-                                Timber.tag("AnnotationSync").e("Bundle upload FAILED.")
+                                Timber.tag("AnnotationSync").e("Bundle upload FAILED. Skipping Firestore sync to prevent data loss.")
+                                return@launch
                             }
                         }
                     }
@@ -1164,12 +1139,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         .d("No local data (ink/text/layout) to upload for ${book.bookId}")
                 }
 
+                val newTimestamp = System.currentTimeMillis()
                 val metadataToSync = book.toBookMetadata().copy(
-                    lastModifiedTimestamp = System.currentTimeMillis(),
+                    lastModifiedTimestamp = newTimestamp,
                     hasAnnotations = hasAnyData
                 )
 
                 firestoreRepository.syncBookMetadata(currentUser.uid, metadataToSync, deviceId)
+                recentFilesRepository.addRecentFile(book.copy(lastModifiedTimestamp = newTimestamp))
                 Timber.tag("AnnotationSync")
                     .d("Firestore metadata updated for ${book.bookId} (hasData=$hasAnyData)")
             } catch (e: Exception) {
@@ -1426,19 +1403,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun syncFolderMetadata() {
-        triggerFolderSyncWorker(metadataOnly = true)
+    fun syncFolderMetadata(showFeedback: Boolean = false) {
+        triggerFolderSyncWorker(metadataOnly = true, showFeedback = showFeedback)
     }
 
     fun scanSyncedFolder() {
-        triggerFolderSyncWorker(metadataOnly = false)
+        triggerFolderSyncWorker(metadataOnly = false, showFeedback = true)
     }
 
-    private fun triggerFolderSyncWorker(metadataOnly: Boolean) {
+    private fun triggerFolderSyncWorker(metadataOnly: Boolean, showFeedback: Boolean) {
         val folders = _internalState.value.syncedFolders
         if (folders.isEmpty()) return
 
-        Timber.tag("FolderSync").d("Requesting folder sync for ${folders.size} folders (metadataOnly=$metadataOnly)")
+        Timber.tag("FolderSync").d("Requesting folder sync for ${folders.size} folders (metadataOnly=$metadataOnly, feedback=$showFeedback)")
 
         val workManager = WorkManager.getInstance(appContext)
         val data = androidx.work.Data.Builder()
@@ -1460,18 +1437,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (workInfo != null) {
                     when (workInfo.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                            val msg = if (metadataOnly) "Folder Sync: Updating metadata..." else "Scanning folder for new books..."
-                            _internalState.update { it.copy(
-                                isLoading = false,
-                                isRefreshing = true,
-                                bannerMessage = BannerMessage(msg)
-                            ) }
+                            if (showFeedback) {
+                                val msg = if (metadataOnly) "Folder Sync: Updating metadata..." else "Scanning folder for new books..."
+                                _internalState.update { it.copy(
+                                    isLoading = false,
+                                    isRefreshing = true,
+                                    bannerMessage = BannerMessage(msg)
+                                ) }
+                            }
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             _internalState.update { it.copy(
                                 isLoading = false,
                                 isRefreshing = false,
-                                bannerMessage = BannerMessage("Folder Sync: Scan complete."),
+                                bannerMessage = if (showFeedback) BannerMessage("Folder Sync: Scan complete.") else it.bannerMessage,
                                 lastFolderScanTime = System.currentTimeMillis()
                             ) }
                         }
@@ -1479,7 +1458,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update { it.copy(
                                 isLoading = false,
                                 isRefreshing = false,
-                                errorMessage = "Sync failed."
+                                errorMessage = if (showFeedback) "Sync failed." else it.errorMessage
                             ) }
                         }
                         else -> Unit
@@ -1933,12 +1912,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 )
                             }
 
-                            val annotationFile =
-                                pdfAnnotationRepository.getAnnotationFileForSync(bookId)
-                            val localFileMissing = annotationFile == null
-                            val fileLastModified = annotationFile?.lastModified() ?: 0L
-                            val isFileStale =
-                                remote.hasAnnotations && (remote.lastModifiedTimestamp > fileLastModified)
+                            val inkFile = pdfAnnotationRepository.getAnnotationFileForSync(bookId)
+                            val richTextFile = pdfRichTextRepository.getFileForSync(bookId)
+                            val layoutFile = pageLayoutRepository.getLayoutFile(bookId)
+                            val textBoxFile = pdfTextBoxRepository.getFileForSync(bookId)
+                            val highlightFile = pdfHighlightRepository.getFileForSync(bookId)
+
+                            val anyLocalFileExists = (inkFile?.exists() == true) || richTextFile.exists() || layoutFile.exists() || textBoxFile.exists() || highlightFile.exists()
+                            val localFileMissing = !anyLocalFileExists
+
+                            val fileLastModified = maxOf(
+                                inkFile?.lastModified() ?: 0L,
+                                richTextFile.lastModified(),
+                                layoutFile.lastModified(),
+                                textBoxFile.lastModified(),
+                                highlightFile.lastModified()
+                            )
+                            val isFileStale = remote.hasAnnotations && (remote.lastModifiedTimestamp > fileLastModified)
 
                             if (isMetadataNewer || localFileMissing && remote.hasAnnotations || isFileStale) {
                                 Timber.tag("AnnotationSync").d("Triggering download for $bookId.")
@@ -2112,46 +2102,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 inkFile.parentFile?.mkdirs()
                 richTextFile.parentFile?.mkdirs()
                 layoutFile.parentFile?.mkdirs()
+                textBoxFile.parentFile?.mkdirs()
                 highlightFile.parentFile?.mkdirs()
 
                 if (isBundle) {
                     val bundle = JSONObject(jsonString)
 
-                    // 1. Ink
-                    if (bundle.has("ink")) {
-                        inkFile.writeText(bundle.getJSONArray("ink").toString())
-                    } else {
-                        // If bundle exists but no ink key, implies ink was deleted or empty
-                        if (inkFile.exists()) inkFile.delete()
+                    fun writeSafe(key: String, file: File) {
+                        if (bundle.has(key)) {
+                            file.parentFile?.mkdirs()
+                            file.writeText(bundle.get(key).toString())
+                        } else {
+                            if (file.exists()) file.delete()
+                        }
                     }
 
-                    // 2. Text
-                    if (bundle.has("text")) {
-                        richTextFile.writeText(bundle.getJSONArray("text").toString())
-                    } else {
-                        if (richTextFile.exists()) richTextFile.delete()
-                    }
-
-                    // 3. Layout
-                    if (bundle.has("layout")) {
-                        layoutFile.writeText(bundle.getJSONArray("layout").toString())
-                    } else {
-                        if (layoutFile.exists()) layoutFile.delete()
-                    }
-
-                    // 4. Text Boxes
-                    if (bundle.has("textBoxes")) {
-                        textBoxFile.writeText(bundle.getJSONArray("textBoxes").toString())
-                    } else {
-                        if (textBoxFile.exists()) textBoxFile.delete()
-                    }
-
-                    // 5. Highlights
-                    if (bundle.has("highlights")) {
-                        highlightFile.writeText(bundle.getJSONArray("highlights").toString())
-                    } else {
-                        if (highlightFile.exists()) highlightFile.delete()
-                    }
+                    writeSafe("ink", inkFile)
+                    writeSafe("text", richTextFile)
+                    writeSafe("layout", layoutFile)
+                    writeSafe("textBoxes", textBoxFile)
+                    writeSafe("highlights", highlightFile)
 
                     Timber.tag("AnnotationSync").d("Unpacked unified bundle.")
                 } else {
@@ -2775,7 +2745,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 if (hasFolder) {
-                    syncFolderMetadata()
+                    syncFolderMetadata(showFeedback = true)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Refresh failed")
