@@ -337,11 +337,11 @@ fun EpubReaderScreen(
     val isReflowFile = uiState.selectedBookId?.endsWith("_reflow") == true
     val originalBookId = if (isReflowFile) uiState.selectedBookId!!.removeSuffix("_reflow") else null
 
-    val onOpenOriginal: (() -> Unit)? = if (originalBookId != null) {
-        {
+    val onOpenOriginal: ((Int) -> Unit)? = if (originalBookId != null) {
+        { currentChapter ->
             val originalItem = uiState.recentFiles.find { it.bookId == originalBookId }
             if (originalItem != null) {
-                viewModel.onRecentFileClicked(originalItem)
+                viewModel.switchToFileSeamlessly(originalItem, currentChapter)
             } else {
                 viewModel.showBanner("Original PDF not found.", true)
             }
@@ -388,7 +388,7 @@ fun EpubReaderHost(
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
     onImportFont: (Uri) -> Unit,
-    onToggleReflow: (() -> Unit)? = null
+    onToggleReflow: ((Int) -> Unit)? = null
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -3114,7 +3114,16 @@ fun EpubReaderHost(
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
-                    onToggleReflow = onToggleReflow,
+                    onToggleReflow = if (onToggleReflow != null) {
+                        {
+                            val activeChapter = if (currentRenderMode == RenderMode.PAGINATED) {
+                                currentChapterInPaginatedMode ?: currentChapterIndex
+                            } else {
+                                currentChapterIndex
+                            }
+                            onToggleReflow(activeChapter)
+                        }
+                    } else null,
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(

@@ -22,6 +22,7 @@ package com.aryan.reader
 import android.os.Build
 import timber.log.Timber
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,6 +70,36 @@ fun AppNavigation(
     Timber.d("AppNavigation composable invoked.")
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    LaunchedEffect(uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
+        if (!uiState.isLoading) {
+            when (uiState.selectedFileType) {
+                FileType.PDF -> {
+                    if (uiState.selectedPdfUri != null) {
+                        if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
+                            navController.navigate(AppDestinations.PDF_VIEWER_ROUTE) {
+                                popUpTo(AppDestinations.MAIN_ROUTE)
+                            }
+                        }
+                    }
+                }
+                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> {
+                    if (uiState.selectedEpubBook != null) {
+                        if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
+                            navController.navigate(AppDestinations.EPUB_READER_ROUTE) {
+                                popUpTo(AppDestinations.MAIN_ROUTE)
+                            }
+                        }
+                    }
+                }
+                null -> {
+                    if (navController.currentDestination?.route != AppDestinations.MAIN_ROUTE) {
+                        navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
+                    }
+                }
+            }
+        }
+    }
+
     NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
         composable(AppDestinations.MAIN_ROUTE) {
             Timber.d("Navigating to Main Screen (${AppDestinations.MAIN_ROUTE}).")
@@ -77,39 +108,6 @@ fun AppNavigation(
                 windowSizeClass = windowSizeClass,
                 navController = navController
             )
-
-            LaunchedEffect(uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
-                if (!uiState.isLoading) {
-                    when (uiState.selectedFileType) {
-                        FileType.PDF -> {
-                            if (uiState.selectedPdfUri != null) {
-                                Timber.d("Navigating to PDF Viewer. Route: ${AppDestinations.PDF_VIEWER_ROUTE}")
-                                if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
-                                    navController.navigate(AppDestinations.PDF_VIEWER_ROUTE)
-                                }
-                            }
-                        }
-                        FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> {
-                            if (uiState.selectedEpubBook != null) {
-                                Timber.d("Navigating to EPUB Reader for ${uiState.selectedFileType}. Route: ${AppDestinations.EPUB_READER_ROUTE}")
-                                if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
-                                    navController.navigate(AppDestinations.EPUB_READER_ROUTE)
-                                }
-                            } else if (uiState.selectedEpubUri != null && uiState.errorMessage == null) {
-                                Timber.d("${uiState.selectedFileType} selected, waiting for parsing/loading before navigation.")
-                            } else if (uiState.errorMessage != null) {
-                                Timber.w("${uiState.selectedFileType} loading failed, staying on Home. Error: ${uiState.errorMessage}")
-                            }
-                        }
-                        null -> {
-                            if (navController.currentDestination?.route != AppDestinations.MAIN_ROUTE) {
-                                Timber.d("File cleared, ensuring navigation back to Main Screen.")
-                                navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         // PDF Viewer Screen Composable
@@ -119,37 +117,53 @@ fun AppNavigation(
             val initialPage = uiState.initialPageInBook
             val initialBookmarksJson = uiState.initialBookmarksJson
 
-            val bookId = uiState.recentFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
+            val bookId =
+                uiState.recentFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
 
             if (pdfUri != null) {
                 Timber.i("Displaying PDF Viewer for URI: $pdfUri, initialPage: $initialPage")
-                PdfViewerScreen(
-                    pdfUri = pdfUri,
-                    initialPage = initialPage,
-                    initialBookmarksJson = initialBookmarksJson,
-                    isProUser = uiState.isProUser,
-                    onNavigateBack = {
-                        Timber.d("Back action triggered from PDF Viewer.")
-                        viewModel.clearSelectedFile()
-                    },
-                    onSavePosition = viewModel::savePdfReadingPosition,
-                    onBookmarksChanged = { bookmarksJson ->
-                        if (bookId != null) {
-                            viewModel.saveBookmarks(bookId, bookmarksJson)
-                        } else {
-                            Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
+                Box(modifier = Modifier.fillMaxSize()) {
+                    PdfViewerScreen(
+                        pdfUri = pdfUri,
+                        initialPage = initialPage,
+                        initialBookmarksJson = initialBookmarksJson,
+                        isProUser = uiState.isProUser,
+                        onNavigateBack = {
+                            Timber.d("Back action triggered from PDF Viewer.")
+                            viewModel.clearSelectedFile()
+                        },
+                        onSavePosition = viewModel::savePdfReadingPosition,
+                        onBookmarksChanged = { bookmarksJson ->
+                            if (bookId != null) {
+                                viewModel.saveBookmarks(bookId, bookmarksJson)
+                            } else {
+                                Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
+                            }
+                        },
+                        onNavigateToPro = {
+                            navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                        },
+                        viewModel = viewModel
+                    )
+
+                    if (uiState.isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
                         }
-                    },
-                    onNavigateToPro = {
-                        navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
-                    },
-                    viewModel = viewModel
-                )
+                    }
+                }
+            } else if (uiState.isLoading) {
+                Timber.d("PDF URI is null but loading is in progress. Showing loading indicator.")
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             } else {
                 Timber.w("PDF URI is null in ViewModel state while on PDF screen. Navigating back to Main.")
-                LaunchedEffect(Unit) {
-                    navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
-                }
             }
         }
 
@@ -172,40 +186,53 @@ fun AppNavigation(
                     uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
                     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
 
-                    EpubReaderScreen(
-                        epubBook = epubBook,
-                        renderMode = renderMode,
-                        initialLocator = initialLocator,
-                        initialCfi = initialCfi,
-                        initialBookmarksJson = initialBookmarksJson,
-                        isProUser = uiState.isProUser,
-                        coverImagePath = coverPath,
-                        onNavigateBack = {
-                            Timber.d("Back action from EPUB Reader. Clearing selected file to navigate home.")
-                            viewModel.clearSelectedFile()
-                        },
-                        onSavePosition = { locator, cfiForWebView, progress ->
-                            Timber.d("Auto-saving EPUB position: Locator $locator, Progress $progress%")
-                            epubUri?.let { uri ->
-                                viewModel.saveEpubReadingPosition(uri, locator, cfiForWebView, progress)
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        EpubReaderScreen(
+                            epubBook = epubBook,
+                            renderMode = renderMode,
+                            initialLocator = initialLocator,
+                            initialCfi = initialCfi,
+                            initialBookmarksJson = initialBookmarksJson,
+                            isProUser = uiState.isProUser,
+                            coverImagePath = coverPath,
+                            onNavigateBack = {
+                                Timber.d("Back action from EPUB Reader. Clearing selected file to navigate home.")
+                                viewModel.clearSelectedFile()
+                            },
+                            onSavePosition = { locator, cfiForWebView, progress ->
+                                Timber.d("Auto-saving EPUB position: Locator $locator, Progress $progress%")
+                                epubUri?.let { uri ->
+                                    viewModel.saveEpubReadingPosition(uri, locator, cfiForWebView, progress)
+                                }
+                            },
+                            onBookmarksChanged = { bookmarksJson ->
+                                val bookId = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
+                                if (bookId != null) {
+                                    viewModel.saveBookmarks(bookId, bookmarksJson)
+                                } else {
+                                    Timber.w("Could not find bookId to save bookmarks for URI: ${uiState.selectedEpubUri}")
+                                }
+                            },
+                            onNavigateToPro = {
+                                navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                            },
+                            onRenderModeChange = viewModel::setRenderMode,
+                            customFonts = customFonts,
+                            onImportFont = viewModel::importFont,
+                            viewModel = viewModel
+                        )
+
+                        if (uiState.isLoading) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
                             }
-                        },
-                        onBookmarksChanged = { bookmarksJson ->
-                            val bookId = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
-                            if (bookId != null) {
-                                viewModel.saveBookmarks(bookId, bookmarksJson)
-                            } else {
-                                Timber.w("Could not find bookId to save bookmarks for URI: ${uiState.selectedEpubUri}")
-                            }
-                        },
-                        onNavigateToPro = {
-                            navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
-                        },
-                        onRenderModeChange = viewModel::setRenderMode,
-                        customFonts = customFonts,
-                        onImportFont = viewModel::importFont,
-                        viewModel = viewModel
-                    )
+                        }
+                    }
                 }
                 isLoading -> {
                     Timber.d("EPUB Reader: Showing loading indicator.")
@@ -231,9 +258,6 @@ fun AppNavigation(
                 }
                 else -> {
                     Timber.w("EPUB Book is null and not loading/error state on EPUB screen. Navigating back.")
-                    LaunchedEffect(Unit) {
-                        navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
-                    }
                 }
             }
         }

@@ -738,8 +738,6 @@ fun PdfViewerScreen(
         isFullScreen = loadPdfFullScreen(context, bookId)
     }
 
-    var isWaitingForReflowCompletion by remember { mutableStateOf(false) }
-
     val uiState by viewModel.uiState.collectAsState()
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
     val hasReflowFile by remember(uiState.recentFiles, reflowBookId) {
@@ -1843,37 +1841,6 @@ fun PdfViewerScreen(
             verticalReaderState.currentPage
         }
         onToggleBookmark(currentPage)
-    }
-
-    var hasAutoOpenedReflow by remember { mutableStateOf(false) }
-
-    LaunchedEffect(reflowInfo?.state, uiState.recentFiles) {
-        val state = reflowInfo?.state
-        val isThisBook = reflowInfo?.tags?.contains("book_$bookId") == true
-
-        if (isThisBook) {
-            if (state == WorkInfo.State.RUNNING || state == WorkInfo.State.ENQUEUED) {
-                // Keep waiting...
-            }
-
-            else if (state == WorkInfo.State.SUCCEEDED && isWaitingForReflowCompletion) {
-                val item = uiState.recentFiles.find { it.bookId == reflowBookId }
-
-                if (item != null) {
-                    Timber.tag("PdfToMdPerf").d("New generation complete. Auto-opening.")
-
-                    isWaitingForReflowCompletion = false
-
-                    viewModel.onRecentFileClicked(item)
-                } else {
-                    Timber.tag("PdfToMdPerf").d("Work succeeded, waiting for DB update...")
-                }
-            }
-
-            else if (state == WorkInfo.State.FAILED || state == WorkInfo.State.CANCELLED) {
-                isWaitingForReflowCompletion = false
-            }
-        }
     }
 
     LaunchedEffect(pdfUri) { debugPdfLinks(context, pdfUri, pdfiumCore, this) }
@@ -4990,15 +4957,14 @@ fun PdfViewerScreen(
                                                 if (hasReflowFile) {
                                                     val item = uiState.recentFiles.find { it.bookId == reflowBookId }
                                                     if (item != null) {
-                                                        viewModel.onRecentFileClicked(item)
+                                                        viewModel.switchToFileSeamlessly(item, currentPage)
                                                     }
                                                 } else {
-                                                    isWaitingForReflowCompletion = true
-
                                                     viewModel.generateAndImportReflowFile(
                                                         pdfBookId = bookId,
                                                         pdfUri = pdfUri,
-                                                        originalTitle = originalFileName
+                                                        originalTitle = originalFileName,
+                                                        autoOpenPage = currentPage
                                                     )
                                                 }
                                             },

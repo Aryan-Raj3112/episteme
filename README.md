@@ -83,7 +83,7 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 
 ## Support
 
-If you find Episteme Reader useful and want to support its development, consider sponsoring.
+If you find Episteme Reader useful and want to support its development, please consider sponsoring. Thank you!
 
 <a href="https://github.com/sponsors/Aryan-Raj3112">
   <img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-%23db61a2?logo=github" alt="Sponsor on GitHub"/>
