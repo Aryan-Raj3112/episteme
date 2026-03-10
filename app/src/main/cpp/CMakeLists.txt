@@ -6,8 +6,21 @@ cmake_minimum_required(VERSION 3.22.1)
 project("reader-native")
 
 add_compile_options(
-    -ffile-prefix-map=${CMAKE_SOURCE_DIR}=.
-    -ffile-prefix-map=${CMAKE_BINARY_DIR}=.
+    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+    "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+)
+
+if(DEFINED CMAKE_ANDROID_NDK)
+    add_compile_options("-ffile-prefix-map=${CMAKE_ANDROID_NDK}=/ndk")
+endif()
+if(DEFINED CMAKE_SYSROOT)
+    add_compile_options("-ffile-prefix-map=${CMAKE_SYSROOT}=/sysroot")
+endif()
+
+add_compile_options(
+    -Wno-builtin-macro-redefined
+    -D__DATE__="\"1970-01-01\""
+    -D__TIME__="\"00:00:00\""
 )
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
