@@ -30,12 +30,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CopyAll
 import androidx.compose.material.icons.filled.Delete
@@ -44,12 +49,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
@@ -99,7 +106,10 @@ internal data class CustomPdfMenuState(
     val anchorRect: Rect,
     val charRange: Pair<Int, Int>,
     val isExistingHighlight: Boolean = false,
-    val highlightId: String? = null
+    val highlightId: String? = null,
+    val isComment: Boolean = false,
+    val author: String? = null,
+    val annotation: EmbeddedAnnotation? = null
 )
 
 internal enum class PdfSelectionMethod {
@@ -156,9 +166,24 @@ internal suspend fun findWordBoundaries(
 }
 
 @Composable
+private fun CommentThread(replies: List<EmbeddedAnnotation>, depth: Int) {
+    replies.forEach { reply ->
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 8.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+        CommentItem(author = reply.author, text = reply.contents ?: "", isReply = depth > 0)
+        if (reply.replies.isNotEmpty()) {
+            CommentThread(reply.replies, depth + 1)
+        }
+    }
+}
+
+@Composable
 internal fun PdfSelectionMenuPopup(
     menuState: CustomPdfMenuState,
     popupPositionProvider: PopupPositionProvider,
+    onDismiss: () -> Unit,
     onCopy: (String) -> Unit,
     onAiDefine: (String) -> Unit,
     onSelectAll: () -> Unit,
@@ -167,128 +192,164 @@ internal fun PdfSelectionMenuPopup(
 ) {
     Popup(
         popupPositionProvider = popupPositionProvider,
-        onDismissRequest = null,
+        onDismissRequest = onDismiss,
         properties = PopupProperties(
-            focusable = false,
-            dismissOnClickOutside = false,
-            dismissOnBackPress = false
+            focusable = true,
+            dismissOnClickOutside = true,
+            dismissOnBackPress = true
         )
     ) {
         Surface(
             shape = RoundedCornerShape(12.dp),
-            shadowElevation = 6.dp,
+            shadowElevation = 8.dp,
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.widthIn(max = 300.dp)
         ) {
-            Column(
-                modifier = Modifier.width(IntrinsicSize.Max)
-            ) {
-                // Color Row
-                Row(
-                    modifier = Modifier
-                        .padding(vertical = 12.dp, horizontal = 12.dp)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PdfHighlightColor.entries.forEach { colorEnum ->
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 6.dp)
-                                .size(32.dp)
-                                .background(colorEnum.color, CircleShape)
-                                .clip(CircleShape)
-                                .clickable {
-                                    Timber.tag("PdfHighlightDebug").d("Color box clicked: $colorEnum")
-                                    onColorSelected(colorEnum)
-                                }
-                        )
-                    }
-                }
-
-                HorizontalDivider()
-
-                // Delete Option (Only for existing)
-                if (menuState.isExistingHighlight) {
-                    Row(
+            Column(modifier = if (menuState.isComment) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max)) {
+                if (menuState.isComment) {
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onDelete() }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            .padding(16.dp)
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Remove",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = "Remove",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        CommentItem(author = menuState.author, text = menuState.selectedText, isReply = false)
+
+                        menuState.annotation?.replies?.let { CommentThread(it, 1) }
                     }
+
                     HorizontalDivider()
-                }
-
-                // Standard Options
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Copy
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { onCopy(menuState.selectedText) }
-                            .padding(vertical = 12.dp),
-                        contentAlignment = Alignment.Center
+                    TextButton(
+                        onClick = {
+                            val fullText = buildString {
+                                append("${menuState.author ?: "Unknown"}: ${menuState.selectedText}\n")
+                                fun appendReplies(replies: List<EmbeddedAnnotation>, indent: String) {
+                                    for (r in replies) {
+                                        append("$indent${r.author ?: "Unknown"}: ${r.contents ?: ""}\n")
+                                        appendReplies(r.replies, "$indent  ")
+                                    }
+                                }
+                                menuState.annotation?.replies?.let { appendReplies(it, "  ") }
+                            }.trimEnd()
+                            onCopy(fullText)
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.CopyAll, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Text("Copy", style = MaterialTheme.typography.labelSmall)
+                        Icon(Icons.Default.CopyAll, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copy Thread")
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PdfHighlightColor.entries.forEach { colorEnum ->
+                            Box(
+                                modifier = Modifier.padding(horizontal = 6.dp).size(32.dp)
+                                    .background(colorEnum.color, CircleShape).clip(CircleShape)
+                                    .clickable {
+                                        Timber.tag("PdfHighlightDebug")
+                                            .d("Color box clicked: $colorEnum")
+                                        onColorSelected(colorEnum)
+                                    })
                         }
                     }
 
-                    // Dictionary
-                    if (menuState.selectedText.length <= 2000) {
+                    HorizontalDivider()
+
+                    if (menuState.isExistingHighlight) {
+                        Row(modifier = Modifier.fillMaxWidth().clickable { onDelete() }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Remove",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Remove",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        HorizontalDivider()
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { onAiDefine(menuState.selectedText) }
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
+                            modifier = Modifier.weight(1f)
+                            .clickable { onCopy(menuState.selectedText) }.padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.dictionary),
+                                    Icons.Default.CopyAll,
                                     contentDescription = null,
                                     modifier = Modifier.size(20.dp)
                                 )
-                                Text("Dictionary", style = MaterialTheme.typography.labelSmall)
+                                Text("Copy", style = MaterialTheme.typography.labelSmall)
                             }
                         }
-                    }
 
-                    // Select All (Only for new selection)
-                    if (!menuState.isExistingHighlight) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { onSelectAll() }
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(painter = painterResource(id = R.drawable.select_all), contentDescription = null, modifier = Modifier.size(20.dp))
-                                Text("Select All", style = MaterialTheme.typography.labelSmall)
+                        if (menuState.selectedText.length <= 2000) {
+                            Box(
+                                modifier = Modifier.weight(1f)
+                                .clickable { onAiDefine(menuState.selectedText) }
+                                .padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.dictionary),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text("Dictionary", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+
+                        if (!menuState.isExistingHighlight) {
+                            Box(modifier = Modifier.weight(1f).clickable { onSelectAll() }
+                                .padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.select_all),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text("Select All", style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CommentItem(author: String?, text: String, isReply: Boolean) {
+    Column(modifier = Modifier.padding(start = if (isReply) 16.dp else 0.dp)) {
+        if (!author.isNullOrBlank()) {
+            Text(
+                text = author,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isReply) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 

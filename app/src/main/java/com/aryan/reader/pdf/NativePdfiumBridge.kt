@@ -11,4 +11,14 @@ object NativePdfiumBridge {
     @JvmStatic external fun getPageFontSizes(textPagePtr: Long, count: Int): FloatArray?
     @JvmStatic external fun getPageFontWeights(textPagePtr: Long, count: Int): IntArray?
     @JvmStatic external fun getPageFontFlags(textPagePtr: Long, count: Int): IntArray?
+
+    @JvmStatic external fun getAnnotCount(pagePtr: Long): Int
+    @JvmStatic external fun getAnnotSubtype(pagePtr: Long, index: Int): Int
+    @JvmStatic external fun getAnnotRect(pagePtr: Long, index: Int): FloatArray?
+    @JvmStatic external fun getAnnotString(pagePtr: Long, index: Int, key: String): String?
+
+    const val ANNOT_TEXT = 1         // Sticky Note
+    const val ANNOT_LINK = 2         // Link
+    const val ANNOT_HIGHLIGHT = 8    // Highlight
+    const val ANNOT_INK = 12         // Freehand drawing
 }
