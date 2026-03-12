@@ -7,8 +7,7 @@
 
   <p>A native Android document reader application built with Kotlin and Jetpack Compose.</p>
 
-  <a href="https://play.google.com/store/apps/details?id=com.aryan.reader">
-      <img alt="Get it on Google Play" src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" height="70"/>
+   <a href="https://f-droid.org/en/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="70"/><a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" height="70"/></a>
   </a>
 
 </div>
