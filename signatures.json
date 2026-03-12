@@ -1,1 +1,12 @@
-{"signedContributors":[]}
+{
+  "signedContributors": [
+    {
+      "name": "Aryan-Raj3112",
+      "id": 187418088,
+      "comment_id": 4048353200,
+      "created_at": "2026-03-12T16:53:01Z",
+      "repoId": 1165671069,
+      "pullRequestNo": 62
+    }
+  ]
+}
