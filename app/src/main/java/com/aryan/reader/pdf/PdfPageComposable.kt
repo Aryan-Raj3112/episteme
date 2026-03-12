@@ -917,6 +917,7 @@ internal fun PdfPageComposable(
                         }
 
                         val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+                        Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
                         if (count > 0) {
                             val allAnnots = (0 until count).mapNotNull { i ->
                                 val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, i)
@@ -932,6 +933,8 @@ internal fun PdfPageComposable(
                                     android.graphics.RectF(pdfRectArray[0], pdfRectArray[3], pdfRectArray[2], pdfRectArray[1])
                                 } else android.graphics.RectF()
 
+                                Timber.tag("PdfCommentDebug").v("Extracted Annot[$i]: Name=$name, IRT=$irt, Subtype=$subtype, Text=${contents?.take(10)}...")
+
                                 EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
                             }
 
@@ -940,11 +943,14 @@ internal fun PdfPageComposable(
 
                             allAnnots.forEach { annot ->
                                 if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
+                                    Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
                                     annotMap[annot.inReplyTo]?.replies?.add(annot)
                                 } else {
                                     orphans.add(annot)
                                 }
                             }
+
+                            Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
 
                             val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
                             orphans.forEach { annot ->
@@ -954,6 +960,7 @@ internal fun PdfPageComposable(
                                     android.graphics.RectF.intersects(inflatedRoot, annot.rect)
                                 }
                                 if (match != null) {
+                                    Timber.tag("PdfCommentDebug").w("Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!")
                                     match.add(annot)
                                 } else {
                                     groupedRoots.add(mutableListOf(annot))
@@ -981,7 +988,7 @@ internal fun PdfPageComposable(
                             }
                         }
                     } catch (e: Exception) {
-                        Timber.tag("PdfiumAnnotation").e(e, "Error extracting annotations")
+                        Timber.tag("PdfCommentDebug").e(e, "Error extracting annotations")
                     }
                 }
             } catch (e: Exception) {
@@ -3440,7 +3447,7 @@ internal fun PdfPageComposable(
                         pageErrorMessage = "Error processing page: ${e.localizedMessage}"
                     } finally {
                         isLoadingPage = false
-                        localBitmap?.recycle() // Clean up if cancelled or failed
+                        localBitmap?.recycle()
                     }
                 }
             }

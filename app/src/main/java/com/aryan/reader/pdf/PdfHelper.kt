@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -167,12 +168,13 @@ internal suspend fun findWordBoundaries(
 
 @Composable
 private fun CommentThread(replies: List<EmbeddedAnnotation>, depth: Int) {
+    Timber.tag("PdfCommentDebug").v("Rendering CommentThread: Depth=$depth, ReplyCount=${replies.size}")
     replies.forEach { reply ->
         HorizontalDivider(
             modifier = Modifier.padding(vertical = 8.dp),
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
-        CommentItem(author = reply.author, text = reply.contents ?: "", isReply = depth > 0)
+        CommentItem(author = reply.author, text = reply.contents ?: "", depth = depth)
         if (reply.replies.isNotEmpty()) {
             CommentThread(reply.replies, depth + 1)
         }
@@ -214,8 +216,7 @@ internal fun PdfSelectionMenuPopup(
                             .heightIn(max = 400.dp)
                             .verticalScroll(rememberScrollState())
                     ) {
-                        CommentItem(author = menuState.author, text = menuState.selectedText, isReply = false)
-
+                        CommentItem(author = menuState.author, text = menuState.selectedText, depth = 0)
                         menuState.annotation?.replies?.let { CommentThread(it, 1) }
                     }
 
@@ -335,21 +336,39 @@ internal fun PdfSelectionMenuPopup(
 }
 
 @Composable
-private fun CommentItem(author: String?, text: String, isReply: Boolean) {
-    Column(modifier = Modifier.padding(start = if (isReply) 16.dp else 0.dp)) {
-        if (!author.isNullOrBlank()) {
+private fun CommentItem(author: String?, text: String, depth: Int) {
+    val indentSize = (depth * 16).dp
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentSize, top = 4.dp, bottom = 4.dp)
+    ) {
+        if (depth > 0) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            if (!author.isNullOrBlank()) {
+                Text(
+                    text = author,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (depth > 0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Text(
-                text = author,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isReply) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
     }
 }
 

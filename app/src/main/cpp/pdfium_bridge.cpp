@@ -30,6 +30,12 @@ static FPDFText_GetFontSize_t get_font_size_func = nullptr;
 static FPDFText_GetFontWeight_t get_font_weight_func = nullptr;
 static FPDFText_GetFontInfo_t get_font_info_func = nullptr;
 
+typedef void* (*FPDFAnnot_GetLinkedAnnot_t)(void* annot, const char* key);
+typedef void (*FPDFPage_CloseAnnot_t)(void* annot);
+
+static FPDFAnnot_GetLinkedAnnot_t get_linked_annot_func = nullptr;
+static FPDFPage_CloseAnnot_t close_annot_func = nullptr;
+
 static bool init_pdfium() {
     if (pdfium_handle) return true;
 
@@ -49,6 +55,8 @@ static bool init_pdfium() {
     get_annot_rect_func = (FPDFAnnot_GetRect_t) dlsym(pdfium_handle, "FPDFAnnot_GetRect");
     get_annot_string_func = (FPDFAnnot_GetStringValue_t) dlsym(pdfium_handle, "FPDFAnnot_GetStringValue");
     get_annot_color_func = (FPDFAnnot_GetColor_t) dlsym(pdfium_handle, "FPDFAnnot_GetColor");
+    get_linked_annot_func = (FPDFAnnot_GetLinkedAnnot_t) dlsym(pdfium_handle, "FPDFAnnot_GetLinkedAnnot");
+    close_annot_func = (FPDFPage_CloseAnnot_t) dlsym(pdfium_handle, "FPDFPage_CloseAnnot");
 
     bool success = get_annot_count_func && get_annot_func && get_annot_subtype_func &&
                    get_annot_rect_func && get_annot_string_func;
@@ -153,6 +161,23 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass 
     if (!annot) return nullptr;
 
     const char* nativeKey = env->GetStringUTFChars(key, nullptr);
+
+    if (strcmp(nativeKey, "IRT") == 0 && get_linked_annot_func && close_annot_func) {
+        void* parentAnnot = get_linked_annot_func(annot, "IRT");
+        if (parentAnnot) {
+            unsigned long len = get_annot_string_func(parentAnnot, "NM", nullptr, 0);
+            jstring result = nullptr;
+            if (len > 2) {
+                std::vector<unsigned short> buffer(len / 2);
+                get_annot_string_func(parentAnnot, "NM", buffer.data(), len);
+                result = env->NewString(reinterpret_cast<const jchar*>(buffer.data()), (jsize)(buffer.size() - 1));
+            }
+            close_annot_func(parentAnnot);
+            env->ReleaseStringUTFChars(key, nativeKey);
+            return result;
+        }
+    }
+
     unsigned long len = get_annot_string_func(annot, nativeKey, nullptr, 0);
 
     if (len <= 2) {
@@ -164,11 +189,6 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass 
     get_annot_string_func(annot, nativeKey, buffer.data(), len);
 
     jstring result = env->NewString(reinterpret_cast<const jchar*>(buffer.data()), (jsize)(buffer.size() - 1));
-
-    // Only log if we found actual data for "Contents"
-    if (strcmp(nativeKey, "Contents") == 0) {
-        LOGI("getAnnotString: Found Contents for index %d", index);
-    }
 
     env->ReleaseStringUTFChars(key, nativeKey);
     return result;
