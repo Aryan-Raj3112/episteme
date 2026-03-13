@@ -21,7 +21,6 @@ package com.aryan.reader.epub
 
 import android.content.Context
 import com.aryan.reader.FileType
-import com.aryan.reader.pdf.PdfToMarkdownGenerator
 import com.vladsch.flexmark.ext.autolink.AutolinkExtension
 import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension
 import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension
@@ -114,11 +113,10 @@ class SingleFileImporter(private val context: Context) {
             hr { border: 0; border-top: 1px solid #ccc; margin: 2em 0; }
         """.trimIndent()
 
-        val delimiter = PdfToMarkdownGenerator.PAGE_DELIMITER.trim()
-        val rawChapters = if (markdownContent.contains(delimiter)) {
-            markdownContent.split(delimiter)
-        } else {
+        val rawChapters = if (markdownContent.contains("\n\n---\n\n")) {
             markdownContent.split("\n\n---\n\n")
+        } else {
+            listOf(markdownContent)
         }
 
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Split into ${rawChapters.size} raw chapters | elapsed=${System.currentTimeMillis() - parseStart}ms")
