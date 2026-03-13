@@ -1235,10 +1235,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        val bookToSync = uiState.value.recentFiles.find {
-            it.uriString == (uiState.value.selectedPdfUri?.toString()
-                ?: uiState.value.selectedEpubUri?.toString())
-        }
+        val uriString = _internalState.value.selectedPdfUri?.toString()
+            ?: _internalState.value.selectedEpubUri?.toString()
 
         _internalState.update {
             it.copy(
@@ -1254,21 +1252,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        bookToSync?.let {
-            if (uiState.value.uploadingBookIds.contains(it.bookId)) {
-                return
-            }
-            if (uiState.value.isSyncEnabled) {
-                Timber.d("Book closed, triggering metadata sync for ${it.bookId}")
-                uploadSingleBookMetadata(it)
-            }
+        if (uriString != null) {
+            viewModelScope.launch {
+                val freshBook = recentFilesRepository.getFileByUri(uriString)
+                freshBook?.let {
+                    if (uiState.value.uploadingBookIds.contains(it.bookId)) {
+                        return@launch
+                    }
+                    if (uiState.value.isSyncEnabled) {
+                        Timber.d("Book closed, triggering metadata sync for ${it.bookId}")
+                        uploadSingleBookMetadata(it)
+                    }
 
-            if (it.sourceFolderUri != null) {
-                Timber.tag("FolderAnnotationSync")
-                    .d("Book closed (Folder Linked), syncing metadata and annotations to folder: ${it.bookId}")
-                viewModelScope.launch {
-                    recentFilesRepository.syncLocalMetadataToFolder(it.bookId)
-                    recentFilesRepository.syncLocalAnnotationsToFolder(it.bookId)
+                    if (it.sourceFolderUri != null) {
+                        Timber.tag("FolderAnnotationSync")
+                            .d("Book closed (Folder Linked), syncing metadata and annotations to folder: ${it.bookId}")
+                        recentFilesRepository.syncLocalMetadataToFolder(it.bookId)
+                        recentFilesRepository.syncLocalAnnotationsToFolder(it.bookId)
+                    }
                 }
             }
         }
@@ -1383,8 +1384,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val constraints = Constraints.Builder().setRequiresBatteryNotLow(true).build()
                 val syncRequest =
                     PeriodicWorkRequestBuilder<FolderSyncWorker>(4, TimeUnit.HOURS).setConstraints(
-                            constraints
-                        ).build()
+                        constraints
+                    ).build()
                 workManager.enqueueUniquePeriodicWork(
                     FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, syncRequest
                 )
@@ -2965,7 +2966,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 0f
             }
-            Timber.d("Saving PDF position locally: URI=$currentPdfUri, Page=$page")
+            Timber.tag("PdfPositionDebug").d("ViewModel: Saving to DB | Page: $page | Total: $totalPages | URI: ${currentPdfUri.lastPathSegment}")
             viewModelScope.launch {
                 recentFilesRepository.getFileByUri(currentPdfUri.toString())?.let { _ ->
                     recentFilesRepository.updatePdfReadingPosition(
@@ -2973,6 +2974,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }
+        } else {
+            Timber.tag("PdfPositionDebug").w("ViewModel: Save aborted. No selectedPdfUri found in state.")
         }
     }
 

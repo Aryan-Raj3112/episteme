@@ -29,11 +29,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -167,6 +162,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
@@ -228,7 +224,10 @@ import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
@@ -283,6 +282,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -708,9 +709,10 @@ fun PdfViewerScreen(
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
     var isPdfDarkMode by remember { mutableStateOf(loadPdfDarkMode(context)) }
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
-    var showBars by remember { mutableStateOf(true) }
+    var showBars by rememberSaveable { mutableStateOf(true) }
     var isFullScreen by remember { mutableStateOf(false) }
-    var documentPassword by remember { mutableStateOf<String?>(null) }
+    var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
     var isScrollLocked by remember { mutableStateOf(false) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
@@ -761,6 +763,7 @@ fun PdfViewerScreen(
     }
 
     var isDockDragging by remember { mutableStateOf(false) }
+    var initialScrollDone by remember { mutableStateOf(false) }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
@@ -810,11 +813,9 @@ fun PdfViewerScreen(
     var showZoomIndicator by remember { mutableStateOf(false) }
     var bookmarks by remember(pdfUri) { mutableStateOf(loadPdfBookmarksFromJson(initialBookmarksJson)) }
 
-    var showPenPlayground by remember { mutableStateOf(false) }
-
-    var isEditMode by remember { mutableStateOf(false) }
-
-    var isDockMinimized by remember { mutableStateOf(false) }
+    var showPenPlayground by rememberSaveable { mutableStateOf(false) }
+    var isEditMode by rememberSaveable { mutableStateOf(false) }
+    var isDockMinimized by rememberSaveable { mutableStateOf(false) }
 
     val isDrawingActive by remember(isEditMode, isDockMinimized) {
         derivedStateOf { isEditMode && !isDockMinimized }
@@ -988,9 +989,7 @@ fun PdfViewerScreen(
 
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
     val toolSettings by annotationSettingsRepo.settings.collectAsState()
-
-    var showToolSettings by remember { mutableStateOf(false) }
-
+    var showToolSettings by rememberSaveable { mutableStateOf(false) }
     val isHighlighterSnapEnabled = toolSettings.isHighlighterSnapEnabled
 
     val selectedTool = toolSettings.getActiveTool()
@@ -1051,7 +1050,7 @@ fun PdfViewerScreen(
     var totalPages by remember { mutableIntStateOf(0) }
     var currentPageScale by remember { mutableFloatStateOf(1f) }
     val textBoxes = remember { mutableStateListOf<PdfTextBox>() }
-    var selectedTextBoxId by remember { mutableStateOf<String?>(null) }
+    var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
     val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
     val drawingState = remember { PdfDrawingState() }
     val pdfiumCore = remember(context) { PdfiumCoreKt(Dispatchers.Default) }
@@ -1070,13 +1069,21 @@ fun PdfViewerScreen(
         }
     }
 
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    val saveMutex = remember { Mutex() }
-
-    var initialScrollDone by remember { mutableStateOf(false) }
     var isDocumentReady by remember { mutableStateOf(false) }
 
-    val lastSavedHashes = remember(currentBookId) { IntArray(5) { 0 } }
+    LaunchedEffect(currentPage, isDocumentReady, totalPages, initialScrollDone) {
+        if (isDocumentReady && totalPages > 0) {
+            if (initialScrollDone) {
+                Timber.tag("PdfPositionDebug").v("UI: Tracking | currentPage: $currentPage | pendingRestorePage updated")
+                pendingRestorePage = currentPage
+            }
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val saveMutex = remember { Mutex() }
+
+    val lastSavedHashes = remember(currentBookId) { IntArray(5) { -1 } }
 
     val currentAnnotations by rememberUpdatedState(allAnnotations)
     val currentTextBoxes by rememberUpdatedState(textBoxes.toList())
@@ -1084,24 +1091,39 @@ fun PdfViewerScreen(
     val currentBookmarks by rememberUpdatedState(bookmarks)
     val currentTotalPages by rememberUpdatedState(totalDisplayPages)
     val currentPageState by rememberUpdatedState(currentPage)
+    val currentPendingPage by rememberUpdatedState(pendingRestorePage)
 
     val saveAllData = remember(currentBookId, annotationRepository, textBoxRepository, highlightRepository) {
         { force: Boolean ->
-            coroutineScope.launch {
+            viewModel.viewModelScope.launch {
                 val bookId = currentBookId ?: return@launch
+
+                if (!isDocumentReady && !force) {
+                    Timber.tag("PdfPositionDebug").w("UI: Save ignored. Document not ready.")
+                    return@launch
+                }
+
                 val annots = currentAnnotations
                 val boxes = currentTextBoxes
                 val highlights = currentHighlights
                 val bms = currentBookmarks
-                val page = currentPageState
                 val totalPgs = currentTotalPages
+
+                val restoreTarget = currentPendingPage ?: 0
+                val page = if (!initialScrollDone) {
+                    Timber.tag("PdfPositionDebug").i("UI: Save during restoration | Using restoreTarget: $restoreTarget (CurrentUI: $currentPageState)")
+                    restoreTarget
+                } else {
+                    currentPageState
+                }
+
+                Timber.tag("PdfPositionDebug").v("UI: Save logic | Choosing: $page (UI: $currentPageState, Target: $restoreTarget, Done: $initialScrollDone)")
 
                 val annotsHash = annots.hashCode()
                 val boxesHash = boxes.hashCode()
                 val highlightsHash = highlights.hashCode()
                 val bmsHash = bms.hashCode()
 
-                // Protect the lock and I/O execution with NonCancellable
                 withContext(NonCancellable) {
                     saveMutex.withLock {
                         withContext(Dispatchers.IO) {
@@ -1131,23 +1153,19 @@ fun PdfViewerScreen(
                                     }
                                 }
                                 val bookmarksJson = JSONArray(objectList).toString()
-                                withContext(Dispatchers.Main) {
-                                    onBookmarksChanged(bookmarksJson)
-                                }
+                                withContext(Dispatchers.Main) { onBookmarksChanged(bookmarksJson) }
                                 lastSavedHashes[3] = bmsHash
                                 didSave = true
                             }
+
                             if (force || page != lastSavedHashes[4]) {
+                                Timber.tag("PdfPositionDebug").d("UI: COMMIT SAVE | Page: $page | Total: $totalPgs | Force: $force")
                                 if (totalPgs > 0) {
                                     withContext(Dispatchers.Main) {
                                         onSavePosition(page, totalPgs)
                                     }
                                 }
                                 lastSavedHashes[4] = page
-                            }
-
-                            if (didSave) {
-                                Timber.tag("PdfSavePerf").d("Saved data for book $bookId")
                             }
                         }
                     }
@@ -1159,12 +1177,17 @@ fun PdfViewerScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
-                Timber.tag("PdfSavePerf").i("Lifecycle $event triggered, forcing save.")
-                coroutineScope.launch {
-                    if (richTextController != null) {
-                        withContext(NonCancellable) { richTextController.saveImmediate() }
+                val shouldSave = initialScrollDone || (currentPageState != 0)
+
+                if (shouldSave) {
+                    viewModel.viewModelScope.launch {
+                        if (richTextController != null) {
+                            withContext(NonCancellable) { richTextController.saveImmediate() }
+                        }
+                        saveAllData(true).join()
                     }
-                    saveAllData(true).join()
+                } else {
+                    Timber.tag("PdfPositionDebug").w("Lifecycle $event triggered: skipping save (initial settling).")
                 }
             }
         }
@@ -1735,35 +1758,44 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(isDocumentReady) {
+    LaunchedEffect(isDocumentReady, totalDisplayPages, displayMode) {
         if (isDocumentReady && !initialScrollDone) {
-            val pageCount = pagerState.pageCount
-            if (pageCount > 0) {
-                val targetPage = initialPage?.coerceIn(0, pageCount - 1) ?: 0
-                Timber.d("Initial Setup: Document is ready. Target page: $targetPage.")
+            val pageCount = totalDisplayPages
+            if (pageCount <= 0) return@LaunchedEffect
 
-                coroutineScope.launch {
-                    if (pagerState.currentPage != targetPage) {
-                        when (displayMode) {
-                            DisplayMode.PAGINATION -> {
-                                Timber.d("Initial Setup: Animating scroll to page $targetPage.")
-                                pagerState.scrollToPage(targetPage)
-                            }
+            val targetPage = pendingRestorePage?.coerceIn(0, pageCount - 1) ?: 0
+            Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount")
 
-                            DisplayMode.VERTICAL_SCROLL -> {
-                                Timber.d("Initial Setup: Snapping scroll to item $targetPage.")
-                                verticalReaderState.snapToPage(targetPage)
-                                pagerState.scrollToPage(targetPage)
-                            }
+            try {
+                delay(200)
+
+                when (displayMode) {
+                    DisplayMode.PAGINATION -> {
+                        if (pagerState.currentPage != targetPage) {
+                            pagerState.scrollToPage(targetPage)
                         }
+                        initialScrollDone = true
                     }
-                    initialScrollDone = true
-                    Timber.d("Initial Setup: Scroll complete. Page saving is now enabled.")
+                    DisplayMode.VERTICAL_SCROLL -> {
+                        var retries = 0
+                        while (verticalReaderState.snapToPageHandler == null && retries < 20) {
+                            delay(50)
+                            retries++
+                        }
+                        Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage) after $retries retries")
+                        verticalReaderState.snapToPage(targetPage)
+                        delay(100)
+                        initialScrollDone = true
+                    }
                 }
-            } else {
-                Timber.w(
-                    "Initial Setup: Document is ready, but pager pageCount is still 0. This may happen on rapid open/close. Scroll will be skipped."
-                )
+                Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage")
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    Timber.tag("PdfPositionDebug").w("UI: Restoration cancelled (likely new recomposition)")
+                } else {
+                    Timber.tag("PdfPositionDebug").e(e, "UI: Restoration error.")
+                    initialScrollDone = true
+                }
             }
         }
     }
@@ -2032,18 +2064,21 @@ fun PdfViewerScreen(
         } else {
             ttsController.stop()
 
-            coroutineScope.launch {
+            viewModel.viewModelScope.launch {
+                initialScrollDone = true
+
                 if (richTextController != null) {
                     withContext(NonCancellable) {
-                        Timber.tag("RichTextFlow").d("Forcing RichTextController immediate sync and save...")
                         richTextController.saveImmediate()
                     }
                 }
 
                 saveAllData(true).join()
 
-                Timber.tag("AnnotationSync").d("Save complete. Navigating back.")
-                onNavigateBack()
+                withContext(Dispatchers.Main) {
+                    Timber.tag("PdfPositionDebug").d("Exit save complete. Navigating back.")
+                    onNavigateBack()
+                }
             }
         }
     }
@@ -5006,16 +5041,22 @@ fun PdfViewerScreen(
                                                     }
                                                     saveAllData(true).join()
 
+                                                    val resolvedPage = if (!initialScrollDone && currentPage == 0) {
+                                                        pendingRestorePage ?: 0
+                                                    } else {
+                                                        currentPage
+                                                    }
+
                                                     if (hasReflowFile) {
                                                         val item = uiState.allRecentFiles.find { it.bookId == reflowBookId }
                                                         if (item != null) {
-                                                            viewModel.switchToFileSeamlessly(item, currentPage)
+                                                            viewModel.switchToFileSeamlessly(item, resolvedPage)
                                                         } else {
                                                             viewModel.generateAndImportReflowFile(
                                                                 pdfBookId = bookId,
                                                                 pdfUri = pdfUri,
                                                                 originalTitle = originalFileName,
-                                                                autoOpenPage = currentPage
+                                                                autoOpenPage = resolvedPage
                                                             )
                                                         }
                                                     } else {
@@ -5023,7 +5064,7 @@ fun PdfViewerScreen(
                                                             pdfBookId = bookId,
                                                             pdfUri = pdfUri,
                                                             originalTitle = originalFileName,
-                                                            autoOpenPage = currentPage
+                                                            autoOpenPage = resolvedPage
                                                         )
                                                     }
                                                 }

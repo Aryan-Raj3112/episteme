@@ -419,6 +419,7 @@ internal fun PdfVerticalReader(
 
             state.snapToPageHandler = { index ->
                 val clampedPanY = calculateTargetPanY(index)
+                Timber.tag("PdfPositionDebug").d("VerticalReader: snapToPage($index) called. ClampedPanY: $clampedPanY")
                 if (clampedPanY != null) {
                     panYAnimatable.snapTo(clampedPanY)
                 }
@@ -1210,9 +1211,7 @@ internal fun PdfVerticalReader(
 
             LaunchedEffect(visiblePages, screenHeight) {
                 snapshotFlow {
-                    Pair(
-                        panYAnimatable.value, zoomAnimatable.value
-                    )
+                    Pair(panYAnimatable.value, zoomAnimatable.value)
                 }.collectLatest { (panY, zoom) ->
                     if (visiblePages.isNotEmpty()) {
                         state.firstVisiblePage = visiblePages.first().index
@@ -1228,6 +1227,7 @@ internal fun PdfVerticalReader(
                         }
 
                         if (mostVisible != null && mostVisible.index != state.currentPage) {
+                            Timber.tag("PdfPositionDebug").v("VerticalReader: Page changed to ${mostVisible.index} (PanY: $panY)")
                             state.currentPage = mostVisible.index
                         }
                     }
