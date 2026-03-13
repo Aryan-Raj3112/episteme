@@ -196,8 +196,8 @@ internal fun PdfSelectionMenuPopup(
         popupPositionProvider = popupPositionProvider,
         onDismissRequest = onDismiss,
         properties = PopupProperties(
-            focusable = true,
-            dismissOnClickOutside = true,
+            focusable = false,
+            dismissOnClickOutside = false,
             dismissOnBackPress = true
         )
     ) {
