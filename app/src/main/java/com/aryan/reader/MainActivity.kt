@@ -69,7 +69,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
 
         lifecycleScope.launch {
             platformFeaturesRepository.checkForUpdates(this@MainActivity, updateLauncher)
