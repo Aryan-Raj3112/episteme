@@ -19,7 +19,7 @@
  */
 // EpubReaderScreen.kt
 @file:OptIn(ExperimentalSerializationApi::class) @file:Suppress("VariableNeverRead",
-    "UnusedVariable", "Unused"
+    "UnusedVariable", "Unused", "SimplifyBooleanWithConstants"
 )
 
 package com.aryan.reader.epubreader
@@ -409,7 +409,7 @@ fun EpubReaderHost(
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }
     val containerFocusRequester = remember { FocusRequester() }
-    var isNavigatingToBookmark by remember { mutableStateOf(false) }
+    var isNavigatingToPosition by remember { mutableStateOf(false) }
 
     var isPageSliderVisible by remember { mutableStateOf(false) }
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
@@ -817,17 +817,22 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(initialLocator, initialCfi) {
-        if (currentRenderMode == RenderMode.VERTICAL_SCROLL && initialLocator != null && cfiToLoad == null) {
-            if (!initialCfi.isNullOrBlank()) {
-                Timber.d("V_SCROLL: Using raw initialCfi: $initialCfi")
-                if (currentChapterIndex != initialLocator.chapterIndex) {
-                    currentChapterIndex = initialLocator.chapterIndex
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    var lastOrientation by remember { mutableIntStateOf(configuration.orientation) }
+
+    LaunchedEffect(configuration.orientation) {
+        if (lastOrientation != configuration.orientation) {
+            lastOrientation = configuration.orientation
+            if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                lastKnownLocator?.let { locator ->
+                    scope.launch {
+                        val cfi = locatorConverter.getCfiFromLocator(epubBook, locator)
+                        if (cfi != null) {
+                            delay(300L)
+                            webViewRefForTts?.evaluateJavascript("javascript:window.scrollToCfi('${escapeJsString(cfi)}');", null)
+                        }
+                    }
                 }
-                cfiToLoad = initialCfi
-            } else {
-                Timber.w("V_SCROLL: initialCfi is null or blank. Position cannot be restored from locator as conversion is disabled per request.")
-                isInitialCfiLoad = false
             }
         }
     }
@@ -1537,7 +1542,7 @@ fun EpubReaderHost(
                                 }
                                 else {
                                     if (targetChunk != null && targetChunk >= 0) {
-                                        isNavigatingToBookmark = true
+                                        isNavigatingToPosition = true
 
                                         if (targetChunk >= loadedChunkCount) {
                                             Timber.tag("BookmarkDiagnosis").d("Manual Chunk Injection: Loading from $loadedChunkCount to $targetChunk")
@@ -1556,9 +1561,6 @@ fun EpubReaderHost(
                                             loadUpToChunkIndex = targetChunk
                                             loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
                                         } else {
-                                            // Even if loadedChunkCount is high enough in Kotlin state,
-                                            // ensure the specific chunk for the bookmark is actually in the DOM.
-                                            // (Sometimes rapid jumps might leave gaps if logic was loose)
                                             val content = chapterChunks.getOrNull(targetChunk)
                                             if (content != null) {
                                                 val escaped = escapeJsString(content)
@@ -1576,8 +1578,8 @@ fun EpubReaderHost(
 
                                         scope.launch {
                                             delay(3000)
-                                            if (isNavigatingToBookmark) {
-                                                isNavigatingToBookmark = false
+                                            if (isNavigatingToPosition) {
+                                                isNavigatingToPosition = false
                                             }
                                         }
                                     } else {
@@ -1591,6 +1593,7 @@ fun EpubReaderHost(
                             }
                             RenderMode.PAGINATED -> {
                                 Timber.d("P-Mode Click: Navigating to bookmark. Chapter: ${bookmark.chapterIndex}, CFI: '${bookmark.cfi}'")
+                                isNavigatingToPosition = true
                                 val locator = locatorConverter.getLocatorFromCfi(
                                     book = epubBook,
                                     chapterIndex = bookmark.chapterIndex,
@@ -1610,11 +1613,13 @@ fun EpubReaderHost(
                                             paginatedPagerState.scrollToPage(chapterStartPage)
                                         }
                                     }
+                                    isNavigatingToPosition = false
                                 } else {
                                     Timber.w("P-Mode Click: Failed to convert CFI to Locator. Using old findPageForCfi as a fallback.")
                                     paginator?.findPageForCfi(bookmark.chapterIndex, bookmark.cfi) { pageIndex ->
                                         scope.launch {
                                             paginatedPagerState.scrollToPage(pageIndex)
+                                            isNavigatingToPosition = false
                                         }
                                     }
                                 }
@@ -1635,11 +1640,48 @@ fun EpubReaderHost(
                                 val targetChunk = locator?.let { it.blockIndex / 20 }
 
                                 if (highlight.chapterIndex != currentChapterIndex) {
-                                    chunkTargetOverride = targetChunk ?: 0
+                                    chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) targetChunk else 0
                                     currentChapterIndex = highlight.chapterIndex
                                 } else {
-                                    if (targetChunk != null && targetChunk >= loadedChunkCount) {
-                                        loadUpToChunkIndex = targetChunk
+                                    if (targetChunk != null && targetChunk >= 0) {
+                                        isNavigatingToPosition = true
+
+                                        if (targetChunk >= loadedChunkCount) {
+                                            val chunksToInject = (loadedChunkCount..targetChunk)
+                                            chunksToInject.forEach { idx ->
+                                                val content = chapterChunks.getOrNull(idx)
+                                                if (content != null) {
+                                                    val escaped = escapeJsString(content)
+                                                    webViewRefForTts?.evaluateJavascript(
+                                                        "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                                                        null
+                                                    )
+                                                }
+                                            }
+                                            loadUpToChunkIndex = targetChunk
+                                            loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
+                                        } else {
+                                            val content = chapterChunks.getOrNull(targetChunk)
+                                            if (content != null) {
+                                                val escaped = escapeJsString(content)
+                                                webViewRefForTts?.evaluateJavascript(
+                                                    "javascript:window.virtualization.appendChunk($targetChunk, '$escaped');",
+                                                    null
+                                                )
+                                            }
+                                        }
+
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "javascript:window.scrollToCfi('${escapeJsString(highlight.cfi)}');",
+                                            null
+                                        )
+
+                                        scope.launch {
+                                            delay(3000)
+                                            if (isNavigatingToPosition) {
+                                                isNavigatingToPosition = false
+                                            }
+                                        }
                                     } else {
                                         webViewRefForTts?.evaluateJavascript(
                                             "javascript:window.scrollToCfi('${escapeJsString(highlight.cfi)}');",
@@ -1649,10 +1691,26 @@ fun EpubReaderHost(
                                 }
                             }
                             RenderMode.PAGINATED -> {
+                                isNavigatingToPosition = true
                                 val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
                                 if (locator != null) {
                                     val pageIndex = (paginator as? BookPaginator)?.findPageForLocator(locator)
-                                    if (pageIndex != null) paginatedPagerState.scrollToPage(pageIndex)
+                                    if (pageIndex != null) {
+                                        paginatedPagerState.scrollToPage(pageIndex)
+                                    } else {
+                                        val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(highlight.chapterIndex)
+                                        if (chapterStartPage != null) {
+                                            paginatedPagerState.scrollToPage(chapterStartPage)
+                                        }
+                                    }
+                                    isNavigatingToPosition = false
+                                } else {
+                                    paginator?.findPageForCfi(highlight.chapterIndex, highlight.cfi) { pageIndex ->
+                                        scope.launch {
+                                            paginatedPagerState.scrollToPage(pageIndex)
+                                            isNavigatingToPosition = false
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2126,7 +2184,7 @@ fun EpubReaderHost(
                                             },
                                             onScrollFinished = { success ->
                                                 Timber.tag("BookmarkDiagnosis").d("Scroll finished callback. Success: $success")
-                                                isNavigatingToBookmark = false
+                                                isNavigatingToPosition = false
                                             },
                                             ttsScope = scope,
                                             onTtsTextReady = { jsonString ->
@@ -3483,7 +3541,7 @@ fun EpubReaderHost(
                     }
                 )
 
-                if (isNavigatingToBookmark) {
+                if (isNavigatingToPosition) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -3495,7 +3553,7 @@ fun EpubReaderHost(
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Navigating to bookmark...",
+                                text = "Navigating to position...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )

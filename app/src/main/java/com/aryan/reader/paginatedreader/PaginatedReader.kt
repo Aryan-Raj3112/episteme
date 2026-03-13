@@ -530,6 +530,20 @@ fun PaginatedReaderScreen(
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
 
         var anchorLocatorForReconfig by remember { mutableStateOf<Locator?>(null) }
+        val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
+
+        val previousConstraints = remember { arrayOf(this.constraints) }
+        if (previousConstraints[0] != this.constraints) {
+            val activePaginator = currentPaginatorRef.value
+            if (activePaginator is BookPaginator) {
+                val currentPage = pagerState.currentPage
+                val locator = activePaginator.getLocatorForPage(currentPage)
+                if (locator != null) {
+                    anchorLocatorForReconfig = locator
+                }
+            }
+            previousConstraints[0] = this.constraints
+        }
 
         val textStyle = remember(
             baseTextStyle,
@@ -555,8 +569,6 @@ fun PaginatedReaderScreen(
                 )
             )
         }
-
-        val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
 
         LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, fontFamily, textAlign) {
             if (fontSizeMultiplier != debouncedFontSizeMult || lineHeightMultiplier != debouncedLineHeightMult || fontFamily != debouncedFontFamily || textAlign != debouncedTextAlign) {
@@ -2902,7 +2914,7 @@ private fun PaginatedTextSelectionMenu(
     onHighlight: ((HighlightColor) -> Unit)?,
     onDelete: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
-    isOss: Boolean,
+    @Suppress("unused") isOss: Boolean,
     activeHighlightPalette: List<HighlightColor> = emptyList(),
     onOpenPaletteManager: (() -> Unit)? = null
 ) {
