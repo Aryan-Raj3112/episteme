@@ -363,7 +363,16 @@ fun EpubReaderScreen(
         onRenderModeChange = onRenderModeChange,
         customFonts = customFonts,
         onImportFont = onImportFont,
-        onToggleReflow = onOpenOriginal
+        onToggleReflow = onOpenOriginal,
+        onDeleteReflow = if (isReflowFile) {
+            {
+                uiState.selectedBookId?.let { id ->
+                    viewModel.deleteBookPermanently(id) {
+                        onNavigateBack()
+                    }
+                }
+            }
+        } else null
     )
 }
 
@@ -388,7 +397,8 @@ fun EpubReaderHost(
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
     onImportFont: (Uri) -> Unit,
-    onToggleReflow: ((Int) -> Unit)? = null
+    onToggleReflow: ((Int) -> Unit)? = null,
+    onDeleteReflow: (() -> Unit)? = null
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -3124,6 +3134,7 @@ fun EpubReaderHost(
                             onToggleReflow(activeChapter)
                         }
                     } else null,
+                    onDeleteReflow = onDeleteReflow
                 )
 
                 val autoScrollPadding by androidx.compose.animation.core.animateDpAsState(

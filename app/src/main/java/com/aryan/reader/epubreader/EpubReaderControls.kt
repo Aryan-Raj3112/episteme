@@ -67,13 +67,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -153,6 +153,7 @@ fun EpubReaderTopBar(
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
+    onDeleteReflow: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(
         visible = isVisible,
@@ -224,6 +225,27 @@ fun EpubReaderTopBar(
                                     }
                                 )
                                 HorizontalDivider()
+                            }
+
+                            onDeleteReflow?.let {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Delete Text View") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        it()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    colors = androidx.compose.material3.MenuDefaults.itemColors(
+                                        textColor = MaterialTheme.colorScheme.error
+                                    )
+                                )
                             }
 
                             DropdownMenuItem(
@@ -386,7 +408,7 @@ fun EpubReaderBottomBar(
                     Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
                 }
 
-                @Suppress("KotlinConstantConditions")
+                @Suppress("KotlinConstantConditions", "SimplifyBooleanWithConstants")
                 if (BuildConfig.FLAVOR != "oss") {
                     Box {
                         var showAiFeaturesMenu by remember { mutableStateOf(false) }

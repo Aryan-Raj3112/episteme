@@ -169,7 +169,6 @@ data class ReaderScreenState(
     val selectedFileType: FileType? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
-    val recentFiles: List<RecentFileItem> = emptyList(),
     val contextualActionItems: Set<RecentFileItem> = emptySet(),
     val renderMode: RenderMode = RenderMode.VERTICAL_SCROLL,
     val sortOrder: SortOrder = SortOrder.RECENT,
@@ -206,7 +205,9 @@ data class ReaderScreenState(
     val searchQuery: String = "",
     val showFolderMigrationDialog: Boolean = false,
     val isRefreshing: Boolean = false,
-    val reflowProgress: Float? = null
+    val reflowProgress: Float? = null,
+    val recentFiles: List<RecentFileItem> = emptyList(),
+    val allRecentFiles: List<RecentFileItem> = emptyList(),
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -300,61 +301,42 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     open val uiState: StateFlow<ReaderScreenState> = combine(
         _internalState, recentFilesRepository.getRecentFilesFlow(), _prefsUpdateFlow
     ) { internalState, recentFilesFromDb, _ ->
-        val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
-            recentFilesFromDb.any { dbItem ->
-                dbItem.uriString == contextItem.uriString
-            }
-        }.toSet()
-
-        if (validContextualItems.size != internalState.contextualActionItems.size) {
-            Timber.d(
-                "Contextual items updated due to recent files change. Before: ${internalState.contextualActionItems.size}, After: ${validContextualItems.size}"
-            )
-        }
-
         val query = internalState.searchQuery.trim()
-        val filteredFiles = if (query.isBlank()) {
+        val rawFilteredByQuery = if (query.isBlank()) {
             recentFilesFromDb
         } else {
             recentFilesFromDb.filter { item ->
-                item.displayName.contains(query, ignoreCase = true) || item.title?.contains(
-                    query, ignoreCase = true
-                ) == true || item.author?.contains(query, ignoreCase = true) == true
+                item.displayName.contains(query, ignoreCase = true) ||
+                        item.title?.contains(query, ignoreCase = true) == true ||
+                        item.author?.contains(query, ignoreCase = true) == true
             }
         }
 
-        val sortedRecentFiles = when (internalState.sortOrder) {
-            SortOrder.RECENT -> filteredFiles // Changed from recentFilesFromDb
-            SortOrder.TITLE_ASC -> filteredFiles.sortedBy {
-                it.title?.lowercase() ?: it.displayName.lowercase()
-            }
-
-            SortOrder.AUTHOR_ASC -> filteredFiles.sortedWith(
-                compareBy(nullsLast()) {
-                    it.author?.lowercase()
-                })
-
-            SortOrder.PERCENT_ASC -> filteredFiles.sortedBy { it.progressPercentage ?: 0f }
-            SortOrder.PERCENT_DESC -> filteredFiles.sortedByDescending {
-                it.progressPercentage ?: 0f
-            }
+        val sortedAllFiles = when (internalState.sortOrder) {
+            SortOrder.RECENT -> rawFilteredByQuery
+            SortOrder.TITLE_ASC -> rawFilteredByQuery.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
+            SortOrder.AUTHOR_ASC -> rawFilteredByQuery.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
+            SortOrder.PERCENT_ASC -> rawFilteredByQuery.sortedBy { it.progressPercentage ?: 0f }
+            SortOrder.PERCENT_DESC -> rawFilteredByQuery.sortedByDescending { it.progressPercentage ?: 0f }
         }
+
+        val visibleRecentFiles = sortedAllFiles.filterNot { it.bookId.endsWith("_reflow") }
+
+        val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
+            visibleRecentFiles.any { dbItem -> dbItem.uriString == contextItem.uriString }
+        }.toSet()
 
         val shelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()) ?: emptySet()
         val shelvedBookIds = mutableSetOf<String>()
 
         val shelvesFromPrefs = shelfNames.map { shelfName ->
-            val bookIds = prefs.getStringSet(
-                "$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()
-            ) ?: emptySet()
-            shelvedBookIds.addAll(bookIds)
-            val booksForShelf = sortedRecentFiles.filter {
-                it.bookId in bookIds
-            }
+            val bookIds = prefs.getStringSet("$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()) ?: emptySet()
+            val booksForShelf = visibleRecentFiles.filter { it.bookId in bookIds }
+            shelvedBookIds.addAll(booksForShelf.map { it.bookId })
             Shelf(shelfName, booksForShelf)
         }.sortedBy { it.name }
 
-        val unshelvedBooks = sortedRecentFiles.filter { it.bookId !in shelvedBookIds }
+        val unshelvedBooks = visibleRecentFiles.filter { it.bookId !in shelvedBookIds }
         val allShelves = shelvesFromPrefs + Shelf("Unshelved", unshelvedBooks)
 
         val booksAvailableForAdding =
@@ -365,7 +347,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 when (internalState.addBooksSource) {
                     AddBooksSource.UNSHELVED -> unshelvedBooks
-                    AddBooksSource.ALL_BOOKS -> sortedRecentFiles.filter {
+                    AddBooksSource.ALL_BOOKS -> visibleRecentFiles.filter {
                         it.uriString !in currentShelfBooksUris
                     }
                 }
@@ -374,7 +356,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
         internalState.copy(
-            recentFiles = sortedRecentFiles,
+            recentFiles = visibleRecentFiles,
+            allRecentFiles = sortedAllFiles,
             contextualActionItems = validContextualItems,
             shelves = allShelves,
             booksAvailableForAdding = booksAvailableForAdding
@@ -749,6 +732,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteFont(fontId: String) {
         viewModelScope.launch { fontsRepository.deleteFont(fontId) }
+    }
+
+    fun deleteBookPermanently(bookId: String, onDeleted: () -> Unit = {}) {
+        viewModelScope.launch {
+            val item = recentFilesRepository.getFileByBookId(bookId) ?: return@launch
+
+            Timber.d("Deleting book permanently from reader: $bookId")
+
+            pdfTextRepository.clearBookText(bookId)
+            try {
+                val cacheDir = File(appContext.cacheDir, "imported_file_$bookId")
+                if (cacheDir.exists()) cacheDir.deleteRecursively()
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to clear cache for $bookId")
+            }
+
+            recentFilesRepository.deleteFilePermanently(listOf(bookId))
+
+            withContext(Dispatchers.Main) {
+                onDeleted()
+                showBanner("Text view deleted.")
+            }
+        }
     }
 
     private fun getInstallationId(): String {

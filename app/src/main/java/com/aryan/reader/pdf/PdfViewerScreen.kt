@@ -740,9 +740,9 @@ fun PdfViewerScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
-    val hasReflowFile by remember(uiState.recentFiles, reflowBookId) {
+    val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId) {
         derivedStateOf {
-            uiState.recentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
+            uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
         }
     }
     val originalFileName by remember(uiState.recentFiles, pdfUri) {
@@ -4955,9 +4955,16 @@ fun PdfViewerScreen(
                                             onClick = {
                                                 showMoreMenu = false
                                                 if (hasReflowFile) {
-                                                    val item = uiState.recentFiles.find { it.bookId == reflowBookId }
+                                                    val item = uiState.allRecentFiles.find { it.bookId == reflowBookId }
                                                     if (item != null) {
                                                         viewModel.switchToFileSeamlessly(item, currentPage)
+                                                    } else {
+                                                        viewModel.generateAndImportReflowFile(
+                                                            pdfBookId = bookId,
+                                                            pdfUri = pdfUri,
+                                                            originalTitle = originalFileName,
+                                                            autoOpenPage = currentPage
+                                                        )
                                                     }
                                                 } else {
                                                     viewModel.generateAndImportReflowFile(
