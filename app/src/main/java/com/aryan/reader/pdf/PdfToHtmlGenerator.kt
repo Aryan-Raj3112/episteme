@@ -45,6 +45,10 @@ object PdfToHtmlGenerator {
             destFile.bufferedWriter().use { writer ->
                 writer.write(buildGlobalHtmlHeader())
                 for (pageIdx in (startPage - 1) until totalPages) {
+                    if (pageIdx > startPage - 1) {
+                        writer.write("\n<page-break></page-break>\n")
+                    }
+
                     val pageHtml = extractPageHtml(doc, pageIdx, pageIdx + 1, headerFooterStrings)
                     writer.write(pageHtml)
                     if (pageIdx % 5 == 0 || pageIdx == totalPages - 1) {
@@ -272,8 +276,7 @@ object PdfToHtmlGenerator {
     }
 
     private fun buildEmptyPageSection(pageNumber: Int) =
-        (if (pageNumber > 1) "<hr class=\"page-divider\">\n" else "") +
-                "<section class=\"page-section\">\n" +
+        "<section class=\"page-section\">\n" +
                 "<p class=\"page-marker\">— Page $pageNumber —</p>\n" +
                 "<p><em>(No text on this page)</em></p>\n</section>\n"
 
@@ -305,7 +308,6 @@ object PdfToHtmlGenerator {
         val wrapThreshold = (typicalLineLen * 0.80).toInt()
 
         val sb = StringBuilder()
-        sb.append(if (pageNumber > 1) "<hr class=\"page-divider\">\n" else "")
         sb.append("<section class=\"page-section\">\n")
         sb.append("<p class=\"page-marker\">— Page $pageNumber —</p>\n")
 

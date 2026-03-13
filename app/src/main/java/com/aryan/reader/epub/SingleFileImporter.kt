@@ -376,65 +376,62 @@ class SingleFileImporter(private val context: Context) {
         val author = doc.select("meta[name=author]").attr("content").takeIf { it.isNotBlank() }
             ?: doc.select("meta[property=article:author]").attr("content").takeIf { it.isNotBlank() }
 
-        val finalHtml = doc.outerHtml()
+        val cssStyle = doc.select("style").html()
+        val bodyHtml = doc.body().html()
 
-        Timber.tag("FileOpenPerf").d("[HTML] parseHtml COMPLETE | elapsed=${System.currentTimeMillis() - parseStart}ms")
-        createBookFromHtmlBody(title, null, null, originalBookNameHint, bookId, extractionDir, metadataFile, preGeneratedFullHtml = finalHtml, author = author)
-    }
-
-    private fun createBookFromHtmlBody(
-        title: String,
-        @Suppress("SameParameterValue") bodyContent: String?,
-        @Suppress("SameParameterValue")cssStyle: String?,
-        fileName: String,
-        bookId: String,
-        extractionDir: File,
-        metadataFile: File,
-        preGeneratedFullHtml: String? = null,
-        author: String? = null
-    ): EpubBook {
-        val fullHtml = preGeneratedFullHtml ?: """
-            <!DOCTYPE html>
-            <html xmlns="http://www.w3.org/1999/xhtml">
-            <head>
-                <title>${title.replace("\"", "&quot;")}</title>
-                <style>
-                    ${cssStyle ?: ""}
-                </style>
-            </head>
-            <body>
-                $bodyContent
-            </body>
-            </html>
-        """.trimIndent()
-
-        val plainText = Jsoup.parse(fullHtml).text()
-
-        try {
-            File(extractionDir, "content.html").writeText(fullHtml)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to save generated HTML to disk")
+        val rawChapters = if (bodyHtml.contains("<page-break></page-break>")) {
+            bodyHtml.split("<page-break></page-break>")
+        } else {
+            listOf(bodyHtml)
         }
 
-        val chapter = EpubChapter(
-            chapterId = bookId,
-            absPath = "content.html",
-            title = title,
-            htmlFilePath = "content.html",
-            plainTextContent = plainText,
-            htmlContent = "",
-            depth = 0,
-            isInToc = true
-        )
+        val chapters = rawChapters.mapIndexed { index, rawText ->
+            async(Dispatchers.Default) {
+                if (rawText.isBlank()) return@async null
+
+                val pageNum = index + 1
+                val chapterTitle = if (rawChapters.size > 1) "Page $pageNum" else title
+                val fileName = "page_$pageNum.html"
+                val file = File(extractionDir, fileName)
+
+                val fullHtml = """
+                    <!DOCTYPE html>
+                    <html xmlns="http://www.w3.org/1999/xhtml">
+                    <head>
+                        <title>${title.replace("\"", "&quot;")}</title>
+                        <style>${cssStyle}</style>
+                    </head>
+                    <body>
+                        ${rawText.trim()}
+                    </body>
+                    </html>
+                """.trimIndent()
+
+                file.writeText(fullHtml)
+
+                EpubChapter(
+                    chapterId = "${bookId}_$pageNum",
+                    absPath = fileName,
+                    title = chapterTitle,
+                    htmlFilePath = fileName,
+                    plainTextContent = Jsoup.parse(fullHtml).text(),
+                    htmlContent = "",
+                    depth = 0,
+                    isInToc = true
+                )
+            }
+        }.awaitAll().filterNotNull()
+
+        Timber.tag("FileOpenPerf").d("[HTML] parseHtml COMPLETE | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
         val book = EpubBook(
-            fileName = fileName,
+            fileName = originalBookNameHint,
             title = title,
-            author = author ?: "",
+            author = author ?: "Unknown",
             language = "en",
             coverImage = null,
-            chapters = listOf(chapter),
-            chaptersForPagination = listOf(chapter),
+            chapters = chapters,
+            chaptersForPagination = chapters,
             images = emptyList(),
             pageList = emptyList(),
             extractionBasePath = extractionDir.absolutePath,
@@ -447,6 +444,6 @@ class SingleFileImporter(private val context: Context) {
             Timber.e(e, "Failed to cache HTML metadata")
         }
 
-        return book
+        return@withContext book
     }
 }
