@@ -189,7 +189,6 @@ object PdfToHtmlGenerator {
                         return@use buildFallbackPageSection(pageNumber, rawText)
                     }
 
-                    // 2. EXTRACT TEXT USING NATIVE READING ORDER
                     val textLines = mutableListOf<TextLine>()
                     val currentSpans = mutableListOf<TextSpan>()
                     val currentSpanBuf = StringBuilder()
@@ -219,10 +218,37 @@ object PdfToHtmlGenerator {
 
                     for (i in 0 until actualCount) {
                         val c = rawText[i]
-                        if (c == '\u0000' || c == '\r') continue
-                        // PDFium auto-injects \r\n between visual line breaks beautifully!
+                        val code = c.code
+
+                        if (code == 0 || code == 13) continue
+
                         if (c == '\n') {
                             commitLine()
+                            continue
+                        }
+
+                        val charToProcess = when (c) {
+                            '\u00A0' -> ' '
+                            '\u00AD' -> '-'
+                            '\u0009' -> ' '
+                            else -> c
+                        }
+
+                        val type = Character.getType(c).toByte()
+                        val isJunk = when {
+                            code == 0xFFFE || code == 0xFFFF -> true
+                            code == 0xFFFD -> true
+                            type == Character.PRIVATE_USE -> true
+                            type == Character.SURROGATE -> true
+                            type == Character.UNASSIGNED -> true
+                            (type == Character.CONTROL && code > 31) -> true
+                            else -> false
+                        }
+
+                        if (isJunk) {
+                            val prefix = rawText.substring(maxOf(0, i - 2), i).replace("\n", "\\n")
+                            val suffix = rawText.substring(minOf(actualCount, i + 1), minOf(actualCount, i + 3)).replace("\n", "\\n")
+                            Timber.tag("PdfToHtml").w("Filtered Junk: 0x${Integer.toHexString(code).uppercase()} at pg $pageIdx. Context: '$prefix[$c]$suffix'")
                             continue
                         }
 
@@ -230,19 +256,19 @@ object PdfToHtmlGenerator {
                         val isBold = weights[i] > 600
                         val isItalic = (flags[i] and 64) != 0
 
-                        if (currentSpanBuf.isEmpty() && currentSpans.isEmpty() && !c.isWhitespace()) {
+                        if (currentSpanBuf.isEmpty() && currentSpans.isEmpty() && !charToProcess.isWhitespace()) {
                             lineBaseline = if (charBoxes != null && i * 4 + 1 < charBoxes.size) charBoxes[i * 4 + 1] else 0f
                         }
 
                         if (currentSpanBuf.isEmpty()) {
                             curSize = size; curBold = isBold; curItalic = isItalic
-                            currentSpanBuf.append(c)
-                        } else if (!c.isWhitespace() && (size != curSize || isBold != curBold || isItalic != curItalic)) {
+                            currentSpanBuf.append(charToProcess)
+                        } else if (!charToProcess.isWhitespace() && (size != curSize || isBold != curBold || isItalic != curItalic)) {
                             commitSpan()
                             curSize = size; curBold = isBold; curItalic = isItalic
-                            currentSpanBuf.append(c)
+                            currentSpanBuf.append(charToProcess)
                         } else {
-                            currentSpanBuf.append(c)
+                            currentSpanBuf.append(charToProcess)
                         }
                     }
                     commitLine()
