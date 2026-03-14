@@ -956,6 +956,21 @@ fun EpubReaderHost(
         }
     }
 
+    var showPermissionRationaleDialog by remember { mutableStateOf(false) }
+    val isDarkTheme = isSystemInDarkTheme()
+    var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
+
+    val currentChapterInPaginatedMode by remember {
+        derivedStateOf {
+            if (currentRenderMode == RenderMode.PAGINATED) {
+                (paginator as? BookPaginator)?.findChapterIndexForPage(paginatedPagerState.currentPage)
+            } else {
+                null
+            }
+        }
+    }
+
     fun startTts() {
         if (isAutoScrollModeActive) {
             isAutoScrollModeActive = false
@@ -1007,10 +1022,66 @@ fun EpubReaderHost(
         }
     )
 
-    var showPermissionRationaleDialog by remember { mutableStateOf(false) }
-    val isDarkTheme = isSystemInDarkTheme()
-    var showTtsSettingsSheet by remember { mutableStateOf(false) }
-    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
+    fun startTtsFromSelectionPaginated(baseCfi: String, startOffset: Int) {
+        val action = {
+            scope.launch {
+                val bookPaginator = paginator as? BookPaginator
+                val chapterIndex = currentChapterInPaginatedMode ?: return@launch
+                val chunks = bookPaginator?.getTtsChunksForChapter(chapterIndex) ?: return@launch
+
+                var foundIdx = -1
+                for (i in chunks.indices) {
+                    val c = chunks[i]
+                    val cPath = c.sourceCfi.substringBefore(":")
+                    val bPath = baseCfi.substringBefore(":")
+                    if (cPath == bPath && startOffset >= c.startOffsetInSource && startOffset < c.startOffsetInSource + c.text.length) {
+                        foundIdx = i
+                        break
+                    }
+                }
+
+                if (foundIdx != -1) {
+                    val target = chunks[foundIdx]
+                    val relativeOffset = startOffset - target.startOffsetInSource
+                    val safeRelativeOffset = relativeOffset.coerceIn(0, target.text.length)
+                    val slicedText = target.text.substring(safeRelativeOffset)
+                    val newChunk = target.copy(text = slicedText, startOffsetInSource = startOffset)
+
+                    val remainingChunks = mutableListOf(newChunk)
+                    remainingChunks.addAll(chunks.subList(foundIdx + 1, chunks.size))
+
+                    if (remainingChunks.isNotEmpty()) {
+                        ttsShouldStartOnChapterLoad = false
+                        ttsChapterIndex = chapterIndex
+                        val chapterTitle = chapters.getOrNull(chapterIndex)?.title
+                        val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
+                        ttsController.start(
+                            chunks = remainingChunks,
+                            bookTitle = epubBook.title,
+                            chapterTitle = chapterTitle,
+                            coverImageUri = coverUriString,
+                            ttsMode = currentTtsMode,
+                            playbackSource = "READER"
+                        )
+                    }
+                }
+            }
+        }
+
+        if (isAutoScrollModeActive) {
+            isAutoScrollModeActive = false
+            isAutoScrollPlaying = false
+        }
+        userStoppedTts = false
+
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            action()
+        } else if (activity?.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) == true) {
+            showPermissionRationaleDialog = true
+        } else {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     TtsSessionObserver(
         ttsState = ttsState,
@@ -1310,16 +1381,6 @@ fun EpubReaderHost(
                 } else {
                     Timber.w("Bookmark map: Failed to convert CFI '${bookmark.cfi}' to locator. Cannot map this bookmark.")
                 }
-            }
-        }
-    }
-
-    val currentChapterInPaginatedMode by remember {
-        derivedStateOf {
-            if (currentRenderMode == RenderMode.PAGINATED) {
-                (paginator as? BookPaginator)?.findChapterIndexForPage(paginatedPagerState.currentPage)
-            } else {
-                null
             }
         }
     }
@@ -2250,10 +2311,11 @@ fun EpubReaderHost(
                                                             val cfiJsonObject =
                                                                 JSONObject(cfiJsonString)
                                                             val cfi = cfiJsonObject.getString("cfi")
+                                                            val baseOffset = jsonObject.optInt("startOffset", 0)
 
                                                             val subChunks =
                                                                 splitTextIntoChunks(text)
-                                                            var currentOffset = 0
+                                                            var currentOffset = baseOffset
                                                             for (subChunk in subChunks) {
                                                                 ttsChunks.add(
                                                                     TtsChunk(
@@ -2648,6 +2710,9 @@ fun EpubReaderHost(
                                 },
                                 onSearch = { text ->
                                     onSearchLookup(text)
+                                },
+                                onStartTtsFromSelection = { cfi, offset ->
+                                    startTtsFromSelectionPaginated(cfi, offset)
                                 },
                                 userHighlights = userHighlights.filter { it.chapterIndex == (currentChapterInPaginatedMode ?: -1) },
                                 onHighlightCreated = { cfi, text, colorId ->

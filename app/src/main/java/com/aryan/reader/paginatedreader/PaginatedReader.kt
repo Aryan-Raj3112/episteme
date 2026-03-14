@@ -31,8 +31,6 @@ import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,12 +62,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -125,6 +123,7 @@ import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -135,6 +134,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
@@ -508,6 +508,7 @@ fun PaginatedReaderScreen(
     onWordSelectedForAiDefinition: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
+    onStartTtsFromSelection: (String, Int) -> Unit,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -807,6 +808,7 @@ fun PaginatedReaderScreen(
             onWordSelectedForAiDefinition = onWordSelectedForAiDefinition,
             onTranslate = onTranslate,
             onSearch = onSearch,
+            onStartTtsFromSelection = onStartTtsFromSelection,
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
@@ -1379,6 +1381,7 @@ internal fun PaginatedReaderContent(
     onWordSelectedForAiDefinition: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
+    onStartTtsFromSelection: (String, Int) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
@@ -2533,14 +2536,58 @@ internal fun PaginatedReaderContent(
                         }, onSelectAll = {
                             state.onSelectAll?.invoke()
                             state.onHide()
+                        }, onTts = {
+                            isForHighlight = true
+                            state.onCopy()
+                            isForHighlight = false
+
+                            capturedTextForAction?.let { text ->
+                                val selectionRect = state.rect
+                                var geometricSuccess = false
+                                val candidates = blockLayoutMap.filter { (_, triple) ->
+                                    val (_, coords, _) = triple
+                                    if (!coords.isAttached) return@filter false
+                                    val pos = coords.positionInWindow()
+                                    val size = coords.size.toSize()
+                                    Rect(pos, size).overlaps(selectionRect)
+                                }
+                                if (candidates.isNotEmpty()) {
+                                    try {
+                                        val sorted = candidates.entries.sortedBy { it.value.second.positionInWindow().y }
+                                        val firstEntry = sorted.first()
+                                        val startCfi: String = firstEntry.key
+                                        val startTriple = firstEntry.value
+
+                                        val startLayout: TextLayoutResult = startTriple.first
+                                        val startCoords: LayoutCoordinates = startTriple.second
+                                        val startAbsOffset: Int = startTriple.third
+
+                                        val localStart = startCoords.windowToLocal(selectionRect.topLeft)
+                                        val finalStartOffset = startLayout.getOffsetForPosition(localStart)
+                                        val absStart: Int = finalStartOffset + startAbsOffset
+
+                                        onStartTtsFromSelection(startCfi, absStart)
+                                        geometricSuccess = true
+                                    } catch(e: Exception) {
+                                        Timber.e(e, "TTS Selection error")
+                                    }
+                                }
+                                if (!geometricSuccess) {
+                                    val pageInfo = onGetPage(pagerState.currentPage)
+                                    val firstCfi = pageInfo?.content?.firstOrNull { it.cfi != null }?.cfi
+                                    if (firstCfi != null) {
+                                        onStartTtsFromSelection(firstCfi, 0)
+                                    }
+                                }
+                            }
+                            state.onHide()
                         }, onDictionary = {
                             isForDictionary = true
                             state.onCopy()
                             isForDictionary = false
                             state.onHide()
                         }, onTranslate = {
-                            state.onCopy() // we don't necessarily need copy to get text, but follow dictionary pattern if needed, wait menuState has selectedText!
-                            // Actually PaginatedMenuState has `selectedText`? Let's check.
+                            state.onCopy()
                             onTranslate(capturedTextForAction ?: "")
                             state.onHide()
                         }, onSearch = {
@@ -2789,6 +2836,9 @@ internal fun PaginatedReaderContent(
                         }, onSearch = {
                             onSearch(sel.text)
                             activeSelection = null
+                        }, onTts = {
+                            onStartTtsFromSelection(sel.baseCfi, sel.startOffset)
+                            activeSelection = null
                         }, onHighlight = { color ->
                             Timber.d(
                                 "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
@@ -2863,6 +2913,13 @@ internal fun PaginatedReaderContent(
                             onSearch(highlight.text)
                             activeHighlightForMenu = null
                         },
+                        onTts = {
+                            val firstPart = highlight.cfi.split("|").first()
+                            val baseCfi = firstPart.substringBefore(":")
+                            val offset = firstPart.substringAfter(":", "0").toIntOrNull() ?: 0
+                            onStartTtsFromSelection(baseCfi, offset)
+                            activeHighlightForMenu = null
+                        },
                         onHighlight = { color ->
                             Timber.d("Menu: Updating highlight color to ${color.id}")
                             onHighlightDeleted(highlight.cfi)
@@ -2935,8 +2992,16 @@ private fun ChapterLoadingPlaceholder(title: String?) {
     }
 }
 
+private class MenuActionItem(
+    val iconRes: Int? = null,
+    val imageVector: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    val label: String,
+    val onClick: () -> Unit,
+    val isError: Boolean = false
+)
+
 @Composable
-private fun PaginatedTextSelectionMenu(
+fun PaginatedTextSelectionMenu(
     onCopy: () -> Unit,
     onSelectAll: (() -> Unit)?,
     onDictionary: () -> Unit,
@@ -2944,6 +3009,7 @@ private fun PaginatedTextSelectionMenu(
     onSearch: () -> Unit,
     onHighlight: ((HighlightColor) -> Unit)?,
     onDelete: (() -> Unit)?,
+    onTts: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
     @Suppress("unused") isOss: Boolean,
     activeHighlightPalette: List<HighlightColor> = emptyList(),
@@ -2986,69 +3052,52 @@ private fun PaginatedTextSelectionMenu(
                 HorizontalDivider()
             }
 
-            // 2. Action Icons Row (Horizontal)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onCopy) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.copy),
-                        contentDescription = "Copy",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+            val actions = mutableListOf<MenuActionItem>()
+            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = onCopy))
+            if (onTts != null) {
+                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
+            }
+            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = onDictionary))
+            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = onTranslate))
+            actions.add(MenuActionItem(iconRes = R.drawable.search, label = "Search", onClick = onSearch))
 
-                IconButton(onClick = onDictionary) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.dictionary),
-                        contentDescription = "Dictionary",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+            if (onSelectAll != null) {
+                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = onSelectAll))
+            }
+            if (onDelete != null) {
+                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = onDelete, isError = true))
+            }
 
-                IconButton(onClick = onTranslate) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.translate),
-                        contentDescription = "Translate",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                IconButton(onClick = onSearch) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.search),
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                if (onSelectAll != null) {
-                    IconButton(onClick = onSelectAll) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.select_all),
-                            contentDescription = "Select All",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                if (onDelete != null) {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Remove",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(24.dp)
-                        )
+            Column(modifier = Modifier.padding(bottom = 4.dp)) {
+                actions.chunked(3).forEach { rowActions ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        rowActions.forEach { action ->
+                            val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            Column(
+                                modifier = Modifier
+                                    .width(64.dp)
+                                    .clickable { action.onClick() }
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (action.imageVector != null) {
+                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                } else if (action.iconRes != null) {
+                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+                            }
+                        }
+                        repeat(3 - rowActions.size) {
+                            Spacer(modifier = Modifier.width(64.dp))
+                        }
                     }
                 }
             }

@@ -1038,7 +1038,7 @@
     };
 
     window.extractTextWithCfi = function () {
-        const results = [];
+        const results =[];
         const contentNodes = document.body.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote");
 
         contentNodes.forEach((node) => {
@@ -1058,6 +1058,73 @@
         return jsonResult;
     };
 
+    window.extractTextWithCfiFromSelection = function() {
+        try {
+            var selection = window.getSelection();
+            if (!selection || selection.rangeCount === 0 || selection.toString().trim() === "") {
+                return window.extractTextWithCfiFromTop(); // Fallback
+            }
+            var range = selection.getRangeAt(0);
+            var startNode = range.startContainer;
+            var startOffset = range.startOffset;
+
+            const ttsNodeSelector = "p, h1, h2, h3, h4, h5, h6, li, blockquote";
+            let startBlock = startNode.nodeType === Node.TEXT_NODE ? startNode.parentNode.closest(ttsNodeSelector) : startNode.closest(ttsNodeSelector);
+
+            if (!startBlock) return window.extractTextWithCfiFromTop(); // Fallback
+
+            let absoluteStartOffset = 0;
+            const treeWalker = document.createTreeWalker(startBlock, NodeFilter.SHOW_TEXT, null, false);
+            let currentNode = treeWalker.nextNode();
+            while (currentNode && currentNode !== startNode) {
+                absoluteStartOffset += currentNode.nodeValue.length;
+                currentNode = treeWalker.nextNode();
+            }
+            if (currentNode === startNode) {
+                absoluteStartOffset += startOffset;
+            }
+
+            const allContentNodes = Array.from(document.body.querySelectorAll(ttsNodeSelector));
+            const startIndex = allContentNodes.findIndex(node => node === startBlock);
+
+            if (startIndex === -1) return window.extractTextWithCfiFromTop();
+
+            const nodesToProcess = allContentNodes.slice(startIndex);
+            const results =[];
+
+            nodesToProcess.forEach((node, index) => {
+                let fullText = node.textContent || "";
+                if (fullText.trim().length > 0 && node.offsetParent !== null) {
+                    try {
+                        const cfiObj = getCfiPathForElement(node, 0);
+                        if (cfiObj && cfiObj.cfi) {
+                            if (index === 0) {
+                                // Slice the very first block strictly from the selected character
+                                let sliced = fullText.substring(absoluteStartOffset);
+                                if (sliced.trim().length > 0) {
+                                    results.push({
+                                        cfi: cfiObj,
+                                        text: sliced,
+                                        startOffset: absoluteStartOffset
+                                    });
+                                }
+                            } else {
+                                results.push({
+                                    cfi: cfiObj,
+                                    text: fullText,
+                                    startOffset: 0
+                                });
+                            }
+                        }
+                    } catch(e){}
+                }
+            });
+            return JSON.stringify(results);
+        } catch(e) {
+            return window.extractTextWithCfiFromTop();
+        }
+    };
+
     window.TtsBridgeHelper = {
         extractAndRelayText: function () {
             try {
@@ -1072,6 +1139,18 @@
                 }
             }
         },
+        extractAndRelayTextFromSelection: function() {
+            try {
+                const structuredTextJson = window.extractTextWithCfiFromSelection();
+                if (typeof TtsBridge !== "undefined" && TtsBridge.onStructuredTextExtracted) {
+                    TtsBridge.onStructuredTextExtracted(structuredTextJson);
+                }
+            } catch (e) {
+                if (typeof TtsBridge !== "undefined" && TtsBridge.onStructuredTextExtracted) {
+                    TtsBridge.onStructuredTextExtracted("[]");
+                }
+            }
+        }
     };
 
     window.reportTopChunk = function () {

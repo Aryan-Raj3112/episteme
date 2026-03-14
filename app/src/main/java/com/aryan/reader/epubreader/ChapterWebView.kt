@@ -50,13 +50,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CopyAll
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,7 +69,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -84,7 +78,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
-import com.aryan.reader.R
+import com.aryan.reader.paginatedreader.PaginatedTextSelectionMenu
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -896,75 +890,69 @@ fun ChapterWebView(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Copied Text", state.selectedText)
-                                clipboard.setPrimaryClip(clip)
-                                state.finishActionModeCallback()
-                                localWebViewRef?.clearFocus()
-                                localWebViewRef?.evaluateJavascript("javascript:if(window.getSelection) window.getSelection().removeAllRanges();", null)
-                                customMenuState = null
-                            }) {
-                                Icon(Icons.Default.CopyAll, contentDescription = "Copy")
-                            }
-
-                            if (state.selectedText.length <= 2000) {
-                                IconButton(onClick = {
+                            PaginatedTextSelectionMenu(
+                                onCopy = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Copied Text", state.selectedText)
+                                    clipboard.setPrimaryClip(clip)
+                                    state.finishActionModeCallback()
+                                    localWebViewRef?.clearFocus()
+                                    localWebViewRef?.evaluateJavascript("javascript:if(window.getSelection) window.getSelection().removeAllRanges();", null)
+                                    customMenuState = null
+                                },
+                                onSelectAll = null,
+                                onDictionary = {
                                     val textToDefine = state.selectedText
                                     if (textToDefine.isNotBlank()) {
                                         onWordSelectedForAiDefinition(textToDefine)
                                     }
                                     customMenuState = null
-                                }) {
-                                    Icon(painterResource(id = R.drawable.dictionary), contentDescription = "Dictionary")
-                                }
-                                IconButton(onClick = {
+                                },
+                                onTranslate = {
                                     val textToDefine = state.selectedText
                                     if (textToDefine.isNotBlank()) {
                                         onTranslate(textToDefine)
                                     }
                                     customMenuState = null
-                                }) {
-                                    Icon(painterResource(id = R.drawable.translate), contentDescription = "Translate")
-                                }
-                                IconButton(onClick = {
+                                },
+                                onSearch = {
                                     val textToDefine = state.selectedText
                                     if (textToDefine.isNotBlank()) {
                                         onSearch(textToDefine)
                                     }
                                     customMenuState = null
-                                }) {
-                                    Icon(painterResource(id = R.drawable.search), contentDescription = "Search")
-                                }
-                            }
-
-                            if (state.isExistingHighlight && state.cfi != null) {
-                                IconButton(onClick = {
-                                    Timber.d("Kotlin: Popup Delete requested for clicked CFI: '${state.cfi}'")
-                                    val highlightToDelete = userHighlights.find { h ->
-                                        h.cfi == state.cfi || h.cfi.split("|").contains(state.cfi)
-                                    }
-
-                                    if (highlightToDelete != null) {
-                                        val cssClassToDelete = highlightToDelete.color.cssClass
-                                        val allCfiParts = highlightToDelete.cfi.split("|")
-
-                                        allCfiParts.forEach { partCfi ->
-                                            localWebViewRef?.evaluateJavascript(
-                                                "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClassToDelete');",
-                                                null
-                                            )
-                                        }
-
-                                        onHighlightDeleted(highlightToDelete.cfi)
-                                    }
-
+                                },
+                                onHighlight = null, // Highlight handles itself above in the Colors Row
+                                onTts = {
+                                    localWebViewRef?.evaluateJavascript("javascript:window.TtsBridgeHelper.extractAndRelayTextFromSelection();", null)
                                     state.finishActionModeCallback()
+                                    localWebViewRef?.clearFocus()
+                                    localWebViewRef?.evaluateJavascript("javascript:if(window.getSelection) window.getSelection().removeAllRanges();", null)
                                     customMenuState = null
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error)
-                                }
-                            }
+                                },
+                                onDelete = if (state.isExistingHighlight && state.cfi != null) {
+                                    {
+                                        val highlightToDelete = userHighlights.find { h ->
+                                            h.cfi == state.cfi || h.cfi.split("|").contains(state.cfi)
+                                        }
+                                        if (highlightToDelete != null) {
+                                            val cssClassToDelete = highlightToDelete.color.cssClass
+                                            val allCfiParts = highlightToDelete.cfi.split("|")
+                                            allCfiParts.forEach { partCfi ->
+                                                localWebViewRef?.evaluateJavascript(
+                                                    "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClassToDelete');",
+                                                    null
+                                                )
+                                            }
+                                            onHighlightDeleted(highlightToDelete.cfi)
+                                        }
+                                        state.finishActionModeCallback()
+                                        customMenuState = null
+                                    }
+                                } else null,
+                                isProUser = isProUser,
+                                isOss = isOss
+                            )
                         }
                     }
                 }
