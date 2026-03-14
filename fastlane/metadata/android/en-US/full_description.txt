@@ -1,4 +1,4 @@
-<p>Episteme Reader is an offline-first application designed for reading various document formats. It leverages native Android technologies and C++ libraries to provide a performant reading experience with customization capabilities.</p>
+<p>Episteme Reader is an offline-first, privacy-focused document and e-book reader that supports PDF, EPUB, MOBI, AZW3, Markdown, HTML, and plain text.</p>
 
 <p><b>Features:</b></p>
 <ul>
