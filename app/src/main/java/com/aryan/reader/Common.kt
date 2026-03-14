@@ -17,6 +17,8 @@
  *
  * mail: epistemereader@gmail.com
  */
+@file:kotlin.OptIn(ExperimentalMaterial3Api::class)
+
 package com.aryan.reader
 
 import android.content.Context
@@ -250,7 +252,6 @@ fun rememberSearchState(
 
 private val activeTooltipState = mutableStateOf<androidx.compose.material3.TooltipState?>(null)
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TooltipIconButton(
     text: String,
@@ -1133,7 +1134,6 @@ suspend fun fetchRecap(
 }
 
 @OptIn(UnstableApi::class)
-@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TtsSettingsSheet(
     isVisible: Boolean,

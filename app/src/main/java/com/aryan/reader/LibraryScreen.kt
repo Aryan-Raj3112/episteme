@@ -471,7 +471,7 @@ fun LibraryScreenContent(
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     var showSortMenu by remember { mutableStateOf(false) }
-    val tabTitles = listOf("All Books", "Shelves", "Folder")
+    val tabTitles = listOf("All Books", "Shelves", "Folders")
     val searchFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isSearchActive) {

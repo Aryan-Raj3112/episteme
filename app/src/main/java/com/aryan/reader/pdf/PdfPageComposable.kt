@@ -389,6 +389,8 @@ internal fun PdfPageComposable(
     isProUser: Boolean,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslateText: (String) -> Unit,
+    onSearchText: (String) -> Unit,
     ttsHighlightData: TtsHighlightData?,
     onLinkClicked: (String) -> Unit,
     onInternalLinkClicked: (Int) -> Unit,
@@ -3685,6 +3687,36 @@ internal fun PdfPageComposable(
                                 )
                             }
                         },
+                        onTranslate = { textToTranslate ->
+                            onTranslateText(textToTranslate.trim())
+                            customMenuState = null
+                            selectionCharRange.value = null
+                            coroutineScope.launch {
+                                updateSelectionVisuals(
+                                    pdfDocumentItem,
+                                    pdfPageIndex,
+                                    null,
+                                    actualBitmapWidthPx,
+                                    actualBitmapHeightPx,
+                                    currentPageRotation
+                                )
+                            }
+                        },
+                        onSearch = { textToSearch ->
+                            onSearchText(textToSearch.trim())
+                            customMenuState = null
+                            selectionCharRange.value = null
+                            coroutineScope.launch {
+                                updateSelectionVisuals(
+                                    pdfDocumentItem,
+                                    pdfPageIndex,
+                                    null,
+                                    actualBitmapWidthPx,
+                                    actualBitmapHeightPx,
+                                    currentPageRotation
+                                )
+                            }
+                        },
                         onSelectAll = {
                             customMenuState = null
                             coroutineScope.launch {
@@ -4523,6 +4555,8 @@ private fun PdfPageRenderer(
     onMenuDismiss: () -> Unit,
     onCopy: (String) -> Unit,
     onAiDefine: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
     onSelectAll: () -> Unit,
     onShowUpsellDialog: () -> Unit,
     isProUser: Boolean,
@@ -4934,6 +4968,8 @@ private fun PdfPageRenderer(
                     onDismiss = onMenuDismiss,
                     onCopy = onCopy,
                     onAiDefine = onAiDefine,
+                    onTranslate = onTranslate,
+                    onSearch = onSearch,
                     onSelectAll = onSelectAll,
                     onColorSelected = { color ->
                         Timber.tag("PdfHighlightDebug").d("PdfSelectionMenuPopup onColorSelected: $color, isExisting=${menuState.isExistingHighlight}")

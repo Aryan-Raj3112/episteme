@@ -69,6 +69,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -505,6 +506,8 @@ fun PaginatedReaderScreen(
     isOss: Boolean = false,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -802,6 +805,8 @@ fun PaginatedReaderScreen(
             isOss = isOss,
             onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialog,
             onWordSelectedForAiDefinition = onWordSelectedForAiDefinition,
+            onTranslate = onTranslate,
+            onSearch = onSearch,
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
@@ -1372,6 +1377,8 @@ internal fun PaginatedReaderContent(
     isOss: Boolean,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
@@ -2531,6 +2538,14 @@ internal fun PaginatedReaderContent(
                             state.onCopy()
                             isForDictionary = false
                             state.onHide()
+                        }, onTranslate = {
+                            state.onCopy() // we don't necessarily need copy to get text, but follow dictionary pattern if needed, wait menuState has selectedText!
+                            // Actually PaginatedMenuState has `selectedText`? Let's check.
+                            onTranslate(capturedTextForAction ?: "")
+                            state.onHide()
+                        }, onSearch = {
+                            onSearch(capturedTextForAction ?: "")
+                            state.onHide()
                         }, onHighlight = { color ->
                             Timber.d("Menu: Highlight option clicked. Color: ${color.id}")
                             isForHighlight = true
@@ -2768,6 +2783,12 @@ internal fun PaginatedReaderContent(
                                 onShowDictionaryUpsellDialog()
                             }
                             activeSelection = null
+                        }, onTranslate = {
+                            onTranslate(sel.text)
+                            activeSelection = null
+                        }, onSearch = {
+                            onSearch(sel.text)
+                            activeSelection = null
                         }, onHighlight = { color ->
                             Timber.d(
                                 "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
@@ -2832,6 +2853,14 @@ internal fun PaginatedReaderContent(
                             } else {
                                 onShowDictionaryUpsellDialog()
                             }
+                            activeHighlightForMenu = null
+                        },
+                        onTranslate = {
+                            onTranslate(highlight.text)
+                            activeHighlightForMenu = null
+                        },
+                        onSearch = {
+                            onSearch(highlight.text)
                             activeHighlightForMenu = null
                         },
                         onHighlight = { color ->
@@ -2911,6 +2940,8 @@ private fun PaginatedTextSelectionMenu(
     onCopy: () -> Unit,
     onSelectAll: (() -> Unit)?,
     onDictionary: () -> Unit,
+    onTranslate: () -> Unit,
+    onSearch: () -> Unit,
     onHighlight: ((HighlightColor) -> Unit)?,
     onDelete: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
@@ -2955,99 +2986,71 @@ private fun PaginatedTextSelectionMenu(
                 HorizontalDivider()
             }
 
-            // 2. Delete Option
-            if (onDelete != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onDelete)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Remove",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        "Remove",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                HorizontalDivider()
-            }
-
-            // 3. Copy Option
+            // 2. Action Icons Row (Horizontal)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onCopy)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.copy),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(20.dp)
-                )
-                Text(
-                    "Copy",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            // 4. Select All Option
-            if (onSelectAll != null) {
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onSelectAll)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                IconButton(onClick = onCopy) {
                     Icon(
-                        painter = painterResource(id = R.drawable.select_all),
-                        contentDescription = null,
+                        painter = painterResource(id = R.drawable.copy),
+                        contentDescription = "Copy",
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        "Select All",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        modifier = Modifier.size(24.dp)
                     )
                 }
-            }
 
-            // 5. Dictionary Option
-            HorizontalDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onDictionary)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.dictionary),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(20.dp)
-                )
-                Text(
-                    "Dictionary",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                IconButton(onClick = onDictionary) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.dictionary),
+                        contentDescription = "Dictionary",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(onClick = onTranslate) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.translate),
+                        contentDescription = "Translate",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(onClick = onSearch) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.search),
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                if (onSelectAll != null) {
+                    IconButton(onClick = onSelectAll) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.select_all),
+                            contentDescription = "Select All",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                if (onDelete != null) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Remove",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
             }
         }
     }

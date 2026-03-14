@@ -193,6 +193,8 @@ internal fun PdfVerticalReader(
     isProUser: Boolean,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslateText: (String) -> Unit,
+    onSearchText: (String) -> Unit,
     ttsHighlightData: TtsHighlightData?,
     ttsReadingPage: Int?,
     onLinkClicked: (String) -> Unit,
@@ -1332,6 +1334,14 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
+                            val onTranslateTextLambda = remember(onTranslateText) {
+                                { text: String -> onTranslateText(text) }
+                            }
+
+                            val onSearchTextLambda = remember(onSearchText) {
+                                { text: String -> onSearchText(text) }
+                            }
+
                             val onDoubleTapLambda = remember(page, screenWidth, screenHeight) {
                                 { localOffset: Offset ->
                                     Timber.tag("PdfZoomDebug").d(
@@ -1456,6 +1466,8 @@ internal fun PdfVerticalReader(
                                     isProUser = isProUser,
                                     onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialog,
                                     onWordSelectedForAiDefinition = onWordSelectedForAiDefinition,
+                                    onTranslateText = onTranslateTextLambda,
+                                    onSearchText = onSearchTextLambda,
                                     ttsHighlightData = pageTtsData,
                                     onLinkClicked = onLinkClicked,
                                     onInternalLinkClicked = onInternalLinkClicked,

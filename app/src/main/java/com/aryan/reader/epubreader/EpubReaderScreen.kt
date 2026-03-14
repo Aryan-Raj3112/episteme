@@ -291,6 +291,8 @@ private fun saveTtsMode(context: Context, modeName: String) {
 
 private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
+private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
+private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 
 private fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss") return false
@@ -311,6 +313,26 @@ private fun loadExternalDictPackage(context: Context): String? {
 private fun saveExternalDictPackage(context: Context, packageName: String) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     prefs.edit { putString(PREF_EXTERNAL_DICT_PKG, packageName) }
+}
+
+private fun loadExternalTranslatePackage(context: Context): String? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(PREF_EXTERNAL_TRANSLATE_PKG, null)
+}
+
+private fun saveExternalTranslatePackage(context: Context, packageName: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_EXTERNAL_TRANSLATE_PKG, packageName) }
+}
+
+private fun loadExternalSearchPackage(context: Context): String? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(PREF_EXTERNAL_SEARCH_PKG, null)
+}
+
+private fun saveExternalSearchPackage(context: Context, packageName: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -573,6 +595,12 @@ fun EpubReaderHost(
     var selectedDictPackage by remember {
         mutableStateOf(loadExternalDictPackage(context))
     }
+    var selectedTranslatePackage by remember {
+        mutableStateOf(loadExternalTranslatePackage(context))
+    }
+    var selectedSearchPackage by remember {
+        mutableStateOf(loadExternalSearchPackage(context))
+    }
 
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
     var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
@@ -605,12 +633,30 @@ fun EpubReaderHost(
                 showDictionaryUpsellDialog = true
             }
         } else {
-            if (selectedDictPackage != null) {
+            if (!selectedDictPackage.isNullOrEmpty()) {
                 ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, word)
             } else {
                 Toast.makeText(context, "Please select a dictionary app first.", Toast.LENGTH_SHORT).show()
                 showDictionarySettingsSheet = true
             }
+        }
+    }
+
+    val onTranslateLookup = { text: String ->
+        if (!selectedTranslatePackage.isNullOrEmpty()) {
+            ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
+        } else {
+            Toast.makeText(context, "Please select a translate app first.", Toast.LENGTH_SHORT).show()
+            showDictionarySettingsSheet = true
+        }
+    }
+
+    val onSearchLookup = { text: String ->
+        if (!selectedSearchPackage.isNullOrEmpty()) {
+            ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
+        } else {
+            Toast.makeText(context, "Please select a search app first.", Toast.LENGTH_SHORT).show()
+            showDictionarySettingsSheet = true
         }
     }
 
@@ -2256,6 +2302,12 @@ fun EpubReaderHost(
                                             onWordSelectedForAiDefinition = { text ->
                                                 onDictionaryLookup(text)
                                             },
+                                            onTranslate = { text ->
+                                                onTranslateLookup(text)
+                                            },
+                                            onSearch = { text ->
+                                                onSearchLookup(text)
+                                            },
                                             onContentReadyForSummarization = { content ->
                                                 Timber.d("Content received for summarization")
                                                 scope.launch {
@@ -2590,6 +2642,12 @@ fun EpubReaderHost(
                                 },
                                 onWordSelectedForAiDefinition = { text ->
                                     onDictionaryLookup(text)
+                                },
+                                onTranslate = { text ->
+                                    onTranslateLookup(text)
+                                },
+                                onSearch = { text ->
+                                    onSearchLookup(text)
                                 },
                                 userHighlights = userHighlights.filter { it.chapterIndex == (currentChapterInPaginatedMode ?: -1) },
                                 onHighlightCreated = { cfi, text, colorId ->
@@ -3532,7 +3590,7 @@ fun EpubReaderHost(
                     onNavigateToPro = onNavigateToPro,
                     isTtsSessionActive = isTtsSessionActive,
                     onOpenExternalDictionary = { text ->
-                        if (selectedDictPackage != null) {
+                        if (!selectedDictPackage.isNullOrEmpty()) {
                             ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
                         } else {
                             Toast.makeText(context, "Select an offline dictionary first.", Toast.LENGTH_SHORT).show()
@@ -3707,10 +3765,20 @@ fun EpubReaderHost(
                     useOnlineDictionary = newState
                     saveUseOnlineDict(context, newState)
                 },
-                selectedPackageName = selectedDictPackage,
-                onSelectPackage = { pkg ->
+                selectedDictionaryPackageName = selectedDictPackage,
+                onSelectDictionaryPackage = { pkg ->
                     selectedDictPackage = pkg
                     saveExternalDictPackage(context, pkg)
+                },
+                selectedTranslatePackageName = selectedTranslatePackage,
+                onSelectTranslatePackage = { pkg ->
+                    selectedTranslatePackage = pkg
+                    saveExternalTranslatePackage(context, pkg)
+                },
+                selectedSearchPackageName = selectedSearchPackage,
+                onSelectSearchPackage = { pkg ->
+                    selectedSearchPackage = pkg
+                    saveExternalSearchPackage(context, pkg)
                 }
             )
         }

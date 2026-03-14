@@ -36,7 +36,6 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +56,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -85,7 +85,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
 import com.aryan.reader.R
-import com.aryan.reader.countWords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -333,6 +332,8 @@ fun ChapterWebView(
     isOss: Boolean = false,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
     onContentReadyForSummarization: suspend (String) -> Unit,
     currentFontFamily: ReaderFont,
     customFontPath: String? = null,
@@ -887,121 +888,82 @@ fun ChapterWebView(
                             )
                         }
 
-                        // 2. Delete Option (Only for existing highlights)
-                        if (state.isExistingHighlight && state.cfi != null) {
-                            HorizontalDivider()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        // LOGGING START
-                                        Timber.d("Kotlin: Popup Delete requested for clicked CFI: '${state.cfi}'")
-
-                                        // 1. IMPROVED LOOKUP: Check if the clicked CFI exists within any split CFI string
-                                        val highlightToDelete = userHighlights.find { h ->
-                                            h.cfi == state.cfi || h.cfi.split("|").contains(state.cfi)
-                                        }
-
-                                        if (highlightToDelete == null) {
-                                            Timber.e("Kotlin: ERROR - Lookup failed. CFI '${state.cfi}' not found in any highlight.")
-                                        } else {
-                                            Timber.d("Kotlin: SUCCESS - Found highlight object. Full CFI: '${highlightToDelete.cfi}', Color: ${highlightToDelete.color.id}")
-
-                                            val cssClassToDelete = highlightToDelete.color.cssClass
-                                            val allCfiParts = highlightToDelete.cfi.split("|")
-
-                                            allCfiParts.forEach { partCfi ->
-                                                Timber.d("Kotlin: Requesting JS removal for part: '$partCfi'")
-                                                localWebViewRef?.evaluateJavascript(
-                                                    "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClassToDelete');",
-                                                    null
-                                                )
-                                            }
-
-                                            onHighlightDeleted(highlightToDelete.cfi)
-                                        }
-
-                                        state.finishActionModeCallback()
-                                        customMenuState = null
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Remove",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = "Remove",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-
                         HorizontalDivider()
-
-                        // 2. Copy Option
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Copied Text", state.selectedText)
-                                    clipboard.setPrimaryClip(clip)
-                                    state.finishActionModeCallback()
-                                    localWebViewRef?.clearFocus()
-                                    localWebViewRef?.evaluateJavascript("javascript:if(window.getSelection) window.getSelection().removeAllRanges();", null)
-                                    customMenuState = null
-                                }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CopyAll,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "Copy",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
+                            IconButton(onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Copied Text", state.selectedText)
+                                clipboard.setPrimaryClip(clip)
+                                state.finishActionModeCallback()
+                                localWebViewRef?.clearFocus()
+                                localWebViewRef?.evaluateJavascript("javascript:if(window.getSelection) window.getSelection().removeAllRanges();", null)
+                                customMenuState = null
+                            }) {
+                                Icon(Icons.Default.CopyAll, contentDescription = "Copy")
+                            }
 
-                        // 3. Dictionary Option (Preserving Logic)
-                        if (state.selectedText.length <= 2000) {
-                            HorizontalDivider()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val textToDefine = state.selectedText
-                                        if (textToDefine.isNotBlank()) {
-                                            onWordSelectedForAiDefinition(textToDefine)
-                                        }
-                                        customMenuState = null
+                            if (state.selectedText.length <= 2000) {
+                                IconButton(onClick = {
+                                    val textToDefine = state.selectedText
+                                    if (textToDefine.isNotBlank()) {
+                                        onWordSelectedForAiDefinition(textToDefine)
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.dictionary),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = "Dictionary",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                    customMenuState = null
+                                }) {
+                                    Icon(painterResource(id = R.drawable.dictionary), contentDescription = "Dictionary")
+                                }
+                                IconButton(onClick = {
+                                    val textToDefine = state.selectedText
+                                    if (textToDefine.isNotBlank()) {
+                                        onTranslate(textToDefine)
+                                    }
+                                    customMenuState = null
+                                }) {
+                                    Icon(painterResource(id = R.drawable.translate), contentDescription = "Translate")
+                                }
+                                IconButton(onClick = {
+                                    val textToDefine = state.selectedText
+                                    if (textToDefine.isNotBlank()) {
+                                        onSearch(textToDefine)
+                                    }
+                                    customMenuState = null
+                                }) {
+                                    Icon(painterResource(id = R.drawable.search), contentDescription = "Search")
+                                }
+                            }
+
+                            if (state.isExistingHighlight && state.cfi != null) {
+                                IconButton(onClick = {
+                                    Timber.d("Kotlin: Popup Delete requested for clicked CFI: '${state.cfi}'")
+                                    val highlightToDelete = userHighlights.find { h ->
+                                        h.cfi == state.cfi || h.cfi.split("|").contains(state.cfi)
+                                    }
+
+                                    if (highlightToDelete != null) {
+                                        val cssClassToDelete = highlightToDelete.color.cssClass
+                                        val allCfiParts = highlightToDelete.cfi.split("|")
+
+                                        allCfiParts.forEach { partCfi ->
+                                            localWebViewRef?.evaluateJavascript(
+                                                "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClassToDelete');",
+                                                null
+                                            )
+                                        }
+
+                                        onHighlightDeleted(highlightToDelete.cfi)
+                                    }
+
+                                    state.finishActionModeCallback()
+                                    customMenuState = null
+                                }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     }

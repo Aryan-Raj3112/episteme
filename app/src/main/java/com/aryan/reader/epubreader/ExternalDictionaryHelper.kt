@@ -6,9 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import timber.log.Timber
+import androidx.core.net.toUri
 
 data class ExternalDictionaryApp(
     val label: String,
@@ -23,7 +25,6 @@ object ExternalDictionaryHelper {
         "com.samsung.android.samsungpassautofill",
         "com.samsung.android.samsungpass",
         "com.samsung.android.app.pass",
-        "com.google.android.gms",
         "com.truecaller",
         "com.adobe.reader",
         "com.reddit.frontpage"
@@ -77,18 +78,15 @@ object ExternalDictionaryHelper {
             )
         )
 
-        return sortedApps
+        return apps.sortedBy { it.label }
     }
 
     fun launchDictionary(context: Context, packageName: String, query: String) {
+        if (packageName.isEmpty()) return
         val pm = context.packageManager
         try {
             if (packageName == GOOGLE_SEARCH_PKG) {
-                val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                    putExtra(SearchManager.QUERY, query)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(searchIntent)
+                launchSearch(context, packageName, query)
                 return
             }
 
@@ -133,6 +131,89 @@ object ExternalDictionaryHelper {
         }
     }
 
+    fun launchTranslate(context: Context, packageName: String, query: String) {
+        if (packageName.isEmpty()) return
+        val pm = context.packageManager
+        try {
+            if (packageName == GOOGLE_SEARCH_PKG) {
+                launchSearch(context, packageName, query)
+                return
+            }
+
+            // Google Translate specific intent
+            if (packageName == "com.google.android.apps.translate") {
+                val translateIntent = Intent(Intent.ACTION_PROCESS_TEXT).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_PROCESS_TEXT, query)
+                    putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+                    setPackage(packageName)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (translateIntent.resolveActivity(pm) != null) {
+                    context.startActivity(translateIntent)
+                    return
+                }
+            }
+
+            // Generic text processing intent
+            val processTextIntent = Intent(Intent.ACTION_PROCESS_TEXT).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_PROCESS_TEXT, query)
+                putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+                setPackage(packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            if (processTextIntent.resolveActivity(pm) != null) {
+                context.startActivity(processTextIntent)
+                return
+            }
+
+            launchGenericSend(context, packageName, query)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to launch translate app: $packageName")
+            Toast.makeText(context, "Error opening translate app", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun launchSearch(context: Context, packageName: String, query: String) {
+        try {
+            if (packageName == GOOGLE_SEARCH_PKG) {
+                val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                    putExtra(SearchManager.QUERY, query)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(searchIntent)
+                return
+            }
+
+            val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                putExtra(SearchManager.QUERY, query)
+                setPackage(packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (searchIntent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(searchIntent)
+                return
+            }
+
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = "https://www.google.com/search?q=${Uri.encode(query)}".toUri()
+                setPackage(packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (viewIntent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(viewIntent)
+                return
+            }
+
+            launchGenericSend(context, packageName, query)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to launch search app: $packageName")
+            Toast.makeText(context, "Error opening search app", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun launchGenericSend(context: Context, packageName: String, query: String) {
         val sendIntent = Intent(Intent.ACTION_SEND)
         sendIntent.type = "text/plain"
@@ -150,5 +231,53 @@ object ExternalDictionaryHelper {
                 throw e
             }
         }
+    }
+
+    fun getAvailableSearchApps(context: Context): List<ExternalDictionaryApp> {
+        val pm = context.packageManager
+        val apps = mutableListOf<ExternalDictionaryApp>()
+        val addedPackages = mutableSetOf<String>()
+
+        val webSearchIntent = Intent(Intent.ACTION_WEB_SEARCH)
+        val searchResolvers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.queryIntentActivities(webSearchIntent, PackageManager.ResolveInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION") pm.queryIntentActivities(webSearchIntent, 0)
+        }
+        searchResolvers.forEach { ri ->
+            val pkg = ri.activityInfo.packageName
+            if (!PACKAGE_BLOCKLIST.contains(pkg) && addedPackages.add(pkg)) {
+                apps.add(
+                    ExternalDictionaryApp(
+                        label = ri.loadLabel(pm).toString(),
+                        packageName = pkg,
+                        icon = ri.loadIcon(pm)
+                    )
+                )
+            }
+        }
+
+        val browserIntent = Intent(Intent.ACTION_VIEW, "http://".toUri()).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        val browserResolvers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.queryIntentActivities(browserIntent, PackageManager.ResolveInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION") pm.queryIntentActivities(browserIntent, 0)
+        }
+        browserResolvers.forEach { ri ->
+            val pkg = ri.activityInfo.packageName
+            if (!PACKAGE_BLOCKLIST.contains(pkg) && addedPackages.add(pkg)) {
+                apps.add(
+                    ExternalDictionaryApp(
+                        label = ri.loadLabel(pm).toString(),
+                        packageName = pkg,
+                        icon = ri.loadIcon(pm)
+                    )
+                )
+            }
+        }
+
+        return apps.sortedBy { it.label }
     }
 }

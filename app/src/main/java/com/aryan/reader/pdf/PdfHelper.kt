@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,6 +46,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CopyAll
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -188,6 +190,8 @@ internal fun PdfSelectionMenuPopup(
     onDismiss: () -> Unit,
     onCopy: (String) -> Unit,
     onAiDefine: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
     onSelectAll: () -> Unit,
     onColorSelected: (PdfHighlightColor) -> Unit,
     onDelete: () -> Unit
@@ -281,51 +285,74 @@ internal fun PdfSelectionMenuPopup(
                         }
                         HorizontalDivider()
                     }
-
                     Row(
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp) // Fixed height for the sleek row
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier.weight(1f)
-                            .clickable { onCopy(menuState.selectedText) }.padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Default.CopyAll,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text("Copy", style = MaterialTheme.typography.labelSmall)
-                            }
+                        // Copy
+                        androidx.compose.material3.IconButton(
+                            onClick = { onCopy(menuState.selectedText) }
+                        ) {
+                            Icon(
+                                Icons.Default.CopyAll,
+                                contentDescription = "Copy",
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
 
+                        // Dictionary
                         if (menuState.selectedText.length <= 2000) {
-                            Box(
-                                modifier = Modifier.weight(1f)
-                                .clickable { onAiDefine(menuState.selectedText) }
-                                .padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.dictionary),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text("Dictionary", style = MaterialTheme.typography.labelSmall)
-                                }
+                            androidx.compose.material3.IconButton(
+                                onClick = { onAiDefine(menuState.selectedText) }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.dictionary),
+                                    contentDescription = "Dictionary",
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
                         }
 
+                        // Translate
+                        if (menuState.selectedText.length <= 2000) {
+                            androidx.compose.material3.IconButton(
+                                onClick = { onTranslate(menuState.selectedText) }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.translate),
+                                    contentDescription = "Translate",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+
+                        // Search
+                        if (menuState.selectedText.length <= 2000) {
+                            androidx.compose.material3.IconButton(
+                                onClick = { onSearch(menuState.selectedText) }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+
+                        // Select All
                         if (!menuState.isExistingHighlight) {
-                            Box(modifier = Modifier.weight(1f).clickable { onSelectAll() }
-                                .padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.select_all),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text("Select All", style = MaterialTheme.typography.labelSmall)
-                                }
+                            androidx.compose.material3.IconButton(
+                                onClick = { onSelectAll() }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.select_all),
+                                    contentDescription = "Select All",
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
                         }
                     }
