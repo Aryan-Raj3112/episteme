@@ -436,6 +436,7 @@ internal fun PdfPageComposable(
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
+    onTts: (Int, Int) -> Unit = { _, _ -> },
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
     val pdfDocumentItem = pdfDocument.item
@@ -2192,7 +2193,7 @@ internal fun PdfPageComposable(
                                     customMenuState = CustomPdfMenuState(
                                         selectedText = selectedText,
                                         anchorRect = combinedRect,
-                                        charRange = Pair(-1, -1)
+                                        charRange = Pair(indices.first, indices.second)
                                     )
                                     Timber.d(
                                         "Menu shown after OCR drag. Anchor: ${customMenuState?.anchorRect}"
@@ -2395,7 +2396,7 @@ internal fun PdfPageComposable(
                                                             selectedText = foundElement.text,
                                                             anchorRect = combinedRect,
                                                             charRange = Pair(
-                                                                -1, -1
+                                                                symbolStartIndex, symbolEndIndex
                                                             )
                                                         )
                                                         Timber.d(
@@ -3637,6 +3638,7 @@ internal fun PdfPageComposable(
                         onHighlightAdd = onHighlightAdd,
                         onHighlightUpdate = onHighlightUpdate,
                         onHighlightDelete = onHighlightDelete,
+                        onTts = onTts,
                         teardropHeightPx = teardropHeightPxState.value,
                         activeDraggingHandle = activeDraggingHandle,
                         showMagnifier = showMagnifier,
@@ -4587,6 +4589,7 @@ private fun PdfPageRenderer(
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit,
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit,
     onHighlightDelete: (String) -> Unit,
+    onTts: (Int, Int) -> Unit,
 ) {
     SideEffect {
         Timber.tag("PdfPerf").v("PAGE_RENDERER: Recomposing Page ${selectionData.pageIndex}. DraggingHandle=${activeDraggingHandle != null}")
@@ -4988,6 +4991,10 @@ private fun PdfPageRenderer(
                         if (menuState.isExistingHighlight && menuState.highlightId != null) {
                             onHighlightDelete(menuState.highlightId)
                         }
+                        onMenuDismiss()
+                    },
+                    onTts = {
+                        onTts(selectionData.pageIndex, menuState.charRange.first)
                         onMenuDismiss()
                     }
                 )

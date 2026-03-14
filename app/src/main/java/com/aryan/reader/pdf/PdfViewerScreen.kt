@@ -2398,8 +2398,8 @@ fun PdfViewerScreen(
         return false
     }
 
-    fun startTts(pageToReadOverride: Int? = null) {
-        Timber.d("TTS button clicked: Starting TTS for current page")
+    fun startTts(pageToReadOverride: Int? = null, startCharIndex: Int? = null) {
+        Timber.d("TTS button clicked: Starting TTS for current page/selection")
         if (pdfDocument == null || totalPages == 0) {
             return
         }
@@ -2532,7 +2532,15 @@ fun PdfViewerScreen(
                 val processedText = preprocessTextForTts(rawPageText!!)
                 ttsPageData = TtsPageData(pageToRead, processedText, ocrUsedForCurrentPageTts)
 
-                val chunks = splitTextIntoChunks(processedText.cleanText)
+                val cleanStartIndex = if (startCharIndex != null && startCharIndex >= 0) {
+                    processedText.indexMap.indexOfFirst { it >= startCharIndex }.coerceAtLeast(0)
+                } else {
+                    0
+                }
+
+                val textToChunk = processedText.cleanText.substring(cleanStartIndex)
+
+                val chunks = splitTextIntoChunks(textToChunk)
 
                 val bookTitle = pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
                     ?: pdfUri.lastPathSegment ?: "PDF Document"
@@ -2569,6 +2577,30 @@ fun PdfViewerScreen(
         contract = ActivityResultContracts.RequestPermission(), onResult = { _ -> startTts() })
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
+
+    val startTtsWithPermissionCheck: (Int?, Int?) -> Unit = remember(context, activity, executeWithOcrCheck) {
+        { pageOverride, startCharIndex ->
+            executeWithOcrCheck {
+                when {
+                    ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED -> {
+                        startTts(pageOverride, startCharIndex)
+                    }
+
+                    activity?.shouldShowRequestPermissionRationale(
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == true -> {
+                        showPermissionRationaleDialog = true
+                    }
+
+                    else -> {
+                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -3971,6 +4003,7 @@ fun PdfViewerScreen(
                                                 onHighlightAdd = onHighlightAdd,
                                                 onHighlightUpdate = onHighlightUpdate,
                                                 onHighlightDelete = onHighlightDelete,
+                                                onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
                                                         val targetPage =
@@ -4302,6 +4335,7 @@ fun PdfViewerScreen(
                                             onHighlightAdd = onHighlightAdd,
                                             onHighlightUpdate = onHighlightUpdate,
                                             onHighlightDelete = onHighlightDelete,
+                                            onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                             onLinkClicked = onLinkClickedStable,
                                             onInternalLinkClicked = onInternalLinkNavStable,
                                             bookmarks = bookmarksHolder,
@@ -5614,27 +5648,7 @@ fun PdfViewerScreen(
                                         Timber.d("TTS button clicked: Stopping TTS")
                                         ttsController.stop()
                                     } else {
-                                        executeWithOcrCheck {
-                                            when {
-                                                ContextCompat.checkSelfPermission(
-                                                    context, Manifest.permission.POST_NOTIFICATIONS
-                                                ) == PackageManager.PERMISSION_GRANTED -> {
-                                                    startTts()
-                                                }
-
-                                                activity?.shouldShowRequestPermissionRationale(
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                ) == true -> {
-                                                    showPermissionRationaleDialog = true
-                                                }
-
-                                                else -> {
-                                                    permissionLauncher.launch(
-                                                        Manifest.permission.POST_NOTIFICATIONS
-                                                    )
-                                                }
-                                            }
-                                        }
+                                        startTtsWithPermissionCheck(null, null)
                                     }
                                 }) {
                                 Icon(

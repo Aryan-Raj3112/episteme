@@ -44,6 +44,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CopyAll
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
@@ -58,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -86,6 +88,14 @@ internal data class OcrSymbolInfo(
     val symbol: OcrSymbol,
     val parentElement: OcrElement,
     val parentLine: OcrLine
+)
+
+private class MenuActionItem(
+    val iconRes: Int? = null,
+    val imageVector: ImageVector? = null,
+    val label: String,
+    val onClick: () -> Unit,
+    val isError: Boolean = false
 )
 
 enum class PdfHighlightColor(val color: Color) {
@@ -194,7 +204,8 @@ internal fun PdfSelectionMenuPopup(
     onSearch: (String) -> Unit,
     onSelectAll: () -> Unit,
     onColorSelected: (PdfHighlightColor) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onTts: (() -> Unit)? = null
 ) {
     Popup(
         popupPositionProvider = popupPositionProvider,
@@ -266,93 +277,54 @@ internal fun PdfSelectionMenuPopup(
 
                     HorizontalDivider()
 
-                    if (menuState.isExistingHighlight) {
-                        Row(modifier = Modifier.fillMaxWidth().clickable { onDelete() }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "Remove",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "Remove",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        HorizontalDivider()
+                    val actions = mutableListOf<MenuActionItem>()
+                    actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = { onCopy(menuState.selectedText) }))
+                    if (onTts != null) {
+                        actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp) // Fixed height for the sleek row
-                            .padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Copy
-                        androidx.compose.material3.IconButton(
-                            onClick = { onCopy(menuState.selectedText) }
-                        ) {
-                            Icon(
-                                Icons.Default.CopyAll,
-                                contentDescription = "Copy",
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                    if (menuState.selectedText.length <= 2000) {
+                        actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = { onAiDefine(menuState.selectedText) }))
+                        actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = { onTranslate(menuState.selectedText) }))
+                        actions.add(MenuActionItem(imageVector = Icons.Default.Search, label = "Search", onClick = { onSearch(menuState.selectedText) }))
+                    }
 
-                        // Dictionary
-                        if (menuState.selectedText.length <= 2000) {
-                            androidx.compose.material3.IconButton(
-                                onClick = { onAiDefine(menuState.selectedText) }
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.dictionary),
-                                    contentDescription = "Dictionary",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
+                    if (!menuState.isExistingHighlight) {
+                        actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = { onSelectAll() }))
+                    }
+                    if (menuState.isExistingHighlight) {
+                        actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = { onDelete() }, isError = true))
+                    }
 
-                        // Translate
-                        if (menuState.selectedText.length <= 2000) {
-                            androidx.compose.material3.IconButton(
-                                onClick = { onTranslate(menuState.selectedText) }
+                    Column(modifier = Modifier.padding(bottom = 4.dp)) {
+                        actions.chunked(3).forEach { rowActions ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.translate),
-                                    contentDescription = "Translate",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-
-                        // Search
-                        if (menuState.selectedText.length <= 2000) {
-                            androidx.compose.material3.IconButton(
-                                onClick = { onSearch(menuState.selectedText) }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Search,
-                                    contentDescription = "Search",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-
-                        // Select All
-                        if (!menuState.isExistingHighlight) {
-                            androidx.compose.material3.IconButton(
-                                onClick = { onSelectAll() }
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.select_all),
-                                    contentDescription = "Select All",
-                                    modifier = Modifier.size(24.dp)
-                                )
+                                rowActions.forEach { action ->
+                                    val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                    Column(
+                                        modifier = Modifier
+                                            .width(64.dp)
+                                            .clickable { action.onClick() }
+                                            .padding(vertical = 8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        if (action.imageVector != null) {
+                                            Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                        } else if (action.iconRes != null) {
+                                            Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+                                    }
+                                }
+                                repeat(3 - rowActions.size) {
+                                    Spacer(modifier = Modifier.width(64.dp))
+                                }
                             }
                         }
                     }

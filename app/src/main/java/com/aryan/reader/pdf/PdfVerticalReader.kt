@@ -230,6 +230,7 @@ internal fun PdfVerticalReader(
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
+    onTts: (Int, Int) -> Unit = { _, _ -> },
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -1501,6 +1502,7 @@ internal fun PdfVerticalReader(
                                     onHighlightAdd = onHighlightAdd,
                                     onHighlightUpdate = onHighlightUpdate,
                                     onHighlightDelete = onHighlightDelete,
+                                    onTts = onTts,
                                     onTextBoxDragStart = { box, localTopLeft, touchOffset ->
                                         val currentZoom = zoomAnimatable.value
                                         val panX = panXAnimatable.value
