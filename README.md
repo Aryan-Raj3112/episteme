@@ -18,7 +18,7 @@
 
 ## Overview
 
-Episteme Reader is an offline-first application designed for reading various document formats. It leverages native Android technologies and C++ libraries to provide a performant reading experience with customization capabilities.
+Episteme Reader is an offline-first, privacy-focused document and e-book reader that supports PDF, EPUB, MOBI, AZW3, Markdown, HTML, and plain text.
 
 > **Note:** This is the Open Source (OSS) edition of Episteme Reader. The version available on the Google Play Store is built from this core but includes additional proprietary features.
 
@@ -61,9 +61,13 @@ Episteme Reader is an offline-first application designed for reading various doc
     ```
 
 2.  **Build:**
-    Open in Android Studio and run the `ossDebug` variant.
+    Open in Android Studio and run the `ossDebug` variant, or build from the command line:
     ```bash
     ./gradlew assembleOssDebug
+    ```
+    The APK will be generated at:
+    ```
+    app/build/outputs/apk/oss/debug/Episteme-oss-v{version}-oss-debug.apk
     ```
 
 ## Open Source Libraries
