@@ -1,1 +1,1 @@
-A document reader for PDF, EPUB, and MOBI
+A document reader for PDF and E-Books
