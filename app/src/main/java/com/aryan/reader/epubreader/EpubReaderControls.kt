@@ -108,6 +108,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -120,6 +121,7 @@ import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
+import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.IPaginator
@@ -182,7 +184,11 @@ fun EpubReaderTopBar(
                         onCloseSearch = onCloseSearch
                     )
                 } else {
-                    IconButton(onClick = onNavigateBack) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_back),
+                        description = stringResource(R.string.tooltip_back_desc),
+                        onClick = onNavigateBack
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                     Spacer(Modifier.width(8.dp))
@@ -193,7 +199,11 @@ fun EpubReaderTopBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = onOpenDictionarySettings) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_dictionary),
+                        description = stringResource(R.string.tooltip_dictionary_desc),
+                        onClick = onOpenDictionarySettings
+                    ) {
                         Icon(
                             painter = painterResource(id = R.drawable.dictionary),
                             contentDescription = "Dictionary Settings"
@@ -201,7 +211,11 @@ fun EpubReaderTopBar(
                     }
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }
-                        IconButton(onClick = { showMoreMenu = true }) {
+                        TooltipIconButton(
+                            text = stringResource(R.string.tooltip_more_options),
+                            description = stringResource(R.string.tooltip_more_options_desc),
+                            onClick = { showMoreMenu = true }
+                        ) {
                             Icon(Icons.Default.MoreVert, contentDescription = "More Options")
                         }
 
@@ -392,19 +406,33 @@ fun EpubReaderBottomBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
-                IconButton(
+                TooltipIconButton(
+                    text = stringResource(R.string.tooltip_slider),
+                    description = stringResource(R.string.tooltip_slider_desc),
                     onClick = onOpenSlider,
                     enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
                 ) {
                     Icon(painter = painterResource(id = R.drawable.slider), contentDescription = "Navigate with slider")
                 }
-                IconButton(onClick = onOpenDrawer) {
+                TooltipIconButton(
+                    text = stringResource(R.string.tooltip_toc),
+                    description = stringResource(R.string.tooltip_toc_desc),
+                    onClick = onOpenDrawer
+                ) {
                     Icon(imageVector = Icons.Default.Menu, contentDescription = "Chapters Menu")
                 }
-                IconButton(onClick = onToggleFormat) {
+                TooltipIconButton(
+                    text = stringResource(R.string.tooltip_format),
+                    description = stringResource(R.string.tooltip_format_desc),
+                    onClick = onToggleFormat
+                ) {
                     Icon(painter = painterResource(id = R.drawable.format_size), contentDescription = "Text Formatting")
                 }
-                IconButton(onClick = onToggleSearch) {
+                TooltipIconButton(
+                    text = stringResource(R.string.tooltip_search),
+                    description = stringResource(R.string.tooltip_search_desc),
+                    onClick = onToggleSearch
+                ) {
                     Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
                 }
 
@@ -412,7 +440,11 @@ fun EpubReaderBottomBar(
                 if (BuildConfig.FLAVOR != "oss") {
                     Box {
                         var showAiFeaturesMenu by remember { mutableStateOf(false) }
-                        IconButton(onClick = { showAiFeaturesMenu = true }) {
+                        TooltipIconButton(
+                            text = stringResource(R.string.tooltip_ai),
+                            description = stringResource(R.string.tooltip_ai_desc),
+                            onClick = { showAiFeaturesMenu = true }
+                        ) {
                             Icon(painter = painterResource(id = R.drawable.ai), contentDescription = "AI Features")
                         }
                         DropdownMenu(
@@ -441,14 +473,32 @@ fun EpubReaderBottomBar(
                 }
                 Box {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onToggleTts) {
+                        TooltipIconButton(
+                            text = if (isTtsSessionActive)
+                                stringResource(R.string.tooltip_tts_stop)
+                            else
+                                stringResource(R.string.tooltip_tts_start),
+                            description = if (isTtsSessionActive)
+                                stringResource(R.string.tooltip_tts_stop_desc)
+                            else
+                                stringResource(R.string.tooltip_tts_start_desc),
+                            onClick = onToggleTts
+                        ) {
                             Icon(
                                 painter = if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech),
                                 contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
                             )
                         }
                         if (isTtsSessionActive) {
-                            IconButton(
+                            TooltipIconButton(
+                                text = if (ttsState.isPlaying)
+                                    stringResource(R.string.tooltip_tts_pause)
+                                else
+                                    stringResource(R.string.tooltip_tts_resume),
+                                description = if (ttsState.isPlaying)
+                                    stringResource(R.string.tooltip_tts_pause_desc)
+                                else
+                                    stringResource(R.string.tooltip_tts_resume_desc),
                                 onClick = onPlayPauseTts,
                                 enabled = !ttsState.isLoading
                             ) {

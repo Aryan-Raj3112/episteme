@@ -23,6 +23,11 @@ import android.content.Context
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.RichTooltip
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -105,6 +110,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -242,6 +248,91 @@ fun rememberSearchState(
     }
 }
 
+private val activeTooltipState = mutableStateOf<androidx.compose.material3.TooltipState?>(null)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TooltipIconButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    description: String? = null,
+    content: @Composable () -> Unit
+) {
+    val tooltipState = rememberTooltipState(isPersistent = true)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(tooltipState.isVisible) {
+        if (tooltipState.isVisible) {
+            val previous = activeTooltipState.value
+            if (previous != null && previous !== tooltipState) {
+                previous.dismiss()
+            }
+            activeTooltipState.value = tooltipState
+        } else {
+            if (activeTooltipState.value === tooltipState) {
+                activeTooltipState.value = null
+            }
+        }
+    }
+
+    TooltipBox(
+        positionProvider = if (description != null)
+            TooltipDefaults.rememberRichTooltipPositionProvider()
+        else
+            TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = {
+            if (description != null) {
+                RichTooltip(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            content()
+                            Text(
+                                text = text,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    },
+                    colors = TooltipDefaults.richTooltipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                ) {
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            } else {
+                PlainTooltip {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        content()
+                        Text(text)
+                    }
+                }
+            }
+        },
+        state = tooltipState
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled
+        ) {
+            content()
+        }
+    }
+}
+
 @Composable
 fun SearchTopBar(
     searchState: SearchState,
@@ -265,7 +356,11 @@ fun SearchTopBar(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onCloseSearch) {
+            TooltipIconButton(
+                text = stringResource(R.string.tooltip_close_search),
+                description = stringResource(R.string.tooltip_close_search_desc),
+                onClick = onCloseSearch
+            ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Close Search"
@@ -297,7 +392,11 @@ fun SearchTopBar(
             )
 
             if (searchState.searchQuery.isNotEmpty()) {
-                IconButton(onClick = { searchState.onQueryChange("") }) {
+                TooltipIconButton(
+                    text = stringResource(R.string.tooltip_clear_search),
+                    description = stringResource(R.string.tooltip_clear_search_desc),
+                    onClick = { searchState.onQueryChange("") }
+                ) {
                     Icon(
                         Icons.Default.Close,
                         contentDescription = "Clear Search"
@@ -305,10 +404,20 @@ fun SearchTopBar(
                 }
             }
 
-            IconButton(onClick = {
-                searchState.showSearchResultsPanel = !searchState.showSearchResultsPanel
-                focusManager.clearFocus()
-            }) {
+            TooltipIconButton(
+                text = if (searchState.showSearchResultsPanel)
+                    stringResource(R.string.tooltip_hide_results)
+                else
+                    stringResource(R.string.tooltip_show_results),
+                description = if (searchState.showSearchResultsPanel)
+                    stringResource(R.string.tooltip_hide_results_desc)
+                else
+                    stringResource(R.string.tooltip_show_results_desc),
+                onClick = {
+                    searchState.showSearchResultsPanel = !searchState.showSearchResultsPanel
+                    focusManager.clearFocus()
+                }
+            ) {
                 Icon(
                     imageVector = if (searchState.showSearchResultsPanel) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
                     contentDescription = if (searchState.showSearchResultsPanel) "Hide Results" else "Show Results"
@@ -333,7 +442,9 @@ fun SearchNavigationControls(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 4.dp)
         ) {
-            IconButton(
+            TooltipIconButton(
+                text = stringResource(R.string.tooltip_prev_result),
+                description = stringResource(R.string.tooltip_prev_result_desc),
                 onClick = { onNavigate(searchState.currentSearchResultIndex - 1) },
                 enabled = searchState.currentSearchResultIndex > 0
             ) {
@@ -346,7 +457,9 @@ fun SearchNavigationControls(
                 modifier = Modifier.padding(horizontal = 4.dp)
             )
 
-            IconButton(
+            TooltipIconButton(
+                text = stringResource(R.string.tooltip_next_result),
+                description = stringResource(R.string.tooltip_next_result_desc),
                 onClick = { onNavigate(searchState.currentSearchResultIndex + 1) },
                 enabled = searchState.currentSearchResultIndex < searchState.searchResultsCount - 1
             ) {

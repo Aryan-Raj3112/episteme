@@ -1,3 +1,61 @@
 <resources>
     <string name="app_name">Episteme</string>
+
+    <!-- Tooltip titles -->
+    <string name="tooltip_back">Back</string>
+    <string name="tooltip_dictionary">Dictionary</string>
+    <string name="tooltip_more_options">More Options</string>
+    <string name="tooltip_slider">Page Slider</string>
+    <string name="tooltip_toc">Table of Contents</string>
+    <string name="tooltip_format">Text Format</string>
+    <string name="tooltip_search">Search</string>
+    <string name="tooltip_ai">AI Features</string>
+    <string name="tooltip_tts_start">Start Text-to-Speech</string>
+    <string name="tooltip_tts_stop">Stop Text-to-Speech</string>
+    <string name="tooltip_tts_pause">Pause</string>
+    <string name="tooltip_tts_resume">Resume</string>
+    <string name="tooltip_dark_mode_on">Enable Dark Mode</string>
+    <string name="tooltip_dark_mode_off">Disable Dark Mode</string>
+    <string name="tooltip_lock_pan">Lock Panning</string>
+    <string name="tooltip_unlock_pan">Unlock Panning</string>
+    <string name="tooltip_fullscreen">Full Screen</string>
+    <string name="tooltip_highlights">Show Highlights</string>
+    <string name="tooltip_highlights_off">Hide Highlights</string>
+    <string name="tooltip_edit_mode">Annotation Mode</string>
+    <string name="tooltip_edit_mode_exit">Exit Annotation Mode</string>
+    <string name="tooltip_close_search">Close Search</string>
+    <string name="tooltip_clear_search">Clear Search</string>
+    <string name="tooltip_show_results">Show Results</string>
+    <string name="tooltip_hide_results">Hide Results</string>
+    <string name="tooltip_prev_result">Previous Result</string>
+    <string name="tooltip_next_result">Next Result</string>
+
+    <!-- Tooltip descriptions -->
+    <string name="tooltip_back_desc">Exit the reader and return to the home screen</string>
+    <string name="tooltip_dictionary_desc">Choose your preferred app for word lookups</string>
+    <string name="tooltip_more_options_desc">Access reading mode, bookmarks, and advanced settings</string>
+    <string name="tooltip_slider_desc">Drag to jump quickly to any page in the document</string>
+    <string name="tooltip_toc_desc">Browse chapters and navigate to any section</string>
+    <string name="tooltip_format_desc">Adjust font, size, line height, alignment, and custom fonts</string>
+    <string name="tooltip_search_desc">Find any word or phrase in this book</string>
+    <string name="tooltip_ai_desc">Summarize the current chapter or page using AI</string>
+    <string name="tooltip_tts_start_desc">Read the book aloud using your device\'s voice engine</string>
+    <string name="tooltip_tts_stop_desc">Stop the current read-aloud session</string>
+    <string name="tooltip_tts_pause_desc">Pause the current read-aloud playback</string>
+    <string name="tooltip_tts_resume_desc">Resume paused read-aloud playback</string>
+    <string name="tooltip_dark_mode_on_desc">Invert PDF colors for dark mode</string>
+    <string name="tooltip_dark_mode_off_desc">Disable dark mode and restore the original PDF colors</string>
+    <string name="tooltip_lock_pan_desc">Lock horizontal panning on the page</string>
+    <string name="tooltip_unlock_pan_desc">Unlock panning to re-enable pinch-to-zoom and drag gestures</string>
+    <string name="tooltip_fullscreen_desc">Hide all UI controls for an immersive, distraction-free reading view</string>
+    <string name="tooltip_highlights_desc">Visually mark selectable text regions across the current page</string>
+    <string name="tooltip_highlights_off_desc">Remove the selectable text overlay from the page</string>
+    <string name="tooltip_edit_mode_desc">Add ink or text annotations</string>
+    <string name="tooltip_edit_mode_exit_desc">Finish editing and return to normal reading view</string>
+    <string name="tooltip_close_search_desc">Exit search and go back to the reader</string>
+    <string name="tooltip_clear_search_desc">Erase your current search query and start over</string>
+    <string name="tooltip_show_results_desc">Expand the panel to see all search matches</string>
+    <string name="tooltip_hide_results_desc">Collapse the search results panel</string>
+    <string name="tooltip_prev_result_desc">Jump to the previous search match in the document</string>
+    <string name="tooltip_next_result_desc">Jump to the next search match in the document</string>
 </resources>
