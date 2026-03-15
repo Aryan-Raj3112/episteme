@@ -25,6 +25,7 @@
 package com.aryan.reader.pdf
 
 import android.Manifest
+import android.print.PrintManager
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
@@ -40,6 +41,14 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
+import android.print.PageRange
+import android.os.Bundle
+import android.os.CancellationSignal
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
@@ -576,6 +585,63 @@ private fun loadDisplayMode(context: Context): DisplayMode {
 
 internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
 
+class PdfPrintDocumentAdapter(
+    private val context: Context,
+    private val pdfUri: Uri,
+    private val fileName: String
+) : PrintDocumentAdapter() {
+
+    override fun onLayout(
+        oldAttributes: PrintAttributes?,
+        newAttributes: PrintAttributes?,
+        cancellationSignal: CancellationSignal?,
+        callback: LayoutResultCallback?,
+        extras: Bundle?
+    ) {
+        if (cancellationSignal?.isCanceled == true) {
+            callback?.onLayoutCancelled()
+            return
+        }
+
+        val info = PrintDocumentInfo.Builder(fileName)
+            .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+            .build()
+
+        callback?.onLayoutFinished(info, true)
+    }
+
+    override fun onWrite(
+        pages: Array<out PageRange>?,
+        destination: ParcelFileDescriptor?,
+        cancellationSignal: CancellationSignal?,
+        callback: WriteResultCallback?
+    ) {
+        try {
+            context.contentResolver.openFileDescriptor(pdfUri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).use { input ->
+                    FileOutputStream(destination?.fileDescriptor).use { output ->
+                        val buf = ByteArray(8192)
+                        var bytesRead: Int
+                        while (input.read(buf).also { bytesRead = it } > 0) {
+                            if (cancellationSignal?.isCanceled == true) {
+                                Timber.tag("PdfPrint").d("Print job cancelled during write")
+                                callback?.onWriteCancelled()
+                                return
+                            }
+                            output.write(buf, 0, bytesRead)
+                        }
+                    }
+                }
+            }
+            Timber.tag("PdfPrint").i("PDF successfully streamed to print spooler")
+            callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+        } catch (e: Exception) {
+            Timber.tag("PdfPrint").e(e, "Error writing PDF to print spooler")
+            callback?.onWriteFailed(e.message)
+        }
+    }
+}
+
 private fun loadPdfBookmarksFromJson(bookmarksJson: String?): Set<PdfBookmark> {
     if (bookmarksJson.isNullOrBlank()) return emptySet()
     return try {
@@ -851,6 +917,25 @@ fun PdfViewerScreen(
 
     LaunchedEffect(bookId) {
         isAutoScrollLocal = loadPdfAutoScrollLocalMode(context, bookId)
+    }
+
+    val onPrintDocument = {
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+        val jobName = "${context.getString(R.string.app_name)} - $originalFileName"
+
+        try {
+            Timber.tag("PdfPrint").d("Starting print job: $jobName")
+            printManager.print(
+                jobName,
+                PdfPrintDocumentAdapter(context, pdfUri, originalFileName),
+                null
+            )
+        } catch (e: Exception) {
+            Timber.tag("PdfPrint").e(e, "Failed to initialize print job")
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar("Could not open print settings")
+            }
+        }
     }
 
     val initialSettings = remember(isAutoScrollLocal, bookId) {
@@ -5221,6 +5306,20 @@ fun PdfViewerScreen(
                                                     Icons.Default.Save, contentDescription = null
                                                 )
                                             })
+                                        DropdownMenuItem(
+                                            text = { Text("Print") },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onPrintDocument()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.print),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                     }
                                 }
                             }
