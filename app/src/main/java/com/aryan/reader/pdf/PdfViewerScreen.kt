@@ -25,7 +25,6 @@
 package com.aryan.reader.pdf
 
 import android.Manifest
-import android.print.PrintManager
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
@@ -34,24 +33,24 @@ import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import android.print.PageRange
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
+import android.print.PrintManager
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import android.print.PrintAttributes
-import android.print.PrintDocumentAdapter
-import android.print.PrintDocumentInfo
-import android.print.PageRange
-import android.os.Bundle
-import android.os.CancellationSignal
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -66,12 +65,16 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -83,6 +86,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -92,7 +96,10 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
@@ -103,6 +110,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
@@ -138,7 +146,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalDrawerSheet
@@ -254,8 +261,8 @@ import com.aryan.reader.R
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
-import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.SummarizationResult
+import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
@@ -300,6 +307,8 @@ import org.json.JSONObject
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.max
@@ -582,6 +591,94 @@ private fun loadDisplayMode(context: Context): DisplayMode {
     }
 }
 
+private const val MAX_FIXED_RECURSION = 128
+
+/**
+ * Patches the library bug where siblings are truncated due to depth-state leakage.
+ */
+suspend fun PdfDocumentKt.getFixedTableOfContents(): List<Bookmark> {
+    val tag = "PdfTocFix"
+    Timber.tag(tag).i("Starting Pure Reflection Traversal...")
+
+    return try {
+        // 1. Get the 'document' field (PdfDocumentU) from PdfDocumentKt
+        val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
+        val docUInstance = documentField.get(this) ?: return getTableOfContents()
+
+        // 2. Get the 'nativeDocument' field from PdfDocumentU
+        val nativeDocField = docUInstance.javaClass.getDeclaredField("nativeDocument").apply { isAccessible = true }
+        val nativeDocInstance = nativeDocField.get(docUInstance) ?: return getTableOfContents()
+
+        // 3. Get the native pointer (long) from PdfDocumentU
+        val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
+        val mNativeDocPtr = ptrField.get(docUInstance) as Long
+
+        // 4. Look up native methods using primitive 'long' types (mandatory for JNI)
+        val nClass = nativeDocInstance.javaClass
+        val lp = Long::class.javaPrimitiveType!! // Shorthand for 'long'
+
+        val getTitleM = nClass.getMethod("getBookmarkTitle", lp)
+        val getDestIdxM = nClass.getMethod("getBookmarkDestIndex", lp, lp)
+        val getFirstChildM = nClass.getMethod("getFirstChildBookmark", lp, lp)
+        val getSiblingM = nClass.getMethod("getSiblingBookmark", lp, lp)
+
+        val topLevel = mutableListOf<Bookmark>()
+        val visited = mutableSetOf<Long>()
+
+        /**
+         * Corrected traversal: Iterative for siblings, recursive for children.
+         */
+        fun walk(parentList: MutableList<Bookmark>, startPtr: Long, level: Int) {
+            var currentPtr = startPtr
+            var itemIndex = 0
+
+            while (currentPtr != 0L) {
+                if (visited.contains(currentPtr)) break
+                visited.add(currentPtr)
+
+                val title = getTitleM.invoke(nativeDocInstance, currentPtr) as? String ?: "Untitled"
+                val pageIdx = getDestIdxM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+
+                Timber.tag(tag).v("Lvl $level | Item $itemIndex | Ptr: 0x${java.lang.Long.toHexString(currentPtr)} | $title")
+
+                val bookmark = Bookmark().apply {
+                    this.mNativePtr = currentPtr
+                    this.title = title
+                    this.pageIdx = pageIdx
+                }
+                parentList.add(bookmark)
+
+                // Recursive dive into children
+                val firstChild = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+                if (firstChild != 0L && level < MAX_FIXED_RECURSION) {
+                    walk(bookmark.children, firstChild, level + 1)
+                }
+
+                // Iterative move to next sibling
+                currentPtr = getSiblingM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+                itemIndex++
+            }
+        }
+
+        // 5. Start from the root (Pass 0L as primitive long)
+        val firstRoot = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, 0L) as Long
+        if (firstRoot != 0L) {
+            walk(topLevel, firstRoot, 0)
+        }
+
+        if (topLevel.isEmpty()) {
+            Timber.tag(tag).w("No items found, falling back to library.")
+            getTableOfContents()
+        } else {
+            Timber.tag(tag).i("TOC Successfully Patched! Nodes: ${visited.size}")
+            topLevel
+        }
+    } catch (e: Exception) {
+        Timber.tag(tag).e(e, "Reflection traversal critical error.")
+        this.getTableOfContents()
+    }
+}
+
 internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
 
 class PdfPrintDocumentAdapter(
@@ -681,20 +778,185 @@ private data class TtsPageData(
 private data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
 
 private fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntry> {
+    Timber.tag("PdfTocDebug").d("Processing level $level with ${bookmarks.size} items")
     val entries = mutableListOf<TocEntry>()
-    for (bookmark in bookmarks) {
+    for ((index, bookmark) in bookmarks.withIndex()) {
+        val title = bookmark.title ?: "Untitled Chapter"
+        val childCount = bookmark.children.size
+
+        Timber.tag("PdfTocDebug").d(
+            "Lvl $level | Item $index: \"$title\" (Page: ${bookmark.pageIdx}) | Children: $childCount"
+        )
+
         entries.add(
             TocEntry(
-                title = bookmark.title ?: "Untitled Chapter",
+                title = title,
                 pageIndex = bookmark.pageIdx.toInt(),
                 nestLevel = level
             )
         )
-        if (bookmark.children.isNotEmpty()) {
+
+        if (childCount > 0) {
+            Timber.tag("PdfTocDebug").v("Entering children of \"$title\"")
             entries.addAll(flattenToc(bookmark.children, level + 1))
+            Timber.tag("PdfTocDebug").v("Returned to Lvl $level from \"$title\"")
         }
     }
     return entries
+}
+
+private data class ScrollbarCalculations(
+    val thumbHeight: Float,
+    val thumbOffset: Float,
+    val contentHeight: Float,
+    val viewportHeight: Float
+)
+
+@Composable
+fun VerticalScrollbar(
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isDragged by interactionSource.collectIsDraggedAsState()
+
+    val scrollbarState by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val visibleItemsInfo = layoutInfo.visibleItemsInfo
+            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
+
+            if (totalItems == 0 || visibleItemsInfo.isEmpty() || viewportHeight <= 0f) {
+                return@derivedStateOf null
+            }
+
+            // Estimate total height
+            val averageItemHeight = visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
+            val estimatedContentHeight = (averageItemHeight * totalItems).coerceAtLeast(viewportHeight)
+            val viewportRatio = viewportHeight / estimatedContentHeight
+
+            if (viewportRatio >= 1f) return@derivedStateOf null
+
+            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(80f, viewportHeight / 2)
+
+            val firstItemIndex = listState.firstVisibleItemIndex
+            val firstItemOffset = listState.firstVisibleItemScrollOffset
+            val currentScrollPixels = (firstItemIndex * averageItemHeight) + firstItemOffset
+            val maxScrollPixels = estimatedContentHeight - viewportHeight
+            val scrollProgress = (currentScrollPixels / maxScrollPixels).coerceIn(0f, 1f)
+            val trackHeight = viewportHeight - thumbHeight
+            val thumbOffset = trackHeight * scrollProgress
+
+            ScrollbarCalculations(
+                thumbHeight = thumbHeight,
+                thumbOffset = thumbOffset,
+                contentHeight = estimatedContentHeight,
+                viewportHeight = viewportHeight
+            )
+        }
+    }
+
+    val targetAlpha = if (listState.isScrollInProgress || isDragged) 1f else 0f
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(durationMillis = 200),
+        label = "ScrollbarAlpha"
+    )
+
+    if (scrollbarState != null) {
+        val state = scrollbarState!!
+        val draggableState = rememberDraggableState { delta ->
+            val trackHeight = state.viewportHeight - state.thumbHeight
+            if (trackHeight > 0) {
+                val scrollRatio = delta / trackHeight
+                val totalScrollableDistance = state.contentHeight - state.viewportHeight
+                val scrollDelta = scrollRatio * totalScrollableDistance
+                listState.dispatchRawDelta(scrollDelta)
+            }
+        }
+
+        Box(
+            modifier = modifier
+                .width(30.dp)
+                .fillMaxHeight()
+                .draggable(
+                    state = draggableState,
+                    orientation = Orientation.Vertical,
+                    interactionSource = interactionSource
+                )
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .graphicsLayer { translationY = state.thumbOffset }
+                    .padding(end = 4.dp)
+                    .width(6.dp)
+                    .height(with(LocalDensity.current) { state.thumbHeight.toDp() })
+                    .alpha(alpha)
+                    .background(
+                        color = if (isDragged) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(100)
+                    )
+            )
+        }
+    }
+}
+
+@Composable
+private fun PdfTocTreeItem(
+    label: String,
+    nestLevel: Int,
+    isExpanded: Boolean,
+    hasChildren: Boolean,
+    isCurrent: Boolean,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit
+) {
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent,
+        label = "TocItemBackground"
+    )
+
+    val contentColor = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .background(backgroundColor)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(modifier = Modifier.width((16 * nestLevel).dp))
+
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clickable(enabled = hasChildren, onClick = onToggleExpand),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasChildren) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Text(
+            text = label,
+            style = if (nestLevel == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isCurrent) FontWeight.Bold else if (nestLevel == 0) FontWeight.SemiBold else FontWeight.Normal,
+            color = contentColor,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(end = 16.dp)
+        )
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -2857,6 +3119,17 @@ fun PdfViewerScreen(
                 pdfDocument = doc
                 pfdState = currentPfdOpened
                 val pagesCount = doc.getPageCount()
+
+                if (pagesCount > 0) {
+                    try {
+                        val tableOfContents = doc.getFixedTableOfContents()
+                        val flattened = flattenToc(tableOfContents)
+                        withContext(Dispatchers.Main) { flatTableOfContents = flattened }
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to load TOC")
+                    }
+                }
+
                 totalPages = pagesCount
 
                 if (pagesCount > 0) {
@@ -2949,16 +3222,6 @@ fun PdfViewerScreen(
                             } catch (e: Exception) {
                                 Timber.w(e, "Failed to calculate ratio for page $i")
                             }
-                        }
-                    }
-
-                    launch(Dispatchers.IO) {
-                        try {
-                            val tableOfContents = doc.getTableOfContents()
-                            val flattened = flattenToc(tableOfContents)
-                            withContext(Dispatchers.Main) { flatTableOfContents = flattened }
-                        } catch (e: Exception) {
-                            Timber.w(e, "Failed to load TOC")
                         }
                     }
                 } else {
@@ -3443,9 +3706,7 @@ fun PdfViewerScreen(
                             0 -> { // Chapters Page
                                 if (flatTableOfContents.isEmpty()) {
                                     Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(16.dp),
+                                        modifier = Modifier.fillMaxSize().padding(16.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
@@ -3455,54 +3716,99 @@ fun PdfViewerScreen(
                                         )
                                     }
                                 } else {
-                                    val currentTocEntry by remember(
-                                        pagerState.currentPage, flatTableOfContents
-                                    ) {
-                                        derivedStateOf {
-                                            flatTableOfContents.lastOrNull {
-                                                it.pageIndex <= pagerState.currentPage
+                                    val listState = rememberLazyListState()
+
+                                    val allParentIndices = remember(flatTableOfContents) {
+                                        flatTableOfContents.indices.filter { i ->
+                                            val next = flatTableOfContents.getOrNull(i + 1)
+                                            next != null && next.nestLevel > flatTableOfContents[i].nestLevel
+                                        }.toSet()
+                                    }
+
+                                    var expandedEntryIndices by rememberSaveable(flatTableOfContents) {
+                                        mutableStateOf(allParentIndices)
+                                    }
+
+                                    val visibleItemInfo = remember(flatTableOfContents, expandedEntryIndices) {
+                                        val result = mutableListOf<Pair<Int, TocEntry>>()
+                                        val visibilityStack = BooleanArray(20) { false }
+                                        visibilityStack[0] = true
+
+                                        for (i in flatTableOfContents.indices) {
+                                            val entry = flatTableOfContents[i]
+                                            val level = entry.nestLevel.coerceIn(0, 19)
+
+                                            if (visibilityStack[level]) {
+                                                result.add(i to entry)
+                                                val isExpanded = expandedEntryIndices.contains(i)
+                                                if (level + 1 < visibilityStack.size) {
+                                                    visibilityStack[level + 1] = isExpanded
+                                                }
+                                            } else {
+                                                if (level + 1 < visibilityStack.size) {
+                                                    visibilityStack[level + 1] = false
+                                                }
                                             }
                                         }
+                                        result
                                     }
-                                    LazyColumn(modifier = Modifier.fillMaxHeight()) {
-                                        itemsIndexed(
-                                            items = flatTableOfContents, key = { index, entry ->
-                                                "toc_${index}_${entry.pageIndex}_${entry.title.hashCode()}"
-                                            }) { _, entry ->
-                                            val isCurrentChapter = entry == currentTocEntry
-                                            ListItem(
-                                                headlineContent = {
-                                                    Text(
-                                                        entry.title,
-                                                        fontWeight = if (isCurrentChapter) FontWeight.Bold
-                                                        else FontWeight.Normal,
-                                                        modifier = Modifier.padding(
-                                                            start = (16 * entry.nestLevel).dp
-                                                        )
-                                                    )
-                                                }, colors = if (isCurrentChapter) {
-                                                    ListItemDefaults.colors(
-                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                        headlineColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                                    )
-                                                } else {
-                                                    ListItemDefaults.colors()
-                                                }, modifier = Modifier.clickable {
-                                                    coroutineScope.launch {
-                                                        drawerState.close()
-                                                        if (displayMode == DisplayMode.PAGINATION) {
-                                                            pagerState.scrollToPage(
-                                                                entry.pageIndex
-                                                            )
+
+                                    val currentTocEntry by remember(pagerState.currentPage, verticalReaderState.currentPage, displayMode, flatTableOfContents) {
+                                        derivedStateOf {
+                                            val activePage = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                                            flatTableOfContents.lastOrNull { it.pageIndex <= activePage }
+                                        }
+                                    }
+
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .padding(end = 12.dp)
+                                        ) {
+                                            items(
+                                                items = visibleItemInfo,
+                                                key = { it.second.title + it.first }
+                                            ) { item ->
+                                                val (originalIndex, entry) = item
+
+                                                val nextItem = flatTableOfContents.getOrNull(originalIndex + 1)
+                                                val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                                val isExpanded = expandedEntryIndices.contains(originalIndex)
+                                                val isCurrentChapter = entry == currentTocEntry
+
+                                                PdfTocTreeItem(
+                                                    label = entry.title,
+                                                    nestLevel = entry.nestLevel,
+                                                    isExpanded = isExpanded,
+                                                    hasChildren = hasChildren,
+                                                    isCurrent = isCurrentChapter,
+                                                    onToggleExpand = {
+                                                        expandedEntryIndices = if (isExpanded) {
+                                                            expandedEntryIndices - originalIndex
                                                         } else {
-                                                            verticalReaderState.scrollToPage(
-                                                                entry.pageIndex
-                                                            )
+                                                            expandedEntryIndices + originalIndex
+                                                        }
+                                                    },
+                                                    onClick = {
+                                                        coroutineScope.launch {
+                                                            drawerState.close()
+                                                            if (displayMode == DisplayMode.PAGINATION) {
+                                                                pagerState.scrollToPage(entry.pageIndex)
+                                                            } else {
+                                                                verticalReaderState.scrollToPage(entry.pageIndex)
+                                                            }
                                                         }
                                                     }
-                                                })
-                                            HorizontalDivider()
+                                                )
+                                            }
                                         }
+
+                                        VerticalScrollbar(
+                                            listState = listState,
+                                            modifier = Modifier.align(Alignment.CenterEnd)
+                                        )
                                     }
                                 }
                             }
