@@ -4158,7 +4158,13 @@ fun PdfViewerScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             key = { it },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
-                                            userScrollEnabled = currentPageScale == 1f && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
+                                            userScrollEnabled = run {
+                                                val enabled = currentPageScale == 1f && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
+                                                SideEffect {
+                                                    Timber.tag("PdfZoomDebug").v("Pager Scroll Enabled: $enabled (Scale: $currentPageScale, Playing: ${ttsState.isPlaying}, Slider: $isPageSliderVisible, DraggingBox: $paginationDraggingBoxId)")
+                                                }
+                                                enabled
+                                            }
                                         ) { pageIndex ->
                                             val isVisiblePage = remember(pagerState.currentPage, pageIndex) {
                                                 kotlin.math.abs(pagerState.currentPage - pageIndex) <= 1

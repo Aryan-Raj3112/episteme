@@ -2563,6 +2563,7 @@ internal fun PdfPageComposable(
                         coroutineScope.launch {
                             val startScale = scale
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
+                            Timber.tag("PdfZoomDebug").i("DoubleTap Triggered: CurrentScale=$startScale, Target=$targetScale")
                             val startOffset = offset
                             val targetOffsetUnbounded = if (targetScale <= 1.1f) {
                                 Offset.Zero
@@ -2661,6 +2662,7 @@ internal fun PdfPageComposable(
                                         accumulatedPan += panChange
                                         if (accumulatedPan.getDistance() > touchSlop) {
                                             mode = 1
+                                            Timber.tag("PdfZoomDebug").d("Mode Change: PAN (Single Pointer)")
                                         }
                                     } else if (pointerCount > 1) {
                                         accumulatedZoom *= zoomChange
@@ -2671,8 +2673,10 @@ internal fun PdfPageComposable(
 
                                         if (zoomDiff > 0.05f) {
                                             mode = 2
+                                            Timber.tag("PdfZoomDebug").d("Mode Change: ZOOM (Multi Pointer)")
                                         } else if (panDist > touchSlop) {
                                             mode = 1
+                                            Timber.tag("PdfZoomDebug").d("Mode Change: PAN (Multi Pointer)")
                                         }
                                     }
                                 }
@@ -2691,6 +2695,7 @@ internal fun PdfPageComposable(
                                     val newY = (offset.y + panChange.y).coerceIn(
                                         -maxOffsetY, maxOffsetY
                                     )
+                                    Timber.tag("PdfZoomDebug").v("Panning: Offset $offset -> $newX, $newY (Max: $maxOffsetX, $maxOffsetY)")
                                     offset = Offset(newX, newY)
 
                                     event.changes.forEach {
@@ -2700,40 +2705,25 @@ internal fun PdfPageComposable(
                                     val oldScale = scale
                                     val newScale = (scale * zoomChange).coerceIn(1f, 4f)
 
-                                    val previousCentroid = event.calculateCentroid(
-                                        useCurrent = false
-                                    )
+                                    val previousCentroid = event.calculateCentroid(useCurrent = false)
                                     if (previousCentroid != Offset.Unspecified) {
                                         val ratio = newScale / oldScale
-                                        val screenCenter = Offset(
-                                            size.width / 2f, size.height / 2f
-                                        )
-                                        val newOffset =
-                                            offset * ratio + (previousCentroid - screenCenter) * (1 - ratio) + panChange
+                                        val screenCenter = Offset(size.width / 2f, size.height / 2f)
+                                        val newOffset = offset * ratio + (previousCentroid - screenCenter) * (1 - ratio) + panChange
 
                                         val contentWidth = actualBitmapWidthPx * newScale
                                         val contentHeight = actualBitmapHeightPx * newScale
-                                        val maxOffsetX =
-                                            (contentWidth - size.width).coerceAtLeast(0f) / 2f
-                                        val maxOffsetY =
-                                            (contentHeight - size.height).coerceAtLeast(0f) / 2f
+                                        val maxOffsetX = (contentWidth - size.width).coerceAtLeast(0f) / 2f
+                                        val maxOffsetY = (contentHeight - size.height).coerceAtLeast(0f) / 2f
+
+                                        Timber.tag("PdfZoomDebug").v("Scaling: RawZoom=$zoomChange, Scale=$oldScale->$newScale, Offset=$offset->$newOffset (Clamped Max: $maxOffsetX, $maxOffsetY)")
 
                                         offset = Offset(
-                                            x = newOffset.x.coerceIn(
-                                                -maxOffsetX, maxOffsetX
-                                            ), y = newOffset.y.coerceIn(
-                                                -maxOffsetY, maxOffsetY
-                                            )
+                                            x = newOffset.x.coerceIn(-maxOffsetX, maxOffsetX),
+                                            y = newOffset.y.coerceIn(-maxOffsetY, maxOffsetY)
                                         )
                                         scale = newScale
-
-                                        if (scale < 1.05f) {
-                                            scale = 1f
-                                            offset = Offset.Zero
-                                            onScaleChanged(scale)
-                                        } else {
-                                            onScaleChanged(scale)
-                                        }
+                                        onScaleChanged(scale)
                                     }
                                     event.changes.forEach {
                                         if (it.positionChanged()) it.consume()
@@ -2808,7 +2798,17 @@ internal fun PdfPageComposable(
                         }
                     } while (!canceled && event.changes.any { it.pressed })
 
-                    if (mode == 1 && scale > 1f) {
+                    if (scale > 1f && scale < 1.05f) {
+                        coroutineScope.launch {
+                            val startScale = scale
+                            val startOffset = offset
+                            Animatable(0f).animateTo(1f) {
+                                scale = lerp(startScale, 1f, value)
+                                offset = lerp(startOffset, Offset.Zero, value)
+                                onScaleChanged(scale)
+                            }
+                        }
+                    } else if (mode == 1 && scale > 1f) {
                         val velocity = velocityTracker.calculateVelocity()
                         val contentWidth = actualBitmapWidthPx * scale
                         val contentHeight = actualBitmapHeightPx * scale
