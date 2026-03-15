@@ -203,6 +203,7 @@ data class ReaderScreenState(
     val lastFolderScanTime: Long? = null,
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
+    val isSearchActive: Boolean = false,
     val showFolderMigrationDialog: Boolean = false,
     val isRefreshing: Boolean = false,
     val reflowProgress: Float? = null,
@@ -369,7 +370,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     fun onSearchQueryChange(newQuery: String) {
-        _internalState.update { it.copy(searchQuery = newQuery) }
+        _internalState.update {
+            if (it.isSearchActive) {
+                it.copy(searchQuery = newQuery)
+            } else {
+                it
+            }
+        }
+    }
+
+    fun setSearchActive(active: Boolean) {
+        _internalState.update {
+            if (active) {
+                it.copy(isSearchActive = true)
+            } else {
+                it.copy(isSearchActive = false, searchQuery = "")
+            }
+        }
     }
 
     private val _reviewRequestEvent = Channel<Unit>(Channel.BUFFERED)

@@ -20,8 +20,6 @@
 // LibraryScreen.kt
 package com.aryan.reader
 
-import android.content.Context
-import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,7 +62,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,8 +96,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -146,7 +141,7 @@ fun LibraryScreen(
 
     val scope = rememberCoroutineScope()
 
-    var isSearchActive by remember { mutableStateOf(false) }
+    val isSearchActive = uiState.isSearchActive
     val searchQuery = uiState.searchQuery
 
     val pickFolderLauncher = rememberLauncherForActivityResult(
@@ -222,8 +217,7 @@ fun LibraryScreen(
     }
 
     BackHandler(enabled = isSearchActive) {
-        isSearchActive = false
-        viewModel.onSearchQueryChange("")
+        viewModel.setSearchActive(false)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -238,10 +232,7 @@ fun LibraryScreen(
             searchQuery = searchQuery,
             isSearchActive = isSearchActive,
             onSearchQueryChange = viewModel::onSearchQueryChange,
-            onSearchActiveChange = { active ->
-                isSearchActive = active
-                if (!active) viewModel.onSearchQueryChange("")
-            },
+            onSearchActiveChange = viewModel::setSearchActive,
             onSortOrderChange = viewModel::setSortOrder,
             onClearSelection = { viewModel.clearContextualAction() },
             onItemClick = viewModel::onRecentFileClicked,
@@ -474,6 +465,19 @@ fun LibraryScreenContent(
     val tabTitles = listOf("All Books", "Shelves", "Folders")
     val searchFocusRequester = remember { FocusRequester() }
 
+    var textFieldValue by remember(isSearchActive) {
+        mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
+    }
+
+    LaunchedEffect(searchQuery) {
+        if (textFieldValue.text != searchQuery) {
+            textFieldValue = textFieldValue.copy(
+                text = searchQuery,
+                selection = TextRange(searchQuery.length)
+            )
+        }
+    }
+
     LaunchedEffect(isSearchActive) {
         if (isSearchActive) {
             searchFocusRequester.requestFocus()
@@ -513,8 +517,11 @@ fun LibraryScreenContent(
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
                             }
                             OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = onSearchQueryChange,
+                                value = textFieldValue,
+                                onValueChange = {
+                                    textFieldValue = it
+                                    onSearchQueryChange(it.text)
+                                },
                                 placeholder = { Text("Search title or author...") },
                                 modifier = Modifier
                                     .weight(1f)
@@ -866,9 +873,11 @@ private fun ShelfDetailScreen(
         },
         floatingActionButton = {
             if (shelf.name != "Unshelved" && !isContextualModeActive) {
-                FloatingActionButton(onClick = onAddBooksClick) {
-                    Icon(Icons.Default.Add, contentDescription = "Add books")
-                }
+                ExtendedFloatingActionButton(
+                    onClick = onAddBooksClick,
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text("Add books") }
+                )
             }
         }
     ) { paddingValues ->
@@ -1360,25 +1369,6 @@ private fun DeleteShelvesConfirmationDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
-}
-
-private fun getDisplayPathFromUri(context: Context, uriString: String): String {
-    val uri = uriString.toUri()
-    val fallbackName = DocumentFile.fromTreeUri(context, uri)?.name ?: "Unknown Folder"
-
-    if (DocumentsContract.isTreeUri(uri) && DocumentsContract.getTreeDocumentId(uri).isNotEmpty()) {
-        val documentId = DocumentsContract.getTreeDocumentId(uri)
-        val split = documentId.split(":")
-        if (split.size > 1) {
-            val type = split[0]
-            val path = split[1]
-            return when (type) {
-                "primary" -> "Internal Storage ▸ $path"
-                else -> path
-            }
-        }
-    }
-    return fallbackName
 }
 
 @Composable
