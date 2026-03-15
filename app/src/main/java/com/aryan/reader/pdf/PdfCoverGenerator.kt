@@ -55,7 +55,7 @@ class PdfCoverGenerator(context: Context) {
                             Timber.w("PDF has no pages, cannot generate cover: $pdfUri")
                             return@withContext null
                         }
-                        doc.openPage(0).use { page ->
+                        doc.openPage(0)?.use { page ->
                             val originalWidth = page.getPageWidthPoint()
                             val originalHeight = page.getPageHeightPoint()
                             if (originalWidth <= 0 || originalHeight <= 0) {

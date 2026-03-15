@@ -171,7 +171,7 @@ class PdfTextRepository(context: Context) {
             var ocrUsed = false
 
             try {
-                document.openPage(pageIndex).use { page ->
+                document.openPage(pageIndex)?.use { page ->
                     page.openTextPage().use { textPage ->
                         val count = textPage.textPageCountChars()
                         if (count > 0) {
@@ -188,7 +188,7 @@ class PdfTextRepository(context: Context) {
 
             if (text.isBlank()) {
                 try {
-                    document.openPage(pageIndex).use { page ->
+                    document.openPage(pageIndex)?.use { page ->
                         val targetWidth = 1080
                         val ptrWidth = page.getPageWidthPoint()
                         val ptrHeight = page.getPageHeightPoint()
@@ -270,11 +270,11 @@ class PdfTextRepository(context: Context) {
     suspend fun hasNativeText(document: PdfDocumentKt, pageIndex: Int): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                document.openPage(pageIndex).use { page ->
+                document.openPage(pageIndex)?.use { page ->
                     page.openTextPage().use { textPage ->
                         textPage.textPageCountChars() > 0
                     }
-                }
+                } ?: false
             } catch (_: Exception) {
                 false
             }
@@ -290,7 +290,7 @@ class PdfTextRepository(context: Context) {
         return withContext(Dispatchers.IO) {
             val rects = mutableListOf<RectF>()
             try {
-                document.openPage(pageIndex).use { page ->
+                document.openPage(pageIndex)?.use { page ->
                     val targetWidth = 1080
                     val ptrWidth = page.getPageWidthPoint()
                     val ptrHeight = page.getPageHeightPoint()

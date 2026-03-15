@@ -131,13 +131,12 @@ object PdfToHtmlGenerator {
         headerFooterStrings: Set<String>
     ): String {
         return try {
-            doc.openPage(pageIdx).use { page ->
-                if (page == null) return buildEmptyPageSection(pageNumber)
+            doc.openPage(pageIdx)?.use { page ->
                 page.openTextPage().use { textPage ->
                     val charCount = textPage.textPageCountChars()
 
-                    val pagePtr = page.page.pagePtr
-                    val textPagePtr = textPage.page.pagePtr
+                    val pagePtr = getNativePointer(page)
+                    val textPagePtr = getNativePointer(textPage)
 
                     val imageElements = mutableListOf<ImageElement>()
                     val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
@@ -178,7 +177,7 @@ object PdfToHtmlGenerator {
                     val flags: IntArray?
                     val charBoxes: FloatArray?
 
-                    synchronized(PdfiumCore.lock) {
+                    synchronized(NativePdfiumBridge::class.java) {
                         sizes     = NativePdfiumBridge.getPageFontSizes(textPagePtr, actualCount)
                         weights   = NativePdfiumBridge.getPageFontWeights(textPagePtr, actualCount)
                         flags     = NativePdfiumBridge.getPageFontFlags(textPagePtr, actualCount)
@@ -293,8 +292,8 @@ object PdfToHtmlGenerator {
                     }
 
                     buildPageHtml(pageNumber, finalElements, headerFooterStrings)
-                }
-            }
+                } ?: buildEmptyPageSection(pageNumber)
+            } ?: buildEmptyPageSection(pageNumber)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Error extracting page $pageIdx")
             buildEmptyPageSection(pageNumber)
@@ -483,7 +482,7 @@ object PdfToHtmlGenerator {
 
         for (pageIdx in samplePages) {
             try {
-                doc.openPage(pageIdx).use { page ->
+                doc.openPage(pageIdx)?.use { page ->
                     page.openTextPage().use { textPage ->
                         val charCount = textPage.textPageCountChars()
                         if (charCount <= 0) return@use
@@ -511,4 +510,21 @@ object PdfToHtmlGenerator {
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
         .replace("'", "&#39;")
+
+    private fun getNativePointer(obj: Any): Long {
+        val priorityFields = listOf("pagePtr", "mNativePage", "page")
+        for (name in priorityFields) {
+            try {
+                val field = obj.javaClass.getDeclaredField(name)
+                field.isAccessible = true
+                val value = field.get(obj)
+                if (value is Long && value != 0L) return value
+                if (value != null && value !is Long) {
+                    val nestedPtr = getNativePointer(value)
+                    if (nestedPtr != 0L) return nestedPtr
+                }
+            } catch (_: Exception) {}
+        }
+        return 0L
+    }
 }

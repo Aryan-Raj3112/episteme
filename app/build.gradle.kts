@@ -19,7 +19,7 @@ if (localPropertiesFile.exists()) {
 
 android {
     namespace = "com.aryan.reader"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
@@ -211,7 +211,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.browser:browser:1.8.0")
 
-    implementation("io.legere:pdfiumandroid:1.0.35")
+    implementation("io.legere:pdfiumandroid:2.0.0")
 }
 
 spotless {

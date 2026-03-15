@@ -279,8 +279,7 @@ import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
-import io.legere.pdfiumandroid.PdfDocument
-import io.legere.pdfiumandroid.PdfPasswordException
+import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
 import io.legere.pdfiumandroid.suspend.PdfTextPageKt
@@ -681,7 +680,7 @@ private data class TtsPageData(
 
 private data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
 
-private fun flattenToc(bookmarks: List<PdfDocument.Bookmark>, level: Int = 0): List<TocEntry> {
+private fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntry> {
     val entries = mutableListOf<TocEntry>()
     for (bookmark in bookmarks) {
         entries.add(
@@ -710,6 +709,7 @@ private suspend fun renderPageToBitmap(doc: PdfDocumentKt, pageIndex: Int): Bitm
         var page: PdfPageKt? = null
         try {
             page = doc.openPage(pageIndex)
+            if (page == null) return@withContext null
 
             val bitmapWidth = 1080
             val aspectRatio =
@@ -1442,7 +1442,7 @@ fun PdfViewerScreen(
 
                 withContext(Dispatchers.IO) {
                     try {
-                        doc.openPage(pageIndex).use { page ->
+                        doc.openPage(pageIndex)?.use { page ->
                             page.openTextPage().use { textPage ->
                                 val fullText = textPage.textPageGetText(newStart, newEnd - newStart) ?: text
                                 val rects = textPage.textPageGetRectsForRanges(intArrayOf(newStart, newEnd - newStart))
@@ -1980,7 +1980,7 @@ fun PdfViewerScreen(
                 if (pdfDocument != null) {
                     try {
                         withContext(Dispatchers.IO) {
-                            pdfDocument!!.openPage(pageIndex).use { page ->
+                            pdfDocument!!.openPage(pageIndex)?.use { page ->
                                 page.openTextPage().use { textPage ->
                                     val count = textPage.textPageCountChars()
 
@@ -2499,10 +2499,10 @@ fun PdfViewerScreen(
                 withContext(Dispatchers.IO) {
                     Timber.d("TTS: Opening page $pageToRead for Pdfium text extraction.")
                     tempPage = pdfDocument!!.openPage(pageToRead)
-                    tempTextPage = tempPage.openTextPage()
-                    val charCount = tempTextPage.textPageCountChars()
+                    tempTextPage = tempPage?.openTextPage()
+                    val charCount = tempTextPage?.textPageCountChars() ?: 0
                     if (charCount > 0) {
-                        rawPageText = tempTextPage.textPageGetText(0, charCount)?.trim()
+                        rawPageText = tempTextPage?.textPageGetText(0, charCount)?.trim()
                         if (rawPageText.isNullOrBlank()) {
                             Timber.d(
                                 "TTS: Pdfium extracted text but it's blank (charCount: $charCount)."
@@ -2867,7 +2867,7 @@ fun PdfViewerScreen(
                         cachedRatios
                     } else {
                         val computedRatios = ArrayList<Float>(pagesCount)
-                        doc.openPage(0).use { page ->
+                        doc.openPage(0)?.use { page ->
                             val width = page.getPageWidthPoint()
                             val height = page.getPageHeightPoint()
                             val ratio = if (height > 0) width.toFloat() / height.toFloat()
@@ -2882,7 +2882,7 @@ fun PdfViewerScreen(
                             for (i in 0 until pagesCount) {
                                 if (!isActive) break
                                 try {
-                                    doc.openPage(i).use { page ->
+                                    doc.openPage(i)?.use { page ->
                                         val width = page.getPageWidthPoint()
                                         val height = page.getPageHeightPoint()
                                         val ratio =
@@ -2928,7 +2928,7 @@ fun PdfViewerScreen(
                         for (i in 1 until pagesCount) {
                             if (!isActive) break
                             try {
-                                doc.openPage(i).use { page ->
+                                doc.openPage(i)?.use { page ->
                                     val width = page.getPageWidthPoint()
                                     val height = page.getPageHeightPoint()
                                     val ratio = if (height > 0) width.toFloat() / height.toFloat()
@@ -2969,7 +2969,7 @@ fun PdfViewerScreen(
                 Timber.i("PDF document loaded optimistically. Total Pages: $totalPages.")
             }
         } catch (e: Exception) {
-            if (e is PdfPasswordException || e.cause is PdfPasswordException) {
+            if (e.javaClass.name.contains("PasswordException") || e.cause?.javaClass?.name?.contains("PasswordException") == true) {
                 Timber.w("PDF is password protected or password incorrect.")
                 withContext(Dispatchers.Main) {
                     if (documentPassword != null) {
@@ -7028,6 +7028,7 @@ private fun debugPdfLinks(
             if (pageCount > 0) {
                 val pageIndex = 0 // Testing the first page
                 page = doc.openPage(pageIndex)
+                if (page == null) return@launch
                 Timber.d("Opened page $pageIndex")
 
                 Timber.d(
@@ -7056,7 +7057,7 @@ private fun debugPdfLinks(
 
                 // Method 2: The one that is working
                 page.openTextPage().use { textPage ->
-                    textPage.loadWebLink().use { webLinks ->
+                    textPage.loadWebLink()?.use { webLinks ->
                         val webLinkCount = webLinks.countWebLinks()
                         Timber.d("[METHOD 2] loadWebLink() found $webLinkCount links.")
                         if (webLinkCount > 0) {
