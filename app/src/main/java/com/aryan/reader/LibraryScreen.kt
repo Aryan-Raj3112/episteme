@@ -505,7 +505,7 @@ fun LibraryScreenContent(
                 } else if (isSearchActive) {
                     Surface(
                         shadowElevation = 4.dp,
-                        modifier = Modifier.fillMaxWidth().statusBarsPadding()
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier

@@ -358,8 +358,12 @@ internal fun PdfVerticalReader(
             val constrainedX = targetPanX.coerceIn(minPanX, maxPanX)
             val constrainedY = targetPanY.coerceIn(minPanY, headerHeightPx)
 
-            // DEDICATED LOG
-            Timber.tag("PdfZoomDebug").v("Clamp Internal: Zoom=$constrainedZoom, PanBoundsX=[$minPanX, $maxPanX], PanBoundsY=[$minPanY, $headerHeightPx]")
+            if (constrainedZoom > 1.01f) {
+                Timber.tag("PdfZoomIssue").v(
+                    "Clamp: Zoom=$constrainedZoom, targetY=$targetPanY, finalY=$constrainedY, " +
+                            "boundsY=[$minPanY, $headerHeightPx], zoomedHeight=$zoomedDocHeight"
+                )
+            }
 
             return Triple(constrainedZoom, constrainedX, constrainedY)
         }
@@ -370,10 +374,14 @@ internal fun PdfVerticalReader(
             return clampValues(targetZoom, targetPanX, targetPanY)
         }
 
+        var isFlinging by remember { mutableStateOf(false) }
+        var isFastFlinging by remember { mutableStateOf(false) }
+        var isInteracting by remember { mutableStateOf(false) }
+
         LaunchedEffect(
-            totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value
+            totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging
         ) {
-            if (zoomAnimatable.isRunning || panXAnimatable.isRunning || panYAnimatable.isRunning) {
+            if (zoomAnimatable.isRunning || panXAnimatable.isRunning || panYAnimatable.isRunning || isInteracting || isFlinging) {
                 return@LaunchedEffect
             }
 
@@ -446,10 +454,6 @@ internal fun PdfVerticalReader(
         }
 
         var selectionClearTrigger by remember { mutableLongStateOf(0L) }
-
-        var isFlinging by remember { mutableStateOf(false) }
-        var isFastFlinging by remember { mutableStateOf(false) }
-
         var draggingBoxId by remember { mutableStateOf<String?>(null) }
         var draggingBoxOffset by remember { mutableStateOf(Offset.Zero) }
         var draggingBoxSize by remember { mutableStateOf(Size.Zero) }
@@ -549,7 +553,6 @@ internal fun PdfVerticalReader(
         }
 
         var highResScale by remember { mutableFloatStateOf(1f) }
-        var isInteracting by remember { mutableStateOf(false) }
 
         LaunchedEffect(isInteracting) {
             if (isInteracting && isAutoScrollPlaying) {
@@ -617,8 +620,12 @@ internal fun PdfVerticalReader(
             imeBottom,
             isEditMode,
             selectedTool,
-            zoomAnimatable.value
+            zoomAnimatable.value,
+            isInteracting,
+            isFlinging
         ) {
+            if (isInteracting || isFlinging) return@LaunchedEffect
+
             val currentZoom = zoomAnimatable.value
             val zoomedDocHeight = totalDocHeight * currentZoom
 
@@ -897,6 +904,7 @@ internal fun PdfVerticalReader(
                         )
 
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        isInteracting = true
 
                         Timber.tag("PointerTypeDebug").d("VerticalReader: Input Type detected: ${down.type}")
 
@@ -1015,31 +1023,35 @@ internal fun PdfVerticalReader(
                                         (!isEditMode || selectedTool == InkType.TEXT || isMultiTouch || (isStylusOnlyMode && isTouchInput))
 
                                 if (shouldScroll) {
-                                    if (!isInteracting) {
-                                        Timber.tag("PdfTouchDebug").i(
-                                            "VerticalReader: Taking control."
-                                        )
-                                        isInteracting = true
-                                    }
-
                                     panLocked = true
                                     if (zoomChange != 1f || panChange != Offset.Zero) {
 
                                         var effectiveZoomChange = zoomChange
-
-                                        if (gestureDisambiguationMode == 1) {
-                                            effectiveZoomChange = 1f
-                                        }
+                                        if (gestureDisambiguationMode == 1) effectiveZoomChange = 1f
 
                                         val oldZoom = accumulatedZoom
                                         val rawTargetZoom = oldZoom * effectiveZoomChange
                                         val constrainedZoom = rawTargetZoom.coerceIn(1f, 5f)
-                                        val actualZoomFactor = if (oldZoom == 0f) 1f
-                                        else constrainedZoom / oldZoom
-                                        val rawNewPanX =
-                                            (accumulatedPanX + panChange.x) - (centroid.x - accumulatedPanX) * (actualZoomFactor - 1)
-                                        val rawNewPanY =
-                                            (accumulatedPanY + panChange.y) - (centroid.y - accumulatedPanY) * (actualZoomFactor - 1)
+
+                                        val prevCentroid = centroid - panChange
+                                        val contentPivotX = (prevCentroid.x - accumulatedPanX) / oldZoom
+                                        val contentPivotY = (prevCentroid.y - accumulatedPanY) / oldZoom
+
+                                        Timber.tag("PdfZoomIssue").v(
+                                            "PivotCalc: ScreenCentroidY=${centroid.y}, DocumentPanY=$accumulatedPanY, " +
+                                                    "CalculatedContentPivotY=$contentPivotY"
+                                        )
+
+                                        val rawNewPanX = centroid.x - (contentPivotX * constrainedZoom)
+                                        val rawNewPanY = centroid.y - (contentPivotY * constrainedZoom)
+
+                                        if (effectiveZoomChange > 1.0f) {
+                                            Timber.tag("PdfZoomIssue").d(
+                                                "PinchIn FIXED: ZoomFactor=$effectiveZoomChange, CentroidY=${centroid.y}, " +
+                                                        "OldPanY=$accumulatedPanY, ResultRawPanY=$rawNewPanY"
+                                            )
+                                        }
+
                                         val (finalZoom, finalX, finalY) = clampCamera(
                                             constrainedZoom, rawNewPanX, rawNewPanY
                                         )
@@ -1064,11 +1076,8 @@ internal fun PdfVerticalReader(
 
                                         if (event.changes.isNotEmpty()) {
                                             velocityTrackerAccumulator += panChange
-
                                             val time = event.changes[0].uptimeMillis
-                                            tracker.addPosition(
-                                                time, velocityTrackerAccumulator
-                                            )
+                                            tracker.addPosition(time, velocityTrackerAccumulator)
                                         }
                                     }
                                 }
