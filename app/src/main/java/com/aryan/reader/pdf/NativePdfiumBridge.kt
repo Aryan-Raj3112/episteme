@@ -24,8 +24,15 @@ object NativePdfiumBridge {
     @JvmStatic external fun getPageObjectBoundingBox(pagePtr: Long, index: Int, outRect: FloatArray): Boolean
     @JvmStatic external fun extractImagePixels(pagePtr: Long, index: Int, dimens: IntArray): IntArray?
 
+    @JvmStatic external fun performClick(pagePtr: Long, x: Double, y: Double): Boolean
+
+    @JvmStatic external fun getAnnotSubtypeAtPoint(pagePtr: Long, x: Double, y: Double): Int
+    @JvmStatic external fun getAnnotRectAtPoint(pagePtr: Long, x: Double, y: Double): FloatArray?
+    @JvmStatic external fun checkActionSupport(): Boolean
+
     const val ANNOT_TEXT = 1         // Sticky Note
     const val ANNOT_LINK = 2         // Link
     const val ANNOT_HIGHLIGHT = 8    // Highlight
     const val ANNOT_INK = 12         // Freehand drawing
+    const val ANNOT_WIDGET = 19
 }

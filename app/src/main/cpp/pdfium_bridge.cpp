@@ -3,6 +3,8 @@
 #include <android/log.h>
 #include <vector>
 #include <string>
+#include <mutex>
+#include <regex>
 
 #define LOG_TAG "PdfiumAnnotation"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -29,7 +31,21 @@ typedef int (*FPDFBitmap_GetStride_t)(void* bitmap);
 typedef void* (*FPDFBitmap_GetBuffer_t)(void* bitmap);
 typedef void (*FPDFBitmap_Destroy_t)(void* bitmap);
 typedef int (*FPDFPageObj_GetBounds_t)(void* page_object, float* left, float* bottom, float* right, float* top);
+typedef int (*FPDF_DoAnnotAction_t)(void* annot, int action_type);
+typedef void* (*FPDFAnnot_GetWidgetAtPoint_t)(void* page, double page_x, double page_y);
+typedef void* (*FPDFLink_GetAction_t)(void* link);
+typedef unsigned long (*FPDFAction_GetType_t)(void* action);
+typedef void* (*FPDFLink_GetAnnot_t)(void* link);
+typedef int (*FPDFAnnot_GetFlags_t)(void* annot);
+typedef int (*FPDFAnnot_SetFlags_t)(void* annot, int flags);
+typedef unsigned long (*FPDFAnnot_GetFormFieldName_t)(void* hFPDFTextPage, void* annot, void* buffer, unsigned long buflen);
 
+static std::mutex g_pdfium_mutex;
+static FPDFLink_GetAnnot_t get_link_annot_func = nullptr;
+static FPDFLink_GetAction_t get_link_action_func = nullptr;
+static FPDFAction_GetType_t get_action_type_func = nullptr;
+static FPDF_DoAnnotAction_t do_annot_action_func = nullptr;
+static FPDFAnnot_GetWidgetAtPoint_t get_widget_at_point_func = nullptr;
 static FPDFPage_CountObjects_t count_objects_func = nullptr;
 static FPDFPage_GetObject_t get_object_func = nullptr;
 static FPDFPageObj_GetType_t get_object_type_func = nullptr;
@@ -51,6 +67,9 @@ static FPDFText_GetFontSize_t get_font_size_func = nullptr;
 static FPDFText_GetFontWeight_t get_font_weight_func = nullptr;
 static FPDFText_GetFontInfo_t get_font_info_func = nullptr;
 static FPDFText_GetCharBox_t get_char_box_func = nullptr;
+static FPDFAnnot_GetFlags_t get_annot_flags_func = nullptr;
+static FPDFAnnot_SetFlags_t set_annot_flags_func = nullptr;
+static FPDFAnnot_GetFormFieldName_t get_form_field_name_func = nullptr;
 
 typedef void* (*FPDFAnnot_GetLinkedAnnot_t)(void* annot, const char* key);
 typedef void (*FPDFPage_CloseAnnot_t)(void* annot);
@@ -67,41 +86,66 @@ static bool init_pdfium() {
         return false;
     }
 
-    get_font_size_func = (FPDFText_GetFontSize_t) dlsym(pdfium_handle, "FPDFText_GetFontSize");
+    // --- Text Functions ---
+    get_font_size_func   = (FPDFText_GetFontSize_t)   dlsym(pdfium_handle, "FPDFText_GetFontSize");
     get_font_weight_func = (FPDFText_GetFontWeight_t) dlsym(pdfium_handle, "FPDFText_GetFontWeight");
-    get_font_info_func = (FPDFText_GetFontInfo_t) dlsym(pdfium_handle, "FPDFText_GetFontInfo");
-    get_char_box_func = (FPDFText_GetCharBox_t) dlsym(pdfium_handle, "FPDFText_GetCharBox");
+    get_font_info_func   = (FPDFText_GetFontInfo_t)   dlsym(pdfium_handle, "FPDFText_GetFontInfo");
+    get_char_box_func    = (FPDFText_GetCharBox_t)    dlsym(pdfium_handle, "FPDFText_GetCharBox");
 
-    get_annot_count_func = (FPDFPage_GetAnnotCount_t) dlsym(pdfium_handle, "FPDFPage_GetAnnotCount");
-    get_annot_func = (FPDFPage_GetAnnot_t) dlsym(pdfium_handle, "FPDFPage_GetAnnot");
-    get_annot_subtype_func = (FPDFAnnot_GetSubtype_t) dlsym(pdfium_handle, "FPDFAnnot_GetSubtype");
-    get_annot_rect_func = (FPDFAnnot_GetRect_t) dlsym(pdfium_handle, "FPDFAnnot_GetRect");
-    get_annot_string_func = (FPDFAnnot_GetStringValue_t) dlsym(pdfium_handle, "FPDFAnnot_GetStringValue");
-    get_annot_color_func = (FPDFAnnot_GetColor_t) dlsym(pdfium_handle, "FPDFAnnot_GetColor");
-    get_linked_annot_func = (FPDFAnnot_GetLinkedAnnot_t) dlsym(pdfium_handle, "FPDFAnnot_GetLinkedAnnot");
-    close_annot_func = (FPDFPage_CloseAnnot_t) dlsym(pdfium_handle, "FPDFPage_CloseAnnot");
+    // --- Annotation Functions ---
+    get_annot_count_func   = (FPDFPage_GetAnnotCount_t)   dlsym(pdfium_handle, "FPDFPage_GetAnnotCount");
+    get_annot_func         = (FPDFPage_GetAnnot_t)        dlsym(pdfium_handle, "FPDFPage_GetAnnot");
+    get_annot_subtype_func = (FPDFAnnot_GetSubtype_t)     dlsym(pdfium_handle, "FPDFAnnot_GetSubtype");
+    get_annot_rect_func    = (FPDFAnnot_GetRect_t)        dlsym(pdfium_handle, "FPDFAnnot_GetRect");
+    get_annot_string_func  = (FPDFAnnot_GetStringValue_t) dlsym(pdfium_handle, "FPDFAnnot_GetStringValue");
+    get_annot_color_func   = (FPDFAnnot_GetColor_t)       dlsym(pdfium_handle, "FPDFAnnot_GetColor");
+    get_linked_annot_func  = (FPDFAnnot_GetLinkedAnnot_t) dlsym(pdfium_handle, "FPDFAnnot_GetLinkedAnnot");
+    close_annot_func       = (FPDFPage_CloseAnnot_t)      dlsym(pdfium_handle, "FPDFPage_CloseAnnot");
+    get_annot_flags_func   = (FPDFAnnot_GetFlags_t)       dlsym(pdfium_handle, "FPDFAnnot_GetFlags");
+    set_annot_flags_func   = (FPDFAnnot_SetFlags_t)       dlsym(pdfium_handle, "FPDFAnnot_SetFlags");
 
-    count_objects_func = (FPDFPage_CountObjects_t) dlsym(pdfium_handle, "FPDFPage_CountObjects");
-    get_object_func = (FPDFPage_GetObject_t) dlsym(pdfium_handle, "FPDFPage_GetObject");
-    get_object_type_func = (FPDFPageObj_GetType_t) dlsym(pdfium_handle, "FPDFPageObj_GetType");
-    get_image_bitmap_func = (FPDFImageObj_GetBitmap_t) dlsym(pdfium_handle, "FPDFImageObj_GetBitmap");
-    bitmap_get_width_func = (FPDFBitmap_GetWidth_t) dlsym(pdfium_handle, "FPDFBitmap_GetWidth");
-    bitmap_get_height_func = (FPDFBitmap_GetHeight_t) dlsym(pdfium_handle, "FPDFBitmap_GetHeight");
-    bitmap_get_stride_func = (FPDFBitmap_GetStride_t) dlsym(pdfium_handle, "FPDFBitmap_GetStride");
-    bitmap_get_buffer_func = (FPDFBitmap_GetBuffer_t) dlsym(pdfium_handle, "FPDFBitmap_GetBuffer");
-    bitmap_destroy_func = (FPDFBitmap_Destroy_t) dlsym(pdfium_handle, "FPDFBitmap_Destroy");
-    get_object_bounds_func = (FPDFPageObj_GetBounds_t) dlsym(pdfium_handle, "FPDFPageObj_GetBounds");
+    // --- Object & Bitmap Functions ---
+    count_objects_func     = (FPDFPage_CountObjects_t)  dlsym(pdfium_handle, "FPDFPage_CountObjects");
+    get_object_func        = (FPDFPage_GetObject_t)     dlsym(pdfium_handle, "FPDFPage_GetObject");
+    get_object_type_func   = (FPDFPageObj_GetType_t)    dlsym(pdfium_handle, "FPDFPageObj_GetType");
+    get_object_bounds_func = (FPDFPageObj_GetBounds_t)  dlsym(pdfium_handle, "FPDFPageObj_GetBounds");
+    get_image_bitmap_func  = (FPDFImageObj_GetBitmap_t) dlsym(pdfium_handle, "FPDFImageObj_GetBitmap");
+    bitmap_get_width_func  = (FPDFBitmap_GetWidth_t)    dlsym(pdfium_handle, "FPDFBitmap_GetWidth");
+    bitmap_get_height_func = (FPDFBitmap_GetHeight_t)   dlsym(pdfium_handle, "FPDFBitmap_GetHeight");
+    bitmap_get_stride_func = (FPDFBitmap_GetStride_t)   dlsym(pdfium_handle, "FPDFBitmap_GetStride");
+    bitmap_get_buffer_func = (FPDFBitmap_GetBuffer_t)   dlsym(pdfium_handle, "FPDFBitmap_GetBuffer");
+    bitmap_destroy_func    = (FPDFBitmap_Destroy_t)     dlsym(pdfium_handle, "FPDFBitmap_Destroy");
 
+    // --- Interaction, Links & Form Functions ---
+    do_annot_action_func     = (FPDF_DoAnnotAction_t)       dlsym(pdfium_handle, "FPDF_DoAnnotAction");
+    get_widget_at_point_func = (FPDFAnnot_GetWidgetAtPoint_t) dlsym(pdfium_handle, "FPDFAnnot_GetWidgetAtPoint");
+    get_link_action_func     = (FPDFLink_GetAction_t)       dlsym(pdfium_handle, "FPDFLink_GetAction");
+    get_action_type_func     = (FPDFAction_GetType_t)       dlsym(pdfium_handle, "FPDFAction_GetType");
+    get_link_annot_func      = (FPDFLink_GetAnnot_t)        dlsym(pdfium_handle, "FPDFLink_GetAnnot");
+    get_form_field_name_func = (FPDFAnnot_GetFormFieldName_t) dlsym(pdfium_handle, "FPDFAnnot_GetFormFieldName");
+
+    // --- Validation & Logging ---
     bool success = get_annot_count_func && get_annot_func && get_annot_subtype_func &&
                    get_annot_rect_func && get_annot_string_func;
 
     if (!success) {
-        LOGE("Failed to find one or more annotation functions in libpdfium.so");
+        LOGE("Failed to find one or more core annotation functions in libpdfium.so");
     } else {
         LOGI("Pdfium Annotation Bridge initialized successfully.");
     }
 
-    return success;
+    LOGD("PdfInteraction: Flags -> Get:%p Set:%p, FormField -> %p",
+         get_annot_flags_func, set_annot_flags_func, get_form_field_name_func);
+
+    if (!get_link_action_func || !do_annot_action_func || !get_widget_at_point_func) {
+        LOGE("PdfInteraction: Missing one or more action/widget functions. LinkAction=%p, DoAction=%p, GetWidget=%p",
+             get_link_action_func, do_annot_action_func, get_widget_at_point_func);
+    } else {
+        LOGI("PdfInteraction: Initialization complete. Summary: LinkAction=%p, DoAction=%p, GetWidget=%p",
+             get_link_action_func, do_annot_action_func, get_widget_at_point_func);
+    }
+
+    return get_annot_count_func != nullptr;
 }
 
 extern "C" JNIEXPORT jdouble JNICALL
@@ -182,55 +226,35 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageCharBoxes(JNIEnv *env, jclas
     return result;
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotCount(JNIEnv *env, jclass clazz, jlong pagePtr) {
-    if (!init_pdfium() || !get_annot_count_func) return 0;
-    return get_annot_count_func(reinterpret_cast<void*>(pagePtr));
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtype(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
-    if (!init_pdfium() || !get_annot_func || !get_annot_subtype_func) return 0;
-    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
-    return annot ? get_annot_subtype_func(annot) : 0;
-}
-
-extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
-    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func) return nullptr;
-    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
-    if (!annot) return nullptr;
-
-    float rect[4];
-    if (!get_annot_rect_func(annot, rect)) return nullptr;
-
-    jfloatArray result = env->NewFloatArray(4);
-    env->SetFloatArrayRegion(result, 0, 4, rect);
-    return result;
-}
-
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jstring key) {
-    if (!init_pdfium() || !get_annot_func || !get_annot_string_func) return nullptr;
-    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
+    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_annot_func || !get_annot_string_func || pagePtr == 0) return nullptr;
+
+    void* page = reinterpret_cast<void*>(pagePtr);
+    void* annot = get_annot_func(page, index);
     if (!annot) return nullptr;
 
     const char* nativeKey = env->GetStringUTFChars(key, nullptr);
 
-    if (strcmp(nativeKey, "IRT") == 0 && get_linked_annot_func && close_annot_func) {
-        void* parentAnnot = get_linked_annot_func(annot, "IRT");
-        if (parentAnnot) {
-            unsigned long len = get_annot_string_func(parentAnnot, "NM", nullptr, 0);
-            jstring result = nullptr;
-            if (len > 2) {
-                std::vector<unsigned short> buffer(len / 2);
-                get_annot_string_func(parentAnnot, "NM", buffer.data(), len);
-                result = env->NewString(reinterpret_cast<const jchar*>(buffer.data()), (jsize)(buffer.size() - 1));
+    if (strcmp(nativeKey, "IRT") == 0) {
+        if (get_linked_annot_func && close_annot_func) {
+            void* parentAnnot = get_linked_annot_func(annot, "IRT");
+            if (parentAnnot) {
+                unsigned long len = get_annot_string_func(parentAnnot, "NM", nullptr, 0);
+                jstring result = nullptr;
+                if (len > 2) {
+                    std::vector<unsigned short> buffer(len / 2);
+                    get_annot_string_func(parentAnnot, "NM", buffer.data(), len);
+                    result = env->NewString(reinterpret_cast<const jchar*>(buffer.data()), (jsize)(buffer.size() - 1));
+                }
+                close_annot_func(parentAnnot);
+                env->ReleaseStringUTFChars(key, nativeKey);
+                return result;
             }
-            close_annot_func(parentAnnot);
-            env->ReleaseStringUTFChars(key, nativeKey);
-            return result;
         }
+        env->ReleaseStringUTFChars(key, nativeKey);
+        return nullptr;
     }
 
     unsigned long len = get_annot_string_func(annot, nativeKey, nullptr, 0);
@@ -326,4 +350,145 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jcl
     env->SetIntArrayRegion(dimens, 0, 2, dims);
 
     return result;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_checkActionSupport(JNIEnv *env, jclass clazz) {
+    init_pdfium();
+    // Return true if we have ANY way to handle actions
+    return (do_annot_action_func || get_link_action_func) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
+    if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return -1;
+
+    void* page = reinterpret_cast<void*>(pagePtr);
+    int count = get_annot_count_func(page);
+
+    for (int i = 0; i < count; i++) {
+        void* annot = get_annot_func(page, i);
+        float r[4]; // L, B, R, T
+        if (get_annot_rect_func(annot, r)) {
+            // FIX: Use min/max to handle inverted PDF rectangles
+            float minX = fmin(r[0], r[2]);
+            float maxX = fmax(r[0], r[2]);
+            float minY = fmin(r[1], r[3]);
+            float maxY = fmax(r[1], r[3]);
+
+            if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                LOGI("PdfInteraction: MATCH FOUND! Index=%d, Type=%d", i, get_annot_subtype_func(annot));
+                return get_annot_subtype_func(annot);
+            }
+        }
+    }
+    return -1;
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRectAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
+    if (!init_pdfium() || !get_annot_count_func || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
+
+    void* page = reinterpret_cast<void*>(pagePtr);
+    int count = get_annot_count_func(page);
+    for (int i = 0; i < count; i++) {
+        void* annot = get_annot_func(page, i);
+        float rect[4];
+        if (get_annot_rect_func(annot, rect)) {
+            if (x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]) {
+                jfloatArray result = env->NewFloatArray(4);
+                env->SetFloatArrayRegion(result, 0, 4, rect);
+                return result;
+            }
+        }
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotCount(JNIEnv *env, jclass clazz, jlong pagePtr) {
+    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return 0;
+    return get_annot_count_func(reinterpret_cast<void*>(pagePtr));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtype(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
+    if (!init_pdfium() || !get_annot_func || !get_annot_subtype_func || pagePtr == 0) return 0;
+    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
+    return annot ? get_annot_subtype_func(annot) : 0;
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
+    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
+    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
+    if (!annot) return nullptr;
+
+    float rect[4];
+    if (!get_annot_rect_func(annot, rect)) return nullptr;
+
+    jfloatArray result = env->NewFloatArray(4);
+    env->SetFloatArrayRegion(result, 0, 4, rect);
+    return result;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
+    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || pagePtr == 0) return JNI_FALSE;
+
+    void* page = reinterpret_cast<void*>(pagePtr);
+    int count = get_annot_count_func(page);
+    void* hitAnnot = nullptr;
+
+    // 1. Find which annotation was clicked
+    for (int i = 0; i < count; i++) {
+        void* annot = get_annot_func(page, i);
+        if (!annot) continue;
+
+        float r[4];
+        if (get_annot_rect_func(annot, r)) {
+            float minX = fminf(r[0], r[2]);
+            float maxX = fmaxf(r[0], r[2]);
+            float minY = fminf(r[1], r[3]);
+            float maxY = fmaxf(r[1], r[3]);
+
+            if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                hitAnnot = annot;
+                break;
+            }
+        }
+    }
+
+    if (hitAnnot) {
+        int subtype = get_annot_subtype_func(hitAnnot);
+
+        if (subtype == 19 || subtype == 20) {
+            LOGI("PdfInteraction: Button clicked (Subtype %d). Performing Blanket Reveal.", subtype);
+            bool anyChanged = false;
+
+            for (int j = 0; j < count; j++) {
+                void* target = get_annot_func(page, j);
+                if (!target || !get_annot_flags_func || !set_annot_flags_func) continue;
+
+                int flags = get_annot_flags_func(target);
+
+                // We check for: Invisible (1), Hidden (2), or NoView (32)
+                if (flags & (1 | 2 | 32)) {
+                    LOGD("PdfInteraction: Unhiding element at index %d (Flags were 0x%X)", j, flags);
+
+                    // Clear bits 1, 2, and 6 (1 + 2 + 32 = 35)
+                    set_annot_flags_func(target, flags & ~35);
+                    anyChanged = true;
+                }
+            }
+
+            if (anyChanged) {
+                return JNI_TRUE;
+            }
+        }
+    }
+
+    return JNI_FALSE;
 }

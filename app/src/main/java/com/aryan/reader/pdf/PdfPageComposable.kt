@@ -907,87 +907,86 @@ internal fun PdfPageComposable(
 
                     // 3. Extract Embedded Annotations
                     try {
-                        val unlockedPage = pageWrapper.page
-                        val pagePtr = try {
-                            val field = unlockedPage.javaClass.getDeclaredField("pagePtr")
-                            field.isAccessible = true
-                            field.get(unlockedPage) as Long
-                        } catch (e: Exception) {
-                            val field = unlockedPage.javaClass.getDeclaredField("mNativePage")
-                            field.isAccessible = true
-                            field.get(unlockedPage) as Long
-                        }
+                        val pagePtr = getNativePointer(pageWrapper.page)
 
-                        val count = NativePdfiumBridge.getAnnotCount(pagePtr)
-                        Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
-                        if (count > 0) {
-                            val allAnnots = (0 until count).mapNotNull { i ->
-                                val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, i)
-                                if (subtype == annotLink) return@mapNotNull null // skip links here
+                        if (pagePtr != 0L) {
+                            val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+                            Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
+                            if (count > 0) {
+                                val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+                                Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
+                                if (count > 0) {
+                                    val allAnnots = (0 until count).mapNotNull { i ->
+                                        val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, i)
+                                        if (subtype == annotLink) return@mapNotNull null // skip links here
 
-                                val contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "Contents")
-                                val name = NativePdfiumBridge.getAnnotString(pagePtr, i, "NM")
-                                val irt = NativePdfiumBridge.getAnnotString(pagePtr, i, "IRT")
-                                val author = NativePdfiumBridge.getAnnotString(pagePtr, i, "T")
+                                        val contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "Contents")
+                                        val name = NativePdfiumBridge.getAnnotString(pagePtr, i, "NM")
+                                        val irt = NativePdfiumBridge.getAnnotString(pagePtr, i, "IRT")
+                                        val author = NativePdfiumBridge.getAnnotString(pagePtr, i, "T")
 
-                                val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, i)
-                                val pdfRectF = if (pdfRectArray != null) {
-                                    android.graphics.RectF(pdfRectArray[0], pdfRectArray[3], pdfRectArray[2], pdfRectArray[1])
-                                } else android.graphics.RectF()
+                                        val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, i)
+                                        val pdfRectF = if (pdfRectArray != null) {
+                                            android.graphics.RectF(pdfRectArray[0], pdfRectArray[3], pdfRectArray[2], pdfRectArray[1])
+                                        } else android.graphics.RectF()
 
-                                Timber.tag("PdfCommentDebug").v("Extracted Annot[$i]: Name=$name, IRT=$irt, Subtype=$subtype, Text=${contents?.take(10)}...")
+                                        Timber.tag("PdfCommentDebug").v("Extracted Annot[$i]: Name=$name, IRT=$irt, Subtype=$subtype, Text=${contents?.take(10)}...")
 
-                                EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
-                            }
+                                        EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
+                                    }
 
-                            val annotMap = allAnnots.associateBy { it.name }
-                            val orphans = mutableListOf<EmbeddedAnnotation>()
+                                    val annotMap = allAnnots.associateBy { it.name }
+                                    val orphans = mutableListOf<EmbeddedAnnotation>()
 
-                            allAnnots.forEach { annot ->
-                                if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
-                                    Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
-                                    annotMap[annot.inReplyTo]?.replies?.add(annot)
-                                } else {
-                                    orphans.add(annot)
+                                    allAnnots.forEach { annot ->
+                                        if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
+                                            Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
+                                            annotMap[annot.inReplyTo]?.replies?.add(annot)
+                                        } else {
+                                            orphans.add(annot)
+                                        }
+                                    }
+
+                                    Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
+
+                                    val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
+                                    orphans.forEach { annot ->
+                                        val match = groupedRoots.find { group ->
+                                            val root = group.first()
+                                            val inflatedRoot = android.graphics.RectF(root.rect).apply { inset(-10f, -10f) }
+                                            android.graphics.RectF.intersects(inflatedRoot, annot.rect)
+                                        }
+                                        if (match != null) {
+                                            Timber.tag("PdfCommentDebug").w("Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!")
+                                            match.add(annot)
+                                        } else {
+                                            groupedRoots.add(mutableListOf(annot))
+                                        }
+                                    }
+
+                                    val rootsWithReplies = groupedRoots.map { group ->
+                                        val root = group.first()
+                                        if (group.size > 1) {
+                                            root.replies.addAll(group.drop(1))
+                                        }
+                                        root
+                                    }
+
+                                    finalDisplayList = rootsWithReplies.filter {
+                                        !it.contents.isNullOrBlank() || it.replies.any { r -> !r.contents.isNullOrBlank() }
+                                    }
+
+                                    mappedAnnots = finalDisplayList.map { annot ->
+                                        val screenRect = pageWrapper.mapRectToDevice(
+                                            0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
+                                            currentPageRotation, annot.rect
+                                        )
+                                        annot to screenRect
+                                    }
                                 }
                             }
-
-                            Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
-
-                            val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
-                            orphans.forEach { annot ->
-                                val match = groupedRoots.find { group ->
-                                    val root = group.first()
-                                    val inflatedRoot = android.graphics.RectF(root.rect).apply { inset(-10f, -10f) }
-                                    android.graphics.RectF.intersects(inflatedRoot, annot.rect)
-                                }
-                                if (match != null) {
-                                    Timber.tag("PdfCommentDebug").w("Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!")
-                                    match.add(annot)
-                                } else {
-                                    groupedRoots.add(mutableListOf(annot))
-                                }
-                            }
-
-                            val rootsWithReplies = groupedRoots.map { group ->
-                                val root = group.first()
-                                if (group.size > 1) {
-                                    root.replies.addAll(group.drop(1))
-                                }
-                                root
-                            }
-
-                            finalDisplayList = rootsWithReplies.filter {
-                                !it.contents.isNullOrBlank() || it.replies.any { r -> !r.contents.isNullOrBlank() }
-                            }
-
-                            mappedAnnots = finalDisplayList.map { annot ->
-                                val screenRect = pageWrapper.mapRectToDevice(
-                                    0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
-                                    currentPageRotation, annot.rect
-                                )
-                                annot to screenRect
-                            }
+                        } else {
+                            Timber.tag("PdfCommentDebug").w("Page $pageIndex: Failed to resolve native page pointer.")
                         }
                     } catch (e: Exception) {
                         Timber.tag("PdfCommentDebug").e(e, "Error extracting annotations")
@@ -1003,141 +1002,6 @@ internal fun PdfPageComposable(
                 pageLinks = allLinks
                 embeddedAnnotations = finalDisplayList
                 standardAnnotScreenRects = mappedAnnots
-            }
-        }
-    }
-
-    LaunchedEffect(pageIndex, pdfDocumentItem, actualBitmapWidthPx, actualBitmapHeightPx, virtualPage) {
-        if (!isPdfPage) {
-            if (pageLinks.isNotEmpty()) pageLinks = emptyList()
-            return@LaunchedEffect
-        }
-
-        if (actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0) {
-            if (pageLinks.isNotEmpty()) pageLinks = emptyList()
-            return@LaunchedEffect
-        }
-        Timber.d(
-            "LaunchedEffect: Starting link fetch for page $pageIndex. Bitmap size: ${actualBitmapWidthPx}x${actualBitmapHeightPx}"
-        )
-
-        withContext(Dispatchers.IO) {
-            val allLinks = mutableListOf<PageLink>()
-            try {
-                pdfDocumentItem.openPage(pdfPageIndex).use { page ->
-                    try {
-                        val annotationLinks = page.getPageLinks()
-                        Timber.d("Method 1 (getPageLinks) returned ${annotationLinks.size} links.")
-                        if (annotationLinks.isNotEmpty()) {
-                            val mappedAnnotationLinks = annotationLinks.mapNotNull { link ->
-                                val uri = link.uri
-                                val destPageIdx = link.destPageIdx
-                                val bounds = link.bounds
-
-                                if (uri != null || (destPageIdx != null && destPageIdx >= 0)) {
-                                    val deviceRect = page.mapRectToDevice(
-                                        startX = 0,
-                                        startY = 0,
-                                        sizeX = actualBitmapWidthPx,
-                                        sizeY = actualBitmapHeightPx,
-                                        rotate = currentPageRotation,
-                                        coords = bounds
-                                    )
-
-                                    Timber.d(
-                                        "[Method 1] Link '$uri' | PDF Bounds: $bounds | Mapped Device Rect: $deviceRect"
-                                    )
-
-                                    if (deviceRect.width() > 0 && deviceRect.height() > 0) {
-                                        val tapRect = Rect(
-                                            deviceRect.left,
-                                            deviceRect.top - linkVerticalPaddingPx,
-                                            deviceRect.right,
-                                            deviceRect.bottom + linkVerticalPaddingPx
-                                        )
-                                        Timber.d(
-                                            "[Method 1] Padded Tap Rect: $tapRect (Padding: $linkVerticalPaddingPx)"
-                                        )
-                                        PageLink(
-                                            highlightBounds = deviceRect,
-                                            tapBounds = tapRect,
-                                            url = uri,
-                                            destPageIdx = destPageIdx,
-                                            source = LinkSource.ANNOTATION
-                                        )
-                                    } else null
-                                } else null
-                            }
-                            allLinks.addAll(mappedAnnotationLinks)
-                        }
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error fetching annotation links")
-                    }
-
-                    // --- METHOD 2: Get links detected within the text content
-                    // ---
-                    try {
-                        page.openTextPage().use { textPage ->
-                            textPage.loadWebLink().use { webLinks ->
-                                val webLinkCount = webLinks.countWebLinks()
-                                Timber.d("Method 2 (loadWebLink) returned $webLinkCount links.")
-                                for (linkIndex in 0 until webLinkCount) {
-                                    val rawUrl = webLinks.getURL(linkIndex, 2048)
-                                    val url = rawUrl?.substringBefore('\u0000')
-
-                                    if (url.isNullOrBlank()) continue
-
-                                    val rectCount = webLinks.countRects(linkIndex)
-                                    for (rectIndex in 0 until rectCount) {
-                                        val pdfRect = webLinks.getRect(linkIndex, rectIndex)
-                                        val deviceRect = page.mapRectToDevice(
-                                            startX = 0,
-                                            startY = 0,
-                                            sizeX = actualBitmapWidthPx,
-                                            sizeY = actualBitmapHeightPx,
-                                            rotate = currentPageRotation,
-                                            coords = pdfRect
-                                        )
-                                        Timber.d(
-                                            "[Method 2] Link '$url' | PDF Rect: $pdfRect | Mapped Device Rect: $deviceRect"
-                                        )
-
-                                        if (deviceRect.width() > 0 && deviceRect.height() > 0) {
-                                            val tapRect = Rect(
-                                                deviceRect.left,
-                                                deviceRect.top - linkVerticalPaddingPx,
-                                                deviceRect.right,
-                                                deviceRect.bottom + linkVerticalPaddingPx
-                                            )
-                                            Timber.d(
-                                                "[Method 2] Padded Tap Rect: $tapRect (Padding: $linkVerticalPaddingPx)"
-                                            )
-                                            allLinks.add(
-                                                PageLink(
-                                                    highlightBounds = deviceRect,
-                                                    tapBounds = tapRect,
-                                                    url = url,
-                                                    destPageIdx = null,
-                                                    source = LinkSource.TEXT_CONTENT
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error fetching web links from text page")
-                    }
-
-                    pageLinks = allLinks
-                    Timber.d(
-                        "Finished fetching. Stored a total of ${allLinks.size} links in state."
-                    )
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to open page $pdfPageIndex for link fetching")
-                pageLinks = emptyList()
             }
         }
     }
@@ -2511,6 +2375,40 @@ internal fun PdfPageComposable(
 
                 detectTapGestures(onTap = { tapOffset ->
                     val tapInContentCoords = screenToContentCoordinates(tapOffset)
+
+                    coroutineScope.launch {
+                        val wasHandled = withContext(Dispatchers.IO) {
+                            try {
+                                pdfDocumentItem.openPage(pdfPageIndex).use { page ->
+                                    val pagePtr = getNativePointer(page.page)
+
+                                    if (pagePtr == 0L) {
+                                        Timber.tag("PdfInteraction").e("Could not find native pointer for page $pdfPageIndex")
+                                        return@withContext false
+                                    }
+
+                                    val pdfCoords = page.mapDeviceCoordsToPage(
+                                        0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
+                                        currentPageRotation, tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt()
+                                    )
+
+                                    NativePdfiumBridge.performClick(pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble())
+                                }
+                            } catch (e: Exception) {
+                                Timber.tag("PdfInteraction").e(e, "Interaction error")
+                                false
+                            }
+                        }
+
+                        if (wasHandled) {
+                            Timber.tag("PdfInteraction").i("Action detected. Refreshing page.")
+                            tiles = emptyList()
+                            bitmapState = null
+                            isLoadingPage = true
+                            currentRenderedPageId = "ACTION_${System.currentTimeMillis()}"
+                        }
+                    }
+
                     val tapXInBitmap = tapInContentCoords.x
                     val tapYInBitmap = tapInContentCoords.y
 
@@ -3290,7 +3188,8 @@ internal fun PdfPageComposable(
                 currentContainerMaxHeight,
                 density,
                 virtualPage,
-                isVisible
+                isVisible,
+                currentRenderedPageId
             ) {
                 if (!isVisible && !isVerticalScroll) return@LaunchedEffect
 
@@ -5189,4 +5088,29 @@ fun PdfRichTextLayer(
             }
         }
     }
+}
+
+private fun getNativePointer(obj: Any): Long {
+    val priorityFields = listOf("pagePtr", "mNativePage")
+
+    for (name in priorityFields) {
+        try {
+            val field = obj.javaClass.getDeclaredField(name)
+            field.isAccessible = true
+            val value = field.get(obj)
+            if (value is Long && value != 0L) return value
+        } catch (_: Exception) {}
+    }
+
+    try {
+        for (field in obj.javaClass.declaredFields) {
+            if (field.type == Long::class.java || field.type == Long::class.javaPrimitiveType) {
+                field.isAccessible = true
+                val value = field.get(obj) as Long
+                if (value > 0xFFFFFFFFL) return value
+            }
+        }
+    } catch (_: Exception) {}
+
+    return 0L
 }
