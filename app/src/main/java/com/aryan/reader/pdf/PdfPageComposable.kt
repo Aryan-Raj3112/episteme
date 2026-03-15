@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
@@ -438,7 +439,6 @@ internal fun PdfPageComposable(
     onHighlightDelete: (String) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
 ) {
-    SideEffect { Timber.tag("PdfDrawPerf").v("PdfPageComposable Recompose: Page $pageIndex") }
     val pdfDocumentItem = pdfDocument.item
     var bitmapState by remember { mutableStateOf(PdfThumbnailCache.get(pageIndex)) }
     var currentRenderedPageId by remember { mutableStateOf<String?>(null) }
@@ -1014,6 +1014,21 @@ internal fun PdfPageComposable(
                 bitmapState = null
                 @Suppress("ControlFlowWithEmptyBody") if (old != null && old !== PdfThumbnailCache.get(pageIndex)) { }
             }
+        }
+    }
+
+    SideEffect {
+        if (effectiveScale > 1f) {
+            Timber.tag("PdfZoomDiagnostics").v(
+                """
+            Page $pageIndex Stats:
+            - Internal Scale: $scale | Effective Scale: $effectiveScale
+            - Offset: $offset
+            - Bitmap Dims: ${actualBitmapWidthPx}x${actualBitmapHeightPx}
+            - Canvas Dims: ${canvasWidthPx.floatValue}x${canvasHeightPx.floatValue}
+            - Centering: X=$centeringOffsetX, Y=$centeringOffsetY
+            """.trimIndent()
+            )
         }
     }
 
@@ -2964,6 +2979,13 @@ internal fun PdfPageComposable(
                 }
             }, contentAlignment = Alignment.Center
     ) {
+        SideEffect {
+            if (effectiveScale > 1f) {
+                Timber.tag("PdfZoomDiagnostics").d(
+                    "BoxWithConstraints Page $pageIndex: MaxW=$maxWidth, MaxH=$maxHeight"
+                )
+            }
+        }
         val imeInsets = WindowInsets.ime
         val screenHeight = constraints.maxHeight.toFloat()
 
@@ -3819,53 +3841,48 @@ private fun PdfBitmapLayer(
     colorFilter: ColorFilter? = null,
     isDarkMode: Boolean = false
 ) {
-    SideEffect {
-        Timber.tag("PdfDrawPerf")
-            .v("BITMAP LAYER: SideEffect (Scale: $effectiveScale, Tiles: ${tiles.size})")
-    }
     Canvas(modifier = Modifier
         .fillMaxSize()
         .graphicsLayer()) {
-        val drawStart = System.nanoTime()
-        Timber.tag("PdfDrawPerf").v("BITMAP LAYER: Canvas Draw Start (Tiles: ${tiles.size})")
         translate(left = centeringOffsetX, top = centeringOffsetY) {
-            if (bitmapState != null && !bitmapState.isRecycled) {
-                val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
-                val dstH = if (targetHeight > 0) targetHeight else bitmapState.height
-                val srcSize = IntSize(bitmapState.width, bitmapState.height)
-                val dstSize = IntSize(dstW, dstH)
+            // THIS is the fix: Hard clip to the target bounds so edge tiles can't bleed out.
+            clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
+                if (bitmapState != null && !bitmapState.isRecycled) {
+                    val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
+                    val dstH = if (targetHeight > 0) targetHeight else bitmapState.height
+                    val srcSize = IntSize(bitmapState.width, bitmapState.height)
+                    val dstSize = IntSize(dstW, dstH)
 
-                // 1. Draw Base Bitmap (with Dark Mode filter if active)
-                drawImage(
-                    image = bitmapState.asImageBitmap(),
-                    srcOffset = IntOffset.Zero,
-                    srcSize = srcSize,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = dstSize,
-                    colorFilter = colorFilter
-                )
+                    // 1. Draw Base Bitmap
+                    drawImage(
+                        image = bitmapState.asImageBitmap(),
+                        srcOffset = IntOffset.Zero,
+                        srcSize = srcSize,
+                        dstOffset = IntOffset.Zero,
+                        dstSize = dstSize,
+                        colorFilter = colorFilter
+                    )
 
-                // 3. Draw Tiles
-                if (effectiveScale > 1f) {
-                    tiles.forEach { tile ->
-                        if (!tile.bitmap.isRecycled) {
-                            drawImage(
-                                image = tile.bitmap.asImageBitmap(),
-                                srcOffset = IntOffset.Zero,
-                                srcSize = IntSize(tile.bitmap.width, tile.bitmap.height),
-                                dstOffset = IntOffset(tile.renderRect.left, tile.renderRect.top),
-                                dstSize = IntSize(
-                                    tile.renderRect.width(), tile.renderRect.height()
-                                ),
-                                colorFilter = colorFilter
-                            )
+                    // 2. Draw High-Res Tiles
+                    if (effectiveScale > 1f) {
+                        tiles.forEach { tile ->
+                            if (!tile.bitmap.isRecycled) {
+                                drawImage(
+                                    image = tile.bitmap.asImageBitmap(),
+                                    srcOffset = IntOffset.Zero,
+                                    srcSize = IntSize(tile.bitmap.width, tile.bitmap.height),
+                                    dstOffset = IntOffset(tile.renderRect.left, tile.renderRect.top),
+                                    dstSize = IntSize(
+                                        tile.renderRect.width(), tile.renderRect.height()
+                                    ),
+                                    colorFilter = colorFilter
+                                )
+                            }
                         }
                     }
                 }
             }
         }
-        val drawTime = (System.nanoTime() - drawStart) / 1_000_000f
-        Timber.tag("PdfDrawPerf").v("BITMAP LAYER: Canvas draw finished in ${drawTime}ms")
     }
 }
 
@@ -4252,6 +4269,7 @@ internal object PdfAnnotationRenderHelper {
     }
 }
 
+@Suppress("SameParameterValue")
 @Composable
 private fun PdfAnnotationLayer(
     actualBitmapWidthPx: Int,
@@ -4369,13 +4387,6 @@ private fun PdfAnnotationLayer(
 
 @Composable
 private fun PdfPageStaticLayer(data: PageStaticData) {
-    SideEffect {
-        Timber.tag("PdfDrawPerf").v(
-            "STATIC LAYER: Composition (Should not happen during draw). DataHash: ${data.hashCode()}"
-        )
-    }
-    Timber.tag("PdfDrawPerf").v("STATIC LAYER: Recomposing")
-
     PdfBitmapLayer(
         bitmapState = data.bitmap.item,
         tiles = data.tiles.item,
@@ -4506,15 +4517,11 @@ private fun PdfPageRenderer(
     onHighlightDelete: (String) -> Unit,
     onTts: (Int, Int) -> Unit,
 ) {
-    SideEffect {
-        Timber.tag("PdfPerf").v("PAGE_RENDERER: Recomposing Page ${selectionData.pageIndex}. DraggingHandle=${activeDraggingHandle != null}")
-    }
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    Timber.tag("PdfPerf").v("GraphicsLayer Update: Scale=$scale, Offset=$offset")
                     scaleX = scale
                     scaleY = scale
                     translationX = offset.x
@@ -4522,9 +4529,7 @@ private fun PdfPageRenderer(
                 }) {
 
             // Layer 1: The Heavy Bitmap
-            Box(modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer()) {
+            Box(modifier = Modifier.fillMaxSize().graphicsLayer()) {
                 PdfPageStaticLayer(data = staticData)
             }
 
@@ -4551,11 +4556,9 @@ private fun PdfPageRenderer(
                 selectionHighlightColor = selectionData.selectionHighlightColor
             )
 
-            // Layer 3: Annotations (Drawing)
+            // Layer 3: Annotations & Text
             if (staticData.targetWidth > 0 && staticData.targetHeight > 0) {
-                Box(modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer()) {
+                Box(modifier = Modifier.fillMaxSize().graphicsLayer()) {
                     PdfAnnotationLayer(
                         actualBitmapWidthPx = staticData.targetWidth,
                         actualBitmapHeightPx = staticData.targetHeight,
@@ -4568,19 +4571,6 @@ private fun PdfPageRenderer(
                 }
 
                 if (richTextController != null) {
-                    val density = LocalDensity.current
-                    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-                    val targetW = staticData.targetWidth.toFloat()
-                    val targetH = staticData.targetHeight.toFloat()
-
-                    LaunchedEffect(targetW, targetH, density) {
-                        if (targetW > 0 && targetH > 0) {
-                            richTextController.updateLayoutConfig(
-                                targetW, targetH, density, textMeasurer
-                            )
-                        }
-                    }
-
                     val isEditable = isEditMode && selectedTool == InkType.TEXT
                     val hasContent = richTextController.pageLayouts.any {
                         it.pageIndex == selectionData.pageIndex
@@ -4601,7 +4591,6 @@ private fun PdfPageRenderer(
                     }
                 }
 
-                // Text Boxes
                 textBoxes.forEach { box ->
                     val isDraggingThisBox = (box.id == draggingBoxId)
                     val boxAlpha = if (isDraggingThisBox) 0f else 1f
@@ -4668,46 +4657,46 @@ private fun PdfPageRenderer(
                         )
                     }
                 }
-
-                // Layer 4: Page Number Indicator
-                if (totalPages > 0) {
-                    val pageNumColor = if (staticData.isDarkMode) {
-                        Color.White
-                    } else {
-                        Color.Black
-                    }
-
-                    Box(modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                x = staticData.centeringOffsetX.toInt(),
-                                y = staticData.centeringOffsetY.toInt()
-                            )
-                        }
-                        .size(width = with(density) {
-                            staticData.targetWidth.toDp()
-                        }, height = with(density) {
-                            staticData.targetHeight.toDp()
-                        })) {
-                        Text(
-                            text = "${selectionData.pageIndex + 1}/$totalPages",
-                            color = pageNumColor.copy(alpha = 0.5f),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 12.sp, fontWeight = FontWeight.Bold
-                            ),
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(end = 12.dp, bottom = 12.dp)
-                        )
-                    }
-                }
             }
 
-            // Capture size for coordinate conversions
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                if (staticData.canvasWidth != size.width || staticData.canvasHeight != size.height) {
-                    onCanvasSizeChanged(size.width, size.height)
+            // Layer 4: Page Number Indicator
+            if (totalPages > 0) {
+                val pageNumColor = if (staticData.isDarkMode) {
+                    Color.White
+                } else {
+                    Color.Black
                 }
+
+                Box(modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = staticData.centeringOffsetX.toInt(),
+                            y = staticData.centeringOffsetY.toInt()
+                        )
+                    }
+                    .size(width = with(density) {
+                        staticData.targetWidth.toDp()
+                    }, height = with(density) {
+                        staticData.targetHeight.toDp()
+                    })) {
+                    Text(
+                        text = "${selectionData.pageIndex + 1}/$totalPages",
+                        color = pageNumColor.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold
+                        ),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 12.dp, bottom = 12.dp)
+                    )
+                }
+            }
+        }
+
+        // Capture size for coordinate conversions
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (staticData.canvasWidth != size.width || staticData.canvasHeight != size.height) {
+                onCanvasSizeChanged(size.width, size.height)
             }
         }
 
@@ -4847,7 +4836,6 @@ private fun PdfPageRenderer(
                         ): IntOffset {
                             val coords = layoutCoordinates ?: return IntOffset.Zero
 
-                            // Map the bitmap-space anchor (the icon) to window-space
                             val topLeftLocal = contentToScreenCoordinates(Offset(
                                 menuState.anchorRect.left.toFloat(),
                                 menuState.anchorRect.top.toFloat()))
@@ -4859,14 +4847,12 @@ private fun PdfPageRenderer(
                             val bottomRightWindow = coords.localToWindow(bottomRightLocal)
 
                             val windowCenterX = (topLeftWindow.x + bottomRightWindow.x) / 2
-                            val gapPx = with(density) { 16.dp.toPx() } // Increased gap
+                            val gapPx = with(density) { 16.dp.toPx() }
 
-                            // Try placing ABOVE the icon first
                             var yInWindow = (topLeftWindow.y - popupContentSize.height - gapPx).toInt()
 
                             if (yInWindow < 0) {
                                 yInWindow = (bottomRightWindow.y + gapPx).toInt()
-                                // Ensure it doesn't get pushed out of the bottom boundary either
                                 if (yInWindow + popupContentSize.height > windowSize.height) {
                                     yInWindow = windowSize.height - popupContentSize.height - gapPx.toInt()
                                 }
@@ -4890,11 +4876,9 @@ private fun PdfPageRenderer(
                     onSearch = onSearch,
                     onSelectAll = onSelectAll,
                     onColorSelected = { color ->
-                        Timber.tag("PdfHighlightDebug").d("PdfSelectionMenuPopup onColorSelected: $color, isExisting=${menuState.isExistingHighlight}")
                         if (menuState.isExistingHighlight && menuState.highlightId != null) {
                             onHighlightUpdate(menuState.highlightId, color)
                         } else {
-                            Timber.tag("PdfHighlightDebug").d("Calling onHighlightAdd for page ${selectionData.pageIndex}")
                             onHighlightAdd(
                                 selectionData.pageIndex, menuState.charRange, menuState.selectedText,
                                 color

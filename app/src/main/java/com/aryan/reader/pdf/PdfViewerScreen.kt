@@ -4158,7 +4158,7 @@ fun PdfViewerScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             key = { it },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
-                                            userScrollEnabled= currentPageScale == 1f && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
+                                            userScrollEnabled = currentPageScale == 1f && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
                                         ) { pageIndex ->
                                             val isVisiblePage = remember(pagerState.currentPage, pageIndex) {
                                                 kotlin.math.abs(pagerState.currentPage - pageIndex) <= 1
