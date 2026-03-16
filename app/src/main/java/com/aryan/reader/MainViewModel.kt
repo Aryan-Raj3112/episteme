@@ -116,6 +116,10 @@ private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
 private const val KEY_FOLDER_MIGRATION_COMPLETED = "folder_migration_completed_v2"
 
+private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
+private const val KEY_FILTER_FOLDERS = "filter_folders"
+private const val KEY_FILTER_READ_STATUS = "filter_read_status"
+
 data class BannerMessage(val message: String, val isError: Boolean = false)
 
 data class UserData(
@@ -159,6 +163,19 @@ enum class SortOrder(val displayName: String) {
     RECENT("Recent"), TITLE_ASC("Title A-Z"), AUTHOR_ASC("Author A-Z"), PERCENT_ASC("Percent complete 0-100"), PERCENT_DESC(
         "Percent complete 100-0"
     )
+}
+
+enum class ReadStatusFilter(val displayName: String) {
+    ALL("All"), UNREAD("Unread"), IN_PROGRESS("In Progress"), COMPLETED("Completed")
+}
+
+data class LibraryFilters(
+    val fileTypes: Set<FileType> = emptySet(),
+    val sourceFolders: Set<String> = emptySet(),
+    val readStatus: ReadStatusFilter = ReadStatusFilter.ALL
+) {
+    val isActive: Boolean
+        get() = fileTypes.isNotEmpty() || sourceFolders.isNotEmpty() || readStatus != ReadStatusFilter.ALL
 }
 
 data class ReaderScreenState(
@@ -209,6 +226,9 @@ data class ReaderScreenState(
     val reflowProgress: Float? = null,
     val recentFiles: List<RecentFileItem> = emptyList(),
     val allRecentFiles: List<RecentFileItem> = emptyList(),
+    val pinnedHomeBookIds: Set<String> = emptySet(),
+    val pinnedLibraryBookIds: Set<String> = emptySet(),
+    val libraryFilters: LibraryFilters = LibraryFilters(),
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -291,11 +311,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
             isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
+            libraryFilters = LibraryFilters(
+                fileTypes = prefs.getStringSet(KEY_FILTER_FILE_TYPES, emptySet())?.mapNotNull {
+                    runCatching { FileType.valueOf(it) }.getOrNull()
+                }?.toSet() ?: emptySet(),
+                sourceFolders = prefs.getStringSet(KEY_FILTER_FOLDERS, emptySet()) ?: emptySet(),
+                readStatus = runCatching {
+                    ReadStatusFilter.valueOf(prefs.getString(KEY_FILTER_READ_STATUS, ReadStatusFilter.ALL.name) ?: ReadStatusFilter.ALL.name)
+                }.getOrDefault(ReadStatusFilter.ALL)
+            ),
             syncedFolders = loadSyncedFoldersFromPrefs(),
             lastFolderScanTime = if (prefs.contains(KEY_LAST_FOLDER_SCAN_TIME)) prefs.getLong(
                 KEY_LAST_FOLDER_SCAN_TIME, 0L
             )
-            else null
+            else null,
+            pinnedHomeBookIds = prefs.getStringSet(KEY_PINNED_HOME, emptySet()) ?: emptySet(),
+            pinnedLibraryBookIds = prefs.getStringSet(KEY_PINNED_LIBRARY, emptySet()) ?: emptySet()
         )
     )
 
@@ -313,18 +344,46 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        val sortedAllFiles = when (internalState.sortOrder) {
-            SortOrder.RECENT -> rawFilteredByQuery
-            SortOrder.TITLE_ASC -> rawFilteredByQuery.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
-            SortOrder.AUTHOR_ASC -> rawFilteredByQuery.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
-            SortOrder.PERCENT_ASC -> rawFilteredByQuery.sortedBy { it.progressPercentage ?: 0f }
-            SortOrder.PERCENT_DESC -> rawFilteredByQuery.sortedByDescending { it.progressPercentage ?: 0f }
+        val baseVisibleFiles = rawFilteredByQuery.filterNot { it.bookId.endsWith("_reflow") }
+
+        val filters = internalState.libraryFilters
+        val libraryFiltered = baseVisibleFiles.filter { item ->
+            val matchType = if (filters.fileTypes.isNotEmpty()) item.type in filters.fileTypes else true
+            val matchFolder = if (filters.sourceFolders.isNotEmpty()) item.sourceFolderUri in filters.sourceFolders else true
+            val progress = item.progressPercentage ?: 0f
+            val matchStatus = when (filters.readStatus) {
+                ReadStatusFilter.ALL -> true
+                ReadStatusFilter.UNREAD -> progress == 0f
+                ReadStatusFilter.IN_PROGRESS -> progress > 0f && progress < 100f
+                ReadStatusFilter.COMPLETED -> progress >= 100f
+            }
+            matchType && matchFolder && matchStatus
         }
 
-        val visibleRecentFiles = sortedAllFiles.filterNot { it.bookId.endsWith("_reflow") }
+        fun sortFiles(files: List<RecentFileItem>): List<RecentFileItem> {
+            return when (internalState.sortOrder) {
+                SortOrder.RECENT -> files.sortedByDescending { it.timestamp }
+                SortOrder.TITLE_ASC -> files.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
+                SortOrder.AUTHOR_ASC -> files.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
+                SortOrder.PERCENT_ASC -> files.sortedBy { it.progressPercentage ?: 0f }
+                SortOrder.PERCENT_DESC -> files.sortedByDescending { it.progressPercentage ?: 0f }
+            }
+        }
+
+        val sortedLibraryFiles = sortFiles(libraryFiltered).let { list ->
+            val pinned = list.filter { it.bookId in internalState.pinnedLibraryBookIds }
+            val unpinned = list.filter { it.bookId !in internalState.pinnedLibraryBookIds }
+            pinned + unpinned
+        }
+
+        val visibleRecentFiles = sortFiles(baseVisibleFiles.filter { it.isRecent }).let { list ->
+            val pinned = list.filter { it.bookId in internalState.pinnedHomeBookIds }
+            val unpinned = list.filter { it.bookId !in internalState.pinnedHomeBookIds }
+            pinned + unpinned
+        }
 
         val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
-            visibleRecentFiles.any { dbItem -> dbItem.uriString == contextItem.uriString }
+            baseVisibleFiles.any { dbItem -> dbItem.uriString == contextItem.uriString }
         }.toSet()
 
         val shelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()) ?: emptySet()
@@ -332,12 +391,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val shelvesFromPrefs = shelfNames.map { shelfName ->
             val bookIds = prefs.getStringSet("$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()) ?: emptySet()
-            val booksForShelf = visibleRecentFiles.filter { it.bookId in bookIds }
+            val booksForShelf = baseVisibleFiles.filter { it.bookId in bookIds }
             shelvedBookIds.addAll(booksForShelf.map { it.bookId })
             Shelf(shelfName, booksForShelf)
         }.sortedBy { it.name }
 
-        val unshelvedBooks = visibleRecentFiles.filter { it.bookId !in shelvedBookIds }
+        val unshelvedBooks = baseVisibleFiles.filter { it.bookId !in shelvedBookIds }
         val allShelves = shelvesFromPrefs + Shelf("Unshelved", unshelvedBooks)
 
         val booksAvailableForAdding =
@@ -348,7 +407,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 when (internalState.addBooksSource) {
                     AddBooksSource.UNSHELVED -> unshelvedBooks
-                    AddBooksSource.ALL_BOOKS -> visibleRecentFiles.filter {
+                    AddBooksSource.ALL_BOOKS -> baseVisibleFiles.filter {
                         it.uriString !in currentShelfBooksUris
                     }
                 }
@@ -358,7 +417,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         internalState.copy(
             recentFiles = visibleRecentFiles,
-            allRecentFiles = sortedAllFiles,
+            allRecentFiles = sortedLibraryFiles,
             contextualActionItems = validContextualItems,
             shelves = allShelves,
             booksAvailableForAdding = booksAvailableForAdding
@@ -1007,6 +1066,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _internalState.update { it.copy(isLoading = false) }
             }
         }
+    }
+
+    fun togglePinForContextualItems(isHome: Boolean) {
+        val selectedIds = _internalState.value.contextualActionItems.map { it.bookId }.toSet()
+        if (selectedIds.isEmpty()) return
+
+        _internalState.update { state ->
+            val currentPins = if (isHome) state.pinnedHomeBookIds else state.pinnedLibraryBookIds
+            val allPinned = selectedIds.all { it in currentPins }
+
+            val newPins = if (allPinned) currentPins - selectedIds else currentPins + selectedIds
+
+            prefs.edit { putStringSet(if (isHome) KEY_PINNED_HOME else KEY_PINNED_LIBRARY, newPins) }
+
+            if (isHome) {
+                state.copy(pinnedHomeBookIds = newPins, contextualActionItems = emptySet())
+            } else {
+                state.copy(pinnedLibraryBookIds = newPins, contextualActionItems = emptySet())
+            }
+        }
+    }
+
+    fun updateLibraryFilters(filters: LibraryFilters) {
+        _internalState.update { it.copy(libraryFilters = filters) }
+
+        prefs.edit {
+            putStringSet(KEY_FILTER_FILE_TYPES, filters.fileTypes.map { it.name }.toSet())
+            putStringSet(KEY_FILTER_FOLDERS, filters.sourceFolders)
+            putString(KEY_FILTER_READ_STATUS, filters.readStatus.name)
+        }
+
+        Timber.d("Library filters updated and persisted: $filters")
     }
 
     suspend fun sharePdf(
@@ -3738,5 +3829,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
         private const val KEY_SYNCED_FOLDERS_JSON = "synced_folders_list_json"
         private const val MAX_FOLDER_LIMIT = 3
+        internal const val KEY_PINNED_HOME = "pinned_home_books"
+        internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
     }
 }

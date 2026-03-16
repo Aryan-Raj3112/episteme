@@ -27,6 +27,15 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AssistChip
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -140,6 +149,7 @@ fun LibraryScreen(
     }
 
     val scope = rememberCoroutineScope()
+    var showFilterSheet by remember { mutableStateOf(false) }
 
     val isSearchActive = uiState.isSearchActive
     val searchQuery = uiState.searchQuery
@@ -222,11 +232,13 @@ fun LibraryScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         LibraryScreenContent(
-            recentFiles = uiState.recentFiles,
+            recentFiles = uiState.allRecentFiles,
             shelves = shelves,
             selectedItems = selectedItems,
             selectedShelves = selectedShelves,
             sortOrder = sortOrder,
+            libraryFilters = uiState.libraryFilters,
+            pinnedLibraryBookIds = uiState.pinnedLibraryBookIds,
             pagerState = pagerState,
             scope = scope,
             searchQuery = searchQuery,
@@ -234,6 +246,10 @@ fun LibraryScreen(
             onSearchQueryChange = viewModel::onSearchQueryChange,
             onSearchActiveChange = viewModel::setSearchActive,
             onSortOrderChange = viewModel::setSortOrder,
+            onFilterClick = { showFilterSheet = true },
+            onClearFilters = { viewModel.updateLibraryFilters(LibraryFilters()) },
+            onRemoveFilter = { viewModel.updateLibraryFilters(it) },
+            onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
             onClearSelection = { viewModel.clearContextualAction() },
             onItemClick = viewModel::onRecentFileClicked,
             onItemLongClick = viewModel::onRecentItemLongPress,
@@ -281,6 +297,15 @@ fun LibraryScreen(
                 onDismiss = { showDeleteConfirmDialog = false },
                 isPermanentDelete = true,
                 containsFolderItems = containsFolderItems
+            )
+        }
+
+        if (showFilterSheet) {
+            LibraryFilterSheet(
+                filters = uiState.libraryFilters,
+                syncedFolders = uiState.syncedFolders,
+                onApply = { viewModel.updateLibraryFilters(it) },
+                onDismiss = { showFilterSheet = false }
             )
         }
 
@@ -421,6 +446,7 @@ fun ShelfScreen(
     }
 }
 
+@Suppress("unused")
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreenContent(
@@ -429,6 +455,8 @@ fun LibraryScreenContent(
     selectedItems: Set<RecentFileItem>,
     selectedShelves: Set<String>,
     sortOrder: SortOrder,
+    libraryFilters: LibraryFilters,
+    pinnedLibraryBookIds: Set<String>,
     pagerState: PagerState,
     scope: CoroutineScope,
     searchQuery: String,
@@ -436,6 +464,10 @@ fun LibraryScreenContent(
     onSearchQueryChange: (String) -> Unit,
     onSearchActiveChange: (Boolean) -> Unit,
     onSortOrderChange: (SortOrder) -> Unit,
+    onFilterClick: () -> Unit,
+    onClearFilters: () -> Unit,
+    onRemoveFilter: (LibraryFilters) -> Unit,
+    onPinClick: () -> Unit,
     onClearSelection: () -> Unit,
     onItemClick: (RecentFileItem) -> Unit,
     onItemLongClick: (RecentFileItem) -> Unit,
@@ -492,6 +524,7 @@ fun LibraryScreenContent(
                     ContextualTopAppBar(
                         selectedItemCount = selectedItems.size,
                         onNavIconClick = onClearSelection,
+                        onPinClick = onPinClick,
                         onInfoClick = onInfoClick,
                         onDeleteClick = onDeleteClick,
                         onSelectAllClick = onSelectAllClick
@@ -550,6 +583,9 @@ fun LibraryScreenContent(
                         title = { Text("Library") },
                         actions = {
                             if (pagerState.currentPage == 0) {
+                                IconButton(onClick = onFilterClick) {
+                                    Icon(Icons.Default.FilterList, contentDescription = "Filter")
+                                }
                                 Box {
                                     TextButton(onClick = { showSortMenu = true }) {
                                         Icon(
@@ -598,6 +634,40 @@ fun LibraryScreenContent(
                                 },
                                 text = { Text(title) }
                             )
+                        }
+                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = libraryFilters.isActive && pagerState.currentPage == 0
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (libraryFilters.fileTypes.isNotEmpty()) {
+                                AssistChip(
+                                    onClick = { onRemoveFilter(libraryFilters.copy(fileTypes = emptySet())) },
+                                    label = { Text("Types: ${libraryFilters.fileTypes.joinToString { it.name }}") },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                )
+                            }
+                            if (libraryFilters.sourceFolders.isNotEmpty()) {
+                                AssistChip(
+                                    onClick = { onRemoveFilter(libraryFilters.copy(sourceFolders = emptySet())) },
+                                    label = { Text("Folders: ${libraryFilters.sourceFolders.size}") },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                )
+                            }
+                            if (libraryFilters.readStatus != ReadStatusFilter.ALL) {
+                                AssistChip(
+                                    onClick = { onRemoveFilter(libraryFilters.copy(readStatus = ReadStatusFilter.ALL)) },
+                                    label = { Text("Status: ${libraryFilters.readStatus.displayName}") },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                )
+                            }
                         }
                     }
                 }
@@ -658,6 +728,7 @@ fun LibraryScreenContent(
                                 LibraryListItem(
                                     item = item,
                                     isSelected = selectedItems.any { it.bookId == item.bookId },
+                                    isPinned = item.bookId in pinnedLibraryBookIds,
                                     onItemClick = { onItemClick(item) },
                                     onItemLongClick = { onItemLongClick(item) },
                                     isDownloading = item.bookId in downloadingBookIds
@@ -1159,6 +1230,7 @@ private fun ShelfListItem(
 private fun LibraryListItem(
     item: RecentFileItem,
     isSelected: Boolean,
+    isPinned: Boolean = false,
     onItemClick: () -> Unit,
     onItemLongClick: () -> Unit,
     isDownloading: Boolean,
@@ -1213,6 +1285,16 @@ private fun LibraryListItem(
                             contentDescription = null,
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
+                    if (isPinned) {
+                        Icon(
+                            imageVector = Icons.Default.PushPin,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                     }
@@ -1553,6 +1635,93 @@ private fun FolderCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LibraryFilterSheet(
+    filters: LibraryFilters,
+    syncedFolders: List<SyncedFolder>,
+    onApply: (LibraryFilters) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var currentFilters by remember { mutableStateOf(filters) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("Filter Library", style = MaterialTheme.typography.titleLarge)
+
+            Text("File Type", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FileType.entries.forEach { type ->
+                    FilterChip(
+                        selected = type in currentFilters.fileTypes,
+                        onClick = {
+                            val newSet = if (type in currentFilters.fileTypes) currentFilters.fileTypes - type else currentFilters.fileTypes + type
+                            currentFilters = currentFilters.copy(fileTypes = newSet)
+                        },
+                        label = { Text(type.name) }
+                    )
+                }
+            }
+
+            if (syncedFolders.isNotEmpty()) {
+                Text("Source Folder", style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    syncedFolders.forEach { folder ->
+                        FilterChip(
+                            selected = folder.uriString in currentFilters.sourceFolders,
+                            onClick = {
+                                val newSet = if (folder.uriString in currentFilters.sourceFolders) currentFilters.sourceFolders - folder.uriString else currentFilters.sourceFolders + folder.uriString
+                                currentFilters = currentFilters.copy(sourceFolders = newSet)
+                            },
+                            label = { Text(folder.name) }
+                        )
+                    }
+                }
+            }
+
+            Text("Read Status", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ReadStatusFilter.entries.forEach { status ->
+                    FilterChip(
+                        selected = currentFilters.readStatus == status,
+                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
+                        label = { Text(status.displayName) }
+                    )
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { currentFilters = LibraryFilters() }) {
+                    Text("Clear All")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                androidx.compose.material3.Button(onClick = { onApply(currentFilters); onDismiss() }) {
+                    Text("Apply")
+                }
+            }
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }

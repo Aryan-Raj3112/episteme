@@ -84,6 +84,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
@@ -192,6 +193,7 @@ fun ContextualTopAppBar(
     onNavIconClick: () -> Unit,
     onInfoClick: (() -> Unit)? = null,
     onSelectAllClick: (() -> Unit)? = null,
+    onPinClick: (() -> Unit)? = null,
     onDeleteClick: () -> Unit
 ) {
     CustomTopAppBar(
@@ -202,6 +204,11 @@ fun ContextualTopAppBar(
             }
         },
         actions = {
+            if (onPinClick != null) {
+                IconButton(onClick = onPinClick) {
+                    Icon(Icons.Filled.PushPin, contentDescription = "Pin/Unpin")
+                }
+            }
             if (selectedItemCount == 1 && onInfoClick != null) {
                 IconButton(onClick = onInfoClick) {
                     Icon(Icons.Filled.Info, contentDescription = "Info")
