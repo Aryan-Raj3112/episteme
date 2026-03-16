@@ -188,9 +188,11 @@ fun HomeScreen(
         }
 
         LaunchedEffect(uiState.bannerMessage) {
-            if (uiState.bannerMessage != null) {
-                delay(3000L)
-                viewModel.bannerMessageShown()
+            uiState.bannerMessage?.let { msg ->
+                if (!msg.isPersistent) {
+                    delay(3000L)
+                    viewModel.bannerMessageShown()
+                }
             }
         }
 

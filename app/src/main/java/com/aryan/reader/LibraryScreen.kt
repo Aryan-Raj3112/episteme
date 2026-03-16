@@ -276,7 +276,8 @@ fun LibraryScreen(
             onDisconnectSyncFolderClick = viewModel::disconnectAllSyncedFolders,
             downloadingBookIds = uiState.downloadingBookIds,
             lastFolderScanTime = uiState.lastFolderScanTime,
-            isLoading = uiState.isLoading
+            isLoading = uiState.isLoading,
+            isRefreshing = uiState.isRefreshing,
         )
 
 
@@ -487,6 +488,7 @@ fun LibraryScreenContent(
     downloadingBookIds: Set<String>,
     lastFolderScanTime: Long?,
     isLoading: Boolean,
+    isRefreshing: Boolean,
     syncedFolders: List<SyncedFolder>,
     onAddFolderClick: (android.net.Uri) -> Unit,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
@@ -752,7 +754,7 @@ fun LibraryScreenContent(
                         onRemoveFolderClick = onRemoveFolderClick,
                         onScanNowClick = onScanNowClick,
                         onSyncMetadataClick = onSyncMetadataClick,
-                        isLoading = isLoading
+                        isLoading = isLoading || isRefreshing
                     )
                 }
             }

@@ -120,7 +120,7 @@ private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
 private const val KEY_FILTER_FOLDERS = "filter_folders"
 private const val KEY_FILTER_READ_STATUS = "filter_read_status"
 
-data class BannerMessage(val message: String, val isError: Boolean = false)
+data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
 
 data class UserData(
     val uid: String, val displayName: String?, val photoUrl: String?, val email: String?
@@ -1571,7 +1571,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     it.copy(
                                         isLoading = false,
                                         isRefreshing = true,
-                                        bannerMessage = BannerMessage(msg)
+                                        bannerMessage = BannerMessage(msg, isPersistent = true)
                                     )
                                 }
                             }
@@ -1583,7 +1583,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     isLoading = false,
                                     isRefreshing = false,
                                     bannerMessage = if (showFeedback) BannerMessage("Folder Sync: Scan complete.") else it.bannerMessage,
-                                    lastFolderScanTime = System.currentTimeMillis()
+                                    lastFolderScanTime = System.currentTimeMillis(),
+                                    syncedFolders = loadSyncedFoldersFromPrefs()
                                 )
                             }
                         }
@@ -1593,7 +1594,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 it.copy(
                                     isLoading = false,
                                     isRefreshing = false,
-                                    errorMessage = if (showFeedback) "Sync failed." else it.errorMessage
+                                    errorMessage = if (showFeedback) "Sync failed." else it.errorMessage,
+                                    bannerMessage = null
                                 )
                             }
                         }

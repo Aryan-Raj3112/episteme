@@ -15,7 +15,6 @@ data class FolderBookMetadata(
     val lastPositionCfi: String?,
     val progressPercentage: Float,
     val isRecent: Boolean,
-    // REMOVED: val isDeleted: Boolean,
     val lastModifiedTimestamp: Long,
     val bookmarksJson: String?,
     val locatorBlockIndex: Int?,
@@ -33,7 +32,6 @@ data class FolderBookMetadata(
         json.put("lastPositionCfi", lastPositionCfi)
         json.put("progressPercentage", progressPercentage.toDouble())
         json.put("isRecent", isRecent)
-        // REMOVED: json.put("isDeleted", isDeleted)
         json.put("lastModifiedTimestamp", lastModifiedTimestamp)
         json.put("bookmarksJson", bookmarksJson)
         json.put("locatorBlockIndex", locatorBlockIndex ?: -1)
@@ -65,7 +63,6 @@ data class FolderBookMetadata(
                 lastPositionCfi = json.optStringNull("lastPositionCfi"),
                 progressPercentage = json.optDouble("progressPercentage", 0.0).toFloat(),
                 isRecent = json.optBoolean("isRecent", true),
-                // REMOVED: isDeleted deserialization
                 lastModifiedTimestamp = json.optLong("lastModifiedTimestamp", 0L),
                 bookmarksJson = json.optStringNull("bookmarksJson"),
                 locatorBlockIndex = json.optIntNull("locatorBlockIndex"),
@@ -75,7 +72,6 @@ data class FolderBookMetadata(
     }
 }
 
-// Update the converter
 fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, sourceFolderUri: String?): RecentFileItem {
     return RecentFileItem(
         bookId = this.bookId,
@@ -95,7 +91,7 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         isRecent = this.isRecent,
         isAvailable = true,
         lastModifiedTimestamp = this.lastModifiedTimestamp,
-        isDeleted = false, // ALWAYS FALSE for folder sync
+        isDeleted = false,
         bookmarksJson = this.bookmarksJson,
         sourceFolderUri = sourceFolderUri
     )

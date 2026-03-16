@@ -68,15 +68,15 @@ class MetadataExtractionWorker(
                                     originalBookNameHint = item.displayName,
                                     parseContent = false
                                 )
-                                title = book.title.takeIf { it.isNotBlank() }
-                                author = book.author.takeIf { it.isNotBlank() }
+                                title = book.title.takeIf { it.isNotBlank() && it != "content" }
+                                author = book.author.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
                                 book.coverImage?.let { coverPath = recentFilesRepository.saveCoverToCache(it, uri) }
                             }
                             FileType.MOBI -> {
                                 val book = mobiParser.createMobiBook(inputStream, item.displayName)
                                 book?.let {
-                                    title = it.title.takeIf { t -> t.isNotBlank() }
-                                    author = it.author.takeIf { a -> a.isNotBlank() }
+                                    title = it.title.takeIf { t -> t.isNotBlank() && t != "content" }
+                                    author = it.author.takeIf { a -> a.isNotBlank() && !a.equals("Unknown", ignoreCase = true) }
                                     it.coverImage?.let { img -> coverPath = recentFilesRepository.saveCoverToCache(img, uri) }
                                 }
                             }
@@ -84,9 +84,11 @@ class MetadataExtractionWorker(
                                 pdfCoverGenerator.generateCover(uri)?.let {
                                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                                 }
-                                title = item.displayName.substringBeforeLast(".")
+                                title = item.displayName
                             }
-                            else -> {}
+                            else -> {
+                                title = item.displayName
+                            }
                         }
                     }
 
