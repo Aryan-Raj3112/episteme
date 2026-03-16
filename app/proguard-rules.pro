@@ -79,3 +79,7 @@
 -dontwarn javax.imageio.**
 
 -keepattributes Signature, EnclosingMethod, InnerClasses, *Annotation*
+
+-keep class com.aryan.reader.pdf.NativePdfiumBridge {
+    *;
+}
