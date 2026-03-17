@@ -114,7 +114,6 @@ import java.util.concurrent.TimeUnit
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
-private const val KEY_FOLDER_MIGRATION_COMPLETED = "folder_migration_completed_v2"
 
 private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
 private const val KEY_FILTER_FOLDERS = "filter_folders"
@@ -221,7 +220,6 @@ data class ReaderScreenState(
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
-    val showFolderMigrationDialog: Boolean = false,
     val isRefreshing: Boolean = false,
     val reflowProgress: Float? = null,
     val recentFiles: List<RecentFileItem> = emptyList(),
@@ -597,14 +595,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         remoteConfigRepository.init()
 
-        val isMigrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
-
         if (_internalState.value.syncedFolders.isNotEmpty()) {
-            if (isMigrationCompleted) {
-                syncFolderMetadata()
-            } else {
-                Timber.d("App Start: Skipping sync. Waiting for migration/detachment logic.")
-            }
+            syncFolderMetadata()
         }
 
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
@@ -655,27 +647,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _internalState.update { it.copy(isProUser = false, hasUnreadFeedback = false) }
                 }
             }
-        }
-        val migrationCompleted = prefs.getBoolean(KEY_FOLDER_MIGRATION_COMPLETED, false)
-
-        val hasFolders = _internalState.value.syncedFolders.isNotEmpty()
-        if (hasFolders && !migrationCompleted) {
-            Timber.tag("FolderSync").d("First time after refactor: Showing migration dialog.")
-            _internalState.update { it.copy(showFolderMigrationDialog = true) }
-        }
-    }
-
-    fun completeFolderMigration() {
-        Timber.tag("FolderSync")
-            .d("User acknowledged update. Detaching old books and starting fresh scan.")
-
-        viewModelScope.launch {
-            recentFilesRepository.detachAllFolderBooks()
-
-            prefs.edit { putBoolean(KEY_FOLDER_MIGRATION_COMPLETED, true) }
-            _internalState.update { it.copy(showFolderMigrationDialog = false) }
-
-            scanSyncedFolder()
         }
     }
 
@@ -1482,7 +1453,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 _internalState.update {
                     it.copy(
-                        syncedFolders = newStats, showFolderMigrationDialog = false
+                        syncedFolders = newStats
                     )
                 }
 
@@ -2623,7 +2594,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val existing = recentFilesRepository.getFileByBookId(reflowBookId)
             if (existing != null) {
-                showBanner("Opening existing text view...")
                 if (autoOpenPage != null) {
                     switchToFileSeamlessly(existing, autoOpenPage)
                 } else {
@@ -3809,8 +3779,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 imagesDir.deleteRecursively()
             }
 
+            val allFiles = recentFilesRepository.getAllFilesForSync()
+            val reflowBooks = allFiles.filter { it.bookId.endsWith("_reflow") }
+
+            if (reflowBooks.isNotEmpty()) {
+                val reflowBookIds = reflowBooks.map { it.bookId }
+
+                reflowBookIds.forEach { bookId ->
+                    clearImportedFileCache(bookId)
+                    pdfTextRepository.clearBookText(bookId)
+                }
+
+                recentFilesRepository.deleteFilePermanently(reflowBookIds)
+            }
+
             withContext(Dispatchers.Main) {
-                showBanner("Reflow cache & images cleared.")
+                showBanner("Reflow cache & generated text views cleared.")
             }
         }
     }

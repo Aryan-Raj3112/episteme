@@ -158,6 +158,9 @@ fun HomeScreen(
         var showSignOutConfirmDialog by remember { mutableStateOf(false) }
         var showAboutDialog by remember { mutableStateOf(false) }
 
+        var showClearBookCacheDialog by remember { mutableStateOf(false) }
+        var showClearReflowCacheDialog by remember { mutableStateOf(false) }
+
         val feedbackResult =
             navController.currentBackStackEntry?.savedStateHandle?.getLiveData<String>("banner_message")
                 ?.observeAsState()
@@ -291,7 +294,7 @@ fun HomeScreen(
                             DefaultTopAppBar(
                                 uiState = uiState,
                                 onRenderModeChange = viewModel::setRenderMode,
-                                onClearCache = viewModel::clearBookCache,
+                                onClearCache = { showClearBookCacheDialog = true },
                                 onClearCloudData = { showClearAllDataDialog = true },
                                 onAboutClick = { showAboutDialog = true },
                                 onDrawerClick = {
@@ -301,7 +304,7 @@ fun HomeScreen(
                                 },
                                 onShowDeviceManagement = viewModel::showDeviceManagementForDebug,
                                 onFolderSyncToggle = viewModel::setFolderSyncEnabled,
-                                onClearReflowCache = viewModel::clearReflowCache
+                                onClearReflowCache = { showClearReflowCacheDialog = true }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -391,6 +394,30 @@ fun HomeScreen(
                             navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
                         })
                     }
+
+                    if (showClearBookCacheDialog) {
+                        DangerousFolderActionDialog(
+                            title = "Clear Book Cache",
+                            message = "This will clear all processed page in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.",
+                            onConfirm = {
+                                viewModel.clearBookCache()
+                                showClearBookCacheDialog = false
+                            },
+                            onDismiss = { showClearBookCacheDialog = false }
+                        )
+                    }
+
+                    if (showClearReflowCacheDialog) {
+                        DangerousFolderActionDialog(
+                            title = "Clear Reflow Cache",
+                            message = "This will delete all generated 'Text View' versions of your PDFs and clear their associated images/HTML cache. Your original PDFs will remain untouched.",
+                            onConfirm = {
+                                viewModel.clearReflowCache()
+                                showClearReflowCacheDialog = false
+                            },
+                            onDismiss = { showClearReflowCacheDialog = false }
+                        )
+                    }
                 }
             }
             if (showAboutDialog) {
@@ -426,11 +453,6 @@ fun HomeScreen(
                         .padding(top = 48.dp, start = 8.dp)
                 )
             }
-        }
-        if (uiState.showFolderMigrationDialog) {
-            FolderMigrationDialog(
-                onConfirm = { viewModel.completeFolderMigration() }
-            )
         }
     }
 }
@@ -693,7 +715,7 @@ fun DefaultTopAppBar(
     onRenderModeChange: (RenderMode) -> Unit,
     onClearCache: () -> Unit,
     onClearCloudData: () -> Unit,
-    onClearReflowCache: () -> Unit, // Add this parameter
+    onClearReflowCache: () -> Unit,
     onDrawerClick: () -> Unit,
     onAboutClick: () -> Unit,
     onShowDeviceManagement: () -> Unit,
@@ -725,18 +747,20 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 })
 
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("Clear Book Cache") }, onClick = {
+                    onClearCache()
+                    showOptionsMenu = false
+                })
+                DropdownMenuItem(text = { Text("Clear Reflow Cache") }, onClick = {
+                    onClearReflowCache()
+                    showOptionsMenu = false
+                })
+
                 if (BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss") {
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("[Debug] Show Device Management") }, onClick = {
                         onShowDeviceManagement()
-                        showOptionsMenu = false
-                    })
-                    DropdownMenuItem(text = { Text("[Debug] Clear Book Cache") }, onClick = {
-                        onClearCache()
-                        showOptionsMenu = false
-                    })
-                    DropdownMenuItem(text = { Text("[Debug] Clear Reflow Cache") }, onClick = {
-                        onClearReflowCache()
                         showOptionsMenu = false
                     })
                     DropdownMenuItem(
@@ -1193,27 +1217,41 @@ fun FpsMonitor(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun FolderMigrationDialog(onConfirm: () -> Unit) {
+fun DangerousFolderActionDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
-        onDismissRequest = { },
-        icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
-        title = { Text("Folder Sync Update") },
-        text = {
-            Column {
-                Text(
-                    "We've improved Folder Sync! Books are now read directly from your folder without duplicating files."
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error
+            )
+        },
+        title = {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.error
+            )
+        },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "To keep your reading progress safe, your previously synced books have been converted to standard local books. You may see duplicates once the folder resyncs; you can safely delete the old copies at your convenience.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            ) {
+                Text("Confirm & Clear")
             }
         },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Got it")
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
     )
