@@ -344,6 +344,12 @@ private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 
+object PdfiumCoreProvider {
+    val core: PdfiumCoreKt by lazy {
+        PdfiumCoreKt(Dispatchers.Default)
+    }
+}
+
 private fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss") return false
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -1426,7 +1432,7 @@ fun PdfViewerScreen(
     var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
     val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
     val drawingState = remember { PdfDrawingState() }
-    val pdfiumCore = remember(context) { PdfiumCoreKt(Dispatchers.Default) }
+    val pdfiumCore = remember { PdfiumCoreProvider.core }
     val verticalReaderState = rememberVerticalPdfReaderState()
     var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
     val totalDisplayPages by remember(virtualPages, totalPages) {
@@ -2330,8 +2336,6 @@ fun PdfViewerScreen(
         }
         onToggleBookmark(currentPage)
     }
-
-    LaunchedEffect(pdfUri) { debugPdfLinks(context, pdfUri, pdfiumCore, this) }
 
     LaunchedEffect(currentBookId) {
         if (currentBookId != null) {

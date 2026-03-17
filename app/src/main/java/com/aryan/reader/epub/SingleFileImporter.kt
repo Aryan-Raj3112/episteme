@@ -366,68 +366,120 @@ class SingleFileImporter(private val context: Context) {
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[HTML] parseHtml START | file=$originalBookNameHint")
-        Timber.d("Importing HTML: $originalBookNameHint")
+        Timber.d("Importing HTML (Streaming): $originalBookNameHint")
 
-        val content = inputStream.bufferedReader().use { it.readText() }
-        val doc = Jsoup.parse(content)
-        val title = doc.title().takeIf { it.isNotBlank() } ?: originalBookNameHint.substringBeforeLast(".")
-        Timber.tag("FileOpenPerf").d("[HTML] parseHtml: Read ${content.length} chars | elapsed=${System.currentTimeMillis() - parseStart}ms")
+        var title = originalBookNameHint.substringBeforeLast(".")
+        var author = "Unknown"
+        val cssBuilder = java.lang.StringBuilder()
+        val chapters = mutableListOf<EpubChapter>()
 
-        val author = doc.select("meta[name=author]").attr("content").takeIf { it.isNotBlank() }
-            ?: doc.select("meta[property=article:author]").attr("content").takeIf { it.isNotBlank() }
+        inputStream.bufferedReader().use { reader ->
+            var inStyle = false
+            var inBody = false
+            var pageNum = 1
+            val currentChapterBuilder = java.lang.StringBuilder()
 
-        val cssStyle = doc.select("style").html()
-        val bodyHtml = doc.body().html()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val trimmed = line!!.trim()
 
-        val rawChapters = if (bodyHtml.contains("<page-break></page-break>")) {
-            bodyHtml.split("<page-break></page-break>")
-        } else {
-            listOf(bodyHtml)
+                if (!inBody) {
+                    if (trimmed.startsWith("<title", ignoreCase = true)) {
+                        val t = trimmed.substringAfter(">").substringBefore("</title>")
+                        if (t.isNotBlank()) title = t
+                    }
+                    val authorMatch = Regex("<meta[^>]+name=\"author\"[^>]+content=\"([^\"]+)\"").find(
+                        line
+                    )
+                        ?: Regex("<meta[^>]+property=\"article:author\"[^>]+content=\"([^\"]+)\"").find(
+                            line
+                        )
+                    if (authorMatch != null) {
+                        author = authorMatch.groupValues[1]
+                    }
+
+                    if (trimmed.startsWith("<style", ignoreCase = true)) {
+                        inStyle = true
+                        val styleContent = line.substringAfter(">").substringBefore("</style>")
+                        if (styleContent.isNotBlank()) cssBuilder.append(styleContent).append("\n")
+                        if (trimmed.contains("</style>")) {
+                            inStyle = false
+                        }
+                        continue
+                    }
+                    if (inStyle) {
+                        if (trimmed.contains("</style>")) {
+                            cssBuilder.append(line.substringBefore("</style>")).append("\n")
+                            inStyle = false
+                        } else {
+                            cssBuilder.append(line).append("\n")
+                        }
+                        continue
+                    }
+
+                    if (trimmed.equals("<body>", ignoreCase = true)) {
+                        inBody = true
+                        continue
+                    }
+                    if (trimmed.startsWith("<body ", ignoreCase = true)) {
+                        inBody = true
+                        val afterBody = line.substringAfter(">", "")
+                        if (afterBody.isNotBlank()) currentChapterBuilder.append(afterBody).append("\n")
+                        continue
+                    }
+
+                    if (trimmed.startsWith("<p") || trimmed.startsWith("<div") ||
+                        trimmed.startsWith("<h") || trimmed.startsWith("<section") ||
+                        trimmed.contains("<page-break>") ||
+                        (trimmed.isNotBlank() && !trimmed.startsWith("<") && !trimmed.startsWith("<!"))) {
+                        inBody = true
+                        currentChapterBuilder.append(line).append("\n")
+                    }
+                } else {
+                    if (trimmed.equals("</body>", ignoreCase = true) || trimmed.equals("</html>", ignoreCase = true)) {
+                        continue
+                    }
+
+                    if (line.contains("<page-break></page-break>")) {
+                        val parts = line.split("<page-break></page-break>")
+                        for (i in parts.indices) {
+                            currentChapterBuilder.append(parts[i]).append("\n")
+                            if (i < parts.size - 1) {
+                                val chapterHtml = currentChapterBuilder.toString()
+                                if (chapterHtml.isNotBlank()) {
+                                    chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), chapterHtml))
+                                }
+                                currentChapterBuilder.clear() // Clean memory allocation
+                            }
+                        }
+                        continue
+                    }
+
+                    currentChapterBuilder.append(line).append("\n")
+
+                    if (currentChapterBuilder.length > 2_000_000) {
+                        chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), currentChapterBuilder.toString()))
+                        currentChapterBuilder.clear()
+                    }
+                }
+            }
+
+            val finalChapterHtml = currentChapterBuilder.toString()
+            if (finalChapterHtml.isNotBlank()) {
+                chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), finalChapterHtml))
+            }
         }
 
-        val chapters = rawChapters.mapIndexed { index, rawText ->
-            async(Dispatchers.Default) {
-                if (rawText.isBlank()) return@async null
+        if (chapters.isEmpty()) {
+            chapters.add(writeHtmlChapter(extractionDir, bookId, 1, title, cssBuilder.toString(), "<p>(Empty File)</p>"))
+        }
 
-                val pageNum = index + 1
-                val chapterTitle = if (rawChapters.size > 1) "Page $pageNum" else title
-                val fileName = "page_$pageNum.html"
-                val file = File(extractionDir, fileName)
-
-                val fullHtml = """
-                    <!DOCTYPE html>
-                    <html xmlns="http://www.w3.org/1999/xhtml">
-                    <head>
-                        <title>${title.replace("\"", "&quot;")}</title>
-                        <style>${cssStyle}</style>
-                    </head>
-                    <body>
-                        ${rawText.trim()}
-                    </body>
-                    </html>
-                """.trimIndent()
-
-                file.writeText(fullHtml)
-
-                EpubChapter(
-                    chapterId = "${bookId}_$pageNum",
-                    absPath = fileName,
-                    title = chapterTitle,
-                    htmlFilePath = fileName,
-                    plainTextContent = Jsoup.parse(fullHtml).text(),
-                    htmlContent = "",
-                    depth = 0,
-                    isInToc = true
-                )
-            }
-        }.awaitAll().filterNotNull()
-
-        Timber.tag("FileOpenPerf").d("[HTML] parseHtml COMPLETE | elapsed=${System.currentTimeMillis() - parseStart}ms")
+        Timber.tag("FileOpenPerf").d("[HTML] parseHtml COMPLETE | chapters=${chapters.size} | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
         val book = EpubBook(
             fileName = originalBookNameHint,
             title = title,
-            author = author ?: "Unknown",
+            author = author,
             language = "en",
             coverImage = null,
             chapters = chapters,
@@ -445,5 +497,46 @@ class SingleFileImporter(private val context: Context) {
         }
 
         return@withContext book
+    }
+
+    private fun writeHtmlChapter(
+        extractionDir: File,
+        bookId: String,
+        pageNum: Int,
+        title: String,
+        cssStyle: String,
+        bodyContent: String
+    ): EpubChapter {
+        val chapterTitle = if (pageNum > 1 || bodyContent.contains("<page-break")) "Page $pageNum" else title
+        val fileName = "page_$pageNum.html"
+        val file = File(extractionDir, fileName)
+
+        val fullHtml = """
+            <!DOCTYPE html>
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <head>
+                <title>${title.replace("\"", "&quot;")}</title>
+                <style>${cssStyle}</style>
+            </head>
+            <body>
+                ${bodyContent.trim()}
+            </body>
+            </html>
+        """.trimIndent()
+
+        file.writeText(fullHtml)
+
+        val plainText = Jsoup.parse(fullHtml).text()
+
+        return EpubChapter(
+            chapterId = "${bookId}_$pageNum",
+            absPath = fileName,
+            title = chapterTitle,
+            htmlFilePath = fileName,
+            plainTextContent = plainText,
+            htmlContent = "",
+            depth = 0,
+            isInToc = true
+        )
     }
 }

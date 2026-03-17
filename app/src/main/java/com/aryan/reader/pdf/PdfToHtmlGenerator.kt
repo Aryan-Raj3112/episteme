@@ -29,7 +29,7 @@ object PdfToHtmlGenerator {
         val t0 = System.currentTimeMillis()
         Timber.tag(TAG).d("generateHtmlFile START | uri=$pdfUri | startPage=$startPage")
 
-        val pdfiumCore = PdfiumCoreKt(Dispatchers.Default)
+        val pdfiumCore = PdfiumCoreProvider.core
         val pfd = context.contentResolver.openFileDescriptor(pdfUri, "r") ?: run {
             Timber.tag(TAG).e("Failed to open ParcelFileDescriptor")
             return@withContext false
