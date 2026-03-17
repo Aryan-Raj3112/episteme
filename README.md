@@ -80,6 +80,10 @@ This project is made possible by the Android open-source ecosystem:
 *   **Media & Image Loading:** Coil, Media3 (ExoPlayer)
 *   **Utilities:** Room (Database), Timber (Logging)
 
+## Contributors
+
+- [CCerrer](https://github.com/CCerrer) - Testing & QA
+
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See the [LICENSE](LICENSE) file for details.
