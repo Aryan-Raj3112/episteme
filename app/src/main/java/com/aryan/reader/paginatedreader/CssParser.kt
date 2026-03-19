@@ -19,9 +19,6 @@
  */
 package com.aryan.reader.paginatedreader
 
-import android.os.Build
-import timber.log.Timber
-import androidx.annotation.RequiresApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
@@ -38,6 +35,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import timber.log.Timber
 import java.io.File
 import java.util.regex.Pattern
 import kotlin.math.roundToInt
@@ -67,24 +65,64 @@ object CssParser {
         "thick" to 5.dp
     )
 
-    internal fun adaptColorForTheme(color: Color, isDarkTheme: Boolean, isBackground: Boolean): Color {
+    internal fun adaptColorForTheme(
+        color: Color,
+        isDarkTheme: Boolean,
+        isBackground: Boolean,
+        themeBackground: Color = Color.Unspecified,
+        themeText: Color = Color.Unspecified
+    ): Color {
         if (!color.isSpecified) return color
-        if (color.alpha < 0.9f) return color
+        if (color.alpha < 0.9f && color != Color.Transparent) return color
+        if (color == Color.Transparent) return color
 
-        val luminance = color.luminance()
-
-        return if (isDarkTheme) {
-            if (isBackground) {
-                if (luminance > 0.9) Color.Transparent else color
+        if (!themeBackground.isSpecified || !themeText.isSpecified) {
+            val luminance = color.luminance()
+            return if (isDarkTheme) {
+                if (isBackground) {
+                    if (luminance > 0.9) Color.Transparent else color
+                } else {
+                    if (luminance < 0.2) Color.White.copy(alpha = 0.87f) else color
+                }
             } else {
-                if (luminance < 0.2) Color.White.copy(alpha = 0.87f) else color
+                if (isBackground) {
+                    if (luminance < 0.1) Color.Transparent else color
+                } else {
+                    if (luminance > 0.8) Color.Black.copy(alpha = 0.87f) else color
+                }
+            }
+        }
+
+        val bgLuminance = themeBackground.luminance()
+        val colorLuminance = color.luminance()
+
+        val l1 = maxOf(bgLuminance, colorLuminance)
+        val l2 = minOf(bgLuminance, colorLuminance)
+        val contrast = (l1 + 0.05f) / (l2 + 0.05f)
+
+        if (isBackground) {
+            return if (isDarkTheme && colorLuminance > 0.5f) {
+                Color.Transparent
+            } else if (!isDarkTheme && colorLuminance < 0.2f) {
+                Color.Transparent
+            } else {
+                color
             }
         } else {
-            if (isBackground) {
-                if (luminance < 0.1) Color.Transparent else color
-            } else {
-                if (luminance > 0.8) Color.Black.copy(alpha = 0.87f) else color
+            if (contrast >= 4.5f) {
+                return color
             }
+
+            val hsl = FloatArray(3)
+            androidx.core.graphics.ColorUtils.colorToHSL(color.toArgb(), hsl)
+
+            if (bgLuminance < 0.5f) {
+                hsl[2] = hsl[2].coerceAtLeast(0.7f)
+            } else {
+                hsl[2] = hsl[2].coerceAtMost(0.3f)
+            }
+
+            return Color(androidx.core.graphics.ColorUtils.HSLToColor(hsl))
         }
     }
 
@@ -138,7 +176,9 @@ object CssParser {
         baseFontSizeSp: Float,
         density: Float,
         constraints: Constraints,
-        isDarkTheme: Boolean
+        isDarkTheme: Boolean,
+        themeBackgroundColor: Color = Color.Unspecified,
+        themeTextColor: Color = Color.Unspecified
     ): OptimizedCssParseResult {
         val byTag = mutableMapOf<String, MutableList<CssRule>>()
         val byClass = mutableMapOf<String, MutableList<CssRule>>()
@@ -192,11 +232,11 @@ object CssParser {
                 val specificity = calculateSpecificity(originalSelector)
                 val normalStyle = parseProperties(
                     propertiesGroup, baseFontSizeSp, density, constraints, onlyImportant = false,
-                    isDarkTheme
+                    isDarkTheme, themeBackgroundColor, themeTextColor
                 )
                 val importantStyle = parseProperties(
                     propertiesGroup, baseFontSizeSp, density, constraints, onlyImportant = true,
-                    isDarkTheme
+                    isDarkTheme, themeBackgroundColor, themeTextColor
                 )
 
                 fun addRule(style: CssStyle, spec: Int) {
@@ -335,7 +375,9 @@ object CssParser {
         density: Float,
         constraints: Constraints,
         onlyImportant: Boolean,
-        isDarkTheme: Boolean
+        isDarkTheme: Boolean,
+        themeBackgroundColor: Color = Color.Unspecified,
+        themeTextColor: Color = Color.Unspecified
     ): CssStyle {
         var spanStyle = SpanStyle()
         var paragraphStyle = ParagraphStyle()
@@ -427,7 +469,7 @@ object CssParser {
                     styleStr: String?
                 ) {
                     val parsedWidth = widthStr?.let { parseCssSizeToDp(it, baseFontSizeSp, density, containerWidthPx) } ?: 0.dp
-                    val parsedColor = colorStr?.let { parseColor(it) }?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false) }
+                    val parsedColor = colorStr?.let { parseColor(it) }?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor) }
 
                     val isExplicitWidth = widthStr != null
 
@@ -482,7 +524,7 @@ object CssParser {
                     }
                     "color" -> {
                         parseColor(value)?.let {
-                            spanStyle = spanStyle.copy(color = this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false))
+                            spanStyle = spanStyle.copy(color = this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor))
                         }
                     }
                     "text-align" -> {
@@ -587,7 +629,7 @@ object CssParser {
 
                     "background-color" -> {
                         val originalColor = parseColor(value) ?: Color.Unspecified
-                        backgroundColor = this@CssParser.adaptColorForTheme(originalColor, isDarkTheme, isBackground = true)
+                        backgroundColor = this@CssParser.adaptColorForTheme(originalColor, isDarkTheme, isBackground = true, themeBackgroundColor, themeTextColor)
                     }
 
                     // Border Properties
@@ -727,7 +769,7 @@ object CssParser {
                         textEmphasisStyleString = value
                     }
                     "text-emphasis-color", "-epub-text-emphasis-color" -> {
-                        textEmphasisColor = parseColor(value)?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false) }
+                        textEmphasisColor = parseColor(value)?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor) }
                     }
                     "text-emphasis-position", "-epub-text-emphasis-position" -> {
                         if (value in listOf("over", "under")) {
@@ -785,7 +827,7 @@ object CssParser {
             val finalStyle = style ?: "none"
             val finalColor = color ?: spanStyle.color.takeIf { it.isSpecified } ?: Color.Black
 
-            val adaptedColor = this@CssParser.adaptColorForTheme(finalColor, isDarkTheme, isBackground = false)
+            val adaptedColor = this@CssParser.adaptColorForTheme(finalColor, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
 
             if (finalWidth > 0.dp && finalStyle != "none" && finalStyle != "hidden") {
                 return BorderStyle(finalWidth, adaptedColor, finalStyle)

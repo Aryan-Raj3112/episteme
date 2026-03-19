@@ -56,9 +56,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -75,6 +77,7 @@ import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -126,6 +129,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -333,6 +337,35 @@ private fun loadExternalSearchPackage(context: Context): String? {
 private fun saveExternalSearchPackage(context: Context, packageName: String) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
+}
+
+data class ReaderTheme(
+    val id: String,
+    val name: String,
+    val backgroundColor: Color,
+    val textColor: Color,
+    val isDark: Boolean
+)
+
+val BuiltInThemes = listOf(
+    ReaderTheme("system", "System", Color.Unspecified, Color.Unspecified, false),
+    ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
+    ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
+    ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
+    ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
+    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+)
+
+private const val PREF_READER_THEME = "reader_theme_id"
+
+private fun saveReaderThemeId(context: Context, themeId: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_READER_THEME, themeId) }
+}
+
+private fun loadReaderThemeId(context: Context): String {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(PREF_READER_THEME, "system") ?: "system"
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -957,9 +990,28 @@ fun EpubReaderHost(
     }
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
-    val isDarkTheme = isSystemInDarkTheme()
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
+    var showThemePanel by remember { mutableStateOf(false) }
+
+    var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
+    val activeTheme = remember(currentThemeId) {
+        BuiltInThemes.find { it.id == currentThemeId } ?: BuiltInThemes[0]
+    }
+
+    val systemIsDark = isSystemInDarkTheme()
+    val isDarkTheme = if (activeTheme.id == "system") systemIsDark else activeTheme.isDark
+
+    val effectiveBg = remember(activeTheme, systemIsDark) {
+        if (activeTheme.id == "system") {
+            if (systemIsDark) Color(0xFF121212) else Color(0xFFFFFFFF)
+        } else activeTheme.backgroundColor
+    }
+    val effectiveText = remember(activeTheme, systemIsDark) {
+        if (activeTheme.id == "system") {
+            if (systemIsDark) Color(0xFFE0E0E0) else Color(0xFF000000)
+        } else activeTheme.textColor
+    }
 
     val currentChapterInPaginatedMode by remember {
         derivedStateOf {
@@ -2080,6 +2132,8 @@ fun EpubReaderHost(
                                             key = chapterKeyForWebView,
                                             chapterTitle = chapterToRender.title,
                                             isDarkTheme = isDarkTheme,
+                                            effectiveBg = effectiveBg,
+                                            effectiveText = effectiveText,
                                             initialScrollTarget = initialScrollTargetForChapter,
                                             initialPageScrollY = currentScrollYPosition,
                                             initialCfi = cfiToLoad,
@@ -2622,6 +2676,8 @@ fun EpubReaderHost(
                             PaginatedReaderScreen(
                                 book = epubBook,
                                 isDarkTheme = isDarkTheme,
+                                effectiveBg = effectiveBg,
+                                effectiveText = effectiveText,
                                 pagerState = paginatedPagerState,
                                 searchQuery = searchState.searchQuery,
                                 fontSizeMultiplier = currentFontSizeEm,
@@ -3305,6 +3361,7 @@ fun EpubReaderHost(
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                    onOpenThemeSettings = { showThemePanel = true },
                     onToggleReflow = if (onToggleReflow != null) {
                         {
                             val activeChapter = if (currentRenderMode == RenderMode.PAGINATED) {
@@ -3874,6 +3931,89 @@ fun EpubReaderHost(
                     onDismiss = { showFontSelectionSheet = false }
                 )
                 Spacer(Modifier.height(16.dp))
+            }
+        }
+
+        if (showThemePanel) {
+            ReaderThemePanel(
+                isVisible = true,
+                currentThemeId = currentThemeId,
+                onThemeSelected = {
+                    currentThemeId = it
+                    saveReaderThemeId(context, it)
+                    showThemePanel = false
+                },
+                onDismiss = { showThemePanel = false }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ReaderThemePanel(
+    isVisible: Boolean,
+    currentThemeId: String,
+    onThemeSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (!isVisible) return
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .padding(bottom = 16.dp)
+        ) {
+            Text(
+                "Theme",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                BuiltInThemes.forEach { theme ->
+                    val isSelected = currentThemeId == theme.id
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { onThemeSelected(theme.id) }
+                            .padding(8.dp)
+                    ) {
+                        val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
+                        val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
+                        val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(bgColor, CircleShape)
+                                .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Aa",
+                                color = textColor,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = theme.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
             }
         }
     }

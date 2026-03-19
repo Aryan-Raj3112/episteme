@@ -66,6 +66,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -297,6 +298,8 @@ fun ChapterWebView(
     onChunkRequested: (Int) -> Unit,
     chapterTitle: String,
     isDarkTheme: Boolean,
+    effectiveBg: androidx.compose.ui.graphics.Color,
+    effectiveText: androidx.compose.ui.graphics.Color,
     initialScrollTarget: ChapterScrollPosition?,
     initialPageScrollY: Int?,
     initialCfi: String?,
@@ -616,8 +619,11 @@ fun ChapterWebView(
                                 )
 
                                 view?.evaluateJavascript(jsToInject, null)
+
+                                val bgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
+                                val textHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
                                 view?.evaluateJavascript(
-                                    "javascript:window.applyReaderTheme($isDarkTheme);",
+                                    "javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex');",
                                     null
                                 )
 

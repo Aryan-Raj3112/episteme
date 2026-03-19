@@ -50,6 +50,8 @@ class ContentStyler(
     private val fontFamilyMap: Map<String, FontFamily>,
     private val density: Density,
     private val isDarkTheme: Boolean,
+    private val themeBackgroundColor: Color,
+    private val themeTextColor: Color,
     private val chapterAbsPath: String,
     private val extractionBasePath: String,
     private val userTextAlign: TextAlign?
@@ -208,7 +210,7 @@ class ContentStyler(
     private fun applyThemeToStyle(style: CssStyle): CssStyle {
         val newSpanStyle = style.spanStyle.let { original ->
             val newColor = if (original.color.isSpecified) {
-                CssParser.adaptColorForTheme(original.color, isDarkTheme, isBackground = false)
+                CssParser.adaptColorForTheme(original.color, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
             } else {
                 original.color
             }
@@ -217,14 +219,14 @@ class ContentStyler(
 
         val newBlockStyle = style.blockStyle.let { original ->
             val newBgColor = if (original.backgroundColor.isSpecified) {
-                CssParser.adaptColorForTheme(original.backgroundColor, isDarkTheme, isBackground = true)
+                CssParser.adaptColorForTheme(original.backgroundColor, isDarkTheme, isBackground = true, themeBackgroundColor, themeTextColor)
             } else {
                 original.backgroundColor
             }
 
             fun themeBorder(b: BorderStyle?): BorderStyle? {
                 if (b == null) return null
-                val newColor = CssParser.adaptColorForTheme(b.color, isDarkTheme, isBackground = false)
+                val newColor = CssParser.adaptColorForTheme(b.color, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
                 return b.copy(color = newColor)
             }
 

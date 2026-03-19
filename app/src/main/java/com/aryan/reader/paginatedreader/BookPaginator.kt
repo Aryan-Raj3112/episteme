@@ -107,6 +107,8 @@ class BookPaginator(
     private val density: Density,
     private val fontFamilyMap: Map<String, FontFamily>,
     private val isDarkTheme: Boolean,
+    private val themeBackgroundColor: Color,
+    private val themeTextColor: Color,
     private val bookId: String,
     private val initialChapterToPaginate: Int,
     private val bookCss: Map<String, String>,
@@ -404,6 +406,8 @@ class BookPaginator(
             fontFamilyMap = fontFamilyMap,
             density = density,
             isDarkTheme = isDarkTheme,
+            themeBackgroundColor = themeBackgroundColor,
+            themeTextColor = themeTextColor,
             chapterAbsPath = chapter.absPath,
             extractionBasePath = extractionBasePath,
             userTextAlign = userTextAlign
@@ -475,10 +479,10 @@ class BookPaginator(
         val processedHtml = document.outerHtml()
 
         var parsingCssRules = OptimizedCssRules()
-        val uaResult = CssParser.parse(cssContent = userAgentStylesheet, cssPath = null, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false)
+        val uaResult = CssParser.parse(cssContent = userAgentStylesheet, cssPath = null, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, themeBackgroundColor = themeBackgroundColor, themeTextColor = themeTextColor)
         parsingCssRules = parsingCssRules.merge(uaResult.rules)
         bookCss.forEach { (path, content) ->
-            val bookCssResult = CssParser.parse(cssContent = content, cssPath = path, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false)
+            val bookCssResult = CssParser.parse(cssContent = content, cssPath = path, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, themeBackgroundColor = themeBackgroundColor, themeTextColor = themeTextColor)
             parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
         }
 

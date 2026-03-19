@@ -189,7 +189,7 @@
         window.VIEWPORT_PADDING_BOTTOM = bottom || 0;
     };
 
-    window.applyReaderTheme = function (isDark) {
+    window.applyReaderTheme = function (isDark, bgHex, textHex) {
         var styleId = "readerThemeStyle";
         var themeStyleElement = document.getElementById(styleId);
 
@@ -199,65 +199,180 @@
             document.head.appendChild(themeStyleElement);
         }
 
-        // Set a class on the root element for theme state
         var themeClassName = isDark ? "dark-theme" : "light-theme";
         var oppositeThemeClassName = isDark ? "light-theme" : "dark-theme";
         document.documentElement.classList.remove(oppositeThemeClassName);
         document.documentElement.classList.add(themeClassName);
 
-        var css = "";
+        var effectiveBg = bgHex || (isDark ? '#121212' : '#FFFFFF');
+        var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
 
-        if (isDark) {
-            css = ` html.dark-theme, html.dark-theme body {
-                    background-color: #121212 !important;
-                    color: #E0E0E0 !important;
-                }
+        var css = `
+            :root {
+                --reader-bg: ${effectiveBg};
+                --reader-text: ${effectiveText};
+            }
+            html.${themeClassName}, html.${themeClassName} body {
+                background-color: var(--reader-bg) !important;
+                color: var(--reader-text) !important;
+            }
 
-                html.dark-theme a {
-                    color: #BB86FC !important;
-                }
+            html.${themeClassName} a {
+                color: ${isDark ? '#BB86FC' : '#1A0DAB'} !important;
+            }
 
-                html.dark-theme a p,
-                html.dark-theme a div,
-                html.dark-theme a span,
-                html.dark-theme a li,
-                html.dark-theme a h1,
-                html.dark-theme a h2,
-                html.dark-theme a h3,
-                html.dark-theme a h4,
-                html.dark-theme a h5,
-                html.dark-theme a h6 {
-                    color: #E0E0E0 !important;
-                    background-color: transparent !important;
-                }
+            html.${themeClassName} a p,
+            html.${themeClassName} a div,
+            html.${themeClassName} a span,
+            html.${themeClassName} a li,
+            html.${themeClassName} a h1,
+            html.${themeClassName} a h2,
+            html.${themeClassName} a h3,
+            html.${themeClassName} a h4,
+            html.${themeClassName} a h5,
+            html.${themeClassName} a h6 {
+                color: var(--reader-text) !important;
+                background-color: transparent !important;
+            }
 
-                html.dark-theme blockquote, html.dark-theme pre,
-                html.dark-theme figcaption, html.dark-theme caption,
-                html.dark-theme label, html.dark-theme dt, html.dark-theme dd {
-                    color: inherit !important;
-                    background-color: transparent !important;
-                }
+            html.${themeClassName} blockquote, html.${themeClassName} pre,
+            html.${themeClassName} figcaption, html.${themeClassName} caption,
+            html.${themeClassName} label, html.${themeClassName} dt, html.${themeClassName} dd {
+                color: inherit !important;
+                background-color: transparent !important;
+            }
 
-                html.dark-theme hr {
-                    border-color: #444444 !important;
-                    background-color: #444444 !important;
-                }
+            html.${themeClassName} hr {
+                border-color: ${isDark ? '#444444' : '#CCCCCC'} !important;
+                background-color: ${isDark ? '#444444' : '#CCCCCC'} !important;
+            }
 
-                html.dark-theme table, html.dark-theme tr, html.dark-theme td, html.dark-theme th {
-                    background-color: transparent !important;
-                    border-color: #555 !important;
-                }
-
-                `;
-        } else {
-            css = ` html.light-theme {
-                    background-color: #FFFFFF;
-                }
-
-                `;
-        }
+            html.${themeClassName} table, html.${themeClassName} tr, html.${themeClassName} td, html.${themeClassName} th {
+                background-color: transparent !important;
+                border-color: ${isDark ? '#555' : '#CCC'} !important;
+            }
+        `;
 
         themeStyleElement.innerHTML = css;
+
+        if (window.adjustInlineColorsForContrast) {
+             window.adjustInlineColorsForContrast(isDark, effectiveBg);
+        }
+    };
+
+    function getLuminance(r, g, b) {
+        var a = [r, g, b].map(function (v) {
+            v /= 255;
+            return v <= 0.03928
+                ? v / 12.92
+                : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+    }
+
+    function hexToRgb(hex) {
+        var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : {r:255,g:255,b:255};
+    }
+
+    function rgbStringToRgb(rgbStr) {
+        var parts = rgbStr.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if (parts) {
+            return { r: parseInt(parts[1]), g: parseInt(parts[2]), b: parseInt(parts[3]) };
+        }
+        return null;
+    }
+
+    function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        var max = Math.max(r, g, b), min = Math.min(r, g, b);
+        var h, s, l = (max + min) / 2;
+
+        if(max == min){
+            h = s = 0; // achromatic
+        }else{
+            var d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch(max){
+                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                case g: h = (b - r) / d + 2; break;
+                case b: h = (r - g) / d + 4; break;
+            }
+            h /= 6;
+        }
+        return[h, s, l];
+    }
+
+    function hslToRgb(h, s, l) {
+        var r, g, b;
+        if(s == 0){
+            r = g = b = l; // achromatic
+        }else{
+            var hue2rgb = function hue2rgb(p, q, t){
+                if(t < 0) t += 1;
+                if(t > 1) t -= 1;
+                if(t < 1/6) return p + (q - p) * 6 * t;
+                if(t < 1/2) return q;
+                if(t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            }
+            var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            var p = 2 * l - q;
+            r = hue2rgb(p, q, h + 1/3);
+            g = hue2rgb(p, q, h);
+            b = hue2rgb(p, q, h - 1/3);
+        }
+        return[Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+    }
+
+    window.adjustInlineColorsForContrast = function(isDark, bgHex) {
+        var bgRgb = hexToRgb(bgHex);
+        var bgLum = getLuminance(bgRgb.r, bgRgb.g, bgRgb.b);
+
+        var elements = document.querySelectorAll('[style*="color"]');
+        elements.forEach(function(el) {
+            var style = window.getComputedStyle(el);
+            var colorStr = style.color;
+            var rgb = rgbStringToRgb(colorStr);
+            if (rgb) {
+                var lum = getLuminance(rgb.r, rgb.g, rgb.b);
+                var l1 = Math.max(bgLum, lum);
+                var l2 = Math.min(bgLum, lum);
+                var contrast = (l1 + 0.05) / (l2 + 0.05);
+
+                if (contrast < 4.5) {
+                    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+                    if (bgLum < 0.5) {
+                        hsl[2] = Math.max(hsl[2], 0.7); // Lighten
+                    } else {
+                        hsl[2] = Math.min(hsl[2], 0.3); // Darken
+                    }
+                    var newRgb = hslToRgb(hsl[0], hsl[1], hsl[2]);
+                    el.style.setProperty('color', `rgb(${newRgb[0]}, ${newRgb[1]}, ${newRgb[2]})`, 'important');
+                }
+            }
+        });
+
+        var bgElements = document.querySelectorAll('[style*="background"]');
+        bgElements.forEach(function(el) {
+            var style = window.getComputedStyle(el);
+            var bgStr = style.backgroundColor;
+            if (bgStr && bgStr !== 'rgba(0, 0, 0, 0)' && bgStr !== 'transparent') {
+                var rgb = rgbStringToRgb(bgStr);
+                if (rgb) {
+                    var lum = getLuminance(rgb.r, rgb.g, rgb.b);
+                    if (isDark && lum > 0.5) {
+                        el.style.setProperty('background-color', 'transparent', 'important');
+                    } else if (!isDark && lum < 0.2) {
+                        el.style.setProperty('background-color', 'transparent', 'important');
+                    }
+                }
+            }
+        });
     };
 
     function handleHighlightInteraction(e) {

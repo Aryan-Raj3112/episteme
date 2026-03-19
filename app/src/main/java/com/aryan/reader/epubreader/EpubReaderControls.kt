@@ -152,6 +152,7 @@ fun EpubReaderTopBar(
     onOpenTtsSettings: () -> Unit,
     onOpenDeviceVoiceSettings: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
+    onOpenThemeSettings: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
@@ -208,6 +209,13 @@ fun EpubReaderTopBar(
                             painter = painterResource(id = R.drawable.dictionary),
                             contentDescription = "Dictionary Settings"
                         )
+                    }
+                    TooltipIconButton(
+                        text = "Theme",
+                        description = "Theme Settings",
+                        onClick = onOpenThemeSettings
+                    ) {
+                        Icon(painter = painterResource(id = R.drawable.palette), contentDescription = "Theme Settings")
                     }
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }

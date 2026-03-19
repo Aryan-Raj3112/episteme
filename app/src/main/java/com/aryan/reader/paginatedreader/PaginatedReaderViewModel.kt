@@ -72,6 +72,8 @@ class PaginatedReaderViewModel : ViewModel() {
         textStyle: TextStyle,
         density: Density,
         isDarkTheme: Boolean,
+        themeBackgroundColor: androidx.compose.ui.graphics.Color,
+        themeTextColor: androidx.compose.ui.graphics.Color,
         context: Context,
         initialChapterToPaginate: Int?,
         mathMLRenderer: MathMLRenderer
@@ -83,7 +85,7 @@ class PaginatedReaderViewModel : ViewModel() {
 
             // CSS Parsing and Font Loading
             val userAgentStylesheet = UserAgentStylesheet.default
-            var allRules = OptimizedCssRules() // CHANGED from: mutableListOf<CssRule>()
+            var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
 
             val uaResult = CssParser.parse(
@@ -92,9 +94,11 @@ class PaginatedReaderViewModel : ViewModel() {
                 baseFontSizeSp = textStyle.fontSize.value,
                 density = density.density,
                 constraints = textConstraints,
-                isDarkTheme = isDarkTheme
+                isDarkTheme = isDarkTheme,
+                themeBackgroundColor = themeBackgroundColor,
+                themeTextColor = themeTextColor
             )
-            allRules = allRules.merge(uaResult.rules) // CHANGED
+            allRules = allRules.merge(uaResult.rules)
             allFontFaces.addAll(uaResult.fontFaces)
 
             book.css.forEach { (path, content) ->
@@ -104,9 +108,11 @@ class PaginatedReaderViewModel : ViewModel() {
                     baseFontSizeSp = textStyle.fontSize.value,
                     density = density.density,
                     constraints = textConstraints,
-                    isDarkTheme = isDarkTheme
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor
                 )
-                allRules = allRules.merge(bookCssResult.rules) // CHANGED
+                allRules = allRules.merge(bookCssResult.rules)
                 allFontFaces.addAll(bookCssResult.fontFaces)
             }
             val fontFamilyMap = loadFontFamilies(
@@ -125,6 +131,8 @@ class PaginatedReaderViewModel : ViewModel() {
                 density = density,
                 fontFamilyMap = fontFamilyMap,
                 isDarkTheme = isDarkTheme,
+                themeBackgroundColor = themeBackgroundColor,
+                themeTextColor = themeTextColor,
                 bookId = bookId,
                 bookCacheDao = bookCacheDao,
                 proto = proto,
