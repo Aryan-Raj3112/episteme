@@ -29,6 +29,11 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import com.aryan.reader.SpectrumBox
+import com.aryan.reader.BrightnessSlider
+import com.aryan.reader.ColorComparePill
+import com.aryan.reader.HexInput
+import com.aryan.reader.RgbInputColumn
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
@@ -74,6 +79,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsStartWidth
@@ -88,6 +94,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -151,6 +158,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
@@ -2027,6 +2035,7 @@ fun EpubReaderHost(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(effectiveBg)
                     .padding(scaffoldPaddingValues)
                     .focusRequester(containerFocusRequester)
                     .focusable()
@@ -4186,6 +4195,8 @@ fun ThemeBuilderView(
     var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
     var textureId by remember { mutableStateOf(initialTheme?.textureId) }
 
+    var editingColorType by remember { mutableStateOf<String?>(null) }
+
     val contrast = calculateContrastRatio(bgColor, txtColor)
     val isDark = bgColor.luminance() < 0.5f
 
@@ -4213,7 +4224,7 @@ fun ThemeBuilderView(
             color = bgColor,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            // Draw Texture if selected
+            // Draw Texture if selected (kept logic for future)
             val context = LocalContext.current
             Box(modifier = Modifier.fillMaxSize().run {
                 val texRes = ReaderTexture.entries.find { it.id == textureId }?.resId
@@ -4224,25 +4235,54 @@ fun ThemeBuilderView(
                     }
                 } else this
             }) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Live Preview", color = txtColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text("The quick brown fox jumps over the lazy dog. Adjust the sliders below.", color = txtColor, style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.padding(16.dp).fillMaxWidth()) {
+                    Text(
+                        text = "So many books, so little time.",
+                        color = txtColor,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "- Frank Zappa",
+                        color = txtColor,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End
+                    )
                 }
             }
         }
 
-        if (contrast < 4.5f) {
-            Text("⚠️ Low contrast! This might cause eye strain.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 8.dp))
+        // Animated Contrast Warning
+        AnimatedVisibility(visible = contrast < 4.5f) {
+            Text(
+                "⚠️ Low contrast! This might cause eye strain.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
 
-        // Color Sliders
-        Text("Page Color", style = MaterialTheme.typography.labelMedium)
-        ColorSlider(color = bgColor, onColorChanged = { bgColor = it })
-        Spacer(Modifier.height(8.dp))
-        Text("Text Color", style = MaterialTheme.typography.labelMedium)
-        ColorSlider(color = txtColor, onColorChanged = { txtColor = it })
+        Spacer(Modifier.height(16.dp))
 
+        // Sleek Color Swatches
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ColorSwatchItem(
+                label = "Page Color",
+                color = bgColor,
+                onClick = { editingColorType = "bg" },
+                modifier = Modifier.weight(1f)
+            )
+            ColorSwatchItem(
+                label = "Text Color",
+                color = txtColor,
+                onClick = { editingColorType = "text" },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // Texture UI hidden for now
+        /*
         Spacer(Modifier.height(16.dp))
         Text("Texture", style = MaterialTheme.typography.labelMedium)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4251,7 +4291,187 @@ fun ThemeBuilderView(
                 TextureOption(tex.displayName, tex.resId, textureId == tex.id) { textureId = tex.id }
             }
         }
+        */
         Spacer(Modifier.height(16.dp))
+    }
+
+    // Show the Advanced Picker Dialog if a swatch was clicked
+    if (editingColorType != null) {
+        ThemeColorPickerDialog(
+            initialColor = if (editingColorType == "bg") bgColor else txtColor,
+            title = if (editingColorType == "bg") "Page Color" else "Text Color",
+            onDismiss = { editingColorType = null },
+            onColorChanged = { newColor ->
+                if (editingColorType == "bg") bgColor = newColor else txtColor = newColor
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ColorSwatchItem(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
+        Surface(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            color = color,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth().height(56.dp)
+        ) {}
+    }
+}
+
+@Composable
+fun ThemeColorPickerDialog(
+    initialColor: Color,
+    title: String,
+    onDismiss: () -> Unit,
+    onColorChanged: (Color) -> Unit
+) {
+    val initialHsv = remember(initialColor) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
+        hsv
+    }
+
+    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
+    var value by remember { mutableFloatStateOf(initialHsv[2]) }
+
+    val currentColor by remember {
+        derivedStateOf {
+            val hsv = floatArrayOf(hue, saturation, value)
+            val argb = android.graphics.Color.HSVToColor(255, hsv)
+            Color(argb)
+        }
+    }
+
+    // Live update the theme builder UI as the user slides
+    LaunchedEffect(currentColor) {
+        onColorChanged(currentColor)
+    }
+
+    fun updateFromColor(color: Color) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        hue = hsv[0]
+        saturation = hsv[1]
+        value = hsv[2]
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF2C2C2C),
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                SpectrumBox(
+                    hue = hue,
+                    saturation = saturation,
+                    currentColor = currentColor,
+                    onHueSatChanged = { h, s -> hue = h; saturation = s },
+                    modifier = Modifier.fillMaxWidth().height(220.dp)
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                BrightnessSlider(
+                    hue = hue,
+                    saturation = saturation,
+                    value = value,
+                    onValueChanged = { value = it },
+                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ColorComparePill(
+                        oldColor = initialColor,
+                        newColor = currentColor,
+                        modifier = Modifier.width(64.dp).height(36.dp)
+                    )
+
+                    Column(
+                        modifier = Modifier.weight(1.6f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Hex", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Spacer(Modifier.height(4.dp))
+                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(2.4f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RgbInputColumn(
+                            label = "R", value = currentColor.red,
+                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(
+                            label = "G", value = currentColor.green,
+                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(
+                            label = "B", value = currentColor.blue,
+                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Black
+                        )
+                    ) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
     }
 }
 

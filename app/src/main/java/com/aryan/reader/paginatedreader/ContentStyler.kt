@@ -61,7 +61,6 @@ class ContentStyler(
         return groupFloatingBlocks(semanticBlocks.mapNotNull { styleBlock(it) })
     }
 
-    // ADD this function to group floating blocks, similar to the original parser
     private fun groupFloatingBlocks(blocks: List<ContentBlock>): List<ContentBlock> {
         if (blocks.isEmpty()) return emptyList()
 
@@ -73,7 +72,6 @@ class ContentStyler(
             val floatDirection = (currentBlock as? ImageBlock)?.style?.float
 
             if (currentBlock is ImageBlock && floatDirection in listOf("left", "right")) {
-                val floatedImage = currentBlock
                 val paragraphsToWrap = mutableListOf<ParagraphBlock>()
 
                 while (processingQueue.isNotEmpty()) {
@@ -88,11 +86,11 @@ class ContentStyler(
                     }
                 }
                 val wrappingBlock = WrappingContentBlock(
-                    floatedImage,
+                    currentBlock,
                     paragraphsToWrap,
-                    elementId = floatedImage.elementId,
-                    cfi = floatedImage.cfi,
-                    blockIndex = floatedImage.blockIndex
+                    elementId = currentBlock.elementId,
+                    cfi = currentBlock.cfi,
+                    blockIndex = currentBlock.blockIndex
                 )
                 result.add(wrappingBlock)
             } else {
@@ -476,7 +474,7 @@ class ContentStyler(
     }
 
     private fun toRoman(number: Int): String {
-        if (number < 1 || number > 3999) return number.toString()
+        if (number !in 1..3999) return number.toString()
         val values = listOf(1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1)
         val symbols = listOf("M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I")
         val result = StringBuilder()
