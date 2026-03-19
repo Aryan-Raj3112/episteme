@@ -231,6 +231,7 @@ internal fun PdfVerticalReader(
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
+    activeToolThickness: Float = 0f
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -1512,6 +1513,7 @@ internal fun PdfVerticalReader(
                                     onHighlightUpdate = onHighlightUpdate,
                                     onHighlightDelete = onHighlightDelete,
                                     onTts = onTts,
+                                    activeToolThickness = activeToolThickness,
                                     onTextBoxDragStart = { box, localTopLeft, touchOffset ->
                                         val currentZoom = zoomAnimatable.value
                                         val panX = panXAnimatable.value
@@ -1911,7 +1913,11 @@ internal fun PdfVerticalReader(
         if (isEditMode && selectedTool == InkType.ERASER && globalEraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val pos = globalEraserPosition!!
-                val radiusPx = 8.dp.toPx()
+                val radiusPx = if (activeToolThickness > 0f) {
+                    activeToolThickness * screenWidth * zoomAnimatable.value
+                } else {
+                    8.dp.toPx()
+                }
 
                 drawCircle(color = Color.White.copy(alpha = 0.3f), radius = radiusPx, center = pos)
 

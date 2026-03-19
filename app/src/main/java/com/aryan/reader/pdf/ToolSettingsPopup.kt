@@ -110,6 +110,7 @@ fun ToolSettingsPopup(
     onSnapToggle: (Boolean) -> Unit = {}
 ) {
     val isHighlighter = selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
+    val isEraser = selectedTool == InkType.ERASER
 
     val activeColor = when (selectedTool) {
         InkType.FOUNTAIN_PEN -> fountainPenColor
@@ -117,6 +118,7 @@ fun ToolSettingsPopup(
         InkType.PENCIL -> pencilColor
         InkType.HIGHLIGHTER -> highlighterColor
         InkType.HIGHLIGHTER_ROUND -> highlighterRoundColor
+        InkType.ERASER -> Color.White
         else -> markerColor
     }
 
@@ -130,8 +132,11 @@ fun ToolSettingsPopup(
         }
     }
 
-    // Thickness settings
-    val thicknessRange = if (isHighlighter) 0.01f..0.06f else 0.001f..0.015f
+    val thicknessRange = when {
+        isHighlighter -> 0.01f..0.06f
+        isEraser -> 0.01f..0.1f
+        else -> 0.001f..0.015f
+    }
     @Suppress("UnusedExpression") if (isHighlighter) 0.005f else 0.001f
 
     var showColorPicker by remember { mutableStateOf(false) }
@@ -164,65 +169,92 @@ fun ToolSettingsPopup(
             modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(125.dp),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    verticalAlignment = Alignment.Bottom
+            if (isEraser) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(125.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    if (isHighlighter) {
-                        PenItem(
-                            type = PenType.HIGHLIGHTER,
-                            forcedInkType = InkType.HIGHLIGHTER,
-                            color = highlighterColor.copy(alpha = 1f),
-                            inkColor = highlighterColor,
-                            isSelected = selectedTool == InkType.HIGHLIGHTER,
-                            strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER) },
-                            isSnappingEnabled = isHighlighterSnapEnabled
-                        )
+                    val radiusDp = (activeToolThickness * 1000).coerceIn(10f, 100f).dp
+                    Box(
+                        modifier = Modifier.size(radiusDp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            drawCircle(
+                                color = Color.White.copy(alpha = 0.3f),
+                                radius = size.width / 2
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = size.width / 2,
+                                style = Stroke(width = 2.dp.toPx())
+                            )
+                        }
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(125.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        if (isHighlighter) {
+                            PenItem(
+                                type = PenType.HIGHLIGHTER,
+                                forcedInkType = InkType.HIGHLIGHTER,
+                                color = highlighterColor.copy(alpha = 1f),
+                                inkColor = highlighterColor,
+                                isSelected = selectedTool == InkType.HIGHLIGHTER,
+                                strokeWidth = activeToolThickness,
+                                onClick = { onToolTypeChanged(InkType.HIGHLIGHTER) },
+                                isSnappingEnabled = isHighlighterSnapEnabled
+                            )
 
-                        PenItem(
-                            type = PenType.HIGHLIGHTER_ROUND,
-                            forcedInkType = InkType.HIGHLIGHTER_ROUND,
-                            color = highlighterRoundColor.copy(alpha = 1f),
-                            inkColor = highlighterRoundColor,
-                            isSelected = selectedTool == InkType.HIGHLIGHTER_ROUND,
-                            strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.HIGHLIGHTER_ROUND) },
-                            isSnappingEnabled = isHighlighterSnapEnabled
-                        )
-                    } else {
-                        PenItem(
-                            type = PenType.FOUNTAIN_PEN,
-                            forcedInkType = InkType.FOUNTAIN_PEN,
-                            color = fountainPenColor,
-                            isSelected = selectedTool == InkType.FOUNTAIN_PEN,
-                            strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.FOUNTAIN_PEN) }
-                        )
+                            PenItem(
+                                type = PenType.HIGHLIGHTER_ROUND,
+                                forcedInkType = InkType.HIGHLIGHTER_ROUND,
+                                color = highlighterRoundColor.copy(alpha = 1f),
+                                inkColor = highlighterRoundColor,
+                                isSelected = selectedTool == InkType.HIGHLIGHTER_ROUND,
+                                strokeWidth = activeToolThickness,
+                                onClick = { onToolTypeChanged(InkType.HIGHLIGHTER_ROUND) },
+                                isSnappingEnabled = isHighlighterSnapEnabled
+                            )
+                        } else {
+                            PenItem(
+                                type = PenType.FOUNTAIN_PEN,
+                                forcedInkType = InkType.FOUNTAIN_PEN,
+                                color = fountainPenColor,
+                                isSelected = selectedTool == InkType.FOUNTAIN_PEN,
+                                strokeWidth = activeToolThickness,
+                                onClick = { onToolTypeChanged(InkType.FOUNTAIN_PEN) }
+                            )
 
-                        PenItem(
-                            type = PenType.MARKER,
-                            forcedInkType = InkType.PEN,
-                            color = markerColor,
-                            isSelected = selectedTool == InkType.PEN,
-                            strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.PEN) }
-                        )
+                            PenItem(
+                                type = PenType.MARKER,
+                                forcedInkType = InkType.PEN,
+                                color = markerColor,
+                                isSelected = selectedTool == InkType.PEN,
+                                strokeWidth = activeToolThickness,
+                                onClick = { onToolTypeChanged(InkType.PEN) }
+                            )
 
-                        PenItem(
-                            type = PenType.PENCIL,
-                            forcedInkType = InkType.PENCIL,
-                            color = pencilColor,
-                            isSelected = selectedTool == InkType.PENCIL,
-                            strokeWidth = activeToolThickness,
-                            onClick = { onToolTypeChanged(InkType.PENCIL) }
-                        )
+                            PenItem(
+                                type = PenType.PENCIL,
+                                forcedInkType = InkType.PENCIL,
+                                color = pencilColor,
+                                isSelected = selectedTool == InkType.PENCIL,
+                                strokeWidth = activeToolThickness,
+                                onClick = { onToolTypeChanged(InkType.PENCIL) }
+                            )
+                        }
                     }
                 }
             }
@@ -262,7 +294,7 @@ fun ToolSettingsPopup(
                 valueRange = thicknessRange, isOpacity = false,
                 trackColor = Color(0xFF424242),
                 thumbColor = Color(0xFF757575),
-                activeColor = activeColor
+                activeColor = if (isEraser) Color.White else activeColor
             )
 
             // Darkness (Opacity) Slider for Highlighters
@@ -281,80 +313,82 @@ fun ToolSettingsPopup(
                 )
             }
 
-            Spacer(Modifier.height(16.dp)) // Reduced spacing
+            if (!isEraser) {
+                Spacer(Modifier.height(16.dp)) // Reduced spacing
 
-            // --- Color Palette ---
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+                // --- Color Palette ---
                 Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    activePalette.take(6).forEachIndexed { index, color ->
-                        val isSelected = index == selectedPaletteIndex
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        activePalette.take(6).forEachIndexed { index, color ->
+                            val isSelected = index == selectedPaletteIndex
 
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(circleSize)
-                                .testTag("Palette_Item_$index")
-                                .pointerInput(color) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            currentOnColorChanged(color)
-                                        },
-                                        onLongPress = {
-                                            colorPickerSlotIndex = index
-                                            showColorPicker = true
-                                        }
-                                    )
-                                }
-                        ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawCircle(color = color.copy(alpha = 1f))
-                                if (isSelected) {
-                                    drawCircle(
-                                        color = Color.White,
-                                        radius = size.minDimension / 2,
-                                        style = Stroke(width = 2.dp.toPx())
-                                    )
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(circleSize)
+                                    .testTag("Palette_Item_$index")
+                                    .pointerInput(color) {
+                                        detectTapGestures(
+                                            onTap = {
+                                                currentOnColorChanged(color)
+                                            },
+                                            onLongPress = {
+                                                colorPickerSlotIndex = index
+                                                showColorPicker = true
+                                            }
+                                        )
+                                    }
+                            ) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    drawCircle(color = color.copy(alpha = 1f))
+                                    if (isSelected) {
+                                        drawCircle(
+                                            color = Color.White,
+                                            radius = size.minDimension / 2,
+                                            style = Stroke(width = 2.dp.toPx())
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                Spacer(Modifier.width(16.dp))
+                    Spacer(Modifier.width(16.dp))
 
-                // Divider
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(circleSize)
-                        .background(Color.White.copy(alpha = 0.15f))
-                )
+                    // Divider
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(circleSize)
+                            .background(Color.White.copy(alpha = 0.15f))
+                    )
 
-                Spacer(Modifier.width(16.dp))
+                    Spacer(Modifier.width(16.dp))
 
-                // Spectrum / Color Wheel Button
-                val rainbowColors = listOf(
-                    Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red
-                )
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(circleSize)
-                        .clip(CircleShape)
-                        .background(Brush.sweepGradient(rainbowColors))
-                        .clickable {
-                            if (selectedPaletteIndex != -1) {
-                                colorPickerSlotIndex = selectedPaletteIndex
-                                showColorPicker = true
+                    // Spectrum / Color Wheel Button
+                    val rainbowColors = listOf(
+                        Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red
+                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(circleSize)
+                            .clip(CircleShape)
+                            .background(Brush.sweepGradient(rainbowColors))
+                            .clickable {
+                                if (selectedPaletteIndex != -1) {
+                                    colorPickerSlotIndex = selectedPaletteIndex
+                                    showColorPicker = true
+                                }
                             }
-                        }
-                ) {}
+                    ) {}
+                }
             }
         }
     }

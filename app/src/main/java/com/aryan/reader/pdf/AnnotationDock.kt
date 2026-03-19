@@ -67,6 +67,7 @@ fun AnnotationDock(
     canUndo: Boolean,
     canRedo: Boolean,
     lastPenTool: InkType,
+    lastHighlighterTool: InkType = InkType.HIGHLIGHTER,
     modifier: Modifier = Modifier,
     isSticky: Boolean = false,
     isMinimized: Boolean,
@@ -180,7 +181,15 @@ fun AnnotationDock(
                         description = "Pen",
                         size = buttonSize,
                         iconSize = iconSize,
-                        onClick = { if(!isMinimized) onToolClick(lastPenTool) }
+                        onClick = {
+                            if(!isMinimized) {
+                                if (selectedTool != InkType.PEN && selectedTool != InkType.FOUNTAIN_PEN && selectedTool != InkType.PENCIL) {
+                                    onToolClick(lastPenTool)
+                                } else {
+                                    onToolClick(selectedTool)
+                                }
+                            }
+                        }
                     )
 
                     // Highlighter
@@ -195,7 +204,7 @@ fun AnnotationDock(
                         onClick = {
                             if (!isMinimized) {
                                 if (selectedTool != InkType.HIGHLIGHTER && selectedTool != InkType.HIGHLIGHTER_ROUND) {
-                                    onToolClick(InkType.HIGHLIGHTER)
+                                    onToolClick(lastHighlighterTool)
                                 } else {
                                     onToolClick(selectedTool)
                                 }

@@ -1374,8 +1374,9 @@ fun PdfViewerScreen(
     val selectedTool = toolSettings.getActiveTool()
 
     val lastPenTool = toolSettings.getLastPenTool()
+    val lastHighlighterTool = toolSettings.getLastHighlighterTool()
     val dockPenColor = toolSettings.getToolColor(lastPenTool)
-    val dockHighlighterColor = toolSettings.getToolColor(InkType.HIGHLIGHTER)
+    val dockHighlighterColor = toolSettings.getToolColor(lastHighlighterTool)
 
     val activeToolColor = toolSettings.getToolColor(selectedTool)
     val activeToolThickness = toolSettings.getToolThickness(selectedTool)
@@ -2714,7 +2715,7 @@ fun PdfViewerScreen(
         annotation: PdfAnnotation,
         hitPoint: PdfPoint,
         pageAspectRatio: Float,
-        threshold: Float = 0.025f
+        threshold: Float
     ): Boolean {
         if (annotation.points.isEmpty()) return false
 
@@ -4242,7 +4243,7 @@ fun PdfViewerScreen(
                                                             val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                             val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point, aspectRatio)
+                                                                isAnnotationHit(it, point, aspectRatio, activeToolThickness)
                                                             }
                                                             if (toRemove.isNotEmpty()) {
                                                                 val batch =
@@ -4289,7 +4290,7 @@ fun PdfViewerScreen(
                                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                                 val toRemove = existing.filter {
-                                                                    isAnnotationHit(it, point, aspectRatio)
+                                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
                                                                 }
                                                                 if (toRemove.isNotEmpty()) {
                                                                     val batch =
@@ -4405,6 +4406,7 @@ fun PdfViewerScreen(
                                                 onHighlightUpdate = onHighlightUpdate,
                                                 onHighlightDelete = onHighlightDelete,
                                                 onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
+                                                activeToolThickness = currentStrokeWidthState,
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
                                                         val targetPage =
@@ -4632,7 +4634,7 @@ fun PdfViewerScreen(
                                                         val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                         val existing = allAnnotations[pageIndex] ?: emptyList()
                                                         val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point, aspectRatio)
+                                                            isAnnotationHit(it, point, aspectRatio, activeToolThickness)
                                                         }
                                                         if (toRemove.isNotEmpty()) {
                                                             val batch =
@@ -4670,7 +4672,7 @@ fun PdfViewerScreen(
                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point, aspectRatio)
+                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
                                                 }
                                                 if (toRemove.isNotEmpty()) {
                                                     val batch =
@@ -4737,6 +4739,7 @@ fun PdfViewerScreen(
                                             onHighlightUpdate = onHighlightUpdate,
                                             onHighlightDelete = onHighlightDelete,
                                             onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
+                                            activeToolThickness = currentStrokeWidthState,
                                             onLinkClicked = onLinkClickedStable,
                                             onInternalLinkClicked = onInternalLinkNavStable,
                                             bookmarks = bookmarksHolder,
@@ -6386,19 +6389,20 @@ fun PdfViewerScreen(
                                     activePenColor = dockPenColor,
                                     activeHighlighterColor = dockHighlighterColor,
                                     lastPenTool = lastPenTool,
+                                    lastHighlighterTool = lastHighlighterTool,
                                     isStylusOnlyMode = isStylusOnlyMode,
                                     onToggleStylusOnlyMode = {
                                         isStylusOnlyMode = !isStylusOnlyMode
                                         saveStylusOnlyMode(context, isStylusOnlyMode)
                                     },
                                     onToolClick = { clickedTool ->
-                                        if (clickedTool == InkType.ERASER || clickedTool == InkType.TEXT) {
+                                        if (clickedTool == InkType.TEXT) {
                                             annotationSettingsRepo.updateSelectedTool(
                                                 clickedTool
                                             )
                                             showToolSettings = false
                                         } else if (selectedTool == clickedTool) {
-                                            if (clickedTool == InkType.PEN || clickedTool == InkType.FOUNTAIN_PEN || clickedTool == InkType.PENCIL || clickedTool == InkType.HIGHLIGHTER || clickedTool == InkType.HIGHLIGHTER_ROUND) {
+                                            if (clickedTool == InkType.PEN || clickedTool == InkType.FOUNTAIN_PEN || clickedTool == InkType.PENCIL || clickedTool == InkType.HIGHLIGHTER || clickedTool == InkType.HIGHLIGHTER_ROUND || clickedTool == InkType.ERASER) {
                                                 showToolSettings = !showToolSettings
                                             }
                                         } else {

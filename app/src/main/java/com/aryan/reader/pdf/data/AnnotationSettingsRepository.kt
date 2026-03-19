@@ -59,6 +59,7 @@ data class TextStyleConfig(
 data class AnnotationToolSettings(
     val selectedToolName: String = "PEN",
     val lastActivePenType: String = "PEN",
+    val lastActiveHighlighterType: String = "HIGHLIGHTER",
     val toolConfigs: Map<String, ToolConfig> = emptyMap(),
     val penPaletteArgb: List<Int> = listOf(
         android.graphics.Color.BLACK,
@@ -101,6 +102,12 @@ data class AnnotationToolSettings(
 
     fun getPenPalette(): List<Color> = penPaletteArgb.map { Color(it) }
     fun getHighlighterPalette(): List<Color> = highlighterPaletteArgb.map { Color(it) }
+
+    fun getLastHighlighterTool(): InkType = try {
+        InkType.valueOf(lastActiveHighlighterType)
+    } catch (_: Exception) {
+        InkType.HIGHLIGHTER
+    }
 }
 
 class AnnotationSettingsRepository(context: Context) {
@@ -154,6 +161,8 @@ class AnnotationSettingsRepository(context: Context) {
 
         if (tool == InkType.PEN || tool == InkType.FOUNTAIN_PEN || tool == InkType.PENCIL) {
             currentSettings = currentSettings.copy(lastActivePenType = tool.name)
+        } else if (tool == InkType.HIGHLIGHTER || tool == InkType.HIGHLIGHTER_ROUND) {
+            currentSettings = currentSettings.copy(lastActiveHighlighterType = tool.name) // ADD THIS
         }
 
         saveSettings(currentSettings)

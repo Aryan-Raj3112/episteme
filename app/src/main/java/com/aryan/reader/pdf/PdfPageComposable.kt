@@ -438,6 +438,7 @@ internal fun PdfPageComposable(
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
+    activeToolThickness: Float = 0f
 ) {
     val pdfDocumentItem = pdfDocument.item
     var bitmapState by remember { mutableStateOf(PdfThumbnailCache.get(pageIndex)) }
@@ -3775,6 +3776,7 @@ internal fun PdfPageComposable(
                         isEditMode = isEditMode,
                         selectedTool = selectedTool,
                         eraserPosition = eraserPosition,
+                        activeToolThickness = activeToolThickness,
                         richTextController = richTextController,
                         textBoxes = textBoxes,
                         selectedTextBoxId = selectedTextBoxId,
@@ -4516,6 +4518,8 @@ private fun PdfPageRenderer(
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit,
     onHighlightDelete: (String) -> Unit,
     onTts: (Int, Int) -> Unit,
+    activeToolThickness: Float
+
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -4704,7 +4708,11 @@ private fun PdfPageRenderer(
 
         if (isEditMode && selectedTool == InkType.ERASER && eraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val radiusPx = 8.dp.toPx()
+                val radiusPx = if (activeToolThickness > 0f && staticData.targetWidth > 0) {
+                    activeToolThickness * staticData.targetWidth * scale // Calculate dynamic size based on tool settings scale
+                } else {
+                    8.dp.toPx()
+                }
 
                 drawCircle(
                     color = Color.White.copy(alpha = 0.3f),
