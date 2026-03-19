@@ -121,6 +121,7 @@ import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
@@ -515,7 +516,8 @@ fun PaginatedReaderScreen(
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<HighlightColor>,
-    onUpdatePalette: (Int, HighlightColor) -> Unit
+    onUpdatePalette: (Int, HighlightColor) -> Unit,
+    activeTextureId: String? = null
 ) {
     LaunchedEffect(userHighlights) {
         Timber.d("PaginatedReaderScreen: Received ${userHighlights.size} highlights.")
@@ -524,7 +526,25 @@ fun PaginatedReaderScreen(
         }
     }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg)) {
+    val context = LocalContext.current
+    val textureBitmap = remember(activeTextureId) {
+        activeTextureId?.let { id ->
+            com.aryan.reader.epubreader.ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
+                androidx.compose.ui.graphics.ImageBitmap.imageResource(context.resources, resId)
+            }
+        }
+    }
+
+    val textureModifier = if (textureBitmap != null) {
+        Modifier.drawBehind {
+            val brush = androidx.compose.ui.graphics.ShaderBrush(
+                androidx.compose.ui.graphics.ImageShader(textureBitmap, androidx.compose.ui.graphics.TileMode.Repeated, androidx.compose.ui.graphics.TileMode.Repeated)
+            )
+            drawRect(brush = brush, blendMode = BlendMode.Multiply, alpha = 0.6f)
+        }
+    } else Modifier
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg).then(textureModifier)) {
         val textMeasurer = rememberTextMeasurer()
         val baseTextStyle = MaterialTheme.typography.bodyLarge
 

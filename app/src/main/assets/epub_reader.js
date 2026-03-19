@@ -189,7 +189,7 @@
         window.VIEWPORT_PADDING_BOTTOM = bottom || 0;
     };
 
-    window.applyReaderTheme = function (isDark, bgHex, textHex) {
+    window.applyReaderTheme = function (isDark, bgHex, textHex, textureBase64) {
         var styleId = "readerThemeStyle";
         var themeStyleElement = document.getElementById(styleId);
 
@@ -207,6 +207,10 @@
         var effectiveBg = bgHex || (isDark ? '#121212' : '#FFFFFF');
         var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
 
+        var textureCss = textureBase64
+            ? `background-image: url('${textureBase64}'); background-repeat: repeat; background-blend-mode: multiply;`
+            : 'background-image: none;';
+
         var css = `
             :root {
                 --reader-bg: ${effectiveBg};
@@ -215,6 +219,7 @@
             html.${themeClassName}, html.${themeClassName} body {
                 background-color: var(--reader-bg) !important;
                 color: var(--reader-text) !important;
+                ${textureCss}
             }
 
             html.${themeClassName} a {

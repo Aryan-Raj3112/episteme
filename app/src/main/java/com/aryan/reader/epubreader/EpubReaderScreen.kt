@@ -31,9 +31,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.media.AudioManager
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import android.net.Uri
 import android.os.Build
 import android.webkit.WebView
@@ -51,10 +48,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -80,20 +81,26 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -119,16 +126,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,6 +165,7 @@ import com.aryan.reader.BuildConfig
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
+import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -339,12 +358,21 @@ private fun saveExternalSearchPackage(context: Context, packageName: String) {
     prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
 }
 
+enum class ReaderTexture(val id: String, val resId: Int, val displayName: String) {
+    PAPER("paper", R.drawable.texture_paper, "Paper"),
+    CANVAS("canvas", R.drawable.texture_canvas, "Canvas"),
+    EINK("eink", R.drawable.texture_eink, "E-Ink"),
+    SLATE("slate", R.drawable.texture_slate, "Slate")
+}
+
 data class ReaderTheme(
     val id: String,
     val name: String,
     val backgroundColor: Color,
     val textColor: Color,
-    val isDark: Boolean
+    val isDark: Boolean,
+    val textureId: String? = null,
+    val isCustom: Boolean = false
 )
 
 val BuiltInThemes = listOf(
@@ -357,6 +385,7 @@ val BuiltInThemes = listOf(
 )
 
 private const val PREF_READER_THEME = "reader_theme_id"
+private const val PREF_CUSTOM_THEMES = "custom_themes_json"
 
 private fun saveReaderThemeId(context: Context, themeId: String) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -366,6 +395,55 @@ private fun saveReaderThemeId(context: Context, themeId: String) {
 private fun loadReaderThemeId(context: Context): String {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getString(PREF_READER_THEME, "system") ?: "system"
+}
+
+private fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    val jsonArray = JSONArray()
+    themes.filter { it.isCustom }.forEach { theme ->
+        val obj = JSONObject().apply {
+            put("id", theme.id)
+            put("name", theme.name)
+            put("bgColor", theme.backgroundColor.toArgb())
+            put("textColor", theme.textColor.toArgb())
+            put("isDark", theme.isDark)
+            theme.textureId?.let { put("textureId", it) }
+        }
+        jsonArray.put(obj)
+    }
+    prefs.edit { putString(PREF_CUSTOM_THEMES, jsonArray.toString()) }
+}
+
+private fun loadCustomThemes(context: Context): List<ReaderTheme> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    val jsonString = prefs.getString(PREF_CUSTOM_THEMES, "[]") ?: "[]"
+    val themes = mutableListOf<ReaderTheme>()
+    try {
+        val jsonArray = org.json.JSONArray(jsonString)
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            themes.add(
+                ReaderTheme(
+                    id = obj.getString("id"),
+                    name = obj.getString("name"),
+                    backgroundColor = Color(obj.getInt("bgColor")),
+                    textColor = Color(obj.getInt("textColor")),
+                    isDark = obj.getBoolean("isDark"),
+                    textureId = if (obj.has("textureId")) obj.getString("textureId") else null,
+                    isCustom = true
+                )
+            )
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to parse custom themes")
+    }
+    return themes
+}
+
+private fun calculateContrastRatio(color1: Color, color2: Color): Float {
+    val l1 = max(color1.luminance(), color2.luminance())
+    val l2 = min(color1.luminance(), color2.luminance())
+    return (l1 + 0.05f) / (l2 + 0.05f)
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -995,8 +1073,12 @@ fun EpubReaderHost(
     var showThemePanel by remember { mutableStateOf(false) }
 
     var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
-    val activeTheme = remember(currentThemeId) {
-        BuiltInThemes.find { it.id == currentThemeId } ?: BuiltInThemes[0]
+    var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+
+    val activeTheme = remember(currentThemeId, customThemes) {
+        BuiltInThemes.find { it.id == currentThemeId }
+            ?: customThemes.find { it.id == currentThemeId }
+            ?: BuiltInThemes[0]
     }
 
     val systemIsDark = isSystemInDarkTheme()
@@ -1012,6 +1094,7 @@ fun EpubReaderHost(
             if (systemIsDark) Color(0xFFE0E0E0) else Color(0xFF000000)
         } else activeTheme.textColor
     }
+    val activeTextureId = activeTheme.textureId
 
     val currentChapterInPaginatedMode by remember {
         derivedStateOf {
@@ -2330,6 +2413,7 @@ fun EpubReaderHost(
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
                                             currentTextAlign = currentTextAlign,
+                                            activeTextureId = activeTextureId,
                                             onHighlightClicked = {
                                                 lastHighlightClickTime = System.currentTimeMillis()
                                                 showBars = false
@@ -2692,6 +2776,7 @@ fun EpubReaderHost(
                                     cfi = ttsState.sourceCfi ?: "",
                                     offset = ttsState.startOffsetInSource
                                 ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
+                                activeTextureId = activeTextureId,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
                                 modifier = Modifier.alpha(if (isPagerInitialized) 1f else 0f),
                                 onPaginatorReady = { newPaginator ->
@@ -3943,7 +4028,9 @@ fun EpubReaderHost(
                     saveReaderThemeId(context, it)
                     showThemePanel = false
                 },
-                onDismiss = { showThemePanel = false }
+                onDismiss = { showThemePanel = false },
+                customThemes = customThemes,
+                onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) }
             )
         }
     }
@@ -3954,67 +4041,238 @@ fun EpubReaderHost(
 fun ReaderThemePanel(
     isVisible: Boolean,
     currentThemeId: String,
+    customThemes: List<ReaderTheme>,
     onThemeSelected: (String) -> Unit,
+    onCustomThemesUpdated: (List<ReaderTheme>) -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!isVisible) return
+    var showBuilder by remember { mutableStateOf(false) }
+    var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.navigationBars }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .padding(bottom = 16.dp)
-        ) {
-            Text(
-                "Theme",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                BuiltInThemes.forEach { theme ->
-                    val isSelected = currentThemeId == theme.id
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clickable { onThemeSelected(theme.id) }
-                            .padding(8.dp)
-                    ) {
-                        val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
-                        val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
-                        val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .background(bgColor, CircleShape)
-                                .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Aa",
-                                color = textColor,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+        AnimatedContent(targetState = showBuilder, label = "ThemePanelTransition") { isBuilding ->
+            if (isBuilding) {
+                ThemeBuilderView(
+                    initialTheme = editingTheme,
+                    onSave = { newTheme ->
+                        val updatedList = if (editingTheme != null) {
+                            customThemes.map { if (it.id == newTheme.id) newTheme else it }
+                        } else {
+                            customThemes + newTheme
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = theme.name,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        onCustomThemesUpdated(updatedList)
+                        onThemeSelected(newTheme.id)
+                        showBuilder = false
+                        editingTheme = null
+                    },
+                    onCancel = {
+                        showBuilder = false
+                        editingTheme = null
+                    }
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .padding(bottom = 16.dp)
+                ) {
+                    Text(
+                        "Reading Themes",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    Text("Presets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    ThemeGrid(themes = BuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
+
+                    Spacer(Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("My Themes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { editingTheme = null; showBuilder = true }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Add, contentDescription = "Create Theme", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    if (customThemes.isEmpty()) {
+                        Text("No custom themes yet. Tap '+' to create one.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        ThemeGrid(
+                            themes = customThemes,
+                            currentThemeId = currentThemeId,
+                            onThemeSelected = onThemeSelected,
+                            onEdit = { editingTheme = it; showBuilder = true },
+                            onDelete = { themeToDelete ->
+                                val updated = customThemes.filter { it.id != themeToDelete.id }
+                                onCustomThemesUpdated(updated)
+                                if (currentThemeId == themeToDelete.id) onThemeSelected("system")
+                            }
                         )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ThemeGrid(
+    themes: List<ReaderTheme>,
+    currentThemeId: String,
+    onThemeSelected: (String) -> Unit,
+    onEdit: ((ReaderTheme) -> Unit)? = null,
+    onDelete: ((ReaderTheme) -> Unit)? = null
+) {
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(4),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(themes.size) { index ->
+            val theme = themes[index]
+            val isSelected = currentThemeId == theme.id
+            val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
+            val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
+            val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable { onThemeSelected(theme.id) }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(bgColor, CircleShape)
+                        .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+
+                    if (theme.isCustom && isSelected && onEdit != null && onDelete != null) {
+                        // Show edit/delete over selected custom theme
+                        Row(modifier = Modifier.align(Alignment.BottomCenter).offset(y = 12.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))) {
+                            Icon(Icons.Default.Edit, "Edit", Modifier.size(16.dp).clickable { onEdit(theme) }.padding(2.dp), tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Delete, "Delete", Modifier.size(16.dp).clickable { onDelete(theme) }.padding(2.dp), tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+fun ThemeBuilderView(
+    initialTheme: ReaderTheme?,
+    onSave: (ReaderTheme) -> Unit,
+    onCancel: () -> Unit
+) {
+    var name by remember { mutableStateOf(initialTheme?.name ?: "Custom Theme") }
+    var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
+    var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
+    var textureId by remember { mutableStateOf(initialTheme?.textureId) }
+
+    val contrast = calculateContrastRatio(bgColor, txtColor)
+    val isDark = bgColor.luminance() < 0.5f
+
+    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            Text(if (initialTheme == null) "New Theme" else "Edit Theme", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = {
+                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, isCustom = true))
+            }) { Text("Save") }
+        }
+
+        androidx.compose.material3.OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Theme Name") },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            singleLine = true
+        )
+
+        // Live Preview Card
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = bgColor,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            // Draw Texture if selected
+            val context = LocalContext.current
+            Box(modifier = Modifier.fillMaxSize().run {
+                val texRes = ReaderTexture.entries.find { it.id == textureId }?.resId
+                if (texRes != null) {
+                    val bmp = ImageBitmap.imageResource(context.resources, texRes)
+                    this.drawBehind {
+                        drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.5f)
+                    }
+                } else this
+            }) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Live Preview", color = txtColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text("The quick brown fox jumps over the lazy dog. Adjust the sliders below.", color = txtColor, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        if (contrast < 4.5f) {
+            Text("⚠️ Low contrast! This might cause eye strain.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        // Color Sliders
+        Text("Page Color", style = MaterialTheme.typography.labelMedium)
+        ColorSlider(color = bgColor, onColorChanged = { bgColor = it })
+        Spacer(Modifier.height(8.dp))
+        Text("Text Color", style = MaterialTheme.typography.labelMedium)
+        ColorSlider(color = txtColor, onColorChanged = { txtColor = it })
+
+        Spacer(Modifier.height(16.dp))
+        Text("Texture", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TextureOption("None", null, textureId == null) { textureId = null }
+            ReaderTexture.entries.forEach { tex ->
+                TextureOption(tex.displayName, tex.resId, textureId == tex.id) { textureId = tex.id }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun TextureOption(name: String, resId: Int?, isSelected: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick)) {
+        Box(modifier = Modifier.size(48.dp).clip(CircleShape).border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape).run {
+            if (resId != null) {
+                val bmp = ImageBitmap.imageResource(LocalResources.current, resId)
+                this.drawBehind { drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated))) }
+            } else this.background(MaterialTheme.colorScheme.surfaceVariant)
+        })
+        Text(name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+fun ColorSlider(color: Color, onColorChanged: (Color) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Slider(value = color.red, onValueChange = { onColorChanged(color.copy(red = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red), modifier = Modifier.weight(1f))
+        Slider(value = color.green, onValueChange = { onColorChanged(color.copy(green = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green), modifier = Modifier.weight(1f))
+        Slider(value = color.blue, onValueChange = { onColorChanged(color.copy(blue = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue), modifier = Modifier.weight(1f))
     }
 }
