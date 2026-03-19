@@ -3536,8 +3536,10 @@ private fun Modifier.realisticBookPage(
 
                     clipRect(0f, 0f, w, h) {
                         clipPath(frontPath) {
-                            val flapColor = if (isDarkTheme) Color(0xFF2A2A2A) else Color(0xFFF0F0F0)
-                            drawPath(reflectedScreenPath, color = flapColor)
+                            drawPath(reflectedScreenPath, color = paperColor)
+
+                            val flapTint = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
+                            drawPath(reflectedScreenPath, color = flapTint)
 
                             val innerShadowWidth = shadowWidth * 0.7f
                             val innerShadowBrush = Brush.linearGradient(
