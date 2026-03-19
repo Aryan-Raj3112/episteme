@@ -556,17 +556,32 @@ fun PaginatedReaderScreen(
         var anchorLocatorForReconfig by remember { mutableStateOf<Locator?>(null) }
         val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
 
-        val previousConstraints = remember { arrayOf(this.constraints) }
-        if (previousConstraints[0] != this.constraints) {
+        val previousState = remember {
+            arrayOf<Any>(this.constraints, isDarkTheme, effectiveBg, effectiveText)
+        }
+
+        if (previousState[0] != this.constraints ||
+            previousState[1] != isDarkTheme ||
+            previousState[2] != effectiveBg ||
+            previousState[3] != effectiveText
+        ) {
             val activePaginator = currentPaginatorRef.value
             if (activePaginator is BookPaginator) {
                 val currentPage = pagerState.currentPage
                 val locator = activePaginator.getLocatorForPage(currentPage)
-                if (locator != null) {
-                    anchorLocatorForReconfig = locator
-                }
+                anchorLocatorForReconfig = locator
+
+                Timber.tag("ThemeReconfig").d("""
+            RECONFIG DETECTED
+            - Reason: ${if (previousState[0] != this.constraints) "Constraints" else "Theme/Colors"}
+            - Current Page: $currentPage
+            - Saved Locator: $locator
+        """.trimIndent())
             }
-            previousConstraints[0] = this.constraints
+            previousState[0] = this.constraints
+            previousState[1] = isDarkTheme
+            previousState[2] = effectiveBg
+            previousState[3] = effectiveText
         }
 
         val textStyle = remember(
@@ -732,31 +747,28 @@ fun PaginatedReaderScreen(
 
         LaunchedEffect(paginator) {
             if (anchorLocatorForReconfig != null) {
-                Timber.d("Waiting for paginator to initialize before restoring anchor...")
+                Timber.tag("ThemeReconfig").d("Restoration Effect Triggered for Locator: $anchorLocatorForReconfig")
 
-                // Suspend until isLoading becomes false
                 snapshotFlow { paginator.isLoading }.filter { !it }.first()
 
                 val targetLocator = anchorLocatorForReconfig
                 if (targetLocator != null) {
-                    Timber.d(
-                        "Paginator initialized. Restoring anchor: Chapter=${targetLocator.chapterIndex}, Block=${targetLocator.blockIndex}, Offset=${targetLocator.charOffset}"
-                    )
-
                     val page = paginator.findPageForLocator(targetLocator)
+
+                    Timber.tag("ThemeReconfig").d("""
+                Restoration Progress:
+                - Target Locator: $targetLocator
+                - Paginator found Page: $page
+                - Chapter Start Page: ${paginator.chapterStartPageIndices[targetLocator.chapterIndex]}
+            """.trimIndent())
+
                     if (page != null) {
                         pagerState.scrollToPage(page)
-                        Timber.d("Restored to page: $page")
                     } else {
-                        val startPage =
-                            paginator.chapterStartPageIndices[targetLocator.chapterIndex]
+                        val startPage = paginator.chapterStartPageIndices[targetLocator.chapterIndex]
                         if (startPage != null) {
-                            Timber.w(
-                                "Exact locator not found. Falling back to start of chapter at page $startPage"
-                            )
+                            Timber.tag("ThemeReconfig").w("Precise page not found, falling back to chapter start: $startPage")
                             pagerState.scrollToPage(startPage)
-                        } else {
-                            Timber.e("Failed to restore position. Chapter start index not found.")
                         }
                     }
                     anchorLocatorForReconfig = null

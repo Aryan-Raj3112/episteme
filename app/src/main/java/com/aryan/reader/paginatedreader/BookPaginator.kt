@@ -129,7 +129,7 @@ class BookPaginator(
     override var generation by mutableIntStateOf(0)
         private set
 
-    override val pageShiftRequest = MutableSharedFlow<Int>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val pageShiftRequest = MutableSharedFlow<Int>(extraBufferCapacity = 100, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val currentUserChapterIndex = MutableStateFlow(initialChapterToPaginate)
 
     internal val chapterPageCounts = ConcurrentHashMap<Int, Int>()
@@ -954,8 +954,8 @@ class BookPaginator(
                 return@launch
             }
 
-            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
             val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
+            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
 
             if (chapterPages == null) {
                 Timber.e("Href Navigation failed: Could not paginate target chapter $targetChapterIndex.")
@@ -987,8 +987,8 @@ class BookPaginator(
             val targetChapterIndex = result.locationInSource
             Timber.i("Finding page for search result: '${result.query}' in chapter $targetChapterIndex")
 
-            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
             val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
+            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
 
             if (chapterPages == null) {
                 Timber.e("Search result navigation failed: Could not paginate target chapter $targetChapterIndex.")
@@ -1059,8 +1059,8 @@ class BookPaginator(
         val targetChapterIndex = locator.chapterIndex
         Timber.i("Finding page for locator: Chapter $targetChapterIndex, Block ${locator.blockIndex}, Offset ${locator.charOffset}")
 
-        val chapterStartPage = chapterStartPageIndices[targetChapterIndex] ?: 0
         val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
+        val chapterStartPage = chapterStartPageIndices[targetChapterIndex] ?: 0
 
         if (chapterPages.isNullOrEmpty()) {
             Timber.e("Locator navigation failed: Could not paginate target chapter $targetChapterIndex.")
@@ -1072,6 +1072,8 @@ class BookPaginator(
         for ((pageIndex, page) in chapterPages.withIndex()) {
             for (block in page.content) {
                 if (block.blockIndex == locator.blockIndex) {
+                    Timber.tag("ThemeReconfig").d("Block Index Match: Found block ${locator.blockIndex} on page $pageIndex of Chapter $targetChapterIndex")
+
                     if (fallbackPageInChapter == -1) {
                         fallbackPageInChapter = pageIndex
                     }
@@ -1081,19 +1083,20 @@ class BookPaginator(
                         val startOffsetOnPage = textBlock.startCharOffsetInSource
                         val endOffsetOnPage = startOffsetOnPage + textBlock.content.length
 
-                        if (locator.charOffset in startOffsetOnPage..<endOffsetOnPage) {
+                        val isInside = locator.charOffset in startOffsetOnPage..<endOffsetOnPage
+                        Timber.tag("ThemeReconfig").d("Offset Check: Target ${locator.charOffset} vs Range [$startOffsetOnPage, $endOffsetOnPage]. Inside: $isInside")
+
+                        if (isInside) {
                             val finalPageIndex = chapterStartPage + pageIndex
-                            Timber.i("Locator navigation SUCCEEDED with offset. Final page index: $finalPageIndex")
                             return finalPageIndex
                         }
                     } else {
-                        val finalPageIndex = chapterStartPage + pageIndex
-                        Timber.i("Locator navigation SUCCEEDED for non-text block. Final page index: $finalPageIndex")
-                        return finalPageIndex
+                        return chapterStartPage + pageIndex
                     }
                 }
             }
         }
+        Timber.tag("ThemeReconfig").e("Block Index NOT FOUND: Could not find block ${locator.blockIndex} in any page of Chapter $targetChapterIndex")
 
         if (fallbackPageInChapter != -1) {
             val finalPageIndex = chapterStartPage + fallbackPageInChapter
@@ -1124,9 +1127,9 @@ class BookPaginator(
         coroutineScope.launch(Dispatchers.IO) {
             Timber.i("findPageForCfi: Starting search for CFI: '$cfi' in chapter: '$chapterIndex'")
 
+            val chapterPages = pageCache[chapterIndex] ?: paginateChapter(chapterIndex)
             val chapterStartPage = calculateAccurateStartIndex(chapterIndex)
             Timber.d("findPageForCfi: Chapter $chapterIndex starts at absolute page $chapterStartPage.")
-            val chapterPages = pageCache[chapterIndex] ?: paginateChapter(chapterIndex)
 
             if (chapterPages == null) {
                 Timber.e("CFI Navigation failed: Could not paginate target chapter $chapterIndex.")
