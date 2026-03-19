@@ -4059,8 +4059,11 @@ fun ReaderThemePanel(
     var showBuilder by remember { mutableStateOf(false) }
     var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.navigationBars }
     ) {
@@ -4088,6 +4091,7 @@ fun ReaderThemePanel(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .fillMaxHeight(0.65f)
                         .padding(16.dp)
                         .padding(bottom = 16.dp)
                 ) {
@@ -4145,8 +4149,8 @@ fun ThemeGrid(
     onDelete: ((ReaderTheme) -> Unit)? = null
 ) {
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(4),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 80.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         items(themes.size) { index ->
@@ -4158,27 +4162,37 @@ fun ThemeGrid(
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.clickable { onThemeSelected(theme.id) }
             ) {
                 Box(
                     modifier = Modifier
                         .size(56.dp)
                         .background(bgColor, CircleShape)
-                        .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape),
+                        .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
+                        .clickable { onThemeSelected(theme.id) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-
-                    if (theme.isCustom && isSelected && onEdit != null && onDelete != null) {
-                        // Show edit/delete over selected custom theme
-                        Row(modifier = Modifier.align(Alignment.BottomCenter).offset(y = 12.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))) {
-                            Icon(Icons.Default.Edit, "Edit", Modifier.size(16.dp).clickable { onEdit(theme) }.padding(2.dp), tint = MaterialTheme.colorScheme.primary)
-                            Icon(Icons.Default.Delete, "Delete", Modifier.size(16.dp).clickable { onDelete(theme) }.padding(2.dp), tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                if (theme.isCustom && onEdit != null && onDelete != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
             }
         }
     }
@@ -4200,7 +4214,7 @@ fun ThemeBuilderView(
     val contrast = calculateContrastRatio(bgColor, txtColor)
     val isDark = bgColor.luminance() < 0.5f
 
-    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.65f).padding(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onCancel) { Text("Cancel") }
             Text(if (initialTheme == null) "New Theme" else "Edit Theme", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
@@ -4295,14 +4309,16 @@ fun ThemeBuilderView(
         Spacer(Modifier.height(16.dp))
     }
 
-    // Show the Advanced Picker Dialog if a swatch was clicked
-    if (editingColorType != null) {
+    editingColorType?.let { type ->
         ThemeColorPickerDialog(
-            initialColor = if (editingColorType == "bg") bgColor else txtColor,
-            title = if (editingColorType == "bg") "Page Color" else "Text Color",
+            initialColor = if (type == "bg") bgColor else txtColor,
+            title = if (type == "bg") "Page Color" else "Text Color",
+            bgColor = bgColor,
+            textColor = txtColor,
+            editingColorType = type,
             onDismiss = { editingColorType = null },
             onColorChanged = { newColor ->
-                if (editingColorType == "bg") bgColor = newColor else txtColor = newColor
+                if (type == "bg") bgColor = newColor else txtColor = newColor
             }
         )
     }
@@ -4327,6 +4343,9 @@ fun ColorSwatchItem(label: String, color: Color, onClick: () -> Unit, modifier: 
 fun ThemeColorPickerDialog(
     initialColor: Color,
     title: String,
+    bgColor: Color,
+    textColor: Color,
+    editingColorType: String,
     onDismiss: () -> Unit,
     onColorChanged: (Color) -> Unit
 ) {
@@ -4348,7 +4367,6 @@ fun ThemeColorPickerDialog(
         }
     }
 
-    // Live update the theme builder UI as the user slides
     LaunchedEffect(currentColor) {
         onColorChanged(currentColor)
     }
@@ -4387,6 +4405,32 @@ fun ThemeColorPickerDialog(
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
                     )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                val liveBgColor = if (editingColorType == "bg") currentColor else bgColor
+                val liveTextColor = if (editingColorType == "text") currentColor else textColor
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = liveBgColor,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Live Preview",
+                            color = liveTextColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Reading is dreaming.",
+                            color = liveTextColor,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(20.dp))

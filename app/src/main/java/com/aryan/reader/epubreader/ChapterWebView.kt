@@ -440,9 +440,15 @@ fun ChapterWebView(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+
+        LaunchedEffect(isDarkTheme, effectiveBg, effectiveText, textureBase64) {
+            val bgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
+            val textHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
+            localWebViewRef?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"});", null)
+        }
+
         key(
             key,
-            isDarkTheme,
             currentFontSize,
             currentLineHeight,
             currentFontFamily,
