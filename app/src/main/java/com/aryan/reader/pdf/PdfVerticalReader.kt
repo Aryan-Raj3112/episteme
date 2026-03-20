@@ -60,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -234,6 +235,13 @@ internal fun PdfVerticalReader(
     activeToolThickness: Float = 0f
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
+    DisposableEffect(state) {
+        onDispose {
+            state.scrollToPageHandler = null
+            state.snapToPageHandler = null
+            state.scrollByHandler = null
+        }
+    }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
     BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         val imeInsets = WindowInsets.ime

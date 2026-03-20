@@ -2196,10 +2196,16 @@ fun PdfViewerScreen(
     }
 
     LaunchedEffect(displayMode) {
-        coroutineScope.launch {
+        if (initialScrollDone) {
             if (displayMode == DisplayMode.VERTICAL_SCROLL) {
                 val pageToScroll = pagerState.currentPage
-                verticalReaderState.scrollToPage(pageToScroll)
+
+                var attempts = 0
+                while (verticalReaderState.snapToPageHandler == null && attempts < 50) {
+                    delay(16)
+                    attempts++
+                }
+                verticalReaderState.snapToPage(pageToScroll)
             } else {
                 val pageToScroll = verticalReaderState.currentPage
                 pagerState.scrollToPage(pageToScroll)
