@@ -2147,8 +2147,6 @@ fun PdfViewerScreen(
             Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount")
 
             try {
-                delay(200)
-
                 when (displayMode) {
                     DisplayMode.PAGINATION -> {
                         if (pagerState.currentPage != targetPage) {
@@ -2157,14 +2155,11 @@ fun PdfViewerScreen(
                         initialScrollDone = true
                     }
                     DisplayMode.VERTICAL_SCROLL -> {
-                        var retries = 0
-                        while (verticalReaderState.snapToPageHandler == null && retries < 20) {
-                            delay(50)
-                            retries++
+                        while (verticalReaderState.snapToPageHandler == null) {
+                            delay(16)
                         }
-                        Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage) after $retries retries")
+                        Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
                         verticalReaderState.snapToPage(targetPage)
-                        delay(100)
                         initialScrollDone = true
                     }
                 }

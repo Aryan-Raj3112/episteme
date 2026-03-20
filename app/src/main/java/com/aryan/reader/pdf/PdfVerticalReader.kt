@@ -260,13 +260,10 @@ internal fun PdfVerticalReader(
         val dividerHeightPx = with(density) { dividerHeightDp.toPx() }
 
         val layoutState = remember(ratios, screenWidth, screenHeight, density) {
-            // Return a wrapper object containing both list and total height to ensure
-            // atomicity
             data class LayoutResult(val pages: List<PdfPageLayout>, val totalHeight: Float)
 
             var currentY = 0.0
 
-            // Special case for single page centering
             if (ratios.size == 1) {
                 val ratio = ratios[0]
                 val safeRatio = if (ratio <= 0f) 1f else ratio
@@ -278,7 +275,6 @@ internal fun PdfVerticalReader(
 
             val pages = ratios.mapIndexed { index, ratio ->
                 val safeRatio = if (ratio <= 0f) 1f else ratio
-                // Use double for calculation
                 val pageHeightDouble = screenWidth.toDouble() / safeRatio.toDouble()
                 val pageHeight = pageHeightDouble.toFloat()
 
@@ -297,9 +293,7 @@ internal fun PdfVerticalReader(
                 info
             }
 
-            // Calculate exact total height based on the double accumulator
             val totalH = if (pages.isNotEmpty()) {
-                // Determine the bottom of the last element strictly
                 val last = pages.last()
                 last.y + last.height
             } else {
@@ -314,57 +308,84 @@ internal fun PdfVerticalReader(
         Timber.tag(SCROLL_BOUNDS_TAG)
             .d("Layout Recalculated. Page Count: ${layoutInfo.size}, TotalDocHeight: $totalDocHeight")
 
-        val zoomAnimatable = remember { Animatable(1f) }
-        val panXAnimatable = remember { Animatable(0f) }
-        val panYAnimatable = remember { Animatable(0f) }
-
-        var previousLayoutPages by remember { mutableStateOf<List<PdfPageLayout>?>(null) }
-        val currentScaleProvider = remember(zoomAnimatable) { { zoomAnimatable.value } }
-
-        SideEffect {
-            val prevPages = previousLayoutPages
-            val currentPages = layoutState.pages
-
-            if (prevPages != null && prevPages.size == currentPages.size) {
-                val anchorIndex = state.firstVisiblePage.coerceIn(currentPages.indices)
-                val oldY = prevPages[anchorIndex].y
-                val newY = currentPages[anchorIndex].y
-                val delta = newY - oldY
-
-                if (abs(delta) > 0.1f) {
-                    val currentZoom = zoomAnimatable.value
-                    val shiftInScreenPixels = delta * currentZoom
-                    val targetPanY = panYAnimatable.value - shiftInScreenPixels
-
-                    scope.launch { panYAnimatable.snapTo(targetPanY) }
+        val fitZoom = remember(ratios, screenWidth, screenHeight) {
+            if (ratios.isEmpty() || screenWidth == 0f || screenHeight == 0f) 1f
+            else {
+                val firstRatio = ratios.firstOrNull { it > 0f } ?: 1f
+                val baseHeight = screenWidth / firstRatio
+                if (screenWidth > screenHeight) {
+                    ((screenHeight - 32f) / baseHeight).coerceAtMost(1f)
+                } else {
+                    1f
                 }
             }
-            previousLayoutPages = currentPages
+        }
+
+        val zoomAnimatable = remember { Animatable(fitZoom) }
+        val panXAnimatable = remember { Animatable(if ((screenWidth * fitZoom) < screenWidth) (screenWidth - (screenWidth * fitZoom)) / 2f else 0f) }
+        val panYAnimatable = remember { Animatable(0f) }
+
+        var previousScreenWidth by remember { mutableFloatStateOf(0f) }
+        LaunchedEffect(screenWidth, screenHeight) {
+            if (previousScreenWidth > 0f && previousScreenWidth != screenWidth) {
+                if (zoomAnimatable.value <= 1.1f) {
+                    val centeredX = if ((screenWidth * fitZoom) < screenWidth) {
+                        (screenWidth - (screenWidth * fitZoom)) / 2f
+                    } else 0f
+
+                    zoomAnimatable.snapTo(fitZoom)
+                    panXAnimatable.snapTo(centeredX)
+                    onZoomChange(fitZoom)
+                }
+            }
+            previousScreenWidth = screenWidth
+        }
+
+        var isInitialLayout by remember { mutableStateOf(true) }
+        val currentScaleProvider = remember(zoomAnimatable) { { zoomAnimatable.value } }
+
+        LaunchedEffect(layoutState.pages) {
+            if (!isInitialLayout) {
+                val targetPageIdx = state.currentPage
+                val newLayout = layoutState.pages
+                val pageLayout = newLayout.getOrNull(targetPageIdx)
+
+                if (pageLayout != null) {
+                    val currentZoom = zoomAnimatable.value
+                    val targetPanY = headerHeightPx - (pageLayout.y * currentZoom)
+                    val zoomedDocHeight = layoutState.totalHeight * currentZoom
+                    val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+                    val finalPanY = targetPanY.coerceIn(minPanY, headerHeightPx)
+
+                    Timber.tag("PdfZoomDiagnostics").i("Layout changed (Orientation/Size). Snapping to Page $targetPageIdx at PanY: $finalPanY")
+                    panYAnimatable.snapTo(finalPanY)
+                }
+            }
+            isInitialLayout = false
         }
 
         fun clampValues(
             targetZoom: Float, targetPanX: Float, targetPanY: Float
         ): Triple<Float, Float, Float> {
-            val constrainedZoom = targetZoom.coerceIn(1f, 5f)
+            val constrainedZoom = targetZoom.coerceIn(fitZoom, 5f)
             val zoomedDocWidth = screenWidth * constrainedZoom
             val zoomedDocHeight = totalDocHeight * constrainedZoom
 
-            val maxPanX = 0f
-            val minPanX = -(zoomedDocWidth - screenWidth).coerceAtLeast(0f)
-
-            val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
-                headerHeightPx
-            )
-
-            val constrainedX = targetPanX.coerceIn(minPanX, maxPanX)
-            val constrainedY = targetPanY.coerceIn(minPanY, headerHeightPx)
-
-            if (constrainedZoom > 1.01f) {
-                Timber.tag("PdfZoomIssue").v(
-                    "Clamp: Zoom=$constrainedZoom, targetY=$targetPanY, finalY=$constrainedY, " +
-                            "boundsY=[$minPanY, $headerHeightPx], zoomedHeight=$zoomedDocHeight"
-                )
+            val constrainedX = if (zoomedDocWidth < screenWidth) {
+                (screenWidth - zoomedDocWidth) / 2f
+            } else {
+                val maxPanX = 0f
+                val minPanX = -(zoomedDocWidth - screenWidth)
+                targetPanX.coerceIn(minPanX, maxPanX)
             }
+
+            val minPanY = if (zoomedDocHeight < (screenHeight - headerHeightPx - footerHeightPx)) {
+                headerHeightPx
+            } else {
+                (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+            }
+
+            val constrainedY = targetPanY.coerceIn(minPanY, headerHeightPx)
 
             return Triple(constrainedZoom, constrainedX, constrainedY)
         }
@@ -629,6 +650,7 @@ internal fun PdfVerticalReader(
 
             val currentZoom = zoomAnimatable.value
             val zoomedDocHeight = totalDocHeight * currentZoom
+            val zoomedDocWidth = screenWidth * currentZoom
 
             val isAnimating = zoomAnimatable.isRunning || panYAnimatable.isRunning || panXAnimatable.isRunning
 
@@ -637,11 +659,21 @@ internal fun PdfVerticalReader(
             val extraScrollForIme = if (isTextEditing) imeBottom.toFloat() else 0f
 
             val minPanY = (screenHeight - effectiveFooterPx - zoomedDocHeight - extraScrollForIme).coerceAtMost(headerHeightPx)
-            val minPanX = -(screenWidth * currentZoom - screenWidth).coerceAtLeast(0f)
+
+            val minPanX: Float
+            val maxPanX: Float
+            if (zoomedDocWidth < screenWidth) {
+                val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                minPanX = centeredX
+                maxPanX = centeredX
+            } else {
+                minPanX = -(zoomedDocWidth - screenWidth)
+                maxPanX = 0f
+            }
 
             if (!isAnimating) {
                 panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
-                panXAnimatable.updateBounds(lowerBound = minPanX, upperBound = 0f)
+                panXAnimatable.updateBounds(lowerBound = minPanX, upperBound = maxPanX)
             } else {
                 panYAnimatable.updateBounds(
                     lowerBound = minOf(panYAnimatable.lowerBound ?: minPanY, minPanY),
@@ -649,7 +681,7 @@ internal fun PdfVerticalReader(
                 )
                 panXAnimatable.updateBounds(
                     lowerBound = minOf(panXAnimatable.lowerBound ?: minPanX, minPanX),
-                    upperBound = 0f
+                    upperBound = maxOf(panXAnimatable.upperBound ?: maxPanX, maxPanX)
                 )
             }
         }
@@ -706,7 +738,12 @@ internal fun PdfVerticalReader(
 
         val onDoubleTapToZoom: (Offset) -> Unit = { tapScreenOffset ->
             val currentZoom = zoomAnimatable.value
-            val targetZoom = if (currentZoom < 1.1f) 2.5f else 1f
+
+            val targetZoom = when {
+                currentZoom < 0.95f -> 1f
+                currentZoom < 2.45f -> 2.5f
+                else -> fitZoom
+            }
 
             val startPanX = panXAnimatable.value
             val startPanY = panYAnimatable.value
@@ -719,46 +756,41 @@ internal fun PdfVerticalReader(
                 val pivotContentX = (tapScreenOffset.x - startPanX) / currentZoom
                 val pivotContentY = (tapScreenOffset.y - startPanY) / currentZoom
 
-                val durationMillis = 400L
-                val startTimeNanos = withFrameNanos { it }
-                val durationNanos = durationMillis * 1_000_000L
+                val rawNextPanX = tapScreenOffset.x - (pivotContentX * targetZoom)
+                val rawNextPanY = tapScreenOffset.y - (pivotContentY * targetZoom)
 
-                while (true) {
-                    val now = withFrameNanos { it }
-                    val elapsedNanos = now - startTimeNanos
-                    val progress = (elapsedNanos.toFloat() / durationNanos).coerceIn(0f, 1f)
-                    val easedProgress = FastOutSlowInEasing.transform(progress)
+                val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
 
-                    val nextZoom = androidx.compose.ui.util.lerp(currentZoom, targetZoom, easedProgress)
+                panXAnimatable.updateBounds(
+                    lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
+                    upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
+                )
+                panYAnimatable.updateBounds(
+                    lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
+                    upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
+                )
 
-                    val rawNextPanX = tapScreenOffset.x - (pivotContentX * nextZoom)
-                    val rawNextPanY = tapScreenOffset.y - (pivotContentY * nextZoom)
-
-                    val (clampedZoom, clampedX, clampedY) = clampCamera(nextZoom, rawNextPanX, rawNextPanY)
-
-                    panXAnimatable.updateBounds(
-                        lowerBound = minOf(panXAnimatable.lowerBound ?: clampedX, clampedX),
-                        upperBound = maxOf(panXAnimatable.upperBound ?: clampedX, clampedX)
-                    )
-                    panYAnimatable.updateBounds(
-                        lowerBound = minOf(panYAnimatable.lowerBound ?: clampedY, clampedY),
-                        upperBound = maxOf(panYAnimatable.upperBound ?: clampedY, clampedY)
-                    )
-
-                    zoomAnimatable.snapTo(clampedZoom)
-                    panXAnimatable.snapTo(clampedX)
-                    panYAnimatable.snapTo(clampedY)
-
-                    if (progress >= 1f) break
+                coroutineScope {
+                    launch { zoomAnimatable.animateTo(finalZoom, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                    launch { panXAnimatable.animateTo(finalX, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                    launch { panYAnimatable.animateTo(finalY, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
                 }
 
                 onZoomChange(zoomAnimatable.value)
 
-                val finalZoom = zoomAnimatable.value
-                panXAnimatable.updateBounds(
-                    lowerBound = -(screenWidth * finalZoom - screenWidth).coerceAtLeast(0f),
-                    upperBound = 0f
-                )
+                val zoomedDocWidth = screenWidth * finalZoom
+                val finalMinX: Float
+                val finalMaxX: Float
+                if (zoomedDocWidth < screenWidth) {
+                    val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                    finalMinX = centeredX
+                    finalMaxX = centeredX
+                } else {
+                    finalMinX = -(zoomedDocWidth - screenWidth)
+                    finalMaxX = 0f
+                }
+                panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
+
                 val zDocH = totalDocHeight * finalZoom
                 val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
                 panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
@@ -1032,7 +1064,7 @@ internal fun PdfVerticalReader(
 
                                         val oldZoom = accumulatedZoom
                                         val rawTargetZoom = oldZoom * effectiveZoomChange
-                                        val constrainedZoom = rawTargetZoom.coerceIn(1f, 5f)
+                                        val constrainedZoom = rawTargetZoom.coerceIn(fitZoom, 5f)
 
                                         val prevCentroid = centroid - panChange
                                         val contentPivotX = (prevCentroid.x - accumulatedPanX) / oldZoom
@@ -1045,13 +1077,6 @@ internal fun PdfVerticalReader(
 
                                         val rawNewPanX = centroid.x - (contentPivotX * constrainedZoom)
                                         val rawNewPanY = centroid.y - (contentPivotY * constrainedZoom)
-
-                                        if (effectiveZoomChange > 1.0f) {
-                                            Timber.tag("PdfZoomIssue").d(
-                                                "PinchIn FIXED: ZoomFactor=$effectiveZoomChange, CentroidY=${centroid.y}, " +
-                                                        "OldPanY=$accumulatedPanY, ResultRawPanY=$rawNewPanY"
-                                            )
-                                        }
 
                                         val (finalZoom, finalX, finalY) = clampCamera(
                                             constrainedZoom, rawNewPanX, rawNewPanY
@@ -1103,7 +1128,7 @@ internal fun PdfVerticalReader(
                             scope.launch {
                                 isFlinging = true
                                 try {
-                                    if (accumulatedZoom !in 1f..5f) {
+                                    if (accumulatedZoom !in fitZoom..5f) {
                                         zoomAnimatable.animateTo(
                                             finalZoom, animationSpec = tween(300)
                                         )
@@ -1111,8 +1136,18 @@ internal fun PdfVerticalReader(
                                     onZoomChange(zoomAnimatable.targetValue)
                                     val zoomedDocWidth = screenWidth * finalZoom
                                     val zoomedDocHeight = totalDocHeight * finalZoom
-                                    val maxPanX = 0f
-                                    val minPanX = -(zoomedDocWidth - screenWidth).coerceAtLeast(0f)
+
+                                    val flingMinX: Float
+                                    val flingMaxX: Float
+                                    if (zoomedDocWidth < screenWidth) {
+                                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                                        flingMinX = centeredX
+                                        flingMaxX = centeredX
+                                    } else {
+                                        flingMinX = -(zoomedDocWidth - screenWidth)
+                                        flingMaxX = 0f
+                                    }
+
                                     val minPanY =
                                         (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
                                             headerHeightPx
@@ -1121,11 +1156,9 @@ internal fun PdfVerticalReader(
                                     Timber.tag(SCROLL_BOUNDS_TAG)
                                         .d("- totalDocHeight: $totalDocHeight, zoom: $finalZoom -> zoomedDocHeight: $zoomedDocHeight")
                                     Timber.tag(SCROLL_BOUNDS_TAG)
-                                        .d("- Fling bounds set to Y: [$minPanY, $headerHeightPx]")
-                                    panXAnimatable.updateBounds(minPanX, maxPanX)
-                                    panYAnimatable.updateBounds(
-                                        minPanY, headerHeightPx
-                                    )
+                                        .d("- Fling bounds set to Y:[$minPanY, $headerHeightPx]")
+                                    panXAnimatable.updateBounds(flingMinX, flingMaxX)
+                                    panYAnimatable.updateBounds(minPanY, headerHeightPx)
 
                                     coroutineScope {
                                         launch {
