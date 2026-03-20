@@ -58,18 +58,29 @@ class FolderSyncWorker(
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
 
         val jsonString = prefs.getString("synced_folders_list_json", null)
-        val folders = mutableListOf<String>()
+        val folders = mutableListOf<Pair<String, Set<FileType>>>()
 
         if (jsonString != null) {
             try {
                 val array = org.json.JSONArray(jsonString)
                 for (i in 0 until array.length()) {
-                    folders.add(array.getJSONObject(i).getString("uri"))
+                    val obj = array.getJSONObject(i)
+                    val uri = obj.getString("uri")
+                    val allowedFileTypes = mutableSetOf<FileType>()
+                    if (obj.has("allowedFileTypes")) {
+                        val typesArray = obj.getJSONArray("allowedFileTypes")
+                        for (j in 0 until typesArray.length()) {
+                            try { allowedFileTypes.add(FileType.valueOf(typesArray.getString(j))) } catch (_: Exception) {}
+                        }
+                    } else {
+                        allowedFileTypes.addAll(FileType.entries)
+                    }
+                    folders.add(Pair(uri, allowedFileTypes))
                 }
             } catch (e: Exception) { Timber.e(e) }
         } else {
             val single = prefs.getString("synced_folder_uri", null)
-            if (single != null) folders.add(single)
+            if (single != null) folders.add(Pair(single, FileType.entries.toSet()))
         }
 
         if (folders.isEmpty()) {
@@ -83,8 +94,8 @@ class FolderSyncWorker(
             syncMutex.withLock {
                 var allSuccess = true
 
-                for (uriString in folders) {
-                    val success = performSyncForFolder(uriString, isMetadataOnly)
+                for ((uriString, allowedTypes) in folders) {
+                    val success = performSyncForFolder(uriString, allowedTypes, isMetadataOnly)
                     if (!success) allSuccess = false
                 }
 
@@ -104,7 +115,7 @@ class FolderSyncWorker(
         }
     }
 
-    private suspend fun performSyncForFolder(folderUriString: String, metadataOnly: Boolean): Boolean {
+    private suspend fun performSyncForFolder(folderUriString: String, allowedFileTypes: Set<FileType>, metadataOnly: Boolean): Boolean {
         if (folderUriString.isBlank()) return true
         val folderUri = folderUriString.toUri()
 
@@ -195,7 +206,8 @@ class FolderSyncWorker(
                         file.listFiles().let { fileQueue.addAll(it) }
                     } else if (file.isFile) {
                         val name = file.name ?: ""
-                        if (isValidExtension(name) && !name.endsWith(".json") && !name.startsWith(".")) {
+                        val type = getFileType(name, file.type)
+                        if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
                             currentDiskFiles.add(file)
                         }
                     }
@@ -298,14 +310,6 @@ class FolderSyncWorker(
         }
     }
 
-    private fun isValidExtension(name: String): Boolean {
-        return name.endsWith(".pdf", true) ||
-                name.endsWith(".epub", true) ||
-                name.endsWith(".mobi", true) ||
-                name.endsWith(".azw3", true) ||
-                name.endsWith(".md", true)
-    }
-
     private fun getFileType(name: String, mimeType: String?): FileType? {
         return when {
             mimeType == "application/pdf" || name.endsWith(".pdf", true) -> FileType.PDF
@@ -313,6 +317,7 @@ class FolderSyncWorker(
             name.endsWith(".mobi", true) || name.endsWith(".azw3", true) -> FileType.MOBI
             name.endsWith(".md", true) -> FileType.MD
             name.endsWith(".txt", true) -> FileType.TXT
+            name.endsWith(".html", true) || name.endsWith(".xhtml", true) || name.endsWith(".htm", true) -> FileType.HTML
             else -> null
         }
     }

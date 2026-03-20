@@ -148,7 +148,7 @@ data class DeviceLimitReachedState(
 )
 
 data class SyncedFolder(
-    val uriString: String, val name: String, val lastScanTime: Long
+    val uriString: String, val name: String, val lastScanTime: Long, val allowedFileTypes: Set<FileType> = FileType.entries.toSet()
 )
 
 data class Shelf(val name: String, val books: List<RecentFileItem>) {
@@ -783,7 +783,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteBookPermanently(bookId: String, onDeleted: () -> Unit = {}) {
         viewModelScope.launch {
-            val item = recentFilesRepository.getFileByBookId(bookId) ?: return@launch
+            @Suppress("UnusedVariable", "Unused") val item = recentFilesRepository.getFileByBookId(bookId) ?: return@launch
 
             Timber.d("Deleting book permanently from reader: $bookId")
 
@@ -1384,7 +1384,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val oldTime = prefs.getLong(KEY_LAST_FOLDER_SCAN_TIME, 0L)
             if (oldUri != null) {
                 val name = getDisplayPathFromUri(appContext, oldUri)
-                val migrated = SyncedFolder(oldUri, name, oldTime)
+                val migrated = SyncedFolder(oldUri, name, oldTime, FileType.entries.toSet())
                 folders.add(migrated)
                 saveSyncedFoldersToPrefs(folders)
 
@@ -1398,11 +1398,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val jsonArray = JSONArray(jsonString)
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
+
+                    val allowedFileTypes = mutableSetOf<FileType>()
+                    if (obj.has("allowedFileTypes")) {
+                        val typesArray = obj.getJSONArray("allowedFileTypes")
+                        for (j in 0 until typesArray.length()) {
+                            try {
+                                allowedFileTypes.add(FileType.valueOf(typesArray.getString(j)))
+                            } catch (_: Exception) {}
+                        }
+                    } else {
+                        allowedFileTypes.addAll(FileType.entries)
+                    }
+
                     folders.add(
                         SyncedFolder(
                             uriString = obj.getString("uri"),
                             name = obj.getString("name"),
-                            lastScanTime = obj.optLong("lastScanTime", 0L)
+                            lastScanTime = obj.optLong("lastScanTime", 0L),
+                            allowedFileTypes = allowedFileTypes
                         )
                     )
                 }
@@ -1420,6 +1434,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             obj.put("uri", folder.uriString)
             obj.put("name", folder.name)
             obj.put("lastScanTime", folder.lastScanTime)
+            val typesArray = JSONArray()
+            folder.allowedFileTypes.forEach { typesArray.put(it.name) }
+            obj.put("allowedFileTypes", typesArray)
             jsonArray.put(obj)
         }
         prefs.edit { putString(KEY_SYNCED_FOLDERS_JSON, jsonArray.toString()) }
@@ -1446,7 +1463,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 val name = getDisplayPathFromUri(appContext, folderUri.toString())
-                val newFolder = SyncedFolder(folderUri.toString(), name, 0L)
+                val newFolder = SyncedFolder(folderUri.toString(), name, 0L, FileType.entries.toSet())
                 val newStats = currentFolders + newFolder
 
                 saveSyncedFoldersToPrefs(newStats)
@@ -1573,6 +1590,37 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                         else -> Unit
                     }
+                }
+            }
+        }
+    }
+
+    fun updateFolderFilters(folder: SyncedFolder, newFilters: Set<FileType>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val currentFolders = _internalState.value.syncedFolders.toMutableList()
+            val index = currentFolders.indexOfFirst { it.uriString == folder.uriString }
+            if (index != -1) {
+                val updatedFolder = folder.copy(allowedFileTypes = newFilters)
+                currentFolders[index] = updatedFolder
+                saveSyncedFoldersToPrefs(currentFolders)
+                _internalState.update { it.copy(syncedFolders = currentFolders) }
+
+                val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
+                    .filter { it.type !in newFilters }
+
+                if (filesToRemove.isNotEmpty()) {
+                    Timber.d("Removing ${filesToRemove.size} files that no longer match the filter for folder ${folder.name}")
+                    val idsToRemove = filesToRemove.map { it.bookId }
+
+                    idsToRemove.forEach { bookId ->
+                        pdfTextRepository.clearBookText(bookId)
+                        clearImportedFileCache(bookId)
+                    }
+                    recentFilesRepository.deleteFilePermanently(idsToRemove)
+                }
+
+                withContext(Dispatchers.Main) {
+                    scanSyncedFolder()
                 }
             }
         }

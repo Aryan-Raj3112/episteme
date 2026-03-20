@@ -26,6 +26,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.FilterList
@@ -270,6 +271,7 @@ fun LibraryScreen(
             onScanNowClick = viewModel::scanSyncedFolder,
             onSyncMetadataClick = viewModel::syncFolderMetadata,
             onSelectSyncFolderClick = onSelectSyncFolderClick,
+            onEditFolderFiltersClick = { folder, filters -> viewModel.updateFolderFilters(folder, filters) },
             syncedFolders = uiState.syncedFolders,
             onAddFolderClick = { uri -> viewModel.addSyncedFolder(uri) },
             onRemoveFolderClick = { folder -> viewModel.removeSyncedFolder(folder) },
@@ -484,6 +486,7 @@ fun LibraryScreenContent(
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
     onSelectSyncFolderClick: () -> Unit,
+    onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onDisconnectSyncFolderClick: () -> Unit,
     downloadingBookIds: Set<String>,
     lastFolderScanTime: Long?,
@@ -750,8 +753,10 @@ fun LibraryScreenContent(
                 2 -> {
                     FolderSyncScreen(
                         syncedFolders = syncedFolders,
+                        allRecentFiles = recentFiles,
                         onAddFolderClick = onAddFolderClick,
                         onRemoveFolderClick = onRemoveFolderClick,
+                        onEditFolderFiltersClick = onEditFolderFiltersClick,
                         onScanNowClick = onScanNowClick,
                         onSyncMetadataClick = onSyncMetadataClick,
                         isLoading = isLoading || isRefreshing
@@ -1458,12 +1463,16 @@ private fun DeleteShelvesConfirmationDialog(
 @Composable
 private fun FolderSyncScreen(
     syncedFolders: List<SyncedFolder>,
+    allRecentFiles: List<RecentFileItem>,
     onAddFolderClick: (android.net.Uri) -> Unit,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
+    onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
     isLoading: Boolean
 ) {
+    var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
+
     val pickFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -1471,8 +1480,6 @@ private fun FolderSyncScreen(
             onAddFolderClick(it)
         }
     }
-
-    LocalContext.current
 
     Scaffold(
         floatingActionButton = {
@@ -1492,7 +1499,6 @@ private fun FolderSyncScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Global Actions Header
             if (syncedFolders.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1534,27 +1540,53 @@ private fun FolderSyncScreen(
                 )
             }
 
-            // List of Folders
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 80.dp) // Space for FAB
+                contentPadding = PaddingValues(bottom = 80.dp)
             ) {
                 items(syncedFolders, key = { it.uriString }) { folder ->
-                    FolderCard(folder, onRemoveFolderClick)
+                    FolderCard(
+                        folder = folder,
+                        allRecentFiles = allRecentFiles,
+                        onRemoveClick = onRemoveFolderClick,
+                        onEditFiltersClick = { editingFolder = folder }
+                    )
                 }
             }
         }
     }
+
+    if (editingFolder != null) {
+        EditFolderFiltersDialog(
+            folder = editingFolder!!,
+            onConfirm = { newFilters ->
+                onEditFolderFiltersClick(editingFolder!!, newFilters)
+                editingFolder = null
+            },
+            onDismiss = { editingFolder = null }
+        )
+    }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun FolderCard(
     folder: SyncedFolder,
-    onRemoveClick: (SyncedFolder) -> Unit
+    allRecentFiles: List<RecentFileItem>,
+    onRemoveClick: (SyncedFolder) -> Unit,
+    onEditFiltersClick: (SyncedFolder) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
     val lastScanText = if (folder.lastScanTime == 0L) "Never" else dateFormat.format(Date(folder.lastScanTime))
+
+    val folderFiles = remember(allRecentFiles, folder.uriString) {
+        allRecentFiles.filter { it.sourceFolderUri == folder.uriString }
+    }
+    val totalBooks = folderFiles.size
+    val countsByType = remember(folderFiles) {
+        folderFiles.groupBy { it.type }.mapValues { it.value.size }
+    }
 
     androidx.compose.material3.ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1590,6 +1622,13 @@ private fun FolderCard(
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(
+                            text = { Text("Edit Filters") },
+                            onClick = {
+                                showMenu = false
+                                onEditFiltersClick(folder)
+                            }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Remove Folder") },
                             onClick = {
                                 showMenu = false
@@ -1605,7 +1644,6 @@ private fun FolderCard(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-            // Details
             Row(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -1617,28 +1655,86 @@ private fun FolderCard(
                     Text(text = lastScanText, style = MaterialTheme.typography.bodySmall)
                 }
 
-                // You could add Book Count here if we queried it from DB
-                // For now, let's just show Status
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "STATUS",
+                        text = "BOOKS",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(Color(0xFF4CAF50), androidx.compose.foundation.shape.CircleShape)
+                    Text(text = totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
+            if (countsByType.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    countsByType.forEach { (type, count) ->
+                        AssistChip(
+                            onClick = { },
+                            label = { Text("${type.name}: $count") }
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "Active", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun EditFolderFiltersDialog(
+    folder: SyncedFolder,
+    onConfirm: (Set<FileType>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedTypes by remember { mutableStateOf(folder.allowedFileTypes) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Filter File Types") },
+        text = {
+            Column {
+                Text(
+                    text = "Select the file types you want to sync from this folder:",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FileType.entries.forEach { type ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedTypes = if (type in selectedTypes) selectedTypes - type else selectedTypes + type
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        androidx.compose.material3.Checkbox(
+                            checked = type in selectedTypes,
+                            onCheckedChange = { checked ->
+                                selectedTypes = if (checked) selectedTypes + type else selectedTypes - type
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(type.name)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selectedTypes) },
+                enabled = selectedTypes.isNotEmpty()
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
