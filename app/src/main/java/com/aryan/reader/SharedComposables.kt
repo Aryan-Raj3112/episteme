@@ -356,7 +356,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                 }
             }
         } else {
-            "Episteme Secure Storage"
+            "In-App Storage"
         }
     }
 

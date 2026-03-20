@@ -227,6 +227,7 @@ data class ReaderScreenState(
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
+    val recentFilesLimit: Int = 0,
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -324,7 +325,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
             else null,
             pinnedHomeBookIds = prefs.getStringSet(KEY_PINNED_HOME, emptySet()) ?: emptySet(),
-            pinnedLibraryBookIds = prefs.getStringSet(KEY_PINNED_LIBRARY, emptySet()) ?: emptySet()
+            pinnedLibraryBookIds = prefs.getStringSet(KEY_PINNED_LIBRARY, emptySet()) ?: emptySet(),
+            recentFilesLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0)
         )
     )
 
@@ -377,7 +379,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val visibleRecentFiles = sortFiles(baseVisibleFiles.filter { it.isRecent }).let { list ->
             val pinned = list.filter { it.bookId in internalState.pinnedHomeBookIds }
             val unpinned = list.filter { it.bookId !in internalState.pinnedHomeBookIds }
-            pinned + unpinned
+            val combined = pinned + unpinned
+            if (internalState.recentFilesLimit > 0) combined.take(internalState.recentFilesLimit) else combined
         }
 
         val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
@@ -2422,6 +2425,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun setRecentFilesLimit(limit: Int) {
+        _internalState.update { it.copy(recentFilesLimit = limit) }
+        prefs.edit { putInt(KEY_RECENT_FILES_LIMIT, limit) }
+    }
+
     fun setSortOrder(sortOrder: SortOrder) {
         _internalState.update { it.copy(sortOrder = sortOrder) }
         prefs.edit { putString(KEY_SORT_ORDER, sortOrder.name) }
@@ -3885,5 +3893,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val MAX_FOLDER_LIMIT = 3
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
+        private const val KEY_RECENT_FILES_LIMIT = "recent_files_limit"
     }
 }
