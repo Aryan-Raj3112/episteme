@@ -60,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -234,6 +235,13 @@ internal fun PdfVerticalReader(
     activeToolThickness: Float = 0f
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
+    DisposableEffect(state) {
+        onDispose {
+            state.scrollToPageHandler = null
+            state.snapToPageHandler = null
+            state.scrollByHandler = null
+        }
+    }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
     BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         val imeInsets = WindowInsets.ime
@@ -399,6 +407,7 @@ internal fun PdfVerticalReader(
         var isFlinging by remember { mutableStateOf(false) }
         var isFastFlinging by remember { mutableStateOf(false) }
         var isInteracting by remember { mutableStateOf(false) }
+        var isDragging by remember { mutableStateOf(false) }
 
         LaunchedEffect(
             totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging
@@ -596,16 +605,13 @@ internal fun PdfVerticalReader(
                     "VerticalReader Interaction State: isBusy=$isBusy (Interacting=$isInteracting, Flinging=$isFlinging, Fast=$isFastFlinging)"
                 )
 
-                if (isBusy) {
-                    highResScale = 1f
-                } else {
-                    delay(20)
+                if (!isBusy) {
+                    delay(50)
                     val target = zoomAnimatable.value
                     if (highResScale != target) {
-                        Timber.tag("PdfDrawPerf")
-                            .v("VerticalReader: Updating highResScale to $target")
+                        Timber.tag("PdfDrawPerf").v("VerticalReader: Updating highResScale to $target")
+                        highResScale = target
                     }
-                    highResScale = target
                 }
             }
         }
@@ -616,17 +622,8 @@ internal fun PdfVerticalReader(
         }
 
         LaunchedEffect(zoomAnimatable.value) {
-            if (!isInteracting && !isFlinging && zoomAnimatable.value != highResScale) {
-                highResScale = zoomAnimatable.value
-            }
-        }
-
-        LaunchedEffect(Unit) {
-            snapshotFlow { isInteracting }.collectLatest { interacting ->
-                if (interacting) {
-                    highResScale = 1f
-                } else {
-                    delay(350)
+            if (!isInteracting && !(isFlinging && isFastFlinging)) {
+                if (highResScale != zoomAnimatable.value) {
                     highResScale = zoomAnimatable.value
                 }
             }
@@ -938,6 +935,7 @@ internal fun PdfVerticalReader(
 
                         val down = awaitFirstDown(requireUnconsumed = false)
                         isInteracting = true
+                        isDragging = false
 
                         Timber.tag("PointerTypeDebug").d("VerticalReader: Input Type detected: ${down.type}")
 
@@ -1057,6 +1055,7 @@ internal fun PdfVerticalReader(
 
                                 if (shouldScroll) {
                                     panLocked = true
+                                    isDragging = true
                                     if (zoomChange != 1f || panChange != Offset.Zero) {
 
                                         var effectiveZoomChange = zoomChange
@@ -1114,6 +1113,7 @@ internal fun PdfVerticalReader(
                             Timber.tag("PdfTouchDebug").v("VerticalReader: Interaction ended")
                             isInteracting = false
                         }
+                        isDragging = false
 
                         val validFlingCondition = panLocked
 
@@ -1519,7 +1519,7 @@ internal fun PdfVerticalReader(
                                     onOcrStateChange = onOcrStateChange,
                                     onBookmarkClick = { onBookmarkClick(page.index) },
                                     isZoomEnabled = false,
-                                    isScrolling = isInteracting || (isFlinging && isFastFlinging),
+                                    isScrolling = isDragging || (isFlinging && isFastFlinging),
                                     isVerticalScroll = true,
                                     visualScaleProvider = currentScaleProvider,
                                     onDoubleTap = onDoubleTapLambda,
