@@ -987,25 +987,20 @@ private fun AppDrawerContent(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
 
-            if (!isOss) {
-                NavigationDrawerItem(
-                    icon = {
-                        Icon(
-                            painter = painterResource(id = R.drawable.feedback),
-                            contentDescription = "Feedback"
-                        )
-                    },
-                    label = { Text("Help & Feedback") },
-                    badge = {
-                        if (uiState.hasUnreadFeedback) {
-                            Badge()
-                        }
-                    },
-                    selected = false,
-                    onClick = { navController.navigate("feedback_screen_route") },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
+            NavigationDrawerItem(
+                icon = {
+                    Icon(
+                        painter = painterResource(id = R.drawable.feedback),
+                        contentDescription = "Feedback"
+                    )
+                },
+                label = { Text("Help & Feedback") },
+                selected = false,
+                onClick = { navController.navigate("feedback_screen_route") },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
 
+            if (!isOss) {
                 if (uiState.currentUser != null) {
                     NavigationDrawerItem(
                         icon = {
