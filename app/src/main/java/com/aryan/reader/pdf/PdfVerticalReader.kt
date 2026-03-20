@@ -407,6 +407,7 @@ internal fun PdfVerticalReader(
         var isFlinging by remember { mutableStateOf(false) }
         var isFastFlinging by remember { mutableStateOf(false) }
         var isInteracting by remember { mutableStateOf(false) }
+        var isDragging by remember { mutableStateOf(false) }
 
         LaunchedEffect(
             totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging
@@ -934,6 +935,7 @@ internal fun PdfVerticalReader(
 
                         val down = awaitFirstDown(requireUnconsumed = false)
                         isInteracting = true
+                        isDragging = false
 
                         Timber.tag("PointerTypeDebug").d("VerticalReader: Input Type detected: ${down.type}")
 
@@ -1053,6 +1055,7 @@ internal fun PdfVerticalReader(
 
                                 if (shouldScroll) {
                                     panLocked = true
+                                    isDragging = true
                                     if (zoomChange != 1f || panChange != Offset.Zero) {
 
                                         var effectiveZoomChange = zoomChange
@@ -1110,6 +1113,7 @@ internal fun PdfVerticalReader(
                             Timber.tag("PdfTouchDebug").v("VerticalReader: Interaction ended")
                             isInteracting = false
                         }
+                        isDragging = false
 
                         val validFlingCondition = panLocked
 
@@ -1515,7 +1519,7 @@ internal fun PdfVerticalReader(
                                     onOcrStateChange = onOcrStateChange,
                                     onBookmarkClick = { onBookmarkClick(page.index) },
                                     isZoomEnabled = false,
-                                    isScrolling = isInteracting || (isFlinging && isFastFlinging),
+                                    isScrolling = isDragging || (isFlinging && isFastFlinging),
                                     isVerticalScroll = true,
                                     visualScaleProvider = currentScaleProvider,
                                     onDoubleTap = onDoubleTapLambda,

@@ -1195,7 +1195,7 @@ internal fun PdfPageComposable(
                                     startY = -tileRenderY,
                                     drawSizeX = fullPageRenderWidth,
                                     drawSizeY = fullPageRenderHeight,
-                                    renderAnnot = false
+                                    renderAnnot = true
                                 )
 
                                 val newTile = PdfTile(tileBitmap, tileRect, tileId)
