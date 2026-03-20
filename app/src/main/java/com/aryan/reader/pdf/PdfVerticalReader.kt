@@ -596,16 +596,13 @@ internal fun PdfVerticalReader(
                     "VerticalReader Interaction State: isBusy=$isBusy (Interacting=$isInteracting, Flinging=$isFlinging, Fast=$isFastFlinging)"
                 )
 
-                if (isBusy) {
-                    highResScale = 1f
-                } else {
-                    delay(20)
+                if (!isBusy) {
+                    delay(50)
                     val target = zoomAnimatable.value
                     if (highResScale != target) {
-                        Timber.tag("PdfDrawPerf")
-                            .v("VerticalReader: Updating highResScale to $target")
+                        Timber.tag("PdfDrawPerf").v("VerticalReader: Updating highResScale to $target")
+                        highResScale = target
                     }
-                    highResScale = target
                 }
             }
         }
@@ -616,17 +613,8 @@ internal fun PdfVerticalReader(
         }
 
         LaunchedEffect(zoomAnimatable.value) {
-            if (!isInteracting && !isFlinging && zoomAnimatable.value != highResScale) {
-                highResScale = zoomAnimatable.value
-            }
-        }
-
-        LaunchedEffect(Unit) {
-            snapshotFlow { isInteracting }.collectLatest { interacting ->
-                if (interacting) {
-                    highResScale = 1f
-                } else {
-                    delay(350)
+            if (!isInteracting && !(isFlinging && isFastFlinging)) {
+                if (highResScale != zoomAnimatable.value) {
                     highResScale = zoomAnimatable.value
                 }
             }

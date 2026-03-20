@@ -4124,9 +4124,6 @@ fun PdfViewerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(
-                            top = verticalHeaderHeight, bottom = verticalFooterHeight
-                        )
                 ) {
                     when {
                         isLoadingDocument -> {
@@ -4605,8 +4602,8 @@ fun PdfViewerScreen(
                                 }
 
                                 DisplayMode.VERTICAL_SCROLL -> {
-                                    val headerHeight = 0.dp
-                                    val footerHeight = 0.dp
+                                    val headerHeight = verticalHeaderHeight
+                                    val footerHeight = verticalFooterHeight
 
                                     val currentSelectedTool by rememberUpdatedState(selectedTool)
                                     val currentStrokeColorState by rememberUpdatedState(
