@@ -3847,6 +3847,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun updateCustomName(bookId: String, newName: String?) {
+        viewModelScope.launch {
+            val item = recentFilesRepository.getFileByBookId(bookId)
+            if (item != null) {
+                val updatedItem = item.copy(customName = newName, lastModifiedTimestamp = System.currentTimeMillis())
+                recentFilesRepository.addRecentFile(updatedItem)
+
+                if (uiState.value.isSyncEnabled) {
+                    uploadSingleBookMetadata(updatedItem)
+                }
+
+                if (updatedItem.sourceFolderUri != null) {
+                    launch(Dispatchers.IO) {
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                    }
+                }
+            }
+        }
+    }
+
     companion object {
         private const val KEY_SORT_ORDER = "sort_order"
         internal const val KEY_SHELVES = "shelf_names"

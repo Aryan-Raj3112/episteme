@@ -19,80 +19,87 @@
  */
 package com.aryan.reader
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
-import timber.log.Timber
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.core.net.toUri
 import com.aryan.reader.data.RecentFileItem
+import timber.log.Timber
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.compose.foundation.text.ClickableText
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.sp
-import android.content.Context
-import android.content.Intent
-import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.UriHandler
-import androidx.core.net.toUri
 
 internal const val PRIVACY_POLICY_URL = "https://aryan-raj3112.github.io/reader-policy/privacy-policy.html"
 internal const val TERMS_URL = "https://aryan-raj3112.github.io/reader-policy/terms-and-conditions.html"
@@ -314,60 +321,196 @@ fun DeleteConfirmationDialog(
 }
 
 @Composable
-fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit) {
+fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (String?) -> Unit) {
+    LocalContext.current
+    @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
+
+    val originalName = item.title ?: item.displayName
+    var editingName by remember { mutableStateOf(item.customName ?: originalName) }
+    val hasCustomName = item.customName != null
+
     val formattedDate = remember(item.timestamp) {
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("File Information") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val displayName = item.displayName
-                val epubTitle = item.title
 
-                if (item.type != FileType.PDF && !epubTitle.isNullOrBlank()) {
-                    InfoRow("Title:", epubTitle, maxLines = 3)
-                    if (displayName != epubTitle) {
-                        InfoRow("File Name:", displayName, maxLines = 2)
-                    }
+    val pathText = remember(item.sourceFolderUri, item.displayName) {
+        if (item.sourceFolderUri != null) {
+            try {
+                val uri = item.sourceFolderUri.toUri()
+                val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                val split = docId.split(":")
+                val storageName = if (split[0].equals("primary", ignoreCase = true)) "Internal storage" else split[0]
+                val relativePath = if (split.size > 1) {
+                    Uri.decode(split[1]).removeSuffix("/")
+                } else ""
+
+                val leadingSlash = if (relativePath.isNotEmpty() && !relativePath.startsWith("/")) "/" else ""
+
+                "/$storageName$leadingSlash$relativePath/${item.displayName}"
+            } catch (_: Exception) {
+                val decoded = Uri.decode(item.sourceFolderUri)
+                if (decoded.contains("primary:")) {
+                    "/Internal storage/${decoded.substringAfter("primary:").removeSuffix("/")}/${item.displayName}"
                 } else {
-                    InfoRow("File Name:", displayName, maxLines = 2)
+                    item.displayName
                 }
-
-                item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
-                    InfoRow("Author:", it, maxLines = 2)
-                }
-
-                InfoRow("File Type:", item.type.name)
-                InfoRow("Date Added:", formattedDate)
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("OK") }
+        } else {
+            "Episteme Secure Storage"
         }
-    )
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "File Information",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+
+                androidx.compose.material3.OutlinedTextField(
+                    value = editingName,
+                    onValueChange = { editingName = it },
+                    label = { Text("Book Name") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp, max = 130.dp),
+                    maxLines = 4,
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            clipboardManager.setText(AnnotatedString(editingName))
+                        }) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Name", modifier = Modifier.size(20.dp))
+                        }
+                    }
+                )
+
+                if (hasCustomName) {
+                    Text(
+                        text = "Original Name: $originalName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton(
+                        onClick = {
+                            editingName = originalName
+                            onUpdateName(null)
+                        },
+                        modifier = Modifier.align(Alignment.End),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("Revert to Original")
+                    }
+                } else if (originalName != item.displayName) {
+                    Text(
+                        text = "File Name: ${item.displayName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
+                        InfoRowDetailed("Author", it)
+                    }
+                    InfoRowDetailed("Format", item.type.name)
+                    InfoRowDetailed("Added", formattedDate)
+                    InfoRowDetailed(
+                        label = "Location",
+                        value = pathText,
+                        maxLines = 4,
+                        onCopy = {
+                            clipboardManager.setText(AnnotatedString(pathText))
+                        }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    androidx.compose.material3.Button(onClick = {
+                        val finalName = editingName.trim()
+                        if (finalName != (item.customName ?: originalName)) {
+                            if (finalName == originalName || finalName.isEmpty()) {
+                                onUpdateName(null)
+                            } else {
+                                onUpdateName(finalName)
+                            }
+                        }
+                        onDismiss()
+                    }) { Text("Save") }
+                }
+            }
+        }
+    }
 }
 
-
 @Composable
-private fun InfoRow(label: String, value: String?, maxLines: Int = 1) {
-    if (value.isNullOrBlank()) return
-    Row {
+private fun InfoRowDetailed(
+    label: String,
+    value: String,
+    maxLines: Int = 1,
+    onCopy: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
         Text(
             text = label,
             fontWeight = FontWeight.SemiBold,
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
-                .width(90.dp)
-                .padding(end = 8.dp)
+                .width(85.dp)
+                .padding(top = 2.dp)
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(top = 2.dp)
         )
+        if (onCopy != null) {
+            IconButton(
+                onClick = onCopy,
+                modifier = Modifier
+                    .size(24.dp)
+                    .padding(start = 4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Copy $label",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                )
+            }
+        }
     }
 }
 

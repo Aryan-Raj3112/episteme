@@ -158,7 +158,8 @@ class RecentFilesRepository(private val context: Context) {
                 lastModifiedTimestamp = entity.lastModifiedTimestamp,
                 bookmarksJson = entity.bookmarks,
                 locatorBlockIndex = entity.locatorBlockIndex,
-                locatorCharOffset = entity.locatorCharOffset
+                locatorCharOffset = entity.locatorCharOffset,
+                customName = entity.customName
             )
 
             LocalSyncUtils.saveMetadataToFolder(

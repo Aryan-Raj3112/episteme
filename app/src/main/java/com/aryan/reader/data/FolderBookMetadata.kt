@@ -18,7 +18,8 @@ data class FolderBookMetadata(
     val lastModifiedTimestamp: Long,
     val bookmarksJson: String?,
     val locatorBlockIndex: Int?,
-    val locatorCharOffset: Int?
+    val locatorCharOffset: Int?,
+    val customName: String?
 ) {
     fun toJsonString(): String {
         val json = JSONObject()
@@ -36,6 +37,7 @@ data class FolderBookMetadata(
         json.put("bookmarksJson", bookmarksJson)
         json.put("locatorBlockIndex", locatorBlockIndex ?: -1)
         json.put("locatorCharOffset", locatorCharOffset ?: -1)
+        json.put("customName", customName)
         return json.toString()
     }
 
@@ -66,7 +68,8 @@ data class FolderBookMetadata(
                 lastModifiedTimestamp = json.optLong("lastModifiedTimestamp", 0L),
                 bookmarksJson = json.optStringNull("bookmarksJson"),
                 locatorBlockIndex = json.optIntNull("locatorBlockIndex"),
-                locatorCharOffset = json.optIntNull("locatorCharOffset")
+                locatorCharOffset = json.optIntNull("locatorCharOffset"),
+                customName = json.optStringNull("customName")
             )
         }
     }
@@ -93,6 +96,7 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         lastModifiedTimestamp = this.lastModifiedTimestamp,
         isDeleted = false,
         bookmarksJson = this.bookmarksJson,
-        sourceFolderUri = sourceFolderUri
+        sourceFolderUri = sourceFolderUri,
+        customName = this.customName
     )
 }

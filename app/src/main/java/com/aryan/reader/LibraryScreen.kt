@@ -330,6 +330,9 @@ fun LibraryScreen(
                     onDismiss = {
                         showInfoDialog = false
                         itemForInfoDialog = null
+                    },
+                    onUpdateName = { newName ->
+                        viewModel.updateCustomName(item.bookId, newName)
                     }
                 )
             }
@@ -441,6 +444,9 @@ fun ShelfScreen(
                     onDismiss = {
                         showInfoDialog = false
                         itemForInfoDialog = null
+                    },
+                    onUpdateName = { newName ->
+                        viewModel.updateCustomName(item.bookId, newName)
                     }
                 )
             }
@@ -1307,7 +1313,7 @@ private fun LibraryListItem(
                     }
 
                     Text(
-                        text = item.title ?: item.displayName,
+                        text = item.customName ?: item.title ?: item.displayName,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,

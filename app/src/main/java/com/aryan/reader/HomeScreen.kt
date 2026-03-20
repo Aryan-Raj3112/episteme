@@ -157,6 +157,8 @@ fun HomeScreen(
         var showUpgradeDialog by remember { mutableStateOf(false) }
         var showSignOutConfirmDialog by remember { mutableStateOf(false) }
         var showAboutDialog by remember { mutableStateOf(false) }
+        var showInfoDialog by remember { mutableStateOf(false) }
+        var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
 
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
         var showClearReflowCacheDialog by remember { mutableStateOf(false) }
@@ -310,6 +312,12 @@ fun HomeScreen(
                             ContextualTopAppBar(
                                 selectedItemCount = selectedContextItems.size,
                                 onNavIconClick = { viewModel.clearContextualAction() },
+                                onInfoClick = {
+                                    if (selectedContextItems.size == 1) {
+                                        itemForInfoDialog = selectedContextItems.first()
+                                        showInfoDialog = true
+                                    }
+                                },
                                 onPinClick = { viewModel.togglePinForContextualItems(isHome = true) },
                                 onDeleteClick = { showDeleteConfirmDialog = true },
                                 onSelectAllClick = { viewModel.selectAllRecentFiles() })
@@ -405,6 +413,21 @@ fun HomeScreen(
                             },
                             onDismiss = { showClearBookCacheDialog = false }
                         )
+                    }
+
+                    itemForInfoDialog?.let { item ->
+                        if (showInfoDialog) {
+                            FileInfoDialog(
+                                item = item,
+                                onDismiss = {
+                                    showInfoDialog = false
+                                    itemForInfoDialog = null
+                                },
+                                onUpdateName = { newName ->
+                                    viewModel.updateCustomName(item.bookId, newName)
+                                }
+                            )
+                        }
                     }
 
                     if (showClearReflowCacheDialog) {
@@ -680,7 +703,7 @@ fun RecentFileCard(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = if ((item.type == FileType.EPUB || item.type == FileType.MOBI) && !item.title.isNullOrBlank()) {
+                    text = item.customName ?: if ((item.type == FileType.EPUB || item.type == FileType.MOBI) && !item.title.isNullOrBlank()) {
                         item.title
                     } else {
                         item.displayName

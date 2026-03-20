@@ -44,7 +44,8 @@ data class RecentFileItem(
     val isDeleted: Boolean = false,
     val bookmarksJson: String? = null,
     val sourceFolderUri: String? = null,
-    val isReflowPreferred: Boolean = false
+    val isReflowPreferred: Boolean = false,
+    val customName: String? = null
 ) {
     fun getUri(): Uri? = uriString?.toUri()
 }
@@ -71,7 +72,8 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         isDeleted = this.isDeleted,
         bookmarksJson = this.bookmarks,
         sourceFolderUri = this.sourceFolderUri,
-        isReflowPreferred = this.isReflowPreferred
+        isReflowPreferred = this.isReflowPreferred,
+        customName = this.customName
     )
 }
 
@@ -97,7 +99,8 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         isDeleted = this.isDeleted,
         bookmarks = this.bookmarksJson,
         sourceFolderUri = this.sourceFolderUri,
-        isReflowPreferred = this.isReflowPreferred
+        isReflowPreferred = this.isReflowPreferred,
+        customName = this.customName
     )
 }
 
@@ -118,7 +121,8 @@ fun RecentFileItem.toBookMetadata(): BookMetadata {
         isDeleted = this.isDeleted,
         lastModifiedTimestamp = this.lastModifiedTimestamp,
         bookmarksJson = this.bookmarksJson,
-        hasAnnotations = false
+        hasAnnotations = false,
+        customName = this.customName
     )
 }
 
@@ -142,6 +146,7 @@ fun BookMetadata.toRecentFileItem(): RecentFileItem {
         isAvailable = false,
         lastModifiedTimestamp = this.lastModifiedTimestamp,
         isDeleted = this.isDeleted,
-        bookmarksJson = this.bookmarksJson
+        bookmarksJson = this.bookmarksJson,
+        customName = this.customName
     )
 }
