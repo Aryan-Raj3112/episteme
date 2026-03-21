@@ -1097,62 +1097,44 @@
 
     window.extractTextWithCfiFromTop = function () {
         try {
-            // 1. Find the element at the top of the viewport.
-            const viewportX = window.innerWidth / 2;
-            const viewportY = window.VIEWPORT_PADDING_TOP + 20; // A bit down from the very top edge
-            let topElement = document.elementFromPoint(viewportX, viewportY);
-
-            if (!topElement) {
-                // Fallback if nothing is found (e.g., blank space between elements)
-                topElement = document.body.querySelector("p, h1, h2, h3, h4, img, svg, table, li");
-                if (!topElement) return "[]"; // Chapter seems empty
-            }
-
-            // 2. Find its containing block-level element that we use for TTS.
             const ttsNodeSelector = "p, h1, h2, h3, h4, h5, h6, li, blockquote";
-            let startBlock = topElement.closest(ttsNodeSelector);
-
-            if (!startBlock) {
-                // If the element itself isn't in a TTS block, fall back to the start of the chapter.
-                console.log("Could not find a starting TTS block. Falling back to full chapter.");
-                return window.extractTextWithCfi();
-            }
-
-            // 3. Get all potential TTS nodes.
             const allContentNodes = Array.from(document.body.querySelectorAll(ttsNodeSelector));
 
-            // 4. Find the index of our starting block.
-            const startIndex = allContentNodes.findIndex((node) => node === startBlock);
+            let startBlock = null;
+            let startIndex = -1;
 
-            if (startIndex === -1) {
-                // Should be rare if startBlock was found, but as a safeguard:
-                console.log("Could not find the start block in the node list. Falling back to full chapter.");
+            for (let i = 0; i < allContentNodes.size || i < allContentNodes.length; i++) {
+                const node = allContentNodes[i];
+                const rect = node.getBoundingClientRect();
+
+                if (rect.bottom > (window.VIEWPORT_PADDING_TOP + 10)) {
+                    startBlock = node;
+                    startIndex = i;
+                    break;
+                }
+            }
+
+            if (!startBlock) {
                 return window.extractTextWithCfi();
             }
 
-            // 5. Slice the array and process it.
             const nodesToProcess = allContentNodes.slice(startIndex);
             const results = [];
 
             nodesToProcess.forEach((node) => {
                 const text = node.innerText ? node.innerText.trim() : "";
-
                 if (text.length > 0 && node.offsetParent !== null) {
                     try {
-                        const cfi = getCfiPathForElement(node, 0);
-
-                        if (cfi) {
-                            results.push({ cfi: cfi, text: text });
+                        const cfiObj = getCfiPathForElement(node, 0);
+                        if (cfiObj && cfiObj.cfi) {
+                            results.push({ cfi: cfiObj, text: text });
                         }
-                    } catch (e) {
-                        // ignore CFI generation errors for a single node
-                    }
+                    } catch (e) {}
                 }
             });
 
             return JSON.stringify(results);
         } catch (e) {
-            // On any error, fall back to extracting everything to not break TTS completely.
             return window.extractTextWithCfi();
         }
     };
