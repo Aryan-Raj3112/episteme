@@ -131,6 +131,7 @@ class TtsJsBridge(
 ) {
     @JavascriptInterface
     fun onStructuredTextExtracted(json: String) {
+        Timber.tag("TTS_LIST_DIAG").d("Bridge received JSON: $json")
         if (json.isNotBlank() && json != "[]") {
             scope.launch {
                 ttsStructuredTextHandler(json)
@@ -543,6 +544,10 @@ fun ChapterWebView(
                                     message.startsWith("BookmarkDiagnosis") -> {
                                         Timber.tag("BookmarkDiagnosis")
                                             .d("JS -> ${message.substringAfter("BookmarkDiagnosis: ")}")
+                                    }
+
+                                    message.startsWith("TTS_LIST_DIAG:") -> {
+                                        Timber.tag("TTS_LIST_DIAG").d("JS -> ${message.substringAfter("TTS_LIST_DIAG: ")}")
                                     }
 
                                     message.startsWith("CFI_DIAGNOSIS:") -> {

@@ -889,6 +889,8 @@
         }
 
         , Text='${textToHighlight.substring(0, 50)}...' `);
+        console.log("TTS_LIST_DIAG: Attempting highlight. CFI: " + cfi + " Text: '" + textToHighlight.substring(0, 20) + "' Offset: " + startOffset);
+
         window.removeHighlight();
 
         if (!cfi || !textToHighlight) {
@@ -1098,12 +1100,15 @@
     window.extractTextWithCfiFromTop = function () {
         try {
             const ttsNodeSelector = "p, h1, h2, h3, h4, h5, h6, li, blockquote";
-            const allContentNodes = Array.from(document.body.querySelectorAll(ttsNodeSelector));
+            const allContentNodesRaw = Array.from(document.body.querySelectorAll(ttsNodeSelector));
+
+            // FIX: Filter out parents that contain matching children to prevent duplicates
+            const allContentNodes = allContentNodesRaw.filter(node => node.querySelector(ttsNodeSelector) === null);
 
             let startBlock = null;
             let startIndex = -1;
 
-            for (let i = 0; i < allContentNodes.size || i < allContentNodes.length; i++) {
+            for (let i = 0; i < allContentNodes.length; i++) {
                 const node = allContentNodes[i];
                 const rect = node.getBoundingClientRect();
 
@@ -1119,7 +1124,7 @@
             }
 
             const nodesToProcess = allContentNodes.slice(startIndex);
-            const results = [];
+            const results =[];
 
             nodesToProcess.forEach((node) => {
                 const text = node.innerText ? node.innerText.trim() : "";
@@ -1141,7 +1146,10 @@
 
     window.extractTextWithCfi = function () {
         const results =[];
-        const contentNodes = document.body.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote");
+        const ttsNodeSelector = "p, h1, h2, h3, h4, h5, h6, li, blockquote";
+        const contentNodesRaw = Array.from(document.body.querySelectorAll(ttsNodeSelector));
+
+        const contentNodes = contentNodesRaw.filter(node => node.querySelector(ttsNodeSelector) === null);
 
         contentNodes.forEach((node) => {
             const text = node.innerText ? node.innerText.trim() : "";
@@ -1156,8 +1164,7 @@
                 } catch (e) {}
             }
         });
-        const jsonResult = JSON.stringify(results);
-        return jsonResult;
+        return JSON.stringify(results);
     };
 
     window.extractTextWithCfiFromSelection = function() {
@@ -1186,8 +1193,14 @@
                 absoluteStartOffset += startOffset;
             }
 
-            const allContentNodes = Array.from(document.body.querySelectorAll(ttsNodeSelector));
-            const startIndex = allContentNodes.findIndex(node => node === startBlock);
+            const allContentNodesRaw = Array.from(document.body.querySelectorAll(ttsNodeSelector));
+            const allContentNodes = allContentNodesRaw.filter(node => node.querySelector(ttsNodeSelector) === null);
+
+            let startIndex = allContentNodes.findIndex(node => node === startBlock);
+
+            if (startIndex === -1) {
+                startIndex = allContentNodes.findIndex(node => startBlock.contains(node));
+            }
 
             if (startIndex === -1) return window.extractTextWithCfiFromTop();
 
@@ -1197,11 +1210,13 @@
             nodesToProcess.forEach((node, index) => {
                 let fullText = node.textContent || "";
                 if (fullText.trim().length > 0 && node.offsetParent !== null) {
+                    if (node.tagName === 'LI' || node.closest('li')) {
+                        console.log("TTS_LIST_DIAG: Selection extracting node <" + node.tagName + "> inside LI. Text: '" + fullText.substring(0, 30) + "'");
+                    }
                     try {
                         const cfiObj = getCfiPathForElement(node, 0);
                         if (cfiObj && cfiObj.cfi) {
                             if (index === 0) {
-                                // Slice the very first block strictly from the selected character
                                 let sliced = fullText.substring(absoluteStartOffset);
                                 if (sliced.trim().length > 0) {
                                     results.push({

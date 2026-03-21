@@ -2447,21 +2447,17 @@ fun EpubReaderHost(
                                             ttsScope = scope,
                                             onTtsTextReady = { jsonString ->
                                                 scope.launch {
-                                                    Timber.d("Vertical: onTtsTextReady received JSON. Length: ${jsonString.length}")
-                                                    val ttsChunks =
-                                                        mutableListOf<TtsChunk>()
+                                                    Timber.tag("TTS_LIST_DIAG").d("Vertical: Processing received JSON. Length: ${jsonString.length}") // Add this
+                                                    val ttsChunks = mutableListOf<TtsChunk>()
                                                     try {
                                                         val jsonArray = JSONArray(jsonString)
-                                                        Timber.d("Vertical: Parsed JSON Array. Items: ${jsonArray.length()}")
                                                         for (i in 0 until jsonArray.length()) {
-                                                            val jsonObject =
-                                                                jsonArray.getJSONObject(i)
+                                                            val jsonObject = jsonArray.getJSONObject(i)
                                                             val text = jsonObject.getString("text")
-                                                            val cfiJsonString =
-                                                                jsonObject.getString("cfi")
-                                                            val cfiJsonObject =
-                                                                JSONObject(cfiJsonString)
+                                                            val cfiJsonObject = JSONObject(jsonObject.getString("cfi"))
                                                             val cfi = cfiJsonObject.getString("cfi")
+
+                                                            Timber.tag("TTS_LIST_DIAG").d("Processing Chunk[$i]: text='${text.take(40)}...' cfi='$cfi'")
                                                             val baseOffset = jsonObject.optInt("startOffset", 0)
 
                                                             val subChunks =
