@@ -138,6 +138,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -919,19 +920,26 @@ internal fun PdfPageComposable(
                                 if (count > 0) {
                                     val allAnnots = (0 until count).mapNotNull { i ->
                                         val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, i)
-                                        if (subtype == annotLink) return@mapNotNull null // skip links here
+                                        if (subtype == annotLink) return@mapNotNull null
 
-                                        val contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "Contents")
+                                        var contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "Contents")
+                                        if (contents.isNullOrBlank()) {
+                                            contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "RC")
+                                        }
+
                                         val name = NativePdfiumBridge.getAnnotString(pagePtr, i, "NM")
                                         val irt = NativePdfiumBridge.getAnnotString(pagePtr, i, "IRT")
                                         val author = NativePdfiumBridge.getAnnotString(pagePtr, i, "T")
 
                                         val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, i)
                                         val pdfRectF = if (pdfRectArray != null) {
-                                            android.graphics.RectF(pdfRectArray[0], pdfRectArray[3], pdfRectArray[2], pdfRectArray[1])
+                                            android.graphics.RectF(
+                                                min(pdfRectArray[0], pdfRectArray[2]),
+                                                max(pdfRectArray[1], pdfRectArray[3]),
+                                                max(pdfRectArray[0], pdfRectArray[2]),
+                                                min(pdfRectArray[1], pdfRectArray[3])
+                                            )
                                         } else android.graphics.RectF()
-
-                                        Timber.tag("PdfCommentDebug").v("Extracted Annot[$i]: Name=$name, IRT=$irt, Subtype=$subtype, Text=${contents?.take(10)}...")
 
                                         EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
                                     }
@@ -2405,6 +2413,8 @@ internal fun PdfPageComposable(
 
                 detectTapGestures(onTap = { tapOffset ->
                     val tapInContentCoords = screenToContentCoordinates(tapOffset)
+                    val tapXInBitmap = tapInContentCoords.x
+                    val tapYInBitmap = tapInContentCoords.y
 
                     coroutineScope.launch {
                         val wasHandled = withContext(Dispatchers.IO) {
@@ -2439,9 +2449,6 @@ internal fun PdfPageComposable(
                         }
                     }
 
-                    val tapXInBitmap = tapInContentCoords.x
-                    val tapYInBitmap = tapInContentCoords.y
-
                     val annotHitTolerance = with(density) { 24.dp.toPx() } / inputScale
                     val hitTolerance = with(density) { 16.dp.toPx() } / inputScale
 
@@ -2466,14 +2473,24 @@ internal fun PdfPageComposable(
                         } else false
                     }
 
-                    val standardHit = standardAnnotScreenRects.findLast { (_, screenRect) ->
+                    val standardHit = standardAnnotScreenRects.findLast { (annot, screenRect) ->
+                        if (annot.subtype == 2) return@findLast false
+
+                        val left = min(screenRect.left, screenRect.right)
+                        val right = max(screenRect.left, screenRect.right)
+                        val top = min(screenRect.top, screenRect.bottom)
+                        val bottom = max(screenRect.top, screenRect.bottom)
+
                         val inflatedHitBox = Rect(
-                            (screenRect.left - annotHitTolerance).toInt(),
-                            (screenRect.top - annotHitTolerance).toInt(),
-                            (screenRect.right + annotHitTolerance).toInt(),
-                            (screenRect.bottom + annotHitTolerance).toInt()
+                            (left - annotHitTolerance).toInt(),
+                            (top - annotHitTolerance).toInt(),
+                            (right + annotHitTolerance).toInt(),
+                            (bottom + annotHitTolerance).toInt()
                         )
-                        inflatedHitBox.contains(tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt())
+
+                        val isHit = inflatedHitBox.contains(tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt())
+
+                        isHit
                     }
 
                     if (standardHit != null) {
