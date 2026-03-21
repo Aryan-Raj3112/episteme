@@ -720,9 +720,7 @@ fun ChapterWebView(
 
                             if (!initialCfi.isNullOrBlank()) {
                                 val cfiJsCommand = "javascript:window.scrollToCfi('$initialCfi');"
-                                Timber.d(
-                                    "WebView onPageFinished: Executing initial scroll to CFI: $initialCfi"
-                                )
+                                Timber.tag("POS_DIAG").d("WebView onPageFinished: Triggering scroll to initialCfi: $initialCfi")
                                 view?.evaluateJavascript(cfiJsCommand) {
                                     onChapterInitiallyScrolled()
                                     scrollActionTaken = true

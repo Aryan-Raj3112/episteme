@@ -51,39 +51,25 @@ class LocatorConverter(
     private val context: Context
 ) {
     private suspend fun processAndCacheChapter(book: EpubBook, chapterIndex: Int): List<SemanticBlock>? = withContext(Dispatchers.IO) {
-        Timber.tag("PosSaveDiag").d("processAndCacheChapter: STARTED for book='${book.title}', chapterIndex=$chapterIndex")
+        Timber.tag("POS_DIAG").d("processAndCacheChapter: Processing for bookId='${book.title}' index=$chapterIndex")
         try {
-            val chapter = book.chapters.getOrNull(chapterIndex)
-            if (chapter == null) {
-                Timber.tag("PosSaveDiag").e("processAndCacheChapter: FAILED. Chapter is null for index $chapterIndex")
-                return@withContext null
-            }
+            val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
 
-            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Checking HTML content. RAM content length: ${chapter.htmlContent.length}")
-
-            val htmlToParse = if (chapter.htmlContent.isNotBlank()) {
-                Timber.tag("PosSaveDiag").d("processAndCacheChapter: Using HTML from RAM.")
-                chapter.htmlContent
-            } else {
-                Timber.tag("PosSaveDiag").d("processAndCacheChapter: RAM HTML is blank. Falling back to disk. Path: ${book.extractionBasePath} / ${chapter.htmlFilePath}")
+            val htmlToParse = chapter.htmlContent.ifBlank {
                 try {
                     val file = File(book.extractionBasePath, chapter.htmlFilePath)
                     if (file.exists()) {
                         val content = file.readText()
-                        Timber.tag("PosSaveDiag").d("processAndCacheChapter: Read file from disk SUCCESS. Content length: ${content.length}")
                         content
                     } else {
-                        Timber.tag("PosSaveDiag").e("processAndCacheChapter: File DOES NOT EXIST at ${file.absolutePath}")
                         ""
                     }
-                } catch (e: Exception) {
-                    Timber.tag("PosSaveDiag").e(e, "processAndCacheChapter: Exception reading chapter file from disk")
+                } catch (_: Exception) {
                     ""
                 }
             }
 
             if (htmlToParse.isBlank()) {
-                Timber.tag("PosSaveDiag").w("processAndCacheChapter: Final HTML to parse is blank. Aborting semantic block generation.")
                 return@withContext null
             }
 
@@ -129,7 +115,6 @@ class LocatorConverter(
                 otherComplex = mergedOtherComplex
             )
 
-            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Calling htmlToSemanticBlocks...")
             val semanticBlocks = htmlToSemanticBlocks(
                 html = htmlToParse,
                 cssRules = parsingCssRules,
@@ -140,10 +125,8 @@ class LocatorConverter(
                 fontFamilyMap = emptyMap(),
                 constraints = constraints
             )
-            Timber.tag("PosSaveDiag").d("processAndCacheChapter: htmlToSemanticBlocks returned ${semanticBlocks.size} blocks.")
 
             val protoBytes = proto.encodeToByteArray(semanticBlocks)
-            Timber.tag("PosSaveDiag").d("processAndCacheChapter: Encoded blocks to protoBytes (size: ${protoBytes.size} bytes).")
 
             val newCacheEntry = ProcessedChapter(
                 bookId = book.title,
@@ -152,10 +135,8 @@ class LocatorConverter(
                 estimatedPageCount = 0
             )
             bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
-            Timber.tag("PosSaveDiag").i("processAndCacheChapter: On-demand processing and DB caching SUCCESS for chapter $chapterIndex.")
             semanticBlocks
-        } catch (e: Exception) {
-            Timber.tag("PosSaveDiag").e(e, "processAndCacheChapter: FAILED for chapter $chapterIndex")
+        } catch (_: Exception) {
             null
         }
     }
@@ -172,12 +153,10 @@ class LocatorConverter(
         }
 
         if (allBlocks.isNullOrEmpty()) {
-            Timber.tag("PosSaveDiag").w("getLocatorFromCfi: Cache missing or empty for chapter $chapterIndex. Triggering on-demand processing.")
             allBlocks = processAndCacheChapter(book, chapterIndex)
         }
 
         if (allBlocks.isNullOrEmpty()) {
-            Timber.tag("PosSaveDiag").e("getLocatorFromCfi: FAILED. Could not get or process semantic blocks.")
             return@withContext null
         }
 

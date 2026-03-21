@@ -473,7 +473,15 @@ class TtsPlaybackManager(
                             }
 
                             if (!exists) {
-                                player.addMediaItem(nextMediaItem)
+                                var insertPosition = player.mediaItemCount
+                                for (k in 0 until player.mediaItemCount) {
+                                    val id = player.getMediaItemAt(k).mediaId.toIntOrNull() ?: -1
+                                    if (id > targetIndex) {
+                                        insertPosition = k
+                                        break
+                                    }
+                                }
+                                player.addMediaItem(insertPosition, nextMediaItem)
                             }
 
                             if (player.playbackState == Player.STATE_ENDED && player.playWhenReady && targetIndex == player.currentMediaItemIndex + 1) {

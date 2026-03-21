@@ -352,15 +352,23 @@ class BookPaginator(
                 if (blockText.isNotBlank()) {
                     val textChunksInBlock = splitTextIntoChunks(blockText)
 
-                    var currentOffsetInBlock = 0
+                    var currentSearchIndex = 0
                     textChunksInBlock.forEach { chunkText ->
+                        val firstWord = chunkText.trim().substringBefore(' ')
+                        val relativeOffset = if (firstWord.isNotEmpty()) {
+                            val idx = blockText.indexOf(firstWord, currentSearchIndex)
+                            if (idx != -1) idx else currentSearchIndex
+                        } else {
+                            currentSearchIndex
+                        }
+
                         val chunk = TtsChunk(
                             text = chunkText,
                             sourceCfi = block.cfi!!,
-                            startOffsetInSource = block.startCharOffsetInSource + currentOffsetInBlock
+                            startOffsetInSource = block.startCharOffsetInSource + relativeOffset
                         )
                         allTtsChunks.add(chunk)
-                        currentOffsetInBlock += chunkText.length
+                        currentSearchIndex = relativeOffset + chunkText.length
                     }
                 } else {
                     Timber.d("PAGINATOR: Skipping blank text block. CFI: ${block.cfi}, startOffset: ${block.startCharOffsetInSource}")
@@ -1036,8 +1044,10 @@ class BookPaginator(
             return null
         }
 
+        val targetPath = CfiUtils.getPath(cfi)
         val foundRange = index.find { range ->
-            val cfiMatches = cfi.startsWith(range.cfi)
+            val rangePath = CfiUtils.getPath(range.cfi)
+            val cfiMatches = targetPath == rangePath || targetPath.startsWith(rangePath) || rangePath.startsWith(targetPath)
             val offsetMatches = charOffset >= range.startOffset && charOffset < range.endOffset
             cfiMatches && offsetMatches
         }

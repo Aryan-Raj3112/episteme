@@ -884,10 +884,14 @@ fun EpubReaderHost(
     var chapterHead by remember(currentChapterIndex) { mutableStateOf("") }
     var isChapterParsing by remember(currentChapterIndex) { mutableStateOf(true) }
 
-    var cfiToLoad by remember { mutableStateOf<String?>(null) }
+    var cfiToLoad by remember { mutableStateOf(initialCfi) }
     var fragmentToLoad by remember { mutableStateOf<String?>(null) }
     var isInitialCfiLoad by remember(initialLocator) { mutableStateOf(initialLocator != null) }
     var bookmarkPageMap by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+
+    LaunchedEffect(Unit) {
+        Timber.tag("POS_DIAG").d("Reader Opening: initialLocator=$initialLocator, initialCfi=$initialCfi")
+    }
 
     var initialScrollTargetForChapter by rememberSaveable(epubBook.title) {
         mutableStateOf(if (initialLocator != null) null else ChapterScrollPosition.START)
@@ -1175,8 +1179,8 @@ fun EpubReaderHost(
                 var foundIdx = -1
                 for (i in chunks.indices) {
                     val c = chunks[i]
-                    val cPath = c.sourceCfi.substringBefore(":")
-                    val bPath = baseCfi.substringBefore(":")
+                    val cPath = com.aryan.reader.paginatedreader.CfiUtils.getPath(c.sourceCfi)
+                    val bPath = com.aryan.reader.paginatedreader.CfiUtils.getPath(baseCfi)
                     if (cPath == bPath && startOffset >= c.startOffsetInSource && startOffset < c.startOffsetInSource + c.text.length) {
                         foundIdx = i
                         break
@@ -2550,10 +2554,9 @@ fun EpubReaderHost(
                                                 showDictionaryUpsellDialog = true
                                             },
                                             onCfiGenerated = { cfi ->
-                                                Timber.tag("PosSaveDiag").d("EpubReaderScreen: onCfiGenerated callback triggered with CFI: '$cfi'")
+                                                Timber.tag("POS_DIAG").d("JS generated CFI: '$cfi'")
 
                                                 if (cfi.isBlank() || !cfi.startsWith('/')) {
-                                                    Timber.tag("PosSaveDiag").w("EpubReaderScreen: onCfiGenerated received an invalid CFI, aborting save: '$cfi'")
                                                     if (isSavingAndExiting) {
                                                         isSavingAndExiting = false
                                                         onNavigateBack()
@@ -2562,15 +2565,12 @@ fun EpubReaderHost(
                                                 }
 
                                                 scope.launch {
-                                                    Timber.tag("PosSaveDiag").d("EpubReaderScreen: Requesting locator conversion for chapter $latestChapterIndex")
                                                     val locator =
                                                         locatorConverter.getLocatorFromCfi(
                                                             epubBook,
                                                             latestChapterIndex,
                                                             cfi
                                                         )
-
-                                                    Timber.tag("PosSaveDiag").d("EpubReaderScreen: Locator conversion returned: $locator")
 
                                                     if (locator != null) {
                                                         lastKnownLocator = locator
@@ -2639,8 +2639,7 @@ fun EpubReaderHost(
                                                         } else {
                                                             0f
                                                         }
-                                                        Timber.d("CFI received for saving: $cfi. Progress: $progress%"
-                                                        )
+                                                        Timber.tag("POS_DIAG").i("Saving Position: Chapter=$latestChapterIndex, CFI=$cfi, Progress=$progress%")
                                                         onSavePosition(locator, cfi, progress)
                                                     } else {
                                                         Timber.w("Failed to convert CFI to Locator: $cfi."

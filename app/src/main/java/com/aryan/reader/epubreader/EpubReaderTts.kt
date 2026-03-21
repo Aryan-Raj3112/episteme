@@ -215,11 +215,8 @@ fun TtsHighlightHandler(
         val targetPage = pag.findPageForCfiAndOffset(chapterIdx, cfi, offset)
 
         if (targetPage != null && targetPage != pagerState.currentPage) {
-            // Prevent backward jumps during reading (unless significant) to avoid jitter
-            if (targetPage >= pagerState.currentPage) {
-                scope.launch {
-                    pagerState.animateScrollToPage(targetPage)
-                }
+            scope.launch {
+                pagerState.animateScrollToPage(targetPage)
             }
         }
     }

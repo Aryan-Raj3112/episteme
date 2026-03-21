@@ -2792,93 +2792,14 @@ fun PdfViewerScreen(
                 withContext(Dispatchers.IO) { tempTextPage?.close() }
             }
 
+            ocrUsedForCurrentPageTts = false
+            withContext(Dispatchers.IO) {
+                tempPage?.close()
+            }
             if (rawPageText.isNullOrBlank()) {
-                Timber.i(
-                    "TTS: Pdfium text is blank or extraction failed. Attempting OCR for page $pageToRead."
-                )
-                ocrAttempted = true
-                ocrUsedForCurrentPageTts = true
-                var ocrBitmap: Bitmap? = null
-                try {
-                    if (tempPage == null) {
-                        withContext(Dispatchers.IO) {
-                            tempPage?.close()
-                            Timber.d("TTS/OCR: Re-opening page $pageToRead for bitmap rendering.")
-                            tempPage = pdfDocument!!.openPage(pageToRead)
-                        }
-                    }
-
-                    val pageForOcr = tempPage ?: throw IllegalStateException(
-                        "TTS/OCR: PDF page couldn't be opened for OCR."
-                    )
-
-                    val ocrBitmapWidth = 1080
-                    val ocrBitmapHeight: Int
-
-                    withContext(Dispatchers.IO) {
-                        val originalWidthPoints = pageForOcr.getPageWidthPoint()
-                        val originalHeightPoints = pageForOcr.getPageHeightPoint()
-
-                        if (originalWidthPoints <= 0 || originalHeightPoints <= 0) {
-                            throw IllegalStateException(
-                                "TTS/OCR: Invalid page dimensions (points) from Pdfium for page $pageToRead."
-                            )
-                        }
-                        val aspectRatio =
-                            originalWidthPoints.toFloat() / originalHeightPoints.toFloat()
-                        ocrBitmapHeight = (ocrBitmapWidth / aspectRatio).toInt()
-
-                        if (ocrBitmapHeight <= 0) {
-                            throw IllegalStateException(
-                                "TTS/OCR: Calculated invalid bitmap dimensions for OCR ($ocrBitmapWidth x $ocrBitmapHeight) for page $pageToRead."
-                            )
-                        }
-
-                        Timber.d(
-                            "TTS/OCR: Rendering page $pageToRead to bitmap of size ${ocrBitmapWidth}x$ocrBitmapHeight."
-                        )
-                        ocrBitmap = createBitmap(ocrBitmapWidth, ocrBitmapHeight)
-                        pageForOcr.renderPageBitmap(
-                            bitmap = ocrBitmap,
-                            startX = 0,
-                            startY = 0,
-                            drawSizeX = ocrBitmapWidth,
-                            drawSizeY = ocrBitmapHeight,
-                            renderAnnot = false
-                        )
-                    }
-                    Timber.d("TTS/OCR: Bitmap rendered for page $pageToRead. Attempting OCR.")
-
-                    rawPageText = OcrHelper.extractTextFromBitmap(ocrBitmap!!) {
-                        isOcrModelDownloading = true
-                    }?.text
-
-                    if (!rawPageText.isNullOrBlank()) {
-                        Timber.i(
-                            "TTS: Text extracted via OCR for page $pageToRead (length: ${rawPageText?.length})."
-                        )
-                    } else {
-                        Timber.w(
-                            "TTS: OCR process completed for page $pageToRead but returned no text or blank text."
-                        )
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "TTS: Error during OCR process for page $pageToRead")
-                } finally {
-                    ocrBitmap?.recycle()
-                    withContext(Dispatchers.IO) {
-                        tempPage?.close()
-                        Timber.d("TTS/OCR: Closed page $pageToRead after OCR attempt.")
-                    }
-                }
+                Timber.i("TTS: Pdfium text is blank or extraction failed. OCR fallback is temporarily disabled.")
             } else {
-                ocrUsedForCurrentPageTts = false
-                withContext(Dispatchers.IO) {
-                    tempPage?.close()
-                    Timber.d(
-                        "TTS: Closed page $pageToRead after successful Pdfium text extraction."
-                    )
-                }
+                    Timber.d("TTS: Closed page $pageToRead after successful Pdfium text extraction.")
             }
 
             if (rawPageText != null && rawPageText!!.isNotBlank()) {
