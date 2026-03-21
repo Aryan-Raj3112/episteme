@@ -1041,16 +1041,20 @@ class BookPaginator(
     override fun findPageForCfiAndOffset(chapterIndex: Int, cfi: String, charOffset: Int): Int? {
         val index = chapterCharacterIndex[chapterIndex]
         if (index.isNullOrEmpty()) {
+            Timber.tag("TTS_PAGE_JUMP_DIAG").w("Lookup failed: No character index for chapter $chapterIndex")
             return null
         }
 
         val targetPath = CfiUtils.getPath(cfi)
-        val foundRange = index.find { range ->
+
+        val matches = index.filter { range ->
             val rangePath = CfiUtils.getPath(range.cfi)
-            val cfiMatches = targetPath == rangePath || targetPath.startsWith(rangePath) || rangePath.startsWith(targetPath)
+            val pathMatches = targetPath == rangePath || targetPath.startsWith(rangePath)
             val offsetMatches = charOffset >= range.startOffset && charOffset < range.endOffset
-            cfiMatches && offsetMatches
+            pathMatches && offsetMatches
         }
+
+        val foundRange = matches.maxByOrNull { CfiUtils.getPath(it.cfi).length }
 
         return if (foundRange != null) {
             val chapterStartPage = chapterStartPageIndices[chapterIndex]
