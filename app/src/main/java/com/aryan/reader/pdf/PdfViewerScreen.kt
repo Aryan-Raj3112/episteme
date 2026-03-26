@@ -2756,21 +2756,24 @@ fun PdfViewerScreen(
     ): Boolean {
         if (annotation.points.isEmpty()) return false
 
+        val effectiveThreshold = threshold + (annotation.strokeWidth / 2f)
+        val thresholdSq = effectiveThreshold * effectiveThreshold
+
         if (annotation.points.size == 1) {
             val p = annotation.points[0]
-            val dx = (p.x - hitPoint.x) * pageAspectRatio
-            val dy = (p.y - hitPoint.y)
-            return (dx * dx + dy * dy) < (threshold * threshold)
+            val dx = (p.x - hitPoint.x)
+            val dy = (p.y - hitPoint.y) / pageAspectRatio
+            return (dx * dx + dy * dy) < thresholdSq
         }
 
         for (i in 0 until annotation.points.size - 1) {
             val a = annotation.points[i]
             val b = annotation.points[i + 1]
 
-            val pax = (hitPoint.x - a.x) * pageAspectRatio
-            val pay = (hitPoint.y - a.y)
-            val bax = (b.x - a.x) * pageAspectRatio
-            val bay = (b.y - a.y)
+            val pax = (hitPoint.x - a.x)
+            val pay = (hitPoint.y - a.y) / pageAspectRatio
+            val bax = (b.x - a.x)
+            val bay = (b.y - a.y) / pageAspectRatio
 
             val segmentLenSq = (bax * bax + bay * bay).coerceAtLeast(1e-6f)
             val t = (pax * bax + pay * bay) / segmentLenSq
@@ -2781,7 +2784,7 @@ fun PdfViewerScreen(
 
             val distSq = (pax - closestX) * (pax - closestX) + (pay - closestY) * (pay - closestY)
 
-            if (distSq < (threshold * threshold)) return true
+            if (distSq < thresholdSq) return true
         }
 
         return false

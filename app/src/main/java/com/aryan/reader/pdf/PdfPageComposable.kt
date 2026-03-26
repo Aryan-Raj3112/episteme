@@ -1642,10 +1642,6 @@ internal fun PdfPageComposable(
                         }
                     }
 
-                    if (selectedTool == InkType.ERASER) {
-                        eraserPosition = down.position
-                    }
-
                     if (dragStartedOnHandle) {
                         Timber.d(
                             "PointerInput: Drag started on handle $activeDraggingHandle"
