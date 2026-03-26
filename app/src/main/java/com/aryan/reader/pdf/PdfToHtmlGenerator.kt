@@ -5,9 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Base64
-import io.legere.pdfiumandroid.PdfiumCore
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
-import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -219,9 +217,17 @@ object PdfToHtmlGenerator {
                         val c = rawText[i]
                         val code = c.code
 
-                        if (code == 0 || code == 13) continue
+                        if (code == 0) continue
+
+                        if (c == '\r') {
+                            commitLine()
+                            continue
+                        }
 
                         if (c == '\n') {
+                            if (i > 0 && rawText[i - 1] == '\r') {
+                                continue
+                            }
                             commitLine()
                             continue
                         }
@@ -292,7 +298,7 @@ object PdfToHtmlGenerator {
                     }
 
                     buildPageHtml(pageNumber, finalElements, headerFooterStrings)
-                } ?: buildEmptyPageSection(pageNumber)
+                }
             } ?: buildEmptyPageSection(pageNumber)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Error extracting page $pageIdx")
@@ -339,9 +345,12 @@ object PdfToHtmlGenerator {
         var inParagraph = false
         var inUl = false
         var inOl = false
+        var inLi = false
 
         fun closeParagraph() { if (inParagraph) { sb.append("</p>\n"); inParagraph = false } }
+        fun closeLi() { if (inLi) { sb.append("</li>\n"); inLi = false } }
         fun closeList() {
+            closeLi()
             if (inUl) { sb.append("</ul>\n"); inUl = false }
             if (inOl) { sb.append("</ol>\n"); inOl = false }
         }
@@ -404,29 +413,40 @@ object PdfToHtmlGenerator {
                             sb.append("<$tag>${renderSpans(line.spans, insideHeading = true)}</$tag>\n")
                         }
                         isBullet -> {
-                            closeParagraph()
+                            closeParagraph(); closeLi()
                             if (inOl) { sb.append("</ol>\n"); inOl = false }
                             if (!inUl) { sb.append("<ul>\n"); inUl = true }
                             val content = trimmed.removePrefix("•").removePrefix("▪").removePrefix("◦").removePrefix("–").removePrefix("- ").trim()
-                            sb.append("<li>${content.escapeHtml()}</li>\n")
+                            sb.append("<li>${content.escapeHtml()}")
+                            inLi = true
                         }
                         numberedMatch -> {
-                            closeParagraph()
+                            closeParagraph(); closeLi()
                             if (inUl) { sb.append("</ul>\n"); inUl = false }
                             if (!inOl) { sb.append("<ol>\n"); inOl = true }
                             val content = trimmed.substringAfter(" ").trim()
-                            sb.append("<li>${content.escapeHtml()}</li>\n")
+                            sb.append("<li>${content.escapeHtml()}")
+                            inLi = true
                         }
                         shouldBreakParagraph -> {
-                            closeList()
-                            if (!inParagraph) { sb.append("<p>"); inParagraph = true }
-                            sb.append(renderSpans(line.spans))
-                            closeParagraph()
+                            if (inLi) {
+                                sb.append(" ").append(renderSpans(line.spans))
+                                closeLi()
+                            } else {
+                                closeList()
+                                if (!inParagraph) { sb.append("<p>"); inParagraph = true }
+                                sb.append(renderSpans(line.spans))
+                                closeParagraph()
+                            }
                         }
                         else -> {
-                            closeList()
-                            if (!inParagraph) { sb.append("<p>"); inParagraph = true } else sb.append(" ")
-                            sb.append(renderSpans(line.spans))
+                            if (inLi) {
+                                sb.append(" ").append(renderSpans(line.spans))
+                            } else {
+                                closeList()
+                                if (!inParagraph) { sb.append("<p>"); inParagraph = true } else sb.append(" ")
+                                sb.append(renderSpans(line.spans))
+                            }
                         }
                     }
                 }

@@ -746,6 +746,7 @@ fun EpubReaderHost(
 
     var searchHighlightTarget by remember { mutableStateOf<SearchResult?>(null) }
     var lastHighlightClickTime by remember { mutableLongStateOf(0L) }
+    var lastScrollHideTime by remember { mutableLongStateOf(0L) }
 
     var webViewRefForTts by remember { mutableStateOf<WebView?>(null) }
 
@@ -2230,20 +2231,26 @@ fun EpubReaderHost(
                                                     if (volumeScrollEnabled && !searchState.isSearchActive) {
                                                         containerFocusRequester.requestFocus()
                                                     }
-                                                    if (showBars || showFormatAdjustmentBars) {
-                                                        showBars = false
-                                                        showFormatAdjustmentBars = false
-                                                        Timber.d("Chapter tapped, hiding all bars.")
+
+                                                    if (System.currentTimeMillis() - lastScrollHideTime < 250) {
+                                                        Timber.d("Ignoring tap toggle because bars were just hidden by scroll (sloppy tap).")
                                                     } else {
-                                                        showBars = true
-                                                        Timber.d("Chapter tapped, showing main bars.")
+                                                        if (showBars || showFormatAdjustmentBars) {
+                                                            showBars = false
+                                                            showFormatAdjustmentBars = false
+                                                            Timber.d("Chapter tapped, hiding all bars.")
+                                                        } else {
+                                                            showBars = true
+                                                            Timber.d("Chapter tapped, showing main bars.")
+                                                        }
                                                     }
                                                 }
                                             },
                                             onPotentialScroll = {
-                                                if (showBars) {
+                                                if (showBars || showFormatAdjustmentBars) {
                                                     showBars = false
                                                     showFormatAdjustmentBars = false
+                                                    lastScrollHideTime = System.currentTimeMillis() // Added
                                                     Timber.d("Scroll/Drag detected, hiding bars.")
                                                 }
                                                 if (isAutoScrollModeActive && isAutoScrollPlaying) {
