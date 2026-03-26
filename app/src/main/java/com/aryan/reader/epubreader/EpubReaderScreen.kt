@@ -1018,6 +1018,15 @@ fun EpubReaderHost(
     }
     val activeTextureId = activeTheme.textureId
 
+    val infoBarBgColor = remember(effectiveBg, isDarkTheme) {
+        val overlayAlpha = if (isDarkTheme) 0.08f else 0.06f
+        val overlayColor = if (isDarkTheme) Color.White else Color.Black
+        val outR = overlayColor.red * overlayAlpha + effectiveBg.red * (1 - overlayAlpha)
+        val outG = overlayColor.green * overlayAlpha + effectiveBg.green * (1 - overlayAlpha)
+        val outB = overlayColor.blue * overlayAlpha + effectiveBg.blue * (1 - overlayAlpha)
+        Color(outR, outG, outB).copy(alpha = 0.95f)
+    }
+
     val currentChapterInPaginatedMode by remember {
         derivedStateOf {
             if (currentRenderMode == RenderMode.PAGINATED) {
@@ -2967,7 +2976,7 @@ fun EpubReaderHost(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(PAGE_INFO_BAR_HEIGHT)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                            .background(infoBarBgColor)
                             .padding(bottom = bottomPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
@@ -2978,7 +2987,7 @@ fun EpubReaderHost(
                         Text(
                             text = "$chapterTitle ($currentPageInChapter/$totalPagesInCurrentChapter)",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = effectiveText.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -2991,7 +3000,7 @@ fun EpubReaderHost(
                             Text(
                                 text = "%.1f%%".format(currentBookProgress),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = effectiveText.copy(alpha = 0.8f),
                                 textAlign = TextAlign.End,
                                 modifier = Modifier.align(Alignment.CenterEnd)
                             )
@@ -3010,7 +3019,7 @@ fun EpubReaderHost(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(PAGE_INFO_BAR_HEIGHT)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                            .background(infoBarBgColor)
                             .padding(bottom = bottomPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
@@ -3039,7 +3048,7 @@ fun EpubReaderHost(
                         Text(
                             text = textToShow,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = effectiveText.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -3073,7 +3082,7 @@ fun EpubReaderHost(
                                 Text(
                                     text = "%.1f%%".format(displayProgress),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = effectiveText.copy(alpha = 0.8f),
                                     textAlign = TextAlign.End,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 )
@@ -3088,7 +3097,7 @@ fun EpubReaderHost(
                                 Text(
                                     text = "%.1f%%".format(percentage),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = effectiveText.copy(alpha = 0.8f),
                                     textAlign = TextAlign.End,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 )
