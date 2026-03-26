@@ -305,21 +305,35 @@ class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
         val scaleX = drawSizeX.toFloat() / originalWidth
         val scaleY = drawSizeY.toFloat() / originalHeight
 
-        val srcLeft = (-startX / scaleX).toInt().coerceAtLeast(0)
-        val srcTop = (-startY / scaleY).toInt().coerceAtLeast(0)
-        val srcRight = (srcLeft + (bitmap.width / scaleX).toInt()).coerceAtMost(originalWidth)
-        val srcBottom = (srcTop + (bitmap.height / scaleY).toInt()).coerceAtMost(originalHeight)
+        val pageOffsetX = -startX.toFloat()
+        val pageOffsetY = -startY.toFloat()
+
+        val exactSrcLeft = pageOffsetX / scaleX
+        val exactSrcTop = pageOffsetY / scaleY
+        val exactSrcRight = (pageOffsetX + bitmap.width) / scaleX
+        val exactSrcBottom = (pageOffsetY + bitmap.height) / scaleY
+
+        val srcLeft = kotlin.math.floor(exactSrcLeft).toInt().coerceAtLeast(0)
+        val srcTop = kotlin.math.floor(exactSrcTop).toInt().coerceAtLeast(0)
+        val srcRight = kotlin.math.ceil(exactSrcRight).toInt().coerceAtMost(originalWidth)
+        val srcBottom = kotlin.math.ceil(exactSrcBottom).toInt().coerceAtMost(originalHeight)
 
         val rect = Rect(srcLeft, srcTop, srcRight, srcBottom)
         if (rect.width() <= 0 || rect.height() <= 0) return
 
         val options = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
+            inScaled = false
+            @Suppress("DEPRECATION")
+            inDither = true
 
             var sampleSize = 1
-            if (rect.height() > bitmap.height || rect.width() > bitmap.width) {
-                val halfHeight = rect.height() / 2
-                val halfWidth = rect.width() / 2
+            val srcWidth = rect.width()
+            val srcHeight = rect.height()
+
+            if (srcHeight > bitmap.height || srcWidth > bitmap.width) {
+                val halfHeight = srcHeight / 2
+                val halfWidth = srcWidth / 2
                 while (halfHeight / sampleSize >= bitmap.height && halfWidth / sampleSize >= bitmap.width) {
                     sampleSize *= 2
                 }
@@ -335,7 +349,13 @@ class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
 
         if (region != null) {
             val canvas = Canvas(bitmap)
-            val destRect = Rect(0, 0, bitmap.width, bitmap.height)
+
+            val destLeft = (srcLeft * scaleX) - pageOffsetX
+            val destTop = (srcTop * scaleY) - pageOffsetY
+            val destRight = (srcRight * scaleX) - pageOffsetX
+            val destBottom = (srcBottom * scaleY) - pageOffsetY
+
+            val destRect = RectF(destLeft, destTop, destRight, destBottom)
 
             val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
 

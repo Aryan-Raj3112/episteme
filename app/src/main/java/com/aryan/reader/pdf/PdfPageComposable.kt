@@ -3105,8 +3105,12 @@ internal fun PdfPageComposable(
         }
 
         LaunchedEffect(
-            this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight, pageIndex
+            this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight
         ) {
+            scale = 1f
+            offset = Offset.Zero
+            onScaleChanged(1f)
+
             Timber.d(
                 "PdfPageComposable Page $pageIndex | Constraints: maxWidth=${this@BoxWithConstraints.maxWidth}, maxHeight=${this@BoxWithConstraints.maxHeight}"
             )
