@@ -134,6 +134,7 @@ fun LibraryScreen(
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     val sortOrder = uiState.sortOrder
     val shelves = uiState.shelves
+    val rawLibraryFiles = uiState.rawLibraryFiles
     val pagerState = rememberPagerState(
         initialPage = uiState.libraryScreenStartPage,
         pageCount = { 3 }
@@ -234,6 +235,7 @@ fun LibraryScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         LibraryScreenContent(
             recentFiles = uiState.allRecentFiles,
+            rawLibraryFiles = rawLibraryFiles,
             shelves = shelves,
             selectedItems = selectedItems,
             selectedShelves = selectedShelves,
@@ -460,6 +462,7 @@ fun ShelfScreen(
 @Composable
 fun LibraryScreenContent(
     recentFiles: List<RecentFileItem>,
+    rawLibraryFiles: List<RecentFileItem>,
     shelves: List<Shelf>,
     selectedItems: Set<RecentFileItem>,
     selectedShelves: Set<String>,
@@ -759,7 +762,7 @@ fun LibraryScreenContent(
                 2 -> {
                     FolderSyncScreen(
                         syncedFolders = syncedFolders,
-                        allRecentFiles = recentFiles,
+                        allRecentFiles = rawLibraryFiles,
                         onAddFolderClick = onAddFolderClick,
                         onRemoveFolderClick = onRemoveFolderClick,
                         onEditFolderFiltersClick = onEditFolderFiltersClick,

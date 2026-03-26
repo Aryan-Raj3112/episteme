@@ -225,6 +225,7 @@ data class ReaderScreenState(
     val reflowProgress: Float? = null,
     val recentFiles: List<RecentFileItem> = emptyList(),
     val allRecentFiles: List<RecentFileItem> = emptyList(),
+    val rawLibraryFiles: List<RecentFileItem> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
@@ -421,6 +422,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internalState.copy(
             recentFiles = visibleRecentFiles,
             allRecentFiles = sortedLibraryFiles,
+            rawLibraryFiles = baseVisibleFiles,
             contextualActionItems = validContextualItems,
             shelves = allShelves,
             booksAvailableForAdding = booksAvailableForAdding

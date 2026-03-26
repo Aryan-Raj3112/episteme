@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -333,24 +334,36 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
     }
 
-    val pathText = remember(item.sourceFolderUri, item.displayName) {
-        if (item.sourceFolderUri != null) {
+    val context = LocalContext.current
+    val pathText = remember(item.sourceFolderUri, item.uriString, item.displayName, context) {
+        if (item.sourceFolderUri != null && item.uriString != null) {
             try {
-                val uri = item.sourceFolderUri.toUri()
-                val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                val uri = item.uriString.toUri()
+                val docId = if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {
+                    android.provider.DocumentsContract.getDocumentId(uri)
+                } else if (android.provider.DocumentsContract.isTreeUri(uri)) {
+                    android.provider.DocumentsContract.getTreeDocumentId(uri)
+                } else {
+                    Uri.decode(uri.toString())
+                }
+
                 val split = docId.split(":")
                 val storageName = if (split[0].equals("primary", ignoreCase = true)) "Internal storage" else split[0]
-                val relativePath = if (split.size > 1) {
+                var relativePath = if (split.size > 1) {
                     Uri.decode(split[1]).removeSuffix("/")
                 } else ""
 
+                if (!relativePath.endsWith(item.displayName)) {
+                    relativePath = if (relativePath.isEmpty()) item.displayName else "$relativePath/${item.displayName}"
+                }
+
                 val leadingSlash = if (relativePath.isNotEmpty() && !relativePath.startsWith("/")) "/" else ""
 
-                "/$storageName$leadingSlash$relativePath/${item.displayName}"
+                "/$storageName$leadingSlash$relativePath"
             } catch (_: Exception) {
-                val decoded = Uri.decode(item.sourceFolderUri)
+                val decoded = Uri.decode(item.uriString)
                 if (decoded.contains("primary:")) {
-                    "/Internal storage/${decoded.substringAfter("primary:").removeSuffix("/")}/${item.displayName}"
+                    "/Internal storage/${decoded.substringAfter("primary:").substringBeforeLast("/")}/${item.displayName}"
                 } else {
                     item.displayName
                 }
@@ -435,6 +448,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                         label = "Location",
                         value = pathText,
                         maxLines = 4,
+                        isScrollable = true,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(pathText))
                         }
@@ -471,6 +485,7 @@ private fun InfoRowDetailed(
     label: String,
     value: String,
     maxLines: Int = 1,
+    isScrollable: Boolean = false, // ADD THIS
     onCopy: (() -> Unit)? = null
 ) {
     Row(
@@ -486,15 +501,23 @@ private fun InfoRowDetailed(
                 .width(85.dp)
                 .padding(top = 2.dp)
         )
+
+        val scrollModifier = if (isScrollable) {
+            Modifier
+                .heightIn(max = 66.dp)
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+        } else Modifier
+
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = if (isScrollable) Int.MAX_VALUE else maxLines,
+            overflow = if (isScrollable) TextOverflow.Clip else TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)
                 .padding(top = 2.dp)
+                .then(scrollModifier)
         )
         if (onCopy != null) {
             IconButton(
