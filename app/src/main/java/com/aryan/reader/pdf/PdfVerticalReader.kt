@@ -111,7 +111,6 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -177,7 +176,7 @@ private data class DividerLayout(val y: Float, val width: Float, val height: Flo
 internal fun PdfVerticalReader(
     state: VerticalPdfReaderState,
     pdfDocument: StableHolder<ReaderDocument>,
-    isDarkMode: Boolean,
+    activeTheme: com.aryan.reader.ReaderTheme,
     totalPages: Int,
     modifier: Modifier = Modifier,
     virtualPages: List<VirtualPage> = emptyList(),
@@ -243,6 +242,7 @@ internal fun PdfVerticalReader(
         }
     }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
+    val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         val imeInsets = WindowInsets.ime
         val density = LocalDensity.current
@@ -1497,7 +1497,7 @@ internal fun PdfVerticalReader(
                                     pageIndex = page.index,
                                     virtualPage = virtualPage,
                                     totalPages = totalPages,
-                                    isDarkMode = isDarkMode,
+                                    activeTheme = activeTheme,
                                     externalScale = highResScale,
                                     onScaleChanged = {},
                                     showAllTextHighlights = showAllTextHighlights,

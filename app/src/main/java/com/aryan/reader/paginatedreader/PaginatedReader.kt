@@ -158,6 +158,7 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.R
+import com.aryan.reader.ReaderTexture
 import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epubreader.HighlightColor
@@ -529,7 +530,7 @@ fun PaginatedReaderScreen(
     val context = LocalContext.current
     val textureBitmap = remember(activeTextureId) {
         activeTextureId?.let { id ->
-            com.aryan.reader.epubreader.ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
+            ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
                 androidx.compose.ui.graphics.ImageBitmap.imageResource(context.resources, resId)
             }
         }

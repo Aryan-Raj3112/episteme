@@ -81,6 +81,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
+import com.aryan.reader.ReaderTexture
 import com.aryan.reader.paginatedreader.PaginatedTextSelectionMenu
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch

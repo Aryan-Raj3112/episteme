@@ -29,11 +29,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
-import com.aryan.reader.SpectrumBox
-import com.aryan.reader.BrightnessSlider
-import com.aryan.reader.ColorComparePill
-import com.aryan.reader.HexInput
-import com.aryan.reader.RgbInputColumn
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
@@ -53,7 +48,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,11 +56,9 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -79,35 +71,26 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -133,32 +116,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.ImageShader
-import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.imageResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
@@ -170,10 +140,11 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
-import com.aryan.reader.R
+import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -183,6 +154,8 @@ import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.fetchAiDefinition
+import com.aryan.reader.loadCustomThemes
+import com.aryan.reader.loadReaderThemeId
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.HeaderBlock
 import com.aryan.reader.paginatedreader.IPaginator
@@ -197,6 +170,8 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
+import com.aryan.reader.saveCustomThemes
+import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
@@ -366,93 +341,8 @@ private fun saveExternalSearchPackage(context: Context, packageName: String) {
     prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
 }
 
-enum class ReaderTexture(val id: String, val resId: Int, val displayName: String) {
-    PAPER("paper", R.drawable.texture_paper, "Paper"),
-    CANVAS("canvas", R.drawable.texture_canvas, "Canvas"),
-    EINK("eink", R.drawable.texture_eink, "E-Ink"),
-    SLATE("slate", R.drawable.texture_slate, "Slate")
-}
-
-data class ReaderTheme(
-    val id: String,
-    val name: String,
-    val backgroundColor: Color,
-    val textColor: Color,
-    val isDark: Boolean,
-    val textureId: String? = null,
-    val isCustom: Boolean = false
-)
-
-val BuiltInThemes = listOf(
-    ReaderTheme("system", "System", Color.Unspecified, Color.Unspecified, false),
-    ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
-    ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
-    ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
-    ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
-)
-
-private const val PREF_READER_THEME = "reader_theme_id"
-private const val PREF_CUSTOM_THEMES = "custom_themes_json"
-
-private fun saveReaderThemeId(context: Context, themeId: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_READER_THEME, themeId) }
-}
-
-private fun loadReaderThemeId(context: Context): String {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_READER_THEME, "system") ?: "system"
-}
-
-private fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val jsonArray = JSONArray()
-    themes.filter { it.isCustom }.forEach { theme ->
-        val obj = JSONObject().apply {
-            put("id", theme.id)
-            put("name", theme.name)
-            put("bgColor", theme.backgroundColor.toArgb())
-            put("textColor", theme.textColor.toArgb())
-            put("isDark", theme.isDark)
-            theme.textureId?.let { put("textureId", it) }
-        }
-        jsonArray.put(obj)
-    }
-    prefs.edit { putString(PREF_CUSTOM_THEMES, jsonArray.toString()) }
-}
-
-private fun loadCustomThemes(context: Context): List<ReaderTheme> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val jsonString = prefs.getString(PREF_CUSTOM_THEMES, "[]") ?: "[]"
-    val themes = mutableListOf<ReaderTheme>()
-    try {
-        val jsonArray = org.json.JSONArray(jsonString)
-        for (i in 0 until jsonArray.length()) {
-            val obj = jsonArray.getJSONObject(i)
-            themes.add(
-                ReaderTheme(
-                    id = obj.getString("id"),
-                    name = obj.getString("name"),
-                    backgroundColor = Color(obj.getInt("bgColor")),
-                    textColor = Color(obj.getInt("textColor")),
-                    isDark = obj.getBoolean("isDark"),
-                    textureId = if (obj.has("textureId")) obj.getString("textureId") else null,
-                    isCustom = true
-                )
-            )
-        }
-    } catch (e: Exception) {
-        Timber.e(e, "Failed to parse custom themes")
-    }
-    return themes
-}
-
-private fun calculateContrastRatio(color1: Color, color2: Color): Float {
-    val l1 = max(color1.luminance(), color2.luminance())
-    val l2 = min(color1.luminance(), color2.luminance())
-    return (l1 + 0.05f) / (l2 + 0.05f)
-}
+const val PREF_READER_THEME = "reader_theme_id"
+const val PREF_CUSTOM_THEMES = "custom_themes_json"
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
@@ -4037,501 +3927,5 @@ fun EpubReaderHost(
                 onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) }
             )
         }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ReaderThemePanel(
-    isVisible: Boolean,
-    currentThemeId: String,
-    customThemes: List<ReaderTheme>,
-    onThemeSelected: (String) -> Unit,
-    onCustomThemesUpdated: (List<ReaderTheme>) -> Unit,
-    onDismiss: () -> Unit
-) {
-    if (!isVisible) return
-    var showBuilder by remember { mutableStateOf(false) }
-    var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
-
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        AnimatedContent(targetState = showBuilder, label = "ThemePanelTransition") { isBuilding ->
-            if (isBuilding) {
-                ThemeBuilderView(
-                    initialTheme = editingTheme,
-                    onSave = { newTheme ->
-                        val updatedList = if (editingTheme != null) {
-                            customThemes.map { if (it.id == newTheme.id) newTheme else it }
-                        } else {
-                            customThemes + newTheme
-                        }
-                        onCustomThemesUpdated(updatedList)
-                        onThemeSelected(newTheme.id)
-                        showBuilder = false
-                        editingTheme = null
-                    },
-                    onCancel = {
-                        showBuilder = false
-                        editingTheme = null
-                    }
-                )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.65f)
-                        .padding(16.dp)
-                        .padding(bottom = 16.dp)
-                ) {
-                    Text(
-                        "Reading Themes",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-
-                    Text("Presets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    ThemeGrid(themes = BuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
-
-                    Spacer(Modifier.height(24.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("My Themes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        IconButton(onClick = { editingTheme = null; showBuilder = true }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Add, contentDescription = "Create Theme", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-
-                    if (customThemes.isEmpty()) {
-                        Text("No custom themes yet. Tap '+' to create one.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        ThemeGrid(
-                            themes = customThemes,
-                            currentThemeId = currentThemeId,
-                            onThemeSelected = onThemeSelected,
-                            onEdit = { editingTheme = it; showBuilder = true },
-                            onDelete = { themeToDelete ->
-                                val updated = customThemes.filter { it.id != themeToDelete.id }
-                                onCustomThemesUpdated(updated)
-                                if (currentThemeId == themeToDelete.id) onThemeSelected("system")
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ThemeGrid(
-    themes: List<ReaderTheme>,
-    currentThemeId: String,
-    onThemeSelected: (String) -> Unit,
-    onEdit: ((ReaderTheme) -> Unit)? = null,
-    onDelete: ((ReaderTheme) -> Unit)? = null
-) {
-    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 80.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        items(themes.size) { index ->
-            val theme = themes[index]
-            val isSelected = currentThemeId == theme.id
-            val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
-            val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
-            val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .background(bgColor, CircleShape)
-                        .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
-                        .clickable { onThemeSelected(theme.id) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-
-                if (theme.isCustom && onEdit != null && onDelete != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ThemeBuilderView(
-    initialTheme: ReaderTheme?,
-    onSave: (ReaderTheme) -> Unit,
-    onCancel: () -> Unit
-) {
-    var name by remember { mutableStateOf(initialTheme?.name ?: "Custom Theme") }
-    var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
-    var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
-    var textureId by remember { mutableStateOf(initialTheme?.textureId) }
-
-    var editingColorType by remember { mutableStateOf<String?>(null) }
-
-    val contrast = calculateContrastRatio(bgColor, txtColor)
-    val isDark = bgColor.luminance() < 0.5f
-
-    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.65f).padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onCancel) { Text("Cancel") }
-            Text(if (initialTheme == null) "New Theme" else "Edit Theme", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = {
-                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, isCustom = true))
-            }) { Text("Save") }
-        }
-
-        androidx.compose.material3.OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Theme Name") },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            singleLine = true
-        )
-
-        // Live Preview Card
-        Surface(
-            modifier = Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = bgColor,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            // Draw Texture if selected (kept logic for future)
-            val context = LocalContext.current
-            Box(modifier = Modifier.fillMaxSize().run {
-                val texRes = ReaderTexture.entries.find { it.id == textureId }?.resId
-                if (texRes != null) {
-                    val bmp = ImageBitmap.imageResource(context.resources, texRes)
-                    this.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.5f)
-                    }
-                } else this
-            }) {
-                Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                    Text(
-                        text = "So many books, so little time.",
-                        color = txtColor,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "- Frank Zappa",
-                        color = txtColor,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.End
-                    )
-                }
-            }
-        }
-
-        // Animated Contrast Warning
-        AnimatedVisibility(visible = contrast < 4.5f) {
-            Text(
-                "⚠️ Low contrast! This might cause eye strain.",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Sleek Color Swatches
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            ColorSwatchItem(
-                label = "Page Color",
-                color = bgColor,
-                onClick = { editingColorType = "bg" },
-                modifier = Modifier.weight(1f)
-            )
-            ColorSwatchItem(
-                label = "Text Color",
-                color = txtColor,
-                onClick = { editingColorType = "text" },
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        // Texture UI hidden for now
-        /*
-        Spacer(Modifier.height(16.dp))
-        Text("Texture", style = MaterialTheme.typography.labelMedium)
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextureOption("None", null, textureId == null) { textureId = null }
-            ReaderTexture.entries.forEach { tex ->
-                TextureOption(tex.displayName, tex.resId, textureId == tex.id) { textureId = tex.id }
-            }
-        }
-        */
-        Spacer(Modifier.height(16.dp))
-    }
-
-    editingColorType?.let { type ->
-        ThemeColorPickerDialog(
-            initialColor = if (type == "bg") bgColor else txtColor,
-            title = if (type == "bg") "Page Color" else "Text Color",
-            bgColor = bgColor,
-            textColor = txtColor,
-            editingColorType = type,
-            onDismiss = { editingColorType = null },
-            onColorChanged = { newColor ->
-                if (type == "bg") bgColor = newColor else txtColor = newColor
-            }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ColorSwatchItem(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
-        Surface(
-            onClick = onClick,
-            shape = RoundedCornerShape(12.dp),
-            color = color,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) {}
-    }
-}
-
-@Composable
-fun ThemeColorPickerDialog(
-    initialColor: Color,
-    title: String,
-    bgColor: Color,
-    textColor: Color,
-    editingColorType: String,
-    onDismiss: () -> Unit,
-    onColorChanged: (Color) -> Unit
-) {
-    val initialHsv = remember(initialColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
-        hsv
-    }
-
-    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember { mutableFloatStateOf(initialHsv[2]) }
-
-    val currentColor by remember {
-        derivedStateOf {
-            val hsv = floatArrayOf(hue, saturation, value)
-            val argb = android.graphics.Color.HSVToColor(255, hsv)
-            Color(argb)
-        }
-    }
-
-    LaunchedEffect(currentColor) {
-        onColorChanged(currentColor)
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .padding(8.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                val liveBgColor = if (editingColorType == "bg") currentColor else bgColor
-                val liveTextColor = if (editingColorType == "text") currentColor else textColor
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = liveBgColor,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Live Preview",
-                            color = liveTextColor,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Reading is dreaming.",
-                            color = liveTextColor,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s -> hue = h; saturation = s },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                BrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ColorComparePill(
-                        oldColor = initialColor,
-                        newColor = currentColor,
-                        modifier = Modifier.width(64.dp).height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("Hex", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        RgbInputColumn(
-                            label = "R", value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(
-                            label = "G", value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(
-                            label = "B", value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onDismiss,
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Text("Done")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun TextureOption(name: String, resId: Int?, isSelected: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick)) {
-        Box(modifier = Modifier.size(48.dp).clip(CircleShape).border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape).run {
-            if (resId != null) {
-                val bmp = ImageBitmap.imageResource(LocalResources.current, resId)
-                this.drawBehind { drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated))) }
-            } else this.background(MaterialTheme.colorScheme.surfaceVariant)
-        })
-        Text(name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-    }
-}
-
-@Composable
-fun ColorSlider(color: Color, onColorChanged: (Color) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Slider(value = color.red, onValueChange = { onColorChanged(color.copy(red = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red), modifier = Modifier.weight(1f))
-        Slider(value = color.green, onValueChange = { onColorChanged(color.copy(green = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green), modifier = Modifier.weight(1f))
-        Slider(value = color.blue, onValueChange = { onColorChanged(color.copy(blue = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue), modifier = Modifier.weight(1f))
     }
 }
