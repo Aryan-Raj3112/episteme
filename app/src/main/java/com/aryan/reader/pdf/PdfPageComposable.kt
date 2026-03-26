@@ -3861,7 +3861,6 @@ private fun PdfBitmapLayer(
         .fillMaxSize()
         .graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
-            // THIS is the fix: Hard clip to the target bounds so edge tiles can't bleed out.
             clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
                 if (bitmapState != null && !bitmapState.isRecycled) {
                     val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
@@ -3869,17 +3868,16 @@ private fun PdfBitmapLayer(
                     val srcSize = IntSize(bitmapState.width, bitmapState.height)
                     val dstSize = IntSize(dstW, dstH)
 
-                    // 1. Draw Base Bitmap
                     drawImage(
                         image = bitmapState.asImageBitmap(),
                         srcOffset = IntOffset.Zero,
                         srcSize = srcSize,
                         dstOffset = IntOffset.Zero,
                         dstSize = dstSize,
-                        colorFilter = colorFilter
+                        colorFilter = colorFilter,
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                     )
 
-                    // 2. Draw High-Res Tiles
                     if (effectiveScale > 1f) {
                         tiles.forEach { tile ->
                             if (!tile.bitmap.isRecycled) {
@@ -3891,7 +3889,8 @@ private fun PdfBitmapLayer(
                                     dstSize = IntSize(
                                         tile.renderRect.width(), tile.renderRect.height()
                                     ),
-                                    colorFilter = colorFilter
+                                    colorFilter = colorFilter,
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             }
                         }
