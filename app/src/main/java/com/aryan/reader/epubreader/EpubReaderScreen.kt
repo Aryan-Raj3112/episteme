@@ -206,6 +206,17 @@ private const val AUTO_SCROLL_LOCAL_SPEED_PREFIX = "auto_scroll_local_speed_"
 private const val AUTO_SCROLL_LOCAL_MIN_PREFIX = "auto_scroll_local_min_"
 private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
 private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
+private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
+
+private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(KEEP_SCREEN_ON_KEY, isEnabled) }
+}
+
+private fun loadKeepScreenOn(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(KEEP_SCREEN_ON_KEY, false)
+}
 
 private fun saveMusicianMode(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -931,6 +942,15 @@ fun EpubReaderHost(
 
     var isMusicianMode by remember { mutableStateOf(loadMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadAutoScrollUseSlider(context)) }
+
+    var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
+
+    DisposableEffect(isKeepScreenOn) {
+        view.keepScreenOn = isKeepScreenOn
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -3283,6 +3303,11 @@ fun EpubReaderHost(
                     volumeScrollEnabled = volumeScrollEnabled,
                     isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
                     onNavigateBack = { triggerSaveAndExit() },
+                    isKeepScreenOn = isKeepScreenOn,
+                    onToggleKeepScreenOn = { enabled ->
+                        isKeepScreenOn = enabled
+                        saveKeepScreenOn(context, enabled)
+                    },
                     onCloseSearch = {
                         searchState.isSearchActive = false
                         searchState.onQueryChange("")

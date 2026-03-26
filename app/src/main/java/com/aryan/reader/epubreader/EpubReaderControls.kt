@@ -142,6 +142,8 @@ fun EpubReaderTopBar(
     volumeScrollEnabled: Boolean,
     isPageTurnAnimationEnabled: Boolean,
     onNavigateBack: () -> Unit,
+    isKeepScreenOn: Boolean,
+    onToggleKeepScreenOn: (Boolean) -> Unit,
     onCloseSearch: () -> Unit,
     onChangeRenderMode: (RenderMode) -> Unit,
     onToggleBookmark: () -> Unit,
@@ -331,6 +333,16 @@ fun EpubReaderTopBar(
                                     showMoreMenu = false
                                 },
                                 trailingIcon = { if (isPageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                            )
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
+                                text = { Text("Keep Screen On") },
+                                onClick = {
+                                    onToggleKeepScreenOn(!isKeepScreenOn)
+                                    showMoreMenu = false
+                                },
+                                trailingIcon = { if (isKeepScreenOn) Icon(Icons.Default.Check, contentDescription = "Enabled") }
                             )
                             HorizontalDivider()
 

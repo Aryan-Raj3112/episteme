@@ -347,6 +347,17 @@ private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 private const val PDF_THEME_KEY = "pdf_reader_theme"
+private const val PDF_KEEP_SCREEN_ON_KEY = "pdf_keep_screen_on_enabled"
+
+private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_KEEP_SCREEN_ON_KEY, isEnabled) }
+}
+
+private fun loadKeepScreenOn(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_KEEP_SCREEN_ON_KEY, false)
+}
 
 private fun savePdfThemeId(context: Context, themeId: String) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -1152,7 +1163,7 @@ fun PdfViewerScreen(
                 ?: pdfUri.lastPathSegment ?: "Document.pdf"
         }
     }
-
+    val view = LocalView.current
     var isDockDragging by remember { mutableStateOf(false) }
     var initialScrollDone by remember { mutableStateOf(false) }
 
@@ -1167,6 +1178,14 @@ fun PdfViewerScreen(
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
+
+    DisposableEffect(isKeepScreenOn) {
+        view.keepScreenOn = isKeepScreenOn
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
 
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
     var useOnlineDictionary by remember { mutableStateOf(loadUseOnlineDict(context)) }
@@ -1338,7 +1357,6 @@ fun PdfViewerScreen(
         }
     }
 
-    val view = LocalView.current
     val window = (view.context as? Activity)?.window
     LaunchedEffect(isFullScreen) {
         if (window != null) {
@@ -5422,6 +5440,23 @@ fun PdfViewerScreen(
                                                     )
                                                 }
                                             })
+                                        HorizontalDivider()
+                                        DropdownMenuItem(
+                                            text = { Text("Keep Screen On") },
+                                            onClick = {
+                                                isKeepScreenOn = !isKeepScreenOn
+                                                saveKeepScreenOn(context, isKeepScreenOn)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (isKeepScreenOn) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Check,
+                                                        contentDescription = "Selected"
+                                                    )
+                                                }
+                                            }
+                                        )
                                         HorizontalDivider()
                                         DropdownMenuItem(
                                             text = { Text("Auto Scroll") },
