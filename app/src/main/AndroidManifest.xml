@@ -90,6 +90,37 @@
                 <data android:pathPattern=".*\\.azw3" />
             </intent-filter>
 
+            <!-- FB2 Filter 1: Catch by specific and common MIME types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-fictionbook+xml" />
+                <data android:mimeType="application/x-fictionbook" />
+                <data android:mimeType="application/fb2+xml" />
+                <data android:mimeType="application/x-fb2" />
+                <data android:mimeType="application/fb2" />
+                <data android:mimeType="application/x-zip-compressed-fb2" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
+
+            <!-- FB2 Filter 2: Catch by Extension when MIME is unknown (octet-stream) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="text/plain" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.fb2" />
+                <data android:pathPattern=".*\\.fb2\\.zip" />
+            </intent-filter>
+
             <!-- Markdown and Plain Text Filter -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

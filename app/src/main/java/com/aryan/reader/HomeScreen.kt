@@ -607,7 +607,7 @@ fun RecentFileCard(
     val context = LocalContext.current
     val placeholder = when (item.type) {
         FileType.PDF -> R.drawable.pdf_placeholder
-        FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML -> R.drawable.epub_placeholder
+        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {
         item.coverImagePath?.let { File(it) } ?: placeholder
@@ -706,7 +706,7 @@ fun RecentFileCard(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = item.customName ?: if ((item.type == FileType.EPUB || item.type == FileType.MOBI) && !item.title.isNullOrBlank()) {
+                    text = item.customName ?: if ((item.type == FileType.EPUB || item.type == FileType.MOBI || item.type == FileType.FB2) && !item.title.isNullOrBlank()) {
                         item.title
                     } else {
                         item.displayName
