@@ -219,8 +219,7 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
                         tempEntries.add(Pair(path, extractedFile))
 
                         var pfd: android.os.ParcelFileDescriptor? = null
-                        try {
-                            // Extract seamlessly using fd to avoid ByteBuffer's state sync bug
+                        @Suppress("ConvertTryFinallyToUseCall") try {
                             pfd = android.os.ParcelFileDescriptor.open(extractedFile, android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE)
                             Archive.readDataIntoFd(archive, pfd.fd)
                         } finally {
@@ -231,7 +230,7 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
                     }
                 }
 
-                tempEntries.sortBy { it.first } // Natural sorting order based on the filename inside the archive
+                tempEntries.sortBy { it.first }
                 tempEntries.forEach { imageEntries.add(it.second.absolutePath) }
 
             } catch (e: Exception) {
@@ -306,15 +305,42 @@ class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
         val scaleX = drawSizeX.toFloat() / originalWidth
         val scaleY = drawSizeY.toFloat() / originalHeight
 
-        val srcLeft = (-startX / scaleX).toInt().coerceAtLeast(0)
-        val srcTop = (-startY / scaleY).toInt().coerceAtLeast(0)
-        val srcRight = (srcLeft + (bitmap.width / scaleX).toInt()).coerceAtMost(originalWidth)
-        val srcBottom = (srcTop + (bitmap.height / scaleY).toInt()).coerceAtMost(originalHeight)
+        val pageOffsetX = -startX.toFloat()
+        val pageOffsetY = -startY.toFloat()
+
+        val exactSrcLeft = pageOffsetX / scaleX
+        val exactSrcTop = pageOffsetY / scaleY
+        val exactSrcRight = (pageOffsetX + bitmap.width) / scaleX
+        val exactSrcBottom = (pageOffsetY + bitmap.height) / scaleY
+
+        val srcLeft = kotlin.math.floor(exactSrcLeft).toInt().coerceAtLeast(0)
+        val srcTop = kotlin.math.floor(exactSrcTop).toInt().coerceAtLeast(0)
+        val srcRight = kotlin.math.ceil(exactSrcRight).toInt().coerceAtMost(originalWidth)
+        val srcBottom = kotlin.math.ceil(exactSrcBottom).toInt().coerceAtMost(originalHeight)
 
         val rect = Rect(srcLeft, srcTop, srcRight, srcBottom)
         if (rect.width() <= 0 || rect.height() <= 0) return
 
-        val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inScaled = false
+            @Suppress("DEPRECATION")
+            inDither = true
+
+            var sampleSize = 1
+            val srcWidth = rect.width()
+            val srcHeight = rect.height()
+
+            if (srcHeight > bitmap.height || srcWidth > bitmap.width) {
+                val halfHeight = srcHeight / 2
+                val halfWidth = srcWidth / 2
+                while (halfHeight / sampleSize >= bitmap.height && halfWidth / sampleSize >= bitmap.width) {
+                    sampleSize *= 2
+                }
+            }
+            inSampleSize = sampleSize
+        }
+
         val region = try {
             decoder.decodeRegion(rect, options)
         } catch (_: Exception) {
@@ -323,8 +349,17 @@ class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
 
         if (region != null) {
             val canvas = Canvas(bitmap)
-            val destRect = Rect(0, 0, bitmap.width, bitmap.height)
-            canvas.drawBitmap(region, null, destRect, Paint(Paint.FILTER_BITMAP_FLAG))
+
+            val destLeft = (srcLeft * scaleX) - pageOffsetX
+            val destTop = (srcTop * scaleY) - pageOffsetY
+            val destRight = (srcRight * scaleX) - pageOffsetX
+            val destBottom = (srcBottom * scaleY) - pageOffsetY
+
+            val destRect = RectF(destLeft, destTop, destRight, destBottom)
+
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+
+            canvas.drawBitmap(region, null, destRect, paint)
             region.recycle()
         }
     }

@@ -259,6 +259,7 @@ import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.FileType
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
@@ -270,6 +271,7 @@ import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.fetchAiDefinition
+import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -281,6 +283,7 @@ import com.aryan.reader.pdf.data.SmartSearchResult
 import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
+import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -343,6 +346,27 @@ private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
+private const val PDF_THEME_KEY = "pdf_reader_theme"
+
+private fun savePdfThemeId(context: Context, themeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_THEME_KEY, themeId) }
+}
+
+private fun loadPdfThemeId(context: Context): String {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PDF_THEME_KEY, "no_theme") ?: "no_theme"
+}
+
+val PdfBuiltInThemes = listOf(
+    com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    com.aryan.reader.ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true),
+    com.aryan.reader.ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
+    com.aryan.reader.ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
+    com.aryan.reader.ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
+    com.aryan.reader.ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
+    com.aryan.reader.ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+)
 
 object PdfiumCoreProvider {
     val core: PdfiumCoreKt by lazy {
@@ -1065,7 +1089,16 @@ fun PdfViewerScreen(
     val focusManager = LocalFocusManager.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
-    var isPdfDarkMode by remember { mutableStateOf(loadPdfDarkMode(context)) }
+    var showThemePanel by remember { mutableStateOf(false) }
+    var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
+    var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+
+    val activeTheme = remember(currentThemeId, customThemes) {
+        PdfBuiltInThemes.find { it.id == currentThemeId }
+            ?: customThemes.find { it.id == currentThemeId }
+            ?: PdfBuiltInThemes[0]
+    }
+    val isPdfDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
     var showBars by rememberSaveable { mutableStateOf(true) }
     var isFullScreen by remember { mutableStateOf(false) }
@@ -1364,7 +1397,6 @@ fun PdfViewerScreen(
     LaunchedEffect(ocrLanguage) { OcrHelper.init(ocrLanguage) }
 
     LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
-    LaunchedEffect(isPdfDarkMode) { savePdfDarkMode(context, isPdfDarkMode) }
 
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
     val toolSettings by annotationSettingsRepo.settings.collectAsState()
@@ -2724,21 +2756,24 @@ fun PdfViewerScreen(
     ): Boolean {
         if (annotation.points.isEmpty()) return false
 
+        val effectiveThreshold = threshold + (annotation.strokeWidth / 2f)
+        val thresholdSq = effectiveThreshold * effectiveThreshold
+
         if (annotation.points.size == 1) {
             val p = annotation.points[0]
-            val dx = (p.x - hitPoint.x) * pageAspectRatio
-            val dy = (p.y - hitPoint.y)
-            return (dx * dx + dy * dy) < (threshold * threshold)
+            val dx = (p.x - hitPoint.x)
+            val dy = (p.y - hitPoint.y) / pageAspectRatio
+            return (dx * dx + dy * dy) < thresholdSq
         }
 
         for (i in 0 until annotation.points.size - 1) {
             val a = annotation.points[i]
             val b = annotation.points[i + 1]
 
-            val pax = (hitPoint.x - a.x) * pageAspectRatio
-            val pay = (hitPoint.y - a.y)
-            val bax = (b.x - a.x) * pageAspectRatio
-            val bay = (b.y - a.y)
+            val pax = (hitPoint.x - a.x)
+            val pay = (hitPoint.y - a.y) / pageAspectRatio
+            val bax = (b.x - a.x)
+            val bay = (b.y - a.y) / pageAspectRatio
 
             val segmentLenSq = (bax * bax + bay * bay).coerceAtLeast(1e-6f)
             val t = (pax * bax + pay * bay) / segmentLenSq
@@ -2749,7 +2784,7 @@ fun PdfViewerScreen(
 
             val distSq = (pax - closestX) * (pax - closestX) + (pay - closestY) * (pay - closestY)
 
-            if (distSq < (threshold * threshold)) return true
+            if (distSq < thresholdSq) return true
         }
 
         return false
@@ -3580,6 +3615,7 @@ fun PdfViewerScreen(
             }
 
             showTtsSettingsSheet -> showTtsSettingsSheet = false
+            showThemePanel -> showThemePanel = false
 
             else -> {
                 saveStateAndExit()
@@ -4257,7 +4293,7 @@ fun PdfViewerScreen(
                                                 pageIndex = pageIndex,
                                                 virtualPage = virtualPage,
                                                 totalPages = totalDisplayPages,
-                                                isDarkMode = isPdfDarkMode,
+                                                activeTheme = activeTheme,
                                                 isScrollLocked = isScrollLocked,
                                                 onScaleChanged = { newScale ->
                                                     if (pagerState.currentPage == pageIndex) {
@@ -4636,7 +4672,7 @@ fun PdfViewerScreen(
                                         PdfVerticalReader(
                                             state = verticalReaderState,
                                             pdfDocument = docHolder,
-                                            isDarkMode = isPdfDarkMode,
+                                            activeTheme = activeTheme,
                                             isScrollLocked = isScrollLocked,
                                             totalPages = totalDisplayPages,
                                             pageAspectRatios = ratiosHolder,
@@ -5223,22 +5259,14 @@ fun PdfViewerScreen(
                                 )
 
                                 TooltipIconButton(
-                                    text = if (isPdfDarkMode)
-                                        stringResource(R.string.tooltip_dark_mode_off)
-                                    else
-                                        stringResource(R.string.tooltip_dark_mode_on),
-                                    description = if (isPdfDarkMode)
-                                        stringResource(R.string.tooltip_dark_mode_off_desc)
-                                    else
-                                        stringResource(R.string.tooltip_dark_mode_on_desc),
-                                    onClick = { isPdfDarkMode = !isPdfDarkMode }
+                                    text = "Theme",
+                                    description = "Theme Settings",
+                                    onClick = { showThemePanel = true }
                                 ) {
                                     Icon(
-                                        painter = painterResource(id = R.drawable.dark_mode),
-                                        contentDescription = if (isPdfDarkMode) "Disable Dark Mode"
-                                        else "Enable Dark Mode",
-                                        tint = if (isPdfDarkMode) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                        painter = painterResource(id = R.drawable.palette),
+                                        contentDescription = "Theme Settings",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
 
@@ -6923,6 +6951,25 @@ fun PdfViewerScreen(
                     DeviceVoiceSettingsSheet(
                         isVisible = true,
                         onDismiss = { showDeviceVoiceSettingsSheet = false }
+                    )
+                }
+
+                if (showThemePanel) {
+                    ReaderThemePanel(
+                        isVisible = true,
+                        currentThemeId = currentThemeId,
+                        builtInThemes = PdfBuiltInThemes,
+                        onThemeSelected = {
+                            currentThemeId = it
+                            savePdfThemeId(context, it)
+                            showThemePanel = false
+                        },
+                        onDismiss = { showThemePanel = false },
+                        customThemes = customThemes,
+                        onCustomThemesUpdated = {
+                            customThemes = it
+                            saveCustomThemes(context, it)
+                        }
                     )
                 }
 

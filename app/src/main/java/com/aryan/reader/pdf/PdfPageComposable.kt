@@ -407,7 +407,7 @@ internal fun PdfPageComposable(
     clearSelectionTrigger: Long = 0L,
     onTtsHighlightCenterCalculated: ((Float) -> Unit)? = null,
     onSearchHighlightCenterCalculated: ((Float) -> Unit)? = null,
-    isDarkMode: Boolean = false,
+    activeTheme: com.aryan.reader.ReaderTheme = com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
     onDoubleTap: ((Offset) -> Unit)? = null,
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
@@ -534,41 +534,55 @@ internal fun PdfPageComposable(
     val canvasWidthPx = remember { mutableFloatStateOf(0f) }
     val canvasHeightPx = remember { mutableFloatStateOf(0f) }
 
-    val colorFilter = remember(isDarkMode) {
-        if (isDarkMode) {
-            val colorMatrix = floatArrayOf(
-                -1f,
-                0f,
-                0f,
-                0f,
-                255f,
-                0f,
-                -1f,
-                0f,
-                0f,
-                255f,
-                0f,
-                0f,
-                -1f,
-                0f,
-                255f,
-                0f,
-                0f,
-                0f,
-                1f,
-                0f
-            )
-            ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
-        } else {
-            null
+    val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
+
+    val colorFilter = remember(activeTheme) {
+        when (activeTheme.id) {
+            "no_theme", "system" -> null
+            "reverse" -> {
+                val colorMatrix = floatArrayOf(
+                    -1f,  0f,  0f,  0f, 255f,
+                    0f, -1f,  0f,  0f, 255f,
+                    0f,  0f, -1f,  0f, 255f,
+                    0f,  0f,  0f,  1f,   0f
+                )
+                ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
+            }
+            else -> {
+                val bgR = activeTheme.backgroundColor.red * 255f
+                val bgG = activeTheme.backgroundColor.green * 255f
+                val bgB = activeTheme.backgroundColor.blue * 255f
+
+                val fgR = activeTheme.textColor.red * 255f
+                val fgG = activeTheme.textColor.green * 255f
+                val fgB = activeTheme.textColor.blue * 255f
+
+                val dr = (bgR - fgR) / 255f
+                val dg = (bgG - fgG) / 255f
+                val db = (bgB - fgB) / 255f
+
+                val lumR = 0.2126f
+                val lumG = 0.7152f
+                val lumB = 0.0722f
+
+                val colorMatrix = floatArrayOf(
+                    dr * lumR, dr * lumG, dr * lumB, 0f, fgR,
+                    dg * lumR, dg * lumG, dg * lumB, 0f, fgG,
+                    db * lumR, db * lumG, db * lumB, 0f, fgB,
+                    0f, 0f, 0f, 1f, 0f
+                )
+                ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
+            }
         }
     }
 
-    val backgroundColor = remember(isDarkMode, isVerticalScroll) {
-        if (isDarkMode) {
-            Color(0xFF2A2A2A)
-        } else {
+    val backgroundColor = remember(activeTheme, isVerticalScroll) {
+        if (activeTheme.id == "no_theme" || activeTheme.id == "system") {
             if (isVerticalScroll) Color.White else Color.Black
+        } else if (activeTheme.id == "reverse") {
+            if (isVerticalScroll) Color.Black else Color.White
+        } else {
+            activeTheme.backgroundColor
         }
     }
 
@@ -1626,10 +1640,6 @@ internal fun PdfPageComposable(
                             customMenuState = null
                             Timber.d("PointerInput: Press on END teardrop handle")
                         }
-                    }
-
-                    if (selectedTool == InkType.ERASER) {
-                        eraserPosition = down.position
                     }
 
                     if (dragStartedOnHandle) {
@@ -3091,8 +3101,12 @@ internal fun PdfPageComposable(
         }
 
         LaunchedEffect(
-            this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight, pageIndex
+            this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight
         ) {
+            scale = 1f
+            offset = Offset.Zero
+            onScaleChanged(1f)
+
             Timber.d(
                 "PdfPageComposable Page $pageIndex | Constraints: maxWidth=${this@BoxWithConstraints.maxWidth}, maxHeight=${this@BoxWithConstraints.maxHeight}"
             )
@@ -3861,7 +3875,6 @@ private fun PdfBitmapLayer(
         .fillMaxSize()
         .graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
-            // THIS is the fix: Hard clip to the target bounds so edge tiles can't bleed out.
             clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
                 if (bitmapState != null && !bitmapState.isRecycled) {
                     val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
@@ -3869,17 +3882,16 @@ private fun PdfBitmapLayer(
                     val srcSize = IntSize(bitmapState.width, bitmapState.height)
                     val dstSize = IntSize(dstW, dstH)
 
-                    // 1. Draw Base Bitmap
                     drawImage(
                         image = bitmapState.asImageBitmap(),
                         srcOffset = IntOffset.Zero,
                         srcSize = srcSize,
                         dstOffset = IntOffset.Zero,
                         dstSize = dstSize,
-                        colorFilter = colorFilter
+                        colorFilter = colorFilter,
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                     )
 
-                    // 2. Draw High-Res Tiles
                     if (effectiveScale > 1f) {
                         tiles.forEach { tile ->
                             if (!tile.bitmap.isRecycled) {
@@ -3891,7 +3903,8 @@ private fun PdfBitmapLayer(
                                     dstSize = IntSize(
                                         tile.renderRect.width(), tile.renderRect.height()
                                     ),
-                                    colorFilter = colorFilter
+                                    colorFilter = colorFilter,
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             }
                         }

@@ -128,7 +128,7 @@ fun ToolSettingsPopup(
 
     val thicknessRange = when {
         isHighlighter -> 0.01f..0.06f
-        isEraser -> 0.01f..0.1f
+        isEraser -> 0.002f..0.1f
         else -> 0.001f..0.015f
     }
     @Suppress("UnusedExpression") if (isHighlighter) 0.005f else 0.001f
@@ -170,9 +170,9 @@ fun ToolSettingsPopup(
                         .height(125.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    val radiusDp = (activeToolThickness * 1000).coerceIn(10f, 100f).dp
+                    val diameterDp = (activeToolThickness * 800).coerceIn(4f, 150f).dp
                     Box(
-                        modifier = Modifier.size(radiusDp),
+                        modifier = Modifier.size(diameterDp),
                         contentAlignment = Alignment.Center
                     ) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
