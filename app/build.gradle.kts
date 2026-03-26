@@ -17,6 +17,10 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
+kotlin {
+    jvmToolchain(21)
+}
+
 android {
     namespace = "com.aryan.reader"
     compileSdk = 36
@@ -102,11 +106,11 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
     buildFeatures {
         compose = true
@@ -196,6 +200,7 @@ dependencies {
     implementation("com.jakewharton.timber:timber:5.0.1")
 
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("me.zhanghai.android.libarchive:library:1.1.6")
 
     implementation("androidx.paging:paging-runtime-ktx:3.3.6")
     implementation("androidx.paging:paging-compose:3.3.6")

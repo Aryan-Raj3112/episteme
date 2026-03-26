@@ -73,7 +73,7 @@ fun AppNavigation(
     LaunchedEffect(uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
             when (uiState.selectedFileType) {
-                FileType.PDF, FileType.CBZ -> {
+                FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
                     if (uiState.selectedPdfUri != null) {
                         if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
                             navController.navigate(AppDestinations.PDF_VIEWER_ROUTE) {

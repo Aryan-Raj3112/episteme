@@ -21,6 +21,12 @@ import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import me.zhanghai.android.libarchive.Archive
+import me.zhanghai.android.libarchive.ArchiveEntry
+import me.zhanghai.android.libarchive.ArchiveException
+import timber.log.Timber
+import java.util.UUID
+import java.util.zip.ZipFile
 
 interface ReaderDocument : AutoCloseable {
     suspend fun getPageCount(): Int
@@ -62,14 +68,14 @@ interface ReaderWebLinks : AutoCloseable {
 
 object DocumentFactory {
     suspend fun loadDocument(context: Context, uri: Uri, type: FileType, password: String?, pdfiumCore: PdfiumCoreKt): ReaderDocument {
-        return if (type == FileType.CBZ) {
-            val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.cbz")
+        return if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+            val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.${type.name.lowercase()}")
             withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     cacheFile.outputStream().use { output -> input.copyTo(output) }
                 }
             }
-            CbzDocumentWrapper(cacheFile)
+            ArchiveDocumentWrapper(cacheFile)
         } else {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: throw Exception("Failed to open PDF")
             PdfDocumentWrapper(pdfiumCore.newDocument(pfd, password))
@@ -145,48 +151,158 @@ class PdfTextPageWrapper(private val textPage: PdfTextPageKt) : ReaderTextPage {
     override fun close() { textPage.close() }
 }
 
-// ================= CBZ IMPLEMENTATION =================
+// ================= CBZ, CBR, CB7 IMPLEMENTATION =================
 
-class CbzDocumentWrapper(private val file: File) : ReaderDocument {
-    private val zipFile = java.util.zip.ZipFile(file)
-    private val imageEntries = zipFile.entries().toList()
-        .filter { it.name.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE)) }
-        .sortedBy { it.name }
+class DummyTextPage : ReaderTextPage {
+    override suspend fun textPageCountChars() = 0
+    override suspend fun textPageGetText(startIndex: Int, count: Int) = null
+    override suspend fun textPageGetRectsForRanges(ranges: IntArray) = null
+    override suspend fun textPageGetCharIndexAtPos(x: Double, y: Double, xTolerance: Double, yTolerance: Double) = -1
+    override suspend fun textPageGetCharBox(index: Int) = null
+    override suspend fun textPageGetUnicode(index: Int) = 0
+    override suspend fun loadWebLink() = null
+    override fun close() {}
+}
+
+class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
+    private val imageEntries = mutableListOf<String>()
+    private var zipFile: ZipFile? = null
+    private var extractedDir: File? = null
+
+    init {
+        // Try reading as ZIP first for instant O(1) random access (Handles .cbz efficiently)
+        try {
+            val zf = ZipFile(file)
+            val entries = zf.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (!entry.isDirectory && entry.name.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))) {
+                    imageEntries.add(entry.name)
+                }
+            }
+            if (imageEntries.isNotEmpty()) {
+                zipFile = zf
+                imageEntries.sort()
+            } else {
+                zf.close()
+            }
+        } catch (_: Exception) {
+            zipFile = null
+        }
+
+        if (zipFile == null) {
+            imageEntries.clear()
+            extractedDir = File(file.parentFile, "extracted_${file.name}_${System.currentTimeMillis()}")
+            extractedDir?.mkdirs()
+
+            var archive = 0L
+            try {
+                archive = Archive.readNew()
+                Archive.readSupportFilterAll(archive)
+                Archive.readSupportFormatAll(archive)
+                Archive.readOpenFileName(archive, file.absolutePath.toByteArray(), 10240)
+
+                val tempEntries = mutableListOf<Pair<String, File>>()
+
+                while (true) {
+                    val entry = try {
+                        Archive.readNextHeader(archive)
+                    } catch (e: ArchiveException) {
+                        if (e.code == Archive.ERRNO_EOF) break
+                        throw e
+                    }
+                    if (entry == 0L) break
+
+                    val path = ArchiveEntry.pathnameUtf8(entry)
+                    if (path != null && path.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))) {
+                        val extractedFile = File(extractedDir, UUID.randomUUID().toString() + ".img")
+                        tempEntries.add(Pair(path, extractedFile))
+
+                        var pfd: android.os.ParcelFileDescriptor? = null
+                        try {
+                            // Extract seamlessly using fd to avoid ByteBuffer's state sync bug
+                            pfd = android.os.ParcelFileDescriptor.open(extractedFile, android.os.ParcelFileDescriptor.MODE_READ_WRITE or android.os.ParcelFileDescriptor.MODE_CREATE)
+                            Archive.readDataIntoFd(archive, pfd.fd)
+                        } finally {
+                            pfd?.close()
+                        }
+                    } else {
+                        Archive.readDataSkip(archive)
+                    }
+                }
+
+                tempEntries.sortBy { it.first } // Natural sorting order based on the filename inside the archive
+                tempEntries.forEach { imageEntries.add(it.second.absolutePath) }
+
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to extract archive entries")
+            } finally {
+                if (archive != 0L) Archive.readFree(archive)
+            }
+        }
+    }
 
     override suspend fun getPageCount() = imageEntries.size
 
     override suspend fun openPage(pageIndex: Int): ReaderPage? = withContext(Dispatchers.IO) {
         if (pageIndex !in imageEntries.indices) return@withContext null
-        val entry = imageEntries[pageIndex]
-        val bytes = zipFile.getInputStream(entry).use { it.readBytes() }
-        CbzPageWrapper(bytes)
+        val targetPath = imageEntries[pageIndex]
+
+        var imageBytes: ByteArray? = null
+
+        if (zipFile != null) {
+            try {
+                val entry = zipFile!!.getEntry(targetPath)
+                if (entry != null) {
+                    zipFile!!.getInputStream(entry).use { imageBytes = it.readBytes() }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to extract page from ZIP")
+            }
+        } else {
+            try {
+                val extractedFile = File(targetPath)
+                if (extractedFile.exists()) {
+                    imageBytes = extractedFile.readBytes()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to read extracted page")
+            }
+        }
+
+        if (imageBytes != null && imageBytes!!.isNotEmpty()) ArchivePageWrapper(imageBytes!!) else null
     }
 
     override suspend fun getTableOfContents() = emptyList<Bookmark>()
 
     override fun close() {
-        try { zipFile.close() } catch (_: Exception) {}
+        try { zipFile?.close() } catch (_: Exception) {}
+        try { extractedDir?.deleteRecursively() } catch (_: Exception) {}
         try { file.delete() } catch (_: Exception) {}
     }
 }
 
-class CbzPageWrapper(imageBytes: ByteArray) : ReaderPage {
-    private val decoder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        BitmapRegionDecoder.newInstance(imageBytes, 0, imageBytes.size)
-    } else {
-        @Suppress("DEPRECATION")
-        BitmapRegionDecoder.newInstance(imageBytes, 0, imageBytes.size, false)
+class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
+    private val decoder = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            BitmapRegionDecoder.newInstance(imageBytes, 0, imageBytes.size)
+        } else {
+            @Suppress("DEPRECATION")
+            BitmapRegionDecoder.newInstance(imageBytes, 0, imageBytes.size, false)
+        }
+    } catch (_: Exception) {
+        null
     }
 
-    private val originalWidth = decoder.width
-    private val originalHeight = decoder.height
+    private val originalWidth = decoder?.width ?: 1
+    private val originalHeight = decoder?.height ?: 1
 
     override suspend fun getPageWidthPoint() = originalWidth
     override suspend fun getPageHeightPoint() = originalHeight
     override suspend fun getPageRotation() = 0
 
     override suspend fun renderPageBitmap(bitmap: Bitmap, startX: Int, startY: Int, drawSizeX: Int, drawSizeY: Int, renderAnnot: Boolean) {
-        if (decoder.isRecycled) return
+        if (decoder == null || decoder.isRecycled) return
         val scaleX = drawSizeX.toFloat() / originalWidth
         val scaleY = drawSizeY.toFloat() / originalHeight
 
@@ -199,7 +315,11 @@ class CbzPageWrapper(imageBytes: ByteArray) : ReaderPage {
         if (rect.width() <= 0 || rect.height() <= 0) return
 
         val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
-        val region = decoder.decodeRegion(rect, options)
+        val region = try {
+            decoder.decodeRegion(rect, options)
+        } catch (_: Exception) {
+            null
+        }
 
         if (region != null) {
             val canvas = Canvas(bitmap)
@@ -231,17 +351,6 @@ class CbzPageWrapper(imageBytes: ByteArray) : ReaderPage {
     override fun getNativePointer() = 0L
 
     override fun close() {
-        decoder.recycle()
+        decoder?.recycle()
     }
-}
-
-class DummyTextPage : ReaderTextPage {
-    override suspend fun textPageCountChars() = 0
-    override suspend fun textPageGetText(startIndex: Int, count: Int) = null
-    override suspend fun textPageGetRectsForRanges(ranges: IntArray) = null
-    override suspend fun textPageGetCharIndexAtPos(x: Double, y: Double, xTolerance: Double, yTolerance: Double) = -1
-    override suspend fun textPageGetCharBox(index: Int) = null
-    override suspend fun textPageGetUnicode(index: Int) = 0
-    override suspend fun loadWebLink() = null
-    override fun close() {}
 }
