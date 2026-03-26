@@ -152,6 +152,8 @@ class FolderSyncWorker(
                             lastPositionCfi = remoteMeta.lastPositionCfi,
                             progressPercentage = remoteMeta.progressPercentage,
                             bookmarksJson = remoteMeta.bookmarksJson,
+                            highlightsJson = remoteMeta.highlightsJson,
+                            customName = remoteMeta.customName,
                             locatorBlockIndex = remoteMeta.locatorBlockIndex,
                             locatorCharOffset = remoteMeta.locatorCharOffset,
                             lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
@@ -247,6 +249,8 @@ class FolderSyncWorker(
                             lastPositionCfi = remoteMeta?.lastPositionCfi,
                             progressPercentage = remoteMeta?.progressPercentage,
                             bookmarksJson = remoteMeta?.bookmarksJson,
+                            highlightsJson = remoteMeta?.highlightsJson,
+                            customName = remoteMeta?.customName,
                             locatorBlockIndex = remoteMeta?.locatorBlockIndex,
                             locatorCharOffset = remoteMeta?.locatorCharOffset
                         )

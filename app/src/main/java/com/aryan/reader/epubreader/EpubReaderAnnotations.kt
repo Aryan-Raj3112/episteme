@@ -215,6 +215,53 @@ fun loadHighlightsFromPrefs(context: Context, bookTitle: String): List<UserHighl
     return list
 }
 
+fun parseHighlightsJson(jsonString: String?): List<UserHighlight> {
+    if (jsonString.isNullOrBlank()) return emptyList()
+    val list = mutableListOf<UserHighlight>()
+    try {
+        val jsonArray = JSONArray(jsonString)
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val colorId = obj.getString("colorId")
+            val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+            list.add(
+                UserHighlight(
+                    id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                    cfi = obj.getString("cfi"),
+                    text = obj.getString("text"),
+                    color = color,
+                    chapterIndex = obj.getInt("chapterIndex")
+                )
+            )
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "Error parsing highlights JSON")
+    }
+    return list
+}
+
+fun highlightsToJson(highlights: List<UserHighlight>): String {
+    val jsonArray = JSONArray()
+    highlights.forEach { h ->
+        val obj = JSONObject().apply {
+            put("id", h.id)
+            put("cfi", h.cfi)
+            put("text", h.text)
+            put("colorId", h.color.id)
+            put("chapterIndex", h.chapterIndex)
+        }
+        jsonArray.put(obj)
+    }
+    return jsonArray.toString()
+}
+
+fun clearHighlightsFromPrefs(context: Context, bookTitle: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val sanitizedTitle = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "")
+    val key = "highlights_data_$sanitizedTitle"
+    prefs.edit { remove(key) }
+}
+
 // --- Logic Helpers ---
 
 fun processAndAddHighlight(

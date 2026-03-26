@@ -23,7 +23,8 @@ data class BookMetadata(
     val lastModifiedTimestamp: Long = 0L,
     val bookmarksJson: String? = null,
     val hasAnnotations: Boolean = false,
-    val customName: String? = null
+    val customName: String? = null,
+    val highlightsJson: String? = null
 )
 
 data class DeviceItem(

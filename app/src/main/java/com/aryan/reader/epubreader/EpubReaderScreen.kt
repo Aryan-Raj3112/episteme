@@ -396,10 +396,16 @@ fun EpubReaderScreen(
         initialLocator = initialLocator,
         initialCfi = initialCfi,
         initialBookmarksJson = initialBookmarksJson,
+        initialHighlightsJson = uiState.initialHighlightsJson,
         isProUser = isProUser,
         onNavigateBack = onNavigateBack,
         onSavePosition = onSavePosition,
         onBookmarksChanged = onBookmarksChanged,
+        onHighlightsChanged = { json ->
+            uiState.selectedBookId?.let { id ->
+                viewModel.saveHighlights(id, json)
+            }
+        },
         onNavigateToPro = onNavigateToPro,
         coverImagePath = coverImagePath,
         onRenderModeChange = onRenderModeChange,
@@ -430,10 +436,12 @@ fun EpubReaderHost(
     initialLocator: Locator?,
     initialCfi: String?,
     initialBookmarksJson: String?,
+    initialHighlightsJson: String?,
     isProUser: Boolean,
     onNavigateBack: () -> Unit,
     onSavePosition: (locator: Locator, cfiForWebView: String?, progress: Float) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
+    onHighlightsChanged: (highlightsJson: String) -> Unit,
     onNavigateToPro: () -> Unit,
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
@@ -490,9 +498,22 @@ fun EpubReaderHost(
         )
     }
 
-    val userHighlights = remember {
+    val userHighlights = remember(epubBook.title) {
         mutableStateListOf<UserHighlight>().apply {
-            addAll(loadHighlightsFromPrefs(context, epubBook.title))
+            if (initialHighlightsJson != null) {
+                addAll(parseHighlightsJson(initialHighlightsJson))
+            } else {
+                addAll(loadHighlightsFromPrefs(context, epubBook.title))
+            }
+        }
+    }
+
+    LaunchedEffect(userHighlights.size, userHighlights.toList()) {
+        val json = highlightsToJson(userHighlights)
+        onHighlightsChanged(json)
+
+        if (initialHighlightsJson == null && userHighlights.isNotEmpty()) {
+            clearHighlightsFromPrefs(context, epubBook.title)
         }
     }
 
@@ -595,10 +616,6 @@ fun EpubReaderHost(
             currentHighlightPalette = newList
             saveHighlightPalette(context, newList)
         }
-    }
-
-    LaunchedEffect(userHighlights.size, userHighlights.toList()) {
-        saveHighlightsToPrefs(context, epubBook.title, userHighlights)
     }
 
     // Dictionary

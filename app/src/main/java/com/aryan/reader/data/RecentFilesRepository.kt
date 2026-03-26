@@ -117,7 +117,8 @@ class RecentFilesRepository(private val context: Context) {
                 progressPercentage = item.progressPercentage ?: existingItem.progressPercentage,
                 isRecent = item.isRecent,
                 isDeleted = item.isDeleted,
-                sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri
+                sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri,
+                highlights = item.highlightsJson ?: existingItem.highlights
             )
         } else {
             item.toRecentFileEntity()
@@ -128,6 +129,12 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")
     }
 
+    suspend fun updateHighlights(bookId: String, highlightsJson: String) = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        recentFileDao.updateHighlights(bookId, highlightsJson, currentTime)
+        Timber.d("Updated highlights for $bookId")
+    }
+
     suspend fun syncLocalMetadataToFolder(bookId: String) = withContext(Dispatchers.IO) {
         val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
         val folderUriString = entity.sourceFolderUri
@@ -135,7 +142,8 @@ class RecentFilesRepository(private val context: Context) {
         if (folderUriString != null) {
             val hasProgress = (entity.progressPercentage != null && entity.progressPercentage > 0f)
             val hasBookmarks = !entity.bookmarks.isNullOrEmpty() && entity.bookmarks != "[]"
-            val isDirty = entity.isRecent || hasProgress || hasBookmarks
+            val hasHighlights = !entity.highlights.isNullOrEmpty() && entity.highlights != "[]"
+            val isDirty = entity.isRecent || hasProgress || hasBookmarks || hasHighlights
 
             if (!isDirty) {
                 Timber.d("SyncDebug: Book $bookId is 'Clean' (Unread/Not Recent). Skipping JSON creation.")
@@ -159,7 +167,8 @@ class RecentFilesRepository(private val context: Context) {
                 bookmarksJson = entity.bookmarks,
                 locatorBlockIndex = entity.locatorBlockIndex,
                 locatorCharOffset = entity.locatorCharOffset,
-                customName = entity.customName
+                customName = entity.customName,
+                highlightsJson = entity.highlights
             )
 
             LocalSyncUtils.saveMetadataToFolder(

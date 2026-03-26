@@ -93,4 +93,7 @@ interface RecentFileDao {
 
     @Query("UPDATE recent_files SET sourceFolderUri = NULL WHERE sourceFolderUri IS NOT NULL")
     suspend fun detachAllFolderBooks()
+
+    @Query("UPDATE recent_files SET highlights = :highlightsJson, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    suspend fun updateHighlights(bookId: String, highlightsJson: String, timestamp: Long)
 }

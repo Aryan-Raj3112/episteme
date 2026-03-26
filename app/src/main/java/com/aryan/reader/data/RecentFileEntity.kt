@@ -49,5 +49,6 @@ data class RecentFileEntity(
     val bookmarks: String?,
     @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?,
     @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean,
-    @ColumnInfo(defaultValue = "NULL") val customName: String?
+    @ColumnInfo(defaultValue = "NULL") val customName: String?,
+    @ColumnInfo(defaultValue = "NULL") val highlights: String?
 )
