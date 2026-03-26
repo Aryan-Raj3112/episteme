@@ -256,6 +256,7 @@ import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.DeviceVoiceSettingsSheet
+import com.aryan.reader.FileType
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
@@ -289,7 +290,6 @@ import com.aryan.reader.tts.splitTextIntoChunks
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
-import io.legere.pdfiumandroid.suspend.PdfTextPageKt
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -972,9 +972,9 @@ private fun saveTtsMode(context: Context, mode: TtsPlaybackManager.TtsMode) {
     prefs.edit { putString(TTS_MODE_KEY, mode.name) }
 }
 
-private suspend fun renderPageToBitmap(doc: PdfDocumentKt, pageIndex: Int): Bitmap? {
+private suspend fun renderPageToBitmap(doc: ReaderDocument, pageIndex: Int): Bitmap? {
     return withContext(Dispatchers.IO) {
-        var page: PdfPageKt? = null
+        var page: ReaderPage? = null
         try {
             page = doc.openPage(pageIndex)
             if (page == null) return@withContext null
@@ -1425,7 +1425,7 @@ fun PdfViewerScreen(
         )
         else null
     }
-    var pdfDocument by remember { mutableStateOf<PdfDocumentKt?>(null) }
+    var pdfDocument by remember { mutableStateOf<ReaderDocument?>(null) }
     var pfdState by remember { mutableStateOf<ParcelFileDescriptor?>(null) }
     var totalPages by remember { mutableIntStateOf(0) }
     var currentPageScale by remember { mutableFloatStateOf(1f) }
@@ -2276,10 +2276,13 @@ fun PdfViewerScreen(
                 if (extractedText.isBlank() && currentBookId != null && pdfDocument != null) {
                     Timber.d("Extracted text is blank. Attempting repository/OCR fallback...")
                     try {
-                        extractedText = pdfTextRepository.getOrExtractText(
-                            currentBookId!!, pdfDocument!!, pageIndex
-                        )
-                        Timber.d("Repository: Extracted text length: ${extractedText.length}")
+                        val pdfDocKt = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument
+                        if (pdfDocKt != null) {
+                            extractedText = pdfTextRepository.getOrExtractText(
+                                currentBookId!!, pdfDocKt, pageIndex
+                            )
+                            Timber.d("Repository: Extracted text length: ${extractedText.length}")
+                        }
                     } catch (e: Exception) {
                         Timber.w(e, "Bookmark: Repository extraction failed")
                     }
@@ -2571,11 +2574,12 @@ fun PdfViewerScreen(
 
     val onGetOcrSearchRectsStable = remember(pdfTextRepository, pdfDocument) {
         val callback: suspend (Int, String) -> List<RectF> = { page, query ->
-            if (pdfDocument != null) {
-                val hasNative = pdfTextRepository.hasNativeText(pdfDocument!!, page)
+            val pdfDocKt = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument
+            if (pdfDocKt != null) {
+                val hasNative = pdfTextRepository.hasNativeText(pdfDocKt, page)
                 if (!hasNative) {
                     pdfTextRepository.getOcrSearchRects(
-                        document = pdfDocument!!,
+                        document = pdfDocKt,
                         pageIndex = page,
                         query = query,
                         onModelDownloading = { isOcrModelDownloading = true })
@@ -2759,9 +2763,9 @@ fun PdfViewerScreen(
         coroutineScope.launch {
             val pageToRead = pageToReadOverride ?: currentPage
             var rawPageText: String? = null
-            var tempPage: PdfPageKt? = null
-            var tempTextPage: PdfTextPageKt? = null
-            var ocrAttempted = false
+            var tempPage: ReaderPage? = null
+            var tempTextPage: ReaderTextPage? = null
+            @Suppress("CanBeVal") var ocrAttempted = false
 
             try {
                 withContext(Dispatchers.IO) {
@@ -2816,8 +2820,8 @@ fun PdfViewerScreen(
 
                 val chunks = splitTextIntoChunks(textToChunk)
 
-                val bookTitle = pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
-                    ?: pdfUri.lastPathSegment ?: "PDF Document"
+                val bookTitle = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
+                    ?: pdfUri.lastPathSegment ?: "Document"
                 val pageTitle = "Page ${pageToRead + 1}"
 
                 val ttsChunks = chunks.mapIndexed { index, text -> TtsChunk(text, "", index) }
@@ -3035,7 +3039,7 @@ fun PdfViewerScreen(
                 currentPfdOpened = context.contentResolver.openFileDescriptor(pdfUri, "r")
                 if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
 
-                val doc = pdfiumCore.newDocument(currentPfdOpened, documentPassword)
+                val doc = DocumentFactory.loadDocument(context, pdfUri, uiState.selectedFileType ?: FileType.PDF, documentPassword, pdfiumCore)
 
                 if (!isActive) {
                     doc.close()
@@ -3049,7 +3053,7 @@ fun PdfViewerScreen(
 
                 if (pagesCount > 0) {
                     try {
-                        val tableOfContents = doc.getFixedTableOfContents()
+                        val tableOfContents = doc.getTableOfContents()
                         val flattened = flattenToc(tableOfContents)
                         withContext(Dispatchers.Main) { flatTableOfContents = flattened }
                     } catch (e: Exception) {
@@ -3264,8 +3268,8 @@ fun PdfViewerScreen(
 
     LaunchedEffect(pdfUri, currentBookId, totalPages) {
         if (currentBookId == null || totalPages == 0) return@LaunchedEffect
-
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
+        if (uiState.selectedFileType != FileType.PDF) return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
             val storedLang = pdfTextRepository.getBookLanguage(currentBookId!!)
@@ -4110,9 +4114,10 @@ fun PdfViewerScreen(
                                                     Timber.d(
                                                         "LaunchedEffect triggered for Page $pageIndex. Checking Native..."
                                                     )
-                                                    val hasNative = pdfTextRepository.hasNativeText(
-                                                        pdfDocument!!, pageIndex
-                                                    )
+                                                    val pdfDocKt = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument
+                                                    val hasNative = if (pdfDocKt != null) pdfTextRepository.hasNativeText(
+                                                        pdfDocKt, pageIndex
+                                                    ) else false
                                                     Timber.d(
                                                         "Page $pageIndex Has Native Text: $hasNative"
                                                     )
@@ -4121,13 +4126,13 @@ fun PdfViewerScreen(
                                                         Timber.d(
                                                             "Fetching OCR rects for query: '${target.query}'"
                                                         )
-                                                        val rects = pdfTextRepository.getOcrSearchRects(
-                                                            document = pdfDocument!!,
+                                                        val rects = if (pdfDocKt != null) pdfTextRepository.getOcrSearchRects(
+                                                            document = pdfDocKt,
                                                             pageIndex = pageIndex,
                                                             query = target.query,
                                                             onModelDownloading = {
                                                                 isOcrModelDownloading = true
-                                                            })
+                                                            }) else emptyList()
                                                         Timber.d(
                                                             "Received ${rects.size} rects from Repository."
                                                         )
@@ -5533,31 +5538,32 @@ fun PdfViewerScreen(
                                                 Icons.Default.Share, contentDescription = null
                                             )
                                         })
-                                        DropdownMenuItem(
-                                            text = { Text("Save copy to device") },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                showSaveDialog = true
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Save, contentDescription = null
-                                                )
-                                            })
-                                        DropdownMenuItem(
-                                            text = { Text("Print") },
-                                            onClick = {
+                                        if (uiState.selectedFileType == FileType.PDF) {
+                                            DropdownMenuItem(
+                                                text = { Text("Save copy to device") },
+                                                onClick = {
+                                                    showMoreMenu = false
+                                                    showSaveDialog = true
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        Icons.Default.Save,
+                                                        contentDescription = null
+                                                    )
+                                                })
+                                        }
+                                        if (uiState.selectedFileType == FileType.PDF) {
+                                            DropdownMenuItem(text = { Text("Print") }, onClick = {
                                                 showMoreMenu = false
                                                 onPrintDocument()
-                                            },
-                                            leadingIcon = {
+                                            }, leadingIcon = {
                                                 Icon(
                                                     painter = painterResource(id = R.drawable.print),
                                                     contentDescription = null,
                                                     modifier = Modifier.size(20.dp)
                                                 )
-                                            }
-                                        )
+                                            })
+                                        }
                                     }
                                 }
                             }

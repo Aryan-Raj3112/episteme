@@ -176,7 +176,7 @@ private data class DividerLayout(val y: Float, val width: Float, val height: Flo
 @Composable
 internal fun PdfVerticalReader(
     state: VerticalPdfReaderState,
-    pdfDocument: StableHolder<PdfDocumentKt>,
+    pdfDocument: StableHolder<ReaderDocument>,
     isDarkMode: Boolean,
     totalPages: Int,
     modifier: Modifier = Modifier,

@@ -143,19 +143,19 @@ internal object OcrHelper {
 }
 
 internal suspend fun findWordBoundaries(
-    textPage: PdfTextPageKt,
+    textPage: ReaderTextPage,
     initialCharIndex: Int,
     pageCharCount: Int
 ): Pair<Int, Int>? {
     if (initialCharIndex !in 0..<pageCharCount) return null
-    val initialChar = textPage.textPageGetUnicode(initialCharIndex)
+    val initialChar = textPage.textPageGetUnicode(initialCharIndex).toChar()
     if (!initialChar.isLetterOrDigit()) {
         Timber.d("Initial char '$initialChar' at index $initialCharIndex is not letter/digit.")
         return null
     }
     var wordStartIndex = initialCharIndex
     while (wordStartIndex > 0) {
-        val char = textPage.textPageGetUnicode(wordStartIndex - 1)
+        val char = textPage.textPageGetUnicode(wordStartIndex - 1).toChar()
         if (!char.isLetterOrDigit()) {
             break
         }
@@ -163,7 +163,7 @@ internal suspend fun findWordBoundaries(
     }
     var wordEndIndex = initialCharIndex
     while (wordEndIndex < pageCharCount) {
-        val char = textPage.textPageGetUnicode(wordEndIndex)
+        val char = textPage.textPageGetUnicode(wordEndIndex).toChar()
         if (!char.isLetterOrDigit()) {
             break
         }

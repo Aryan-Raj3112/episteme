@@ -119,9 +119,6 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
-import io.legere.pdfiumandroid.suspend.PdfPageKt
-import io.legere.pdfiumandroid.suspend.PdfTextPageKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -374,7 +371,7 @@ data class PageSelectionData(
 @Suppress("unused")
 @Composable
 internal fun PdfPageComposable(
-    pdfDocument: StableHolder<PdfDocumentKt>,
+    pdfDocument: StableHolder<ReaderDocument>,
     pageIndex: Int,
     totalPages: Int,
     modifier: Modifier = Modifier,
@@ -747,7 +744,7 @@ internal fun PdfPageComposable(
 
         var rects: List<Rect> = emptyList()
         var pdfiumSucceeded = false
-        var tempPage: PdfPageKt? = null
+        var tempPage: ReaderPage? = null
 
         try {
             withContext(Dispatchers.IO) {
@@ -847,7 +844,7 @@ internal fun PdfPageComposable(
 
                     // 1. Extract Links (Method 1: Annotations)
                     try {
-                        val annotationLinks = pageWrapper.getPageLinks()
+                        val annotationLinks = pageWrapper.getLinks()
                         if (annotationLinks.isNotEmpty()) {
                             val mappedAnnotationLinks = annotationLinks.mapNotNull { link ->
                                 val uri = link.uri
@@ -909,7 +906,7 @@ internal fun PdfPageComposable(
 
                     // 3. Extract Embedded Annotations
                     try {
-                        val pagePtr = getNativePointer(pageWrapper)
+                        val pagePtr = pageWrapper.getNativePointer()
 
                         if (pagePtr != 0L) {
                             val count = NativePdfiumBridge.getAnnotCount(pagePtr)
@@ -1068,7 +1065,7 @@ internal fun PdfPageComposable(
 
         if (actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0 || screenWidth == 0f || screenHeight == 0f) return@LaunchedEffect
 
-        var page: PdfPageKt? = null
+        var page: ReaderPage? = null
 
         if (!isPdfPage) {
             if (tiles.isNotEmpty()) {
@@ -1416,14 +1413,14 @@ internal fun PdfPageComposable(
     }
 
     suspend fun updateSelectionVisuals(
-        doc: PdfDocumentKt,
+        doc: ReaderDocument,
         pageIdx: Int,
         charRange: Pair<Int, Int>?,
         currentBitmapWidth: Int,
         currentBitmapHeight: Int,
         rotation: Int,
-        providedPage: PdfPageKt? = null,
-        providedTextPage: PdfTextPageKt? = null
+        providedPage: ReaderPage? = null,
+        providedTextPage: ReaderTextPage? = null
     ) {
         if (charRange == null || currentBitmapWidth == 0 || currentBitmapHeight == 0) {
             withContext(Dispatchers.Main) {
@@ -1435,12 +1432,12 @@ internal fun PdfPageComposable(
         }
 
         withContext(Dispatchers.IO) {
-            var localPage: PdfPageKt? = null
-            var localTextPage: PdfTextPageKt? = null
+            var localPage: ReaderPage? = null
+            var localTextPage: ReaderTextPage? = null
 
             try {
-                val pageToUse: PdfPageKt
-                val textPageToUse: PdfTextPageKt
+                val pageToUse: ReaderPage
+                val textPageToUse: ReaderTextPage
 
                 if (providedPage != null && providedTextPage != null) {
                     pageToUse = providedPage
@@ -1675,8 +1672,8 @@ internal fun PdfPageComposable(
                         val dragEventChannel = Channel<Offset>(Channel.CONFLATED)
 
                         coroutineScope.launch(Dispatchers.IO) {
-                            var pageForDrag: PdfPageKt? = null
-                            var textPageForDrag: PdfTextPageKt? = null
+                            var pageForDrag: ReaderPage? = null
+                            var textPageForDrag: ReaderTextPage? = null
 
                             try {
                                 if (selectionMethodUsed == PdfSelectionMethod.PDFIUM) {
@@ -2013,8 +2010,8 @@ internal fun PdfPageComposable(
                             if (selectionCharRange.value != null && selectedWordScreenRects.isNotEmpty()) {
                                 val currentRange = selectionCharRange.value!!
                                 coroutineScope.launch {
-                                    var pageForMenu: PdfPageKt? = null
-                                    var textPageForMenu: PdfTextPageKt? = null
+                                    var pageForMenu: ReaderPage? = null
+                                    var textPageForMenu: ReaderTextPage? = null
                                     try {
                                         val text = withContext(Dispatchers.IO) {
                                             pageForMenu = pdfDocumentItem.openPage(pdfPageIndex)
@@ -2125,8 +2122,8 @@ internal fun PdfPageComposable(
                             showMagnifier = false
 
                             coroutineScope.launch {
-                                var tempPage: PdfPageKt? = null
-                                var tempTextPage: PdfTextPageKt? = null
+                                var tempPage: ReaderPage? = null
+                                var tempTextPage: ReaderTextPage? = null
                                 var ocrAttemptedForThisPress = false
                                 try {
                                     if (!isPdfPage) return@launch
@@ -2420,7 +2417,7 @@ internal fun PdfPageComposable(
                         val wasHandled = withContext(Dispatchers.IO) {
                             try {
                                 pdfDocumentItem.openPage(pdfPageIndex)?.use { page ->
-                                    val pagePtr = getNativePointer(page)
+                                    val pagePtr = page.getNativePointer()
 
                                     if (pagePtr == 0L) {
                                         Timber.tag("PdfInteraction").e("Could not find native pointer for page $pdfPageIndex")
@@ -3337,8 +3334,8 @@ internal fun PdfPageComposable(
                             val page = pdfDocumentItem.openPage(pdfPageIndex) ?: return@withContext null
                             val rotation = page.getPageRotation()
                             val screenDpi = (density.density * 160).roundToInt()
-                            val originalWidthPdfUnits = page.getPageWidth(screenDpi)
-                            val originalHeightPdfUnits = page.getPageHeight(screenDpi)
+                            val originalWidthPdfUnits = page.getPageWidthPoint()
+                            val originalHeightPdfUnits = page.getPageHeightPoint()
 
                             if (originalWidthPdfUnits <= 0 || originalHeightPdfUnits <= 0) {
                                 page.close()
@@ -3678,8 +3675,8 @@ internal fun PdfPageComposable(
                                 if (!isPdfPage) return@launch
 
                                 if (selectionMethodUsed == PdfSelectionMethod.PDFIUM) {
-                                    var page: PdfPageKt? = null
-                                    var textPage: PdfTextPageKt? = null
+                                    var page: ReaderPage? = null
+                                    var textPage: ReaderTextPage? = null
                                     try {
                                         val charCount = withContext(Dispatchers.IO) {
                                             page = pdfDocumentItem.openPage(pdfPageIndex)
