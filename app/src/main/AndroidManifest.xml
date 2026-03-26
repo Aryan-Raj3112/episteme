@@ -54,7 +54,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- PDF Filter -->
+            <!-- PDF -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -64,7 +64,7 @@
                 <data android:mimeType="application/pdf" />
             </intent-filter>
 
-            <!-- EPUB Filter -->
+            <!-- EPUB -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -74,7 +74,7 @@
                 <data android:mimeType="application/epub+zip" />
             </intent-filter>
 
-            <!-- MOBI / Kindle Filter -->
+            <!-- MOBI/AZW3 known MIME types -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -84,13 +84,9 @@
                 <data android:mimeType="application/x-mobipocket-ebook" />
                 <data android:mimeType="application/vnd.amazon.mobi8-ebook" />
                 <data android:mimeType="application/vnd.amazon.ebook" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.mobi" />
-                <data android:pathPattern=".*\\.azw3" />
             </intent-filter>
 
-            <!-- FB2 Filter 1: Catch by specific and common MIME types -->
+            <!-- FB2 known MIME types -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -99,14 +95,10 @@
                 <data android:scheme="file" />
                 <data android:mimeType="application/x-fictionbook+xml" />
                 <data android:mimeType="application/x-fictionbook" />
-                <data android:mimeType="application/fb2+xml" />
                 <data android:mimeType="application/x-fb2" />
-                <data android:mimeType="application/fb2" />
-                <data android:mimeType="application/x-zip-compressed-fb2" />
-                <data android:mimeType="application/zip" />
             </intent-filter>
 
-            <!-- FB2 Filter 2: Catch by Extension when MIME is unknown (octet-stream) -->
+            <!-- FALLBACK: catches azw3/fb2/mobi when MIME type is unknown -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -114,14 +106,28 @@
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="text/xml" />
-                <data android:mimeType="text/plain" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.fb2" />
-                <data android:pathPattern=".*\\.fb2\\.zip" />
             </intent-filter>
 
-            <!-- Markdown and Plain Text Filter -->
+            <!-- pathPattern fallback for file:// URIs -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.azw3" />
+                <data android:pathPattern=".*\\..*\\.azw3" />
+                <data android:pathPattern=".*\\..*\\..*\\.azw3" />
+                <data android:pathPattern=".*\\.fb2" />
+                <data android:pathPattern=".*\\..*\\.fb2" />
+                <data android:pathPattern=".*\\..*\\..*\\.fb2" />
+                <data android:pathPattern=".*\\.mobi" />
+                <data android:pathPattern=".*\\..*\\.mobi" />
+                <data android:pathPattern=".*\\..*\\..*\\.mobi" />
+            </intent-filter>
+
+            <!-- Markdown/Text -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -131,7 +137,72 @@
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/markdown" />
                 <data android:mimeType="text/x-markdown" />
-                <data android:mimeType="text/*" />
+            </intent-filter>
+
+            <!-- CBZ known MIME types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+            </intent-filter>
+
+            <!-- CBR known MIME types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+            </intent-filter>
+
+            <!-- CB7 known MIME types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-cb7" />
+            </intent-filter>
+
+            <!-- pathPattern fallback for file:// URIs (comic books) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.cbz" />
+                <data android:pathPattern=".*\\..*\\.cbz" />
+                <data android:pathPattern=".*\\..*\\..*\\.cbz" />
+                <data android:pathPattern=".*\\.cbr" />
+                <data android:pathPattern=".*\\..*\\.cbr" />
+                <data android:pathPattern=".*\\..*\\..*\\.cbr" />
+                <data android:pathPattern=".*\\.cb7" />
+                <data android:pathPattern=".*\\..*\\.cb7" />
+                <data android:pathPattern=".*\\..*\\..*\\.cb7" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.md" />
+                <data android:pathPattern=".*\\..*\\.md" />
+                <data android:pathPattern=".*\\..*\\..*\\.md" />
+                <data android:pathPattern=".*\\.markdown" />
+                <data android:pathPattern=".*\\..*\\.markdown" />
+                <data android:pathPattern=".*\\..*\\..*\\.markdown" />
             </intent-filter>
 
             <intent-filter>
