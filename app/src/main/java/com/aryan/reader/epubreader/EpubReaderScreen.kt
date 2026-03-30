@@ -1992,11 +1992,37 @@ fun EpubReaderHost(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             contentWindowInsets = WindowInsets.statusBars,
         ) { scaffoldPaddingValues ->
+            val currentTopPadding = scaffoldPaddingValues.calculateTopPadding()
+            var stableTopPadding by remember { mutableStateOf(0.dp) }
+            if (currentTopPadding > stableTopPadding) {
+                stableTopPadding = currentTopPadding
+            }
+
+            val effectiveTopPadding = if (currentRenderMode == RenderMode.PAGINATED) {
+                if (systemUiMode == SystemUiMode.HIDDEN) {
+                    0.dp
+                } else {
+                    val insets = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+                    val ignoringVisibilityTopPx = insets?.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0
+                    val ignoringVisibilityTop = with(density) { ignoringVisibilityTopPx.toDp() }
+
+                    if (ignoringVisibilityTop > 0.dp) {
+                        ignoringVisibilityTop
+                    } else if (stableTopPadding > 0.dp) {
+                        stableTopPadding
+                    } else {
+                        24.dp
+                    }
+                }
+            } else {
+                currentTopPadding
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(effectiveBg)
-                    .padding(scaffoldPaddingValues)
+                    .padding(top = effectiveTopPadding)
                     .focusRequester(containerFocusRequester)
                     .focusable()
                     .volumeScrollHandler(
@@ -2187,9 +2213,7 @@ fun EpubReaderHost(
                                                 .mapNotNull { it.fragmentId }
                                         }
 
-                                        @Suppress("KotlinConstantConditions",
-                                            "ControlFlowWithEmptyBody"
-                                        )
+                                        @Suppress("ControlFlowWithEmptyBody")
                                         ChapterWebView(
                                             key = chapterKeyForWebView,
                                             chapterTitle = chapterToRender.title,
@@ -2755,7 +2779,7 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
-                        val contentBottomPadding = if (pageInfoMode == PageInfoMode.DEFAULT && !showBars) PAGE_INFO_BAR_HEIGHT else 0.dp
+                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) PAGE_INFO_BAR_HEIGHT else 0.dp
 
                         BoxWithConstraints(
                             modifier = Modifier
@@ -2763,7 +2787,6 @@ fun EpubReaderHost(
                                 .padding(bottom = contentBottomPadding)
                                 .testTag("ReaderContainer")
                         ) {
-                            @Suppress("KotlinConstantConditions")
                             PaginatedReaderScreen(
                                 book = epubBook,
                                 isDarkTheme = isDarkTheme,
