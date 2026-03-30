@@ -136,7 +136,7 @@ enum class AddBooksSource(val displayName: String) {
 }
 
 enum class FileType {
-    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7
+    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX
 }
 
 enum class RenderMode {
@@ -2388,7 +2388,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         var author: String? = null
         var bookForMetadata = epubBook
 
-        if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML)) {
+        if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX)) {
             Timber.d("Parsing downloaded book for cover/metadata: $displayName")
             Timber.tag("FileOpenPerf")
                 .d("[$bookId] addFileToRecent: Starting metadata parsing (no book provided)")
@@ -2450,7 +2450,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val finalBookMetadata = bookForMetadata
 
-        if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) && finalBookMetadata != null) {
+        if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX) && finalBookMetadata != null) {
             title =
                 finalBookMetadata.title.takeIf { it.isNotBlank() && it != "content" } ?: displayName
 
@@ -2952,7 +2952,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         sourceFolderUri = null
                     )
                 }
-            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML) {
+            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
                     if (recentItem?.sourceFolderUri != null) {
@@ -3110,6 +3110,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.d("Determining type for: $uri | Mime: $mimeType | Name: $fileName")
 
         return when (mimeType) {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
             "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
                 if (fileName?.endsWith(".cbz", ignoreCase = true) == true) FileType.CBZ else null
             }
@@ -3181,6 +3182,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         ".htm",
                         ignoreCase = true
                     ) == true -> FileType.HTML
+                    fileName?.endsWith(".docx", ignoreCase = true) == true -> FileType.DOCX
 
                     else -> null
                 }

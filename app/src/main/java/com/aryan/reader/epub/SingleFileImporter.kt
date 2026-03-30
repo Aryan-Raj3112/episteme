@@ -35,6 +35,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
+import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
@@ -55,6 +56,7 @@ class SingleFileImporter(private val context: Context) {
             FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent)
             else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
         }
     }
@@ -546,6 +548,68 @@ class SingleFileImporter(private val context: Context) {
         }
 
         return@withContext book
+    }
+
+    private suspend fun parseDocx(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean
+    ): EpubBook = withContext(Dispatchers.IO) {
+        if (!parseContent) {
+            return@withContext EpubBook(
+                fileName = originalBookNameHint,
+                title = originalBookNameHint.substringBeforeLast("."),
+                author = "Unknown",
+                language = "en",
+                coverImage = null,
+                chapters = emptyList(),
+                chaptersForPagination = emptyList(),
+                images = emptyList(),
+                pageList = emptyList(),
+                extractionBasePath = "",
+                css = emptyMap()
+            )
+        }
+
+        val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
+            if (!exists()) mkdirs()
+        }
+        val metadataFile = File(extractionDir, "book_metadata.json")
+
+        if (metadataFile.exists()) {
+            try {
+                val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
+                return@withContext cachedBook
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load cached DOCX, parsing again")
+            }
+        }
+
+        val parseStart = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")
+
+        val converter = DocumentConverter()
+        val result = converter.convertToHtml(inputStream)
+        val htmlContent = result.value ?: ""
+
+        Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
+
+        val fullHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${originalBookNameHint.substringBeforeLast(".")}</title>
+            </head>
+            <body>
+            $htmlContent
+            </body>
+            </html>
+        """.trimIndent()
+
+        // 4. Delegate to the already built HTML caching and chunking mechanisms!
+        return@withContext parseHtml(fullHtml.byteInputStream(), originalBookNameHint, bookId, parseContent)
     }
 
     private fun writeHtmlChapter(

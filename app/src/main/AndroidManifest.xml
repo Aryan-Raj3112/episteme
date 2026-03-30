@@ -172,6 +172,28 @@
                 <data android:mimeType="application/x-cb7" />
             </intent-filter>
 
+            <!-- DOCX -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.docx" />
+                <data android:pathPattern=".*\\..*\\.docx" />
+                <data android:pathPattern=".*\\..*\\..*\\.docx" />
+            </intent-filter>
+
             <!-- pathPattern fallback for file:// URIs (comic books) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

@@ -318,6 +318,7 @@ class FolderSyncWorker(
         return when {
             mimeType == "application/pdf" || name.endsWith(".pdf", true) -> FileType.PDF
             mimeType == "application/epub+zip" || name.endsWith(".epub", true) -> FileType.EPUB
+            mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.endsWith(".docx", true) -> FileType.DOCX
             name.endsWith(".mobi", true) || name.endsWith(".azw3", true) -> FileType.MOBI
             name.endsWith(".md", true) -> FileType.MD
             name.endsWith(".txt", true) -> FileType.TXT

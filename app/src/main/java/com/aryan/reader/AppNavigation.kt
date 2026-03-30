@@ -82,7 +82,7 @@ fun AppNavigation(
                         }
                     }
                 }
-                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2 -> {
+                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX -> {
                     if (uiState.selectedEpubBook != null) {
                         if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
                             navController.navigate(AppDestinations.EPUB_READER_ROUTE) {
