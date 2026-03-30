@@ -73,11 +73,16 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadBook(entry: OpdsEntry, context: Context, onDownloaded: (Uri) -> Unit) {
-        val downloadUrl = entry.downloadUrl ?: return
+    data class DownloadState(val isDownloading: Boolean, val progress: Float? = null)
+
+    private val _downloadingState = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
+    val downloadingState: StateFlow<Map<String, DownloadState>> = _downloadingState.asStateFlow()
+
+    fun downloadBook(entry: OpdsEntry, acquisition: OpdsAcquisition, context: Context, onDownloaded: (Uri) -> Unit) {
+        val downloadUrl = acquisition.url
         val catalog = _uiState.value.currentCatalog
         viewModelScope.launch(Dispatchers.IO) {
-            _downloadingEntries.update { it + entry.id }
+            _downloadingState.update { it + (entry.id to DownloadState(true, 0f)) }
             try {
                 val client = repository.getAuthenticatedClient(catalog?.username, catalog?.password)
                 val request = Request.Builder().url(downloadUrl).build()
@@ -86,27 +91,44 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (response.isSuccessful) {
                     val body = response.body ?: throw Exception("Empty body")
+                    val contentLength = body.contentLength()
 
-                    val ext = when {
-                        entry.downloadMimeType?.contains("epub") == true -> ".epub"
-                        entry.downloadMimeType?.contains("pdf") == true -> ".pdf"
-                        entry.downloadMimeType?.contains("mobi") == true -> ".mobi"
-                        entry.downloadMimeType?.contains("fictionbook") == true -> ".fb2"
-                        entry.downloadMimeType?.contains("cbz") == true -> ".cbz"
-                        downloadUrl.endsWith(".epub", ignoreCase = true) -> ".epub"
-                        downloadUrl.endsWith(".pdf", ignoreCase = true) -> ".pdf"
-                        downloadUrl.endsWith(".mobi", ignoreCase = true) -> ".mobi"
-                        downloadUrl.endsWith(".fb2", ignoreCase = true) -> ".fb2"
-                        downloadUrl.endsWith(".cbz", ignoreCase = true) -> ".cbz"
+                    val ext = when (acquisition.formatName) {
+                        "EPUB" -> ".epub"
+                        "PDF" -> ".pdf"
+                        "MOBI" -> ".mobi"
+                        "FB2" -> ".fb2"
+                        "CBZ" -> ".cbz"
+                        "CBR" -> ".cbr"
+                        "TXT" -> ".txt"
                         else -> ".epub"
                     }
 
                     val safeTitle = entry.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(50)
                     val tempFile = File(context.cacheDir, "opds_dl_${safeTitle}$ext")
 
-                    body.byteStream().use { input ->
-                        tempFile.outputStream().use { output ->
-                            input.copyTo(output)
+                    val input = body.byteStream()
+                    val output = tempFile.outputStream()
+                    val buffer = ByteArray(8 * 1024)
+                    var bytesRead: Int
+                    var totalRead = 0L
+                    var lastProgressUpdate = System.currentTimeMillis()
+
+                    input.use { inp ->
+                        output.use { out ->
+                            while (inp.read(buffer).also { bytesRead = it } != -1) {
+                                out.write(buffer, 0, bytesRead)
+                                totalRead += bytesRead
+                                if (contentLength > 0) {
+                                    val now = System.currentTimeMillis()
+                                    // Throttle UI updates to 4-5 fps
+                                    if (now - lastProgressUpdate > 200) {
+                                        val progress = totalRead.toFloat() / contentLength.toFloat()
+                                        _downloadingState.update { it + (entry.id to DownloadState(true, progress)) }
+                                        lastProgressUpdate = now
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -121,7 +143,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 Timber.e(e, "Download error")
                 _uiState.update { it.copy(errorMessage = "Download error: ${e.message}") }
             } finally {
-                _downloadingEntries.update { it - entry.id }
+                _downloadingState.update { it - entry.id }
             }
         }
     }

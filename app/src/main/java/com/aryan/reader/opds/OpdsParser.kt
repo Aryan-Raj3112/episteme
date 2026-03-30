@@ -128,8 +128,12 @@ class OpdsParser {
                         if (href.isNotEmpty()) {
                             val linkTitle = link.optString("title", groupTitle)
                             entries.add(OpdsEntry(
-                                id = href, title = linkTitle, summary = null, author = null,
-                                coverUrl = null, downloadUrl = null, downloadMimeType = null,
+                                id = href,
+                                title = linkTitle,
+                                summary = null,
+                                authors = emptyList(),
+                                coverUrl = null,
+                                acquisitions = emptyList(),
                                 navigationUrl = resolveUrl(baseUrl, href)
                             ))
                         }
@@ -150,19 +154,32 @@ class OpdsParser {
         val publisher = metadata?.optString("publisher")
         val published = metadata?.optString("published")
 
-        var author: String? = null
+        val authors = mutableListOf<OpdsAuthor>()
         val authorObj = metadata?.opt("author")
         if (authorObj is String) {
-            author = authorObj
-        } else if (authorObj is JSONArray && authorObj.length() > 0) {
-            val first = authorObj.get(0)
-            if (first is String) {
-                author = first
-            } else if (first is JSONObject) {
-                author = first.optString("name")
+            authors.add(OpdsAuthor(authorObj, null))
+        } else if (authorObj is JSONArray) {
+            for (i in 0 until authorObj.length()) {
+                val item = authorObj.get(i)
+                if (item is String) authors.add(OpdsAuthor(item, null))
+                else if (item is JSONObject) {
+                    val name = item.optString("name")
+                    var uri: String? = null
+                    val links = item.optJSONArray("links")
+                    if (links != null && links.length() > 0) {
+                        uri = resolveUrl(baseUrl, links.getJSONObject(0).optString("href"))
+                    }
+                    if (name.isNotBlank()) authors.add(OpdsAuthor(name, uri))
+                }
             }
         } else if (authorObj is JSONObject) {
-            author = authorObj.optString("name")
+            val name = authorObj.optString("name")
+            var uri: String? = null
+            val links = authorObj.optJSONArray("links")
+            if (links != null && links.length() > 0) {
+                uri = resolveUrl(baseUrl, links.getJSONObject(0).optString("href"))
+            }
+            if (name.isNotBlank()) authors.add(OpdsAuthor(name, uri))
         }
 
         val categories = mutableListOf<String>()
@@ -180,7 +197,6 @@ class OpdsParser {
             }
         }
 
-        // Parse series mapping "belongsTo -> series"
         var series: String? = null
         var seriesIndex: String? = null
         val belongsTo = metadata?.optJSONObject("belongsTo")
@@ -214,8 +230,7 @@ class OpdsParser {
                 val href = image.optString("href")
                 if (href.isNotEmpty()) {
                     val resolvedHref = resolveUrl(baseUrl, href)
-                    if (coverUrl == null) coverUrl = resolvedHref // Fallback if no specific "cover" tag exists
-
+                    if (coverUrl == null) coverUrl = resolvedHref
                     val rels = image.opt("rel")
                     var isCover = false
                     if (rels is String && rels == "cover") isCover = true
@@ -230,10 +245,7 @@ class OpdsParser {
             }
         }
 
-        var downloadUrl: String? = null
-        var downloadMimeType: String? = null
-        var currentBestPriority = -1
-
+        val acquisitions = mutableListOf<OpdsAcquisition>()
         val links = pub.optJSONArray("links")
         if (links != null) {
             for (i in 0 until links.length()) {
@@ -249,28 +261,15 @@ class OpdsParser {
 
                     if (isAcquisition) {
                         val type = link.optString("type") ?: ""
-                        val formatPriority = when {
-                            type.contains("epub") -> 5
-                            type.contains("pdf") -> 4
-                            type.contains("mobi") || type.contains("x-mobipocket-ebook") -> 3
-                            type.contains("fictionbook") || type.contains("fb2") -> 2
-                            type.contains("cbz") || type.contains("comicbook") -> 1
-                            type.contains("txt") || type.contains("text/plain") -> 0
-                            else -> -1
-                        }
-                        if (formatPriority > currentBestPriority) {
-                            currentBestPriority = formatPriority
-                            downloadUrl = resolveUrl(baseUrl, href)
-                            downloadMimeType = type
-                        }
+                        acquisitions.add(OpdsAcquisition(resolveUrl(baseUrl, href), type))
                     }
                 }
             }
         }
 
         return OpdsEntry(
-            id = id, title = title, summary = summary, author = author,
-            coverUrl = coverUrl, downloadUrl = downloadUrl, downloadMimeType = downloadMimeType,
+            id = id, title = title, summary = summary, authors = authors,
+            coverUrl = coverUrl, acquisitions = acquisitions,
             navigationUrl = null, publisher = publisher, published = published,
             language = language, series = series, seriesIndex = seriesIndex, categories = categories
         )
@@ -283,8 +282,8 @@ class OpdsParser {
         val navigationUrl = if (href.isNotEmpty()) resolveUrl(baseUrl, href) else null
 
         return OpdsEntry(
-            id = href, title = title, summary = summary, author = null,
-            coverUrl = null, downloadUrl = null, downloadMimeType = null,
+            id = href, title = title, summary = summary, authors = emptyList(),
+            coverUrl = null, acquisitions = emptyList(),
             navigationUrl = navigationUrl
         )
     }
@@ -342,12 +341,13 @@ class OpdsParser {
 
     private fun readEntry(parser: XmlPullParser, baseUrl: String): OpdsEntry {
         parser.require(XmlPullParser.START_TAG, null, "entry")
-        var id = ""; var title = ""; var summary: String? = null; var author: String? = null
-        var coverUrl: String? = null; var downloadUrl: String? = null; var downloadMimeType: String? = null; var navigationUrl: String? = null
+        var id = ""; var title = ""; var summary: String? = null
+        var coverUrl: String? = null; var navigationUrl: String? = null
         var publisher: String? = null; var published: String? = null; var language: String? = null
         var series: String? = null; var seriesIndex: String? = null
+        val authors = mutableListOf<OpdsAuthor>()
         val categories = mutableListOf<String>()
-        var currentBestPriority = -1
+        val acquisitions = mutableListOf<OpdsAcquisition>()
 
         while (parser.next() != XmlPullParser.END_TAG) {
             if (parser.eventType != XmlPullParser.START_TAG) continue
@@ -356,9 +356,9 @@ class OpdsParser {
                 "id" -> id = readText(parser)
                 "title" -> title = readText(parser)
                 "summary", "content" -> summary = readText(parser)
-                "author" -> author = readAuthor(parser)
+                "author" -> authors.add(readAuthor(parser, baseUrl))
                 "publisher" -> publisher = readText(parser)
-                "language" -> language = language ?: readText(parser) // Keep first found
+                "language" -> language = language ?: readText(parser)
                 "issued", "published", "updated" -> {
                     val date = readText(parser)
                     if (published == null || tagName != "updated") published = date
@@ -393,20 +393,7 @@ class OpdsParser {
                         if (rel.contains("http://opds-spec.org/image")) {
                             if (coverUrl == null || rel.contains("thumbnail")) coverUrl = absoluteUrl
                         } else if (rel.contains("http://opds-spec.org/acquisition")) {
-                            val formatPriority = when {
-                                type.contains("epub") -> 5
-                                type.contains("pdf") -> 4
-                                type.contains("mobi") || type.contains("x-mobipocket-ebook") -> 3
-                                type.contains("fictionbook") || type.contains("fb2") -> 2
-                                type.contains("cbz") || type.contains("comicbook") -> 1
-                                type.contains("txt") || type.contains("text/plain") -> 0
-                                else -> -1
-                            }
-                            if (formatPriority > currentBestPriority) {
-                                currentBestPriority = formatPriority
-                                downloadUrl = absoluteUrl
-                                downloadMimeType = type
-                            }
+                            acquisitions.add(OpdsAcquisition(absoluteUrl, type))
                         } else if (type.contains("profile=opds-catalog") || type.contains("application/atom+xml")) {
                             if (navigationUrl == null) navigationUrl = absoluteUrl
                         } else if (rel == "subsection" || rel == "collection" || rel == "start") {
@@ -418,20 +405,21 @@ class OpdsParser {
                 else -> skip(parser)
             }
         }
-        return OpdsEntry(id, title, summary, author, coverUrl, downloadUrl, downloadMimeType, navigationUrl, publisher, published, language, series, seriesIndex, categories)
+        return OpdsEntry(id, title, summary, authors, coverUrl, acquisitions, navigationUrl, publisher, published, language, series, seriesIndex, categories)
     }
 
-    private fun readAuthor(parser: XmlPullParser): String {
+    private fun readAuthor(parser: XmlPullParser, baseUrl: String): OpdsAuthor {
         var name = ""
+        var uri: String? = null
         while (parser.next() != XmlPullParser.END_TAG) {
             if (parser.eventType != XmlPullParser.START_TAG) continue
-            if (parser.name == "name") {
-                name = readText(parser)
-            } else {
-                skip(parser)
+            when (parser.name.substringAfter(":")) {
+                "name" -> name = readText(parser)
+                "uri" -> uri = resolveUrl(baseUrl, readText(parser))
+                else -> skip(parser)
             }
         }
-        return name
+        return OpdsAuthor(name, uri)
     }
 
     private fun readText(parser: XmlPullParser): String {

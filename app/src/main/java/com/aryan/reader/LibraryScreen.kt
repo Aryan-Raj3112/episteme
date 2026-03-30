@@ -127,6 +127,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.opds.OpdsAcquisition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -792,7 +793,10 @@ fun LibraryScreenContent(
                     )
                 }
                 3 -> {
-                    OpdsTab(onBookDownloaded = onOpdsBookDownloaded)
+                    OpdsTab(
+                        localLibraryFiles = rawLibraryFiles,
+                        onBookDownloaded = onOpdsBookDownloaded
+                    )
                 }
             }
         }
@@ -1850,10 +1854,12 @@ fun LibraryFilterSheet(
 
 @Composable
 fun OpdsTab(
+    localLibraryFiles: List<RecentFileItem>,
     onBookDownloaded: (Uri, String) -> Unit,
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
+    val downloadingState by opdsViewModel.downloadingState.collectAsStateWithLifecycle()
     val downloadingEntries by opdsViewModel.downloadingEntries.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
@@ -2066,13 +2072,18 @@ fun OpdsTab(
                                 } else {
                                     OpdsBookCard(
                                         entry = entry,
-                                        isDownloading = downloadingEntries.contains(entry.id),
+                                        localLibraryFiles = localLibraryFiles,
+                                        downloadState = downloadingState[entry.id],
                                         onDownloadClick = {
-                                            opdsViewModel.downloadBook(
-                                                entry,
-                                                context
-                                            ) { downloadedUri ->
-                                                onBookDownloaded(downloadedUri, entry.title)
+                                            val bestAcq = entry.bestAcquisition
+                                            if (bestAcq != null) {
+                                                opdsViewModel.downloadBook(
+                                                    entry,
+                                                    bestAcq,
+                                                    context
+                                                ) { downloadedUri ->
+                                                    onBookDownloaded(downloadedUri, entry.title)
+                                                }
                                             }
                                         },
                                         onClick = { selectedEntry = entry }
@@ -2110,11 +2121,17 @@ fun OpdsTab(
         if (selectedEntry != null) {
             OpdsBookDetailsSheet(
                 entry = selectedEntry!!,
-                isDownloading = downloadingEntries.contains(selectedEntry!!.id),
-                onDownloadClick = {
-                    opdsViewModel.downloadBook(selectedEntry!!, context) { downloadedUri ->
+                localLibraryFiles = localLibraryFiles,
+                downloadState = downloadingState[selectedEntry!!.id],
+                onDownloadFormat = { acquisition ->
+                    opdsViewModel.downloadBook(selectedEntry!!, acquisition, context) { downloadedUri ->
                         onBookDownloaded(downloadedUri, selectedEntry!!.title)
                     }
+                },
+                onAuthorOrCategoryClick = { url, fallbackName ->
+                    if (url != null) opdsViewModel.openFeedUrl(url)
+                    else opdsViewModel.search(fallbackName)
+                    selectedEntry = null // close sheet and navigate
                 },
                 onDismiss = { selectedEntry = null }
             )
@@ -2272,7 +2289,19 @@ fun OpdsNavigationCard(entry: OpdsEntry, onClick: (String) -> Unit) {
 }
 
 @Composable
-fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -> Unit, onClick: () -> Unit) {
+fun OpdsBookCard(
+    entry: OpdsEntry,
+    localLibraryFiles: List<RecentFileItem>,
+    downloadState: OpdsViewModel.DownloadState?,
+    onDownloadClick: () -> Unit,
+    onClick: () -> Unit
+) {
+    val isInLibrary = remember(entry, localLibraryFiles) {
+        localLibraryFiles.any { it.title.equals(entry.title, ignoreCase = true) || it.displayName.equals(entry.title, ignoreCase = true) }
+    }
+    val isDownloading = downloadState?.isDownloading == true
+    val progress = downloadState?.progress
+
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
@@ -2280,7 +2309,6 @@ fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(modifier = Modifier.padding(12.dp)) {
-            // Cover Image
             AsyncImage(
                 model = entry.coverUrl,
                 contentDescription = null,
@@ -2298,26 +2326,51 @@ fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -
                 }
                 entry.summary?.let {
                     val cleanSummary = remember(it) { Jsoup.parse(it).text() }
-                    Text(cleanSummary, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    Text(cleanSummary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                FilledTonalButton(
-                    onClick = onDownloadClick,
-                    enabled = !isDownloading && entry.downloadUrl != null,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    if (isDownloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Downloading...")
-                    } else if (entry.downloadUrl == null) {
-                        Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+
+                if (isInLibrary) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onClick,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Unavailable")
-                    } else {
-                        Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Download")
+                        Text("In Library")
+                    }
+                } else if (isDownloading) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Downloading...", style = MaterialTheme.typography.labelMedium)
+                            Spacer(modifier = Modifier.weight(1f))
+                            if (progress != null) {
+                                Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (progress != null) {
+                            androidx.compose.material3.LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                } else {
+                    val bestAcq = entry.bestAcquisition
+                    FilledTonalButton(
+                        onClick = onDownloadClick,
+                        enabled = bestAcq != null,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        if (bestAcq == null) {
+                            Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Unavailable")
+                        } else {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(bestAcq.formatName)
+                        }
                     }
                 }
             }
@@ -2329,16 +2382,20 @@ fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -
 @Composable
 fun OpdsBookDetailsSheet(
     entry: OpdsEntry,
-    isDownloading: Boolean,
-    onDownloadClick: () -> Unit,
+    localLibraryFiles: List<RecentFileItem>,
+    downloadState: OpdsViewModel.DownloadState?,
+    onDownloadFormat: (OpdsAcquisition) -> Unit,
+    onAuthorOrCategoryClick: (String?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isInLibrary = remember(entry, localLibraryFiles) {
+        localLibraryFiles.any { it.title.equals(entry.title, ignoreCase = true) || it.displayName.equals(entry.title, ignoreCase = true) }
+    }
+    val isDownloading = downloadState?.isDownloading == true
+    val progress = downloadState?.progress
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2364,14 +2421,23 @@ fun OpdsBookDetailsSheet(
                         fontWeight = FontWeight.Bold,
                         lineHeight = 28.sp
                     )
-                    entry.author?.takeIf { it.isNotBlank() }?.let {
+
+                    if (entry.authors.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            entry.authors.forEach { author ->
+                                Text(
+                                    text = author.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable {
+                                        onAuthorOrCategoryClick(author.url, author.name)
+                                    }
+                                )
+                            }
+                        }
                     }
+
                     entry.series?.takeIf { it.isNotBlank() }?.let { series ->
                         Spacer(modifier = Modifier.height(8.dp))
                         val seriesText = if (!entry.seriesIndex.isNullOrBlank()) "$series #${entry.seriesIndex}" else series
@@ -2379,48 +2445,82 @@ fun OpdsBookDetailsSheet(
                             text = seriesText,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable {
+                                onAuthorOrCategoryClick(null, series)
+                            }
                         )
                     }
                 }
             }
 
-            FilledTonalButton(
-                onClick = onDownloadClick,
-                enabled = !isDownloading && entry.downloadUrl != null,
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                if (isDownloading) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Downloading...", fontWeight = FontWeight.Bold)
-                } else if (entry.downloadUrl == null) {
-                    Icon(Icons.Default.Info, null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Unavailable", fontWeight = FontWeight.Bold)
-                } else {
-                    Icon(Icons.Default.Add, null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val ext = entry.downloadMimeType?.substringAfterLast("/")?.uppercase()?.takeIf { it.isNotBlank() } ?: "BOOK"
-                    Text("Download $ext", fontWeight = FontWeight.Bold)
+            if (isInLibrary) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.Check, "In Library", tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Already in Library", color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.Bold)
+                    }
                 }
+            }
+
+            if (isDownloading) {
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Downloading...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.weight(1f))
+                        if (progress != null) {
+                            Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (progress != null) {
+                        androidx.compose.material3.LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(8.dp))
+                    }
+                }
+            } else if (entry.acquisitions.isNotEmpty()) {
+                Text("Download Format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    entry.acquisitions.sortedByDescending { it.priority }.forEach { acq ->
+                        FilledTonalButton(onClick = { onDownloadFormat(acq) }) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(acq.formatName, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                Text("No supported formats available.", color = MaterialTheme.colorScheme.error)
             }
 
             if (entry.categories.isNotEmpty()) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     entry.categories.distinct().forEach { category ->
                         Surface(
                             shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            onClick = { onAuthorOrCategoryClick(null, category) }
                         ) {
                             Text(
                                 text = category,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
@@ -2448,7 +2548,7 @@ fun OpdsBookDetailsSheet(
                         entry.published?.takeIf { it.isNotBlank() }?.let {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("PUBLISHED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                val cleanDate = it.substringBefore("T") // Strip time strings if present
+                                val cleanDate = it.substringBefore("T")
                                 Text(cleanDate, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
                         }
