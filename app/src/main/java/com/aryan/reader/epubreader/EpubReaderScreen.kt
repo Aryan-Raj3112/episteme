@@ -2250,7 +2250,7 @@ fun EpubReaderHost(
                                                         containerFocusRequester.requestFocus()
                                                     }
 
-                                                    if (System.currentTimeMillis() - lastScrollHideTime < 250) {
+                                                    if (System.currentTimeMillis() - lastScrollHideTime < 400) {
                                                         Timber.d("Ignoring tap toggle because bars were just hidden by scroll (sloppy tap).")
                                                     } else {
                                                         if (showBars || showFormatAdjustmentBars) {
