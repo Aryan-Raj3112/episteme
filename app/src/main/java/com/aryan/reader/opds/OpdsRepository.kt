@@ -248,8 +248,7 @@ class OpdsRepository(context: Context) {
                 return@withContext Result.failure(Exception("Empty response body"))
             }
 
-            val inputStream = bodyString.byteInputStream()
-            val feed = parser.parse(inputStream, url)
+            val feed = parser.parse(bodyString, url)
 
             Timber.tag("OpdsDebug").d("Parsing complete. Found ${feed.entries.size} entries.")
             Result.success(feed)

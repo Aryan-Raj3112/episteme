@@ -1856,7 +1856,6 @@ fun OpdsTab(
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
     val downloadingEntries by opdsViewModel.downloadingEntries.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var showAddCatalogDialog by remember { mutableStateOf(false) }
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
     var showCatalogDialog by remember { mutableStateOf(false) }
     var editingCatalog by remember { mutableStateOf<OpdsCatalog?>(null) }
@@ -1867,19 +1866,10 @@ fun OpdsTab(
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (!uiState.isViewingCatalog) {
-            Scaffold(
-                floatingActionButton = {
-                    ExtendedFloatingActionButton(
-                        text = { Text("Add Catalog") },
-                        icon = { Icon(Icons.Default.Add, "Add") },
-                        onClick = {
-                            editingCatalog = null
-                            showCatalogDialog = true
-                        })
-                }) { padding ->
+            Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(16.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiState.catalogs, key = { it.id }) { catalog ->
@@ -1894,9 +1884,22 @@ fun OpdsTab(
                             },
                             onDelete = if (catalog.isDefault) null else {
                                 { opdsViewModel.removeCatalog(catalog.id) }
-                            })
+                            }
+                        )
                     }
                 }
+
+                ExtendedFloatingActionButton(
+                    text = { Text("Add Catalog") },
+                    icon = { Icon(Icons.Default.Add, "Add") },
+                    onClick = {
+                        editingCatalog = null
+                        showCatalogDialog = true
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                )
             }
         } else {
             // Screen 2: Viewing a specific feed/catalog

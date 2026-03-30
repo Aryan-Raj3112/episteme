@@ -1,19 +1,303 @@
+// OpdsParser.kt
 package com.aryan.reader.opds
 
 import android.util.Xml
+import org.json.JSONArray
+import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import timber.log.Timber
 import java.io.InputStream
+import java.util.UUID
 
 class OpdsParser {
 
-    fun parse(inputStream: InputStream, baseUrl: String): OpdsFeed {
+    fun parse(bodyString: String, baseUrl: String): OpdsFeed {
+        val trimmed = bodyString.trimStart()
+        return if (trimmed.startsWith("{")) {
+            Timber.tag("OpdsDebug").d("Detected OPDS 2.0 (JSON) feed")
+            parseOpds2(trimmed, baseUrl)
+        } else {
+            Timber.tag("OpdsDebug").d("Detected OPDS 1.x (XML) feed")
+            parseOpds1(trimmed.byteInputStream(), baseUrl)
+        }
+    }
+
+    // --- OPDS 2.0 (JSON) Parsing ---
+
+    private fun parseOpds2(jsonString: String, baseUrl: String): OpdsFeed {
+        val root = JSONObject(jsonString)
+        val metadata = root.optJSONObject("metadata")
+        val title = metadata?.optString("title") ?: "OPDS 2.0 Feed"
+
+        var nextUrl: String? = null
+        var searchUrl: String? = null
+        val facets = mutableListOf<OpdsFacet>()
+
+        // Root Links
+        val links = root.optJSONArray("links")
+        if (links != null) {
+            for (i in 0 until links.length()) {
+                val link = links.getJSONObject(i)
+                val relArray = link.optJSONArray("rel")
+                val rels = mutableListOf<String>()
+                if (relArray != null) {
+                    for (j in 0 until relArray.length()) rels.add(relArray.getString(j))
+                } else if (link.has("rel")) {
+                    val rel = link.optString("rel")
+                    if (rel.isNotBlank()) rels.add(rel)
+                }
+
+                val href = link.optString("href")
+                if (href.isNotEmpty()) {
+                    val resolvedHref = resolveUrl(baseUrl, href)
+                    if (rels.contains("next")) {
+                        nextUrl = resolvedHref
+                    } else if (rels.contains("search")) {
+                        searchUrl = resolvedHref
+                    }
+                }
+            }
+        }
+
+        // Facets
+        val facetsArray = root.optJSONArray("facets")
+        if (facetsArray != null) {
+            for (i in 0 until facetsArray.length()) {
+                val facetObj = facetsArray.getJSONObject(i)
+                val group = facetObj.optJSONObject("metadata")?.optString("title") ?: "Filter"
+                val facetLinks = facetObj.optJSONArray("links")
+                if (facetLinks != null) {
+                    for (j in 0 until facetLinks.length()) {
+                        val link = facetLinks.getJSONObject(j)
+                        val href = link.optString("href")
+                        if (href.isNotEmpty()) {
+                            val titleFacet = link.optString("title", "Facet")
+                            val properties = link.optJSONObject("properties")
+                            val active = properties?.optBoolean("active", false) ?: false
+                            facets.add(OpdsFacet(titleFacet, group, resolveUrl(baseUrl, href), active))
+                        }
+                    }
+                }
+            }
+        }
+
+        val entries = mutableListOf<OpdsEntry>()
+
+        // Publications
+        val publications = root.optJSONArray("publications")
+        if (publications != null) {
+            for (i in 0 until publications.length()) {
+                entries.add(parseOpds2Publication(publications.getJSONObject(i), baseUrl))
+            }
+        }
+
+        // Navigation
+        val navigation = root.optJSONArray("navigation")
+        if (navigation != null) {
+            for (i in 0 until navigation.length()) {
+                entries.add(parseOpds2Navigation(navigation.getJSONObject(i), baseUrl))
+            }
+        }
+
+        // Groups (Collections containing sub-navigation or sub-publications)
+        val groups = root.optJSONArray("groups")
+        if (groups != null) {
+            for (i in 0 until groups.length()) {
+                val group = groups.getJSONObject(i)
+                val groupTitle = group.optJSONObject("metadata")?.optString("title") ?: ""
+
+                val groupNav = group.optJSONArray("navigation")
+                if (groupNav != null) {
+                    for (j in 0 until groupNav.length()) {
+                        entries.add(parseOpds2Navigation(groupNav.getJSONObject(j), baseUrl))
+                    }
+                }
+
+                val groupPubs = group.optJSONArray("publications")
+                if (groupPubs != null) {
+                    for (j in 0 until groupPubs.length()) {
+                        entries.add(parseOpds2Publication(groupPubs.getJSONObject(j), baseUrl))
+                    }
+                }
+
+                val groupLinks = group.optJSONArray("links")
+                if (groupLinks != null) {
+                    for (j in 0 until groupLinks.length()) {
+                        val link = groupLinks.getJSONObject(j)
+                        val href = link.optString("href")
+                        if (href.isNotEmpty()) {
+                            val linkTitle = link.optString("title", groupTitle)
+                            entries.add(OpdsEntry(
+                                id = href, title = linkTitle, summary = null, author = null,
+                                coverUrl = null, downloadUrl = null, downloadMimeType = null,
+                                navigationUrl = resolveUrl(baseUrl, href)
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        return OpdsFeed(title, entries, nextUrl, searchUrl, facets)
+    }
+
+    private fun parseOpds2Publication(pub: JSONObject, baseUrl: String): OpdsEntry {
+        val metadata = pub.optJSONObject("metadata")
+        val title = metadata?.optString("title") ?: "Unknown Title"
+        val id = metadata?.optString("identifier") ?: pub.optString("id", UUID.randomUUID().toString())
+        val summary = metadata?.optString("description") ?: metadata?.optString("summary")
+        val language = metadata?.optString("language")
+        val publisher = metadata?.optString("publisher")
+        val published = metadata?.optString("published")
+
+        var author: String? = null
+        val authorObj = metadata?.opt("author")
+        if (authorObj is String) {
+            author = authorObj
+        } else if (authorObj is JSONArray && authorObj.length() > 0) {
+            val first = authorObj.get(0)
+            if (first is String) {
+                author = first
+            } else if (first is JSONObject) {
+                author = first.optString("name")
+            }
+        } else if (authorObj is JSONObject) {
+            author = authorObj.optString("name")
+        }
+
+        val categories = mutableListOf<String>()
+        when (val subjectObj = metadata?.opt("subject")) {
+            is String -> categories.add(subjectObj)
+            is JSONArray -> {
+                for (i in 0 until subjectObj.length()) {
+                    val subj = subjectObj.get(i)
+                    if (subj is String) categories.add(subj)
+                    else if (subj is JSONObject) categories.add(subj.optString("name"))
+                }
+            }
+            is JSONObject -> {
+                categories.add(subjectObj.optString("name"))
+            }
+        }
+
+        // Parse series mapping "belongsTo -> series"
+        var series: String? = null
+        var seriesIndex: String? = null
+        val belongsTo = metadata?.optJSONObject("belongsTo")
+        if (belongsTo != null) {
+            val seriesObj = belongsTo.opt("series")
+            if (seriesObj is String) {
+                series = seriesObj
+            } else if (seriesObj is JSONObject) {
+                series = seriesObj.optString("name")
+                if (seriesObj.has("position")) {
+                    seriesIndex = seriesObj.optDouble("position").toString().removeSuffix(".0")
+                }
+            } else if (seriesObj is JSONArray && seriesObj.length() > 0) {
+                val firstSeries = seriesObj.get(0)
+                if (firstSeries is String) {
+                    series = firstSeries
+                } else if (firstSeries is JSONObject) {
+                    series = firstSeries.optString("name")
+                    if (firstSeries.has("position")) {
+                        seriesIndex = firstSeries.optDouble("position").toString().removeSuffix(".0")
+                    }
+                }
+            }
+        }
+
+        var coverUrl: String? = null
+        val images = pub.optJSONArray("images")
+        if (images != null && images.length() > 0) {
+            for (i in 0 until images.length()) {
+                val image = images.getJSONObject(i)
+                val href = image.optString("href")
+                if (href.isNotEmpty()) {
+                    val resolvedHref = resolveUrl(baseUrl, href)
+                    if (coverUrl == null) coverUrl = resolvedHref // Fallback if no specific "cover" tag exists
+
+                    val rels = image.opt("rel")
+                    var isCover = false
+                    if (rels is String && rels == "cover") isCover = true
+                    else if (rels is JSONArray) {
+                        for (j in 0 until rels.length()) if (rels.optString(j) == "cover") isCover = true
+                    }
+                    if (isCover) {
+                        coverUrl = resolvedHref
+                        break
+                    }
+                }
+            }
+        }
+
+        var downloadUrl: String? = null
+        var downloadMimeType: String? = null
+        var currentBestPriority = -1
+
+        val links = pub.optJSONArray("links")
+        if (links != null) {
+            for (i in 0 until links.length()) {
+                val link = links.getJSONObject(i)
+                val href = link.optString("href")
+                if (href.isNotEmpty()) {
+                    val rels = link.opt("rel")
+                    var isAcquisition = false
+                    if (rels is String && rels.contains("acquisition")) isAcquisition = true
+                    else if (rels is JSONArray) {
+                        for (j in 0 until rels.length()) if (rels.optString(j).contains("acquisition")) isAcquisition = true
+                    }
+
+                    if (isAcquisition) {
+                        val type = link.optString("type") ?: ""
+                        val formatPriority = when {
+                            type.contains("epub") -> 5
+                            type.contains("pdf") -> 4
+                            type.contains("mobi") || type.contains("x-mobipocket-ebook") -> 3
+                            type.contains("fictionbook") || type.contains("fb2") -> 2
+                            type.contains("cbz") || type.contains("comicbook") -> 1
+                            type.contains("txt") || type.contains("text/plain") -> 0
+                            else -> -1
+                        }
+                        if (formatPriority > currentBestPriority) {
+                            currentBestPriority = formatPriority
+                            downloadUrl = resolveUrl(baseUrl, href)
+                            downloadMimeType = type
+                        }
+                    }
+                }
+            }
+        }
+
+        return OpdsEntry(
+            id = id, title = title, summary = summary, author = author,
+            coverUrl = coverUrl, downloadUrl = downloadUrl, downloadMimeType = downloadMimeType,
+            navigationUrl = null, publisher = publisher, published = published,
+            language = language, series = series, seriesIndex = seriesIndex, categories = categories
+        )
+    }
+
+    private fun parseOpds2Navigation(nav: JSONObject, baseUrl: String): OpdsEntry {
+        val title = nav.optString("title", "Unknown")
+        val href = nav.optString("href")
+        val summary = nav.optString("description", null)
+        val navigationUrl = if (href.isNotEmpty()) resolveUrl(baseUrl, href) else null
+
+        return OpdsEntry(
+            id = href, title = title, summary = summary, author = null,
+            coverUrl = null, downloadUrl = null, downloadMimeType = null,
+            navigationUrl = navigationUrl
+        )
+    }
+
+    // --- OPDS 1.x (XML) Parsing ---
+
+    private fun parseOpds1(inputStream: InputStream, baseUrl: String): OpdsFeed {
         return inputStream.use {
             val parser: XmlPullParser = Xml.newPullParser()
             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
             parser.setInput(it, null)
             parser.nextTag()
-            Timber.tag("OpdsDebug").d("Parser started at root tag: <${parser.name}>")
+            Timber.tag("OpdsDebug").d($$"Parser started at root tag: <${parser.name}>")
             readFeed(parser, baseUrl)
         }
     }
@@ -74,7 +358,7 @@ class OpdsParser {
                 "summary", "content" -> summary = readText(parser)
                 "author" -> author = readAuthor(parser)
                 "publisher" -> publisher = readText(parser)
-                "language" -> language = readText(parser)
+                "language" -> language = language ?: readText(parser) // Keep first found
                 "issued", "published", "updated" -> {
                     val date = readText(parser)
                     if (published == null || tagName != "updated") published = date
@@ -118,7 +402,7 @@ class OpdsParser {
                                 type.contains("txt") || type.contains("text/plain") -> 0
                                 else -> -1
                             }
-                            if (formatPriority >= currentBestPriority) {
+                            if (formatPriority > currentBestPriority) {
                                 currentBestPriority = formatPriority
                                 downloadUrl = absoluteUrl
                                 downloadMimeType = type
@@ -167,7 +451,7 @@ class OpdsParser {
     }
 
     private fun skip(parser: XmlPullParser) {
-        if (parser.eventType != XmlPullParser.START_TAG) throw IllegalStateException()
+        if (parser.eventType != XmlPullParser.START_TAG) throw java.lang.IllegalStateException()
         var depth = 1
         while (depth != 0) {
             when (parser.next()) {
