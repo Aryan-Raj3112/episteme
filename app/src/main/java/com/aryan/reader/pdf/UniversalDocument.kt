@@ -24,6 +24,8 @@ import java.io.File
 import me.zhanghai.android.libarchive.Archive
 import me.zhanghai.android.libarchive.ArchiveEntry
 import me.zhanghai.android.libarchive.ArchiveException
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import timber.log.Timber
 import java.util.UUID
 import java.util.zip.ZipFile
@@ -68,6 +70,14 @@ interface ReaderWebLinks : AutoCloseable {
 
 object DocumentFactory {
     suspend fun loadDocument(context: Context, uri: Uri, type: FileType, password: String?, pdfiumCore: PdfiumCoreKt): ReaderDocument {
+        if (uri.scheme == "opds-pse") {
+            val bookId = uri.getQueryParameter("id") ?: UUID.randomUUID().toString()
+            val urlTemplate = uri.getQueryParameter("url") ?: ""
+            val count = uri.getQueryParameter("count")?.toIntOrNull() ?: 0
+            val user = uri.getQueryParameter("user")?.takeIf { it.isNotBlank() }
+            val pass = uri.getQueryParameter("pass")?.takeIf { it.isNotBlank() }
+            return OpdsStreamDocumentWrapper(context, bookId, urlTemplate, count, user, pass)
+        }
         return if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
             val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.${type.name.lowercase()}")
             withContext(Dispatchers.IO) {
@@ -117,13 +127,36 @@ class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
     }
 
     override fun getNativePointer(): Long {
-        return try {
-            val field = pdfPage.javaClass.getDeclaredField("mNativePagePtr")
-            field.isAccessible = true
-            field.get(pdfPage) as? Long ?: 0L
-        } catch (_: Exception) {
-            0L
+        return extractNativePointer(pdfPage)
+    }
+
+    private fun extractNativePointer(obj: Any): Long {
+        val priorityFields = listOf("page", "mNativePagePtr", "pagePtr", "mNativePage")
+
+        for (name in priorityFields) {
+            try {
+                val field = obj.javaClass.getDeclaredField(name)
+                field.isAccessible = true
+                val value = field.get(obj)
+                if (value is Long && value != 0L) return value
+                if (value != null && value !is Long) {
+                    val nestedPtr = extractNativePointer(value)
+                    if (nestedPtr != 0L) return nestedPtr
+                }
+            } catch (_: Exception) {}
         }
+
+        try {
+            for (field in obj.javaClass.declaredFields) {
+                if (field.type == Long::class.java || field.type == Long::class.javaPrimitiveType) {
+                    field.isAccessible = true
+                    val value = field.get(obj) as Long
+                    if (value > 0xFFFFFFFFL) return value
+                }
+            }
+        } catch (_: Exception) {}
+
+        return 0L
     }
 
     override fun close() { pdfPage.close() }
@@ -388,4 +421,62 @@ class ArchivePageWrapper(imageBytes: ByteArray) : ReaderPage {
     override fun close() {
         decoder?.recycle()
     }
+}
+
+class OpdsStreamDocumentWrapper(
+    private val context: Context,
+    private val bookId: String,
+    private val urlTemplate: String,
+    private val pageCount: Int,
+    private val username: String?,
+    private val password: String?
+) : ReaderDocument {
+    private val cacheDir = File(context.cacheDir, "opds_stream_${bookId.hashCode()}").apply { mkdirs() }
+    private val client = OkHttpClient.Builder()
+        .apply {
+            if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
+                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(username, password))
+            }
+        }
+        .build()
+
+    override suspend fun getPageCount() = pageCount
+
+    override suspend fun openPage(pageIndex: Int): ReaderPage? = withContext(Dispatchers.IO) {
+        if (pageIndex !in 0 until pageCount) return@withContext null
+
+        val cachedFile = File(cacheDir, "page_$pageIndex.jpg")
+        if (cachedFile.exists() && cachedFile.length() > 0) {
+            try {
+                return@withContext ArchivePageWrapper(cachedFile.readBytes())
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to read cached stream page")
+            }
+        }
+
+        // OPDS-PSE defaults to 0-indexed values
+        val url = urlTemplate.replace("{pageNumber}", pageIndex.toString())
+            .replace("{maxWidth}", "1600")
+
+        val request = Request.Builder().url(url).build()
+        try {
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bytes = response.body?.bytes()
+                if (bytes != null && bytes.isNotEmpty()) {
+                    cachedFile.writeBytes(bytes)
+                    return@withContext ArchivePageWrapper(bytes)
+                }
+            } else {
+                Timber.e("Stream page failed with HTTP ${response.code}")
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to fetch stream page $pageIndex")
+        }
+        null
+    }
+
+    override suspend fun getTableOfContents() = emptyList<Bookmark>()
+
+    override fun close() {}
 }

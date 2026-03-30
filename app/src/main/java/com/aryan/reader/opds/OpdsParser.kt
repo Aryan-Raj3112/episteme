@@ -246,6 +246,9 @@ class OpdsParser {
         }
 
         val acquisitions = mutableListOf<OpdsAcquisition>()
+        var pseCount: Int? = null
+        var pseUrlTemplate: String? = null
+
         val links = pub.optJSONArray("links")
         if (links != null) {
             for (i in 0 until links.length()) {
@@ -253,6 +256,18 @@ class OpdsParser {
                 val href = link.optString("href")
                 if (href.isNotEmpty()) {
                     val rels = link.opt("rel")
+
+                    var isStream = false
+                    if (rels is String && rels == "http://vaemendis.net/opds-pse/stream") isStream = true
+                    else if (rels is JSONArray) {
+                        for (j in 0 until rels.length()) if (rels.optString(j) == "http://vaemendis.net/opds-pse/stream") isStream = true
+                    }
+                    if (isStream) {
+                        pseUrlTemplate = resolveUrl(baseUrl, href)
+                        val properties = link.optJSONObject("properties")
+                        pseCount = properties?.optInt("numberOfItems")?.takeIf { it > 0 }
+                    }
+
                     var isAcquisition = false
                     if (rels is String && rels.contains("acquisition")) isAcquisition = true
                     else if (rels is JSONArray) {
@@ -271,7 +286,8 @@ class OpdsParser {
             id = id, title = title, summary = summary, authors = authors,
             coverUrl = coverUrl, acquisitions = acquisitions,
             navigationUrl = null, publisher = publisher, published = published,
-            language = language, series = series, seriesIndex = seriesIndex, categories = categories
+            language = language, series = series, seriesIndex = seriesIndex, categories = categories,
+            pseCount = pseCount, pseUrlTemplate = pseUrlTemplate
         )
     }
 
@@ -345,6 +361,8 @@ class OpdsParser {
         var coverUrl: String? = null; var navigationUrl: String? = null
         var publisher: String? = null; var published: String? = null; var language: String? = null
         var series: String? = null; var seriesIndex: String? = null
+        var pseCount: Int? = null
+        var pseUrlTemplate: String? = null
         val authors = mutableListOf<OpdsAuthor>()
         val categories = mutableListOf<String>()
         val acquisitions = mutableListOf<OpdsAcquisition>()
@@ -383,6 +401,12 @@ class OpdsParser {
                     val type = parser.getAttributeValue(null, "type") ?: ""
                     val linkTitle = parser.getAttributeValue(null, "title")
 
+                    if (rel == "http://vaemendis.net/opds-pse/stream") {
+                        pseUrlTemplate = resolveUrl(baseUrl, href)
+                        val countStr = parser.getAttributeValue(null, "pse:count")
+                        pseCount = countStr?.toIntOrNull()
+                    }
+
                     if (rel == "http://calibre-ebook.com/opds/series") {
                         if (series == null) series = linkTitle
                     }
@@ -405,7 +429,7 @@ class OpdsParser {
                 else -> skip(parser)
             }
         }
-        return OpdsEntry(id, title, summary, authors, coverUrl, acquisitions, navigationUrl, publisher, published, language, series, seriesIndex, categories)
+        return OpdsEntry(id, title, summary, authors, coverUrl, acquisitions, navigationUrl, publisher, published, language, series, seriesIndex, categories, pseCount, pseUrlTemplate)
     }
 
     private fun readAuthor(parser: XmlPullParser, baseUrl: String): OpdsAuthor {

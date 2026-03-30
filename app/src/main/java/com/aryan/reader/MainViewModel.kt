@@ -455,6 +455,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun streamOpdsBook(
+        bookId: String,
+        title: String,
+        urlTemplate: String,
+        pageCount: Int,
+        username: String?,
+        password: String?
+    ) {
+        val encodedUrl = Uri.encode(urlTemplate)
+        val user = Uri.encode(username ?: "")
+        val pass = Uri.encode(password ?: "")
+        val safeId = Uri.encode(bookId)
+
+        val uriString = "opds-pse://stream?id=$safeId&count=$pageCount&url=$encodedUrl&user=$user&pass=$pass"
+        openBook(uriString.toUri(), bookId, FileType.CBZ, title)
+    }
+
     private val _reviewRequestEvent = Channel<Unit>(Channel.BUFFERED)
     val reviewRequestEvent = _reviewRequestEvent.receiveAsFlow()
     private var hasRequestedReviewInThisSession = false
@@ -2424,7 +2441,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (coverBitmap != null) {
                     coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
                 }
-            } else if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+            } else if (uri.scheme != "opds-pse" && (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7)) {
                 var cacheFile: File? = null
                 try {
                     cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
@@ -2837,20 +2854,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
 
-        try {
-            val cursor = appContext.contentResolver.query(uri, null, null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
-                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    val size = if (sizeIndex != -1) it.getLong(sizeIndex) else -1L
-                    val name = if (nameIndex != -1) it.getString(nameIndex) else "unknown"
-                    Timber.tag("FileOpenPerf")
-                        .d("[$bookId] File details | name=$name | size=${size} bytes | sizeMB=${size / (1024.0 * 1024)}")
+        if (uri.scheme != "opds-pse") {
+            try {
+                val cursor = appContext.contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
+                        val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val size = if (sizeIndex != -1) it.getLong(sizeIndex) else -1L
+                        val name = if (nameIndex != -1) it.getString(nameIndex) else "unknown"
+                        Timber.tag("FileOpenPerf")
+                            .d("[$bookId] File details | name=$name | size=${size} bytes | sizeMB=${size / (1024.0 * 1024)}")
+                    }
                 }
+            } catch (e: Exception) {
+                Timber.tag("FileOpenPerf").e(e, "[$bookId] Failed to get file details")
             }
-        } catch (e: Exception) {
-            Timber.tag("FileOpenPerf").e(e, "[$bookId] Failed to get file details")
         }
 
         viewModelScope.launch {

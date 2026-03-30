@@ -3089,14 +3089,17 @@ fun PdfViewerScreen(
         try {
             withContext(Dispatchers.IO) {
                 Timber.d("Opening ParcelFileDescriptor for URI: $pdfUri")
-                currentPfdOpened = context.contentResolver.openFileDescriptor(pdfUri, "r")
-                if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
+
+                if (pdfUri.scheme != "opds-pse") {
+                    currentPfdOpened = context.contentResolver.openFileDescriptor(pdfUri, "r")
+                    if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
+                }
 
                 val doc = DocumentFactory.loadDocument(context, pdfUri, uiState.selectedFileType ?: FileType.PDF, documentPassword, pdfiumCore)
 
                 if (!isActive) {
                     doc.close()
-                    currentPfdOpened.close()
+                    currentPfdOpened?.close()
                     return@withContext
                 }
 

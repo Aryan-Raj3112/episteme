@@ -71,7 +71,10 @@ data class OpdsEntry(
     val language: String? = null,
     val series: String? = null,
     val seriesIndex: String? = null,
-    val categories: List<String> = emptyList()
+    val categories: List<String> = emptyList(),
+    // ADD THESE:
+    val pseCount: Int? = null,
+    val pseUrlTemplate: String? = null
 ) {
     val author: String?
         get() = authors.firstOrNull()?.name
@@ -84,4 +87,7 @@ data class OpdsEntry(
 
     val isNavigation: Boolean
         get() = navigationUrl != null && acquisitions.isEmpty()
+
+    val isStreamable: Boolean
+        get() = pseUrlTemplate != null && pseCount != null && pseCount > 0
 }

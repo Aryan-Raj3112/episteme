@@ -149,7 +149,7 @@ class OpdsRepository(context: Context) {
             .build()
     }
 
-    private class OpdsAuthenticator(private val user: String?, private val pass: String?) : okhttp3.Authenticator {
+    class OpdsAuthenticator(private val user: String?, private val pass: String?) : okhttp3.Authenticator {
         private var cnonceCount = 0
 
         override fun authenticate(route: okhttp3.Route?, response: okhttp3.Response): Request? {

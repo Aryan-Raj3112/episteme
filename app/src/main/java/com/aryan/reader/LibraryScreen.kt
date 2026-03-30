@@ -302,6 +302,16 @@ fun LibraryScreen(
             onOpdsBookDownloaded = { uri, title ->
                 viewModel.showBanner("Downloaded $title")
                 viewModel.onFileSelected(uri, isFromRecent = false)
+            },
+            onStreamOpdsBook = { entry, catalog ->
+                viewModel.streamOpdsBook(
+                    bookId = entry.id,
+                    title = entry.title,
+                    urlTemplate = entry.pseUrlTemplate!!,
+                    pageCount = entry.pseCount!!,
+                    username = catalog?.username,
+                    password = catalog?.password
+                )
             }
         )
 
@@ -525,6 +535,7 @@ fun LibraryScreenContent(
     syncedFolders: List<SyncedFolder>,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
     onOpdsBookDownloaded: (Uri, String) -> Unit,
+    onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
@@ -796,7 +807,8 @@ fun LibraryScreenContent(
                     OpdsTab(
                         localLibraryFiles = rawLibraryFiles,
                         onBookDownloaded = onOpdsBookDownloaded,
-                        onReadBook = onItemClick
+                        onReadBook = onItemClick,
+                        onStreamBook = onStreamOpdsBook
                     )
                 }
             }
@@ -1858,6 +1870,7 @@ fun OpdsTab(
     localLibraryFiles: List<RecentFileItem>,
     onBookDownloaded: (Uri, String) -> Unit,
     onReadBook: (RecentFileItem) -> Unit,
+    onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
@@ -1877,7 +1890,12 @@ fun OpdsTab(
             Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 16.dp,
+                        bottom = 88.dp
+                    ),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiState.catalogs, key = { it.id }) { catalog ->
@@ -1892,8 +1910,7 @@ fun OpdsTab(
                             },
                             onDelete = if (catalog.isDefault) null else {
                                 { opdsViewModel.removeCatalog(catalog.id) }
-                            }
-                        )
+                            })
                     }
                 }
 
@@ -1904,9 +1921,7 @@ fun OpdsTab(
                         editingCatalog = null
                         showCatalogDialog = true
                     },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(16.dp)
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
                 )
             }
         } else {
@@ -1952,9 +1967,7 @@ fun OpdsTab(
                                         value = query,
                                         onValueChange = { query = it },
                                         placeholder = { Text("Search catalog...") },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(vertical = 4.dp)
+                                        modifier = Modifier.weight(1f).padding(vertical = 4.dp)
                                             .focusRequester(searchFocusRequester),
                                         singleLine = true,
                                         colors = TextFieldDefaults.colors(
@@ -1985,7 +1998,8 @@ fun OpdsTab(
                                                     showSearch = false
                                                     query = ""
                                                 }
-                                            }))
+                                            })
+                                    )
                                 } else {
                                     Text(
                                         text = uiState.currentFeed?.title ?: "Loading...",
@@ -2005,16 +2019,17 @@ fun OpdsTab(
 
                             if (uiState.isLoading) {
                                 androidx.compose.material3.LinearProgressIndicator(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .align(Alignment.BottomCenter)
+                                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
                                 )
                             }
                         }
                     }
 
                     if (uiState.currentFeed?.entries?.isEmpty() == true && !uiState.isLoading) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text("This feed is empty.")
                         }
                     } else {
@@ -2022,22 +2037,30 @@ fun OpdsTab(
                         if (facets.isNotEmpty()) {
                             val groups = facets.groupBy { it.group }
                             LazyRow(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 groups.forEach { (groupName, groupFacets) ->
                                     item(key = groupName) {
                                         var expanded by remember { mutableStateOf(false) }
-                                        val activeFacet = groupFacets.find { it.isActive } ?: groupFacets.firstOrNull()
+                                        val activeFacet = groupFacets.find { it.isActive }
+                                            ?: groupFacets.firstOrNull()
 
                                         Box {
                                             FilterChip(
                                                 selected = activeFacet?.isActive == true,
                                                 onClick = { expanded = true },
                                                 label = { Text("${groupName}: ${activeFacet?.title ?: "Select"}") },
-                                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, null) }
-                                            )
-                                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                                trailingIcon = {
+                                                    Icon(
+                                                        Icons.Default.ArrowDropDown,
+                                                        null
+                                                    )
+                                                })
+                                            DropdownMenu(
+                                                expanded = expanded,
+                                                onDismissRequest = { expanded = false }) {
                                                 groupFacets.forEach { facet ->
                                                     DropdownMenuItem(
                                                         text = { Text(facet.title) },
@@ -2045,8 +2068,9 @@ fun OpdsTab(
                                                             expanded = false
                                                             opdsViewModel.openFeedUrl(facet.url)
                                                         },
-                                                        trailingIcon = if (facet.isActive) { { Icon(Icons.Default.Check, null) } } else null
-                                                    )
+                                                        trailingIcon = if (facet.isActive) {
+                                                            { Icon(Icons.Default.Check, null) }
+                                                        } else null)
                                                 }
                                             }
                                         }
@@ -2078,16 +2102,19 @@ fun OpdsTab(
                                         downloadState = downloadingState[entry.id],
                                         onDownloadClick = { acquisition ->
                                             opdsViewModel.downloadBook(
-                                                entry,
-                                                acquisition,
-                                                context
+                                                entry, acquisition, context
                                             ) { downloadedUri ->
                                                 onBookDownloaded(downloadedUri, entry.title)
                                             }
                                         },
                                         onReadClick = onReadBook,
-                                        onClick = { selectedEntry = entry }
-                                    )
+                                        onStreamClick = {
+                                            onStreamBook(
+                                                entry,
+                                                uiState.currentCatalog
+                                            )
+                                        },
+                                        onClick = { selectedEntry = entry })
                                 }
                             }
                         }
@@ -2105,9 +2132,7 @@ fun OpdsTab(
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
                 shape = MaterialTheme.shapes.medium,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
                     .padding(bottom = 70.dp)
             ) {
                 Text(
@@ -2129,10 +2154,11 @@ fun OpdsTab(
                     }
                 },
                 onReadClick = onReadBook,
+                onStreamClick = { selectedEntry?.let { onStreamBook(it, uiState.currentCatalog) } },
                 onAuthorOrCategoryClick = { url, fallbackName ->
                     if (url != null) opdsViewModel.openFeedUrl(url)
                     else opdsViewModel.search(fallbackName)
-                    selectedEntry = null // close sheet and navigate
+                    selectedEntry = null
                 },
                 onDismiss = { selectedEntry = null }
             )
@@ -2280,7 +2306,6 @@ fun OpdsNavigationCard(entry: OpdsEntry, onClick: (String) -> Unit) {
             Column {
                 Text(entry.title, style = MaterialTheme.typography.titleMedium)
                 entry.summary?.let {
-                    // Strip HTML from summary using Jsoup
                     val cleanSummary = remember(it) { Jsoup.parse(it).text() }
                     Text(cleanSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -2296,6 +2321,7 @@ fun OpdsBookCard(
     downloadState: OpdsViewModel.DownloadState?,
     onDownloadClick: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
+    onStreamClick: () -> Unit,
     onClick: () -> Unit
 ) {
     val libraryItem = remember(entry, localLibraryFiles) {
@@ -2362,26 +2388,39 @@ fun OpdsBookCard(
                         }
                     }
                 } else {
-                    Box {
-                        FilledTonalButton(
-                            onClick = {
-                                if (uniqueAcquisitions.size == 1) {
-                                    onDownloadClick(uniqueAcquisitions.first())
-                                } else if (uniqueAcquisitions.size > 1) {
-                                    showFormatMenu = true
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (entry.isStreamable) {
+                            FilledTonalButton(
+                                onClick = onStreamClick,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Stream")
+                            }
+                        }
+
+                        Box {
+                            FilledTonalButton(
+                                onClick = {
+                                    if (uniqueAcquisitions.size == 1) {
+                                        onDownloadClick(uniqueAcquisitions.first())
+                                    } else if (uniqueAcquisitions.size > 1) {
+                                        showFormatMenu = true
+                                    }
+                                },
+                                enabled = uniqueAcquisitions.isNotEmpty(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                if (uniqueAcquisitions.isEmpty()) {
+                                    Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Unavailable")
+                                } else {
+                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Download")
                                 }
-                            },
-                            enabled = uniqueAcquisitions.isNotEmpty(),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                        ) {
-                            if (uniqueAcquisitions.isEmpty()) {
-                                Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Unavailable")
-                            } else {
-                                Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Download")
                             }
                         }
                         DropdownMenu(
@@ -2413,6 +2452,7 @@ fun OpdsBookDetailsSheet(
     downloadState: OpdsViewModel.DownloadState?,
     onDownloadFormat: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
+    onStreamClick: () -> Unit,
     onAuthorOrCategoryClick: (String?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2516,17 +2556,39 @@ fun OpdsBookDetailsSheet(
                         androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(8.dp))
                     }
                 }
-            } else if (uniqueAcquisitions.isNotEmpty()) {
-                Text("Download Format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    uniqueAcquisitions.forEach { acq ->
-                        FilledTonalButton(onClick = { onDownloadFormat(acq) }) {
-                            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(acq.formatName, fontWeight = FontWeight.Bold)
+            } else if (uniqueAcquisitions.isNotEmpty() || entry.isStreamable) {
+                if (entry.isStreamable) {
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            onStreamClick()
+                            onDismiss()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Stream Now", fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                if (uniqueAcquisitions.isNotEmpty()) {
+                    Text(
+                        "Download Format",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        uniqueAcquisitions.forEach { acq ->
+                            FilledTonalButton(onClick = { onDownloadFormat(acq) }) {
+                                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(acq.formatName, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
