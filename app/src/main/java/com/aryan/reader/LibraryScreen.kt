@@ -45,6 +45,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,6 +59,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -67,9 +69,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
@@ -112,9 +116,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -1851,21 +1858,24 @@ fun OpdsTab(
     val context = LocalContext.current
     var showAddCatalogDialog by remember { mutableStateOf(false) }
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
+    var showCatalogDialog by remember { mutableStateOf(false) }
+    var editingCatalog by remember { mutableStateOf<OpdsCatalog?>(null) }
 
-    // Intercept hardware back button to navigate catalog hierarchy
     BackHandler(enabled = uiState.isViewingCatalog) {
         opdsViewModel.navigateBack()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (!uiState.isViewingCatalog) {
-            // Screen 1: List of saved Catalogs
             Scaffold(
                 floatingActionButton = {
                     ExtendedFloatingActionButton(
                         text = { Text("Add Catalog") },
                         icon = { Icon(Icons.Default.Add, "Add") },
-                        onClick = { showAddCatalogDialog = true })
+                        onClick = {
+                            editingCatalog = null
+                            showCatalogDialog = true
+                        })
                 }) { padding ->
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(padding),
@@ -1876,6 +1886,12 @@ fun OpdsTab(
                         OpdsCatalogCard(
                             catalog = catalog,
                             onClick = { opdsViewModel.openCatalog(catalog) },
+                            onEdit = if (catalog.isDefault) null else {
+                                {
+                                    editingCatalog = catalog
+                                    showCatalogDialog = true
+                                }
+                            },
                             onDelete = if (catalog.isDefault) null else {
                                 { opdsViewModel.removeCatalog(catalog.id) }
                             })
@@ -1893,6 +1909,15 @@ fun OpdsTab(
                     ) {
                         var showSearch by remember { mutableStateOf(false) }
                         var query by remember { mutableStateOf("") }
+
+                        val searchFocusRequester = remember { FocusRequester() }
+
+                        LaunchedEffect(showSearch) {
+                            if (showSearch) {
+                                delay(100)
+                                searchFocusRequester.requestFocus()
+                            }
+                        }
 
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Row(
@@ -1916,7 +1941,10 @@ fun OpdsTab(
                                         value = query,
                                         onValueChange = { query = it },
                                         placeholder = { Text("Search catalog...") },
-                                        modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(vertical = 4.dp)
+                                            .focusRequester(searchFocusRequester),
                                         singleLine = true,
                                         colors = TextFieldDefaults.colors(
                                             focusedContainerColor = Color.Transparent,
@@ -1975,13 +2003,47 @@ fun OpdsTab(
                     }
 
                     if (uiState.currentFeed?.entries?.isEmpty() == true && !uiState.isLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("This feed is empty.")
                         }
                     } else {
+                        val facets = uiState.currentFeed?.facets ?: emptyList()
+                        if (facets.isNotEmpty()) {
+                            val groups = facets.groupBy { it.group }
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                groups.forEach { (groupName, groupFacets) ->
+                                    item(key = groupName) {
+                                        var expanded by remember { mutableStateOf(false) }
+                                        val activeFacet = groupFacets.find { it.isActive } ?: groupFacets.firstOrNull()
+
+                                        Box {
+                                            FilterChip(
+                                                selected = activeFacet?.isActive == true,
+                                                onClick = { expanded = true },
+                                                label = { Text("${groupName}: ${activeFacet?.title ?: "Select"}") },
+                                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, null) }
+                                            )
+                                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                                groupFacets.forEach { facet ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(facet.title) },
+                                                        onClick = {
+                                                            expanded = false
+                                                            opdsViewModel.openFeedUrl(facet.url)
+                                                        },
+                                                        trailingIcon = if (facet.isActive) { { Icon(Icons.Default.Check, null) } } else null
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(16.dp),
@@ -2056,13 +2118,21 @@ fun OpdsTab(
         }
     }
 
-    if (showAddCatalogDialog) {
-        var newTitle by remember { mutableStateOf("") }
-        var newUrl by remember { mutableStateOf("") }
+    // Dynamic Add/Edit Dialog
+    if (showCatalogDialog) {
+        var newTitle by remember(editingCatalog) { mutableStateOf(editingCatalog?.title ?: "") }
+        var newUrl by remember(editingCatalog) { mutableStateOf(editingCatalog?.url ?: "") }
+        var newUsername by remember(editingCatalog) { mutableStateOf(editingCatalog?.username ?: "") }
+        var newPassword by remember(editingCatalog) { mutableStateOf(editingCatalog?.password ?: "") }
+
+        val isEditMode = editingCatalog != null
 
         AlertDialog(
-            onDismissRequest = { showAddCatalogDialog = false },
-            title = { Text("Add OPDS Catalog") },
+            onDismissRequest = {
+                showCatalogDialog = false
+                editingCatalog = null
+            },
+            title = { Text(if (isEditMode) "Edit Catalog" else "Add OPDS Catalog") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -2075,29 +2145,57 @@ fun OpdsTab(
                         value = newUrl,
                         onValueChange = { newUrl = it },
                         label = { Text("URL") },
-                        placeholder = { Text("e.g. https://m.gutenberg.org/ebooks.opds/") },
+                        placeholder = { Text("e.g. http://192.168.1.50:8080/opds") },
                         singleLine = true
+                    )
+                    Text(
+                        "Authentication (Optional)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = newUsername,
+                        onValueChange = { newUsername = it },
+                        label = { Text("Username") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = { newPassword = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password)
                     )
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        opdsViewModel.addCatalog(newTitle, newUrl)
-                        showAddCatalogDialog = false
+                        if (isEditMode) {
+                            opdsViewModel.updateCatalog(editingCatalog!!.id, newTitle, newUrl, newUsername, newPassword)
+                        } else {
+                            opdsViewModel.addCatalog(newTitle, newUrl, newUsername, newPassword)
+                        }
+                        showCatalogDialog = false
+                        editingCatalog = null
                     },
                     enabled = newTitle.isNotBlank() && newUrl.isNotBlank()
-                ) { Text("Add") }
+                ) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { showAddCatalogDialog = false }) { Text("Cancel") }
+                TextButton(onClick = {
+                    showCatalogDialog = false
+                    editingCatalog = null
+                }) { Text("Cancel") }
             }
         )
     }
 }
 
 @Composable
-fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: (() -> Unit)?) {
+fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onEdit: (() -> Unit)?, onDelete: (() -> Unit)?) {
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
@@ -2129,6 +2227,11 @@ fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: (() -> 
                     }
                 }
                 Text(catalog.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (onEdit != null) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit")
+                }
             }
             if (onDelete != null) {
                 IconButton(onClick = onDelete) {
@@ -2236,30 +2339,29 @@ fun OpdsBookDetailsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 24.dp, vertical = 8.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                // Cover Image
                 AsyncImage(
                     model = entry.coverUrl,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(width = 120.dp, height = 180.dp)
-                        .clip(MaterialTheme.shapes.small)
+                        .size(width = 110.dp, height = 160.dp)
+                        .clip(MaterialTheme.shapes.medium)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 )
 
-                // Title, Author, Download
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = entry.title,
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 28.sp
                     )
-                    entry.author?.let {
+                    entry.author?.takeIf { it.isNotBlank() }?.let {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = it,
@@ -2267,50 +2369,116 @@ fun OpdsBookDetailsSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    entry.series?.takeIf { it.isNotBlank() }?.let { series ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val seriesText = if (!entry.seriesIndex.isNullOrBlank()) "$series #${entry.seriesIndex}" else series
+                        Text(
+                            text = seriesText,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+            FilledTonalButton(
+                onClick = onDownloadClick,
+                enabled = !isDownloading && entry.downloadUrl != null,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                if (isDownloading) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Downloading...", fontWeight = FontWeight.Bold)
+                } else if (entry.downloadUrl == null) {
+                    Icon(Icons.Default.Info, null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Unavailable", fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(Icons.Default.Add, null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val ext = entry.downloadMimeType?.substringAfterLast("/")?.uppercase()?.takeIf { it.isNotBlank() } ?: "BOOK"
+                    Text("Download $ext", fontWeight = FontWeight.Bold)
+                }
+            }
 
-                    FilledTonalButton(
-                        onClick = onDownloadClick,
-                        enabled = !isDownloading && entry.downloadUrl != null,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isDownloading) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Downloading...")
-                        } else if (entry.downloadUrl == null) {
-                            Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Unavailable")
-                        } else {
-                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Download")
+            if (entry.categories.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    entry.categories.distinct().forEach { category ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Text(
+                                text = category,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
                         }
                     }
                 }
             }
 
-            HorizontalDivider()
-
-            Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-            if (!entry.summary.isNullOrBlank()) {
-                val cleanSummary = remember(entry.summary) { Jsoup.parse(entry.summary).text() }
-                Text(
-                    text = cleanSummary,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            } else {
-                Text(
-                    text = "No summary available.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            val hasSecondaryMeta = !entry.publisher.isNullOrBlank() || !entry.published.isNullOrBlank() || !entry.language.isNullOrBlank()
+            if (hasSecondaryMeta) {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        entry.publisher?.takeIf { it.isNotBlank() }?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("PUBLISHER", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        entry.published?.takeIf { it.isNotBlank() }?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("PUBLISHED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val cleanDate = it.substringBefore("T") // Strip time strings if present
+                                Text(cleanDate, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        entry.language?.takeIf { it.isNotBlank() }?.let {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("LANGUAGE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it.uppercase(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            if (!entry.summary.isNullOrBlank()) {
+                Text("Synopsis", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+                val cleanSummary = remember(entry.summary) {
+                    val preProcessed = entry.summary
+                        .replace("<br>", "\n")
+                        .replace("</p>", "\n\n")
+                    Jsoup.parse(preProcessed).text().trim()
+                }
+
+                Text(
+                    text = cleanSummary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 24.sp,
+                    modifier = Modifier.padding(bottom = 48.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(48.dp))
+            }
         }
     }
 }

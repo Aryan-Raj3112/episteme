@@ -3,7 +3,6 @@ package com.aryan.reader.opds
 import android.app.Application
 import android.content.Context
 import android.net.Uri
-import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -13,13 +12,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 
 data class OpdsScreenState(
     val catalogs: List<OpdsCatalog> = emptyList(),
+    val currentCatalog: OpdsCatalog? = null,
     val currentFeed: OpdsFeed? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -35,19 +34,16 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val urlStack = mutableListOf<String>()
 
-    private val httpClient = OkHttpClient()
-
     private val _downloadingEntries = MutableStateFlow<Set<String>>(emptySet())
     val downloadingEntries: StateFlow<Set<String>> = _downloadingEntries.asStateFlow()
 
     private fun fetchUrl(url: String, isPagination: Boolean = false) {
         viewModelScope.launch {
-            Timber.tag("OpdsDebug").i("ViewModel requesting URL: $url (isPagination=$isPagination)")
+            val catalog = _uiState.value.currentCatalog
             _uiState.update { it.copy(isLoading = true, errorMessage = null, isViewingCatalog = true) }
 
-            val result = repository.fetchFeed(url)
+            val result = repository.fetchFeed(url, catalog?.username, catalog?.password)
             result.onSuccess { newFeed ->
-                Timber.tag("OpdsDebug").i("ViewModel received feed: ${newFeed.title} with ${newFeed.entries.size} entries")
                 val template = newFeed.searchUrl ?: _uiState.value.searchUrlTemplate
                 if (!isPagination) {
                     if (urlStack.isEmpty() || urlStack.last() != url) {
@@ -65,7 +61,6 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }.onFailure { e ->
-                Timber.tag("OpdsDebug").e("ViewModel received error: ${e.message}")
                 _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load feed: ${e.message}") }
             }
         }
@@ -80,11 +75,14 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun downloadBook(entry: OpdsEntry, context: Context, onDownloaded: (Uri) -> Unit) {
         val downloadUrl = entry.downloadUrl ?: return
+        val catalog = _uiState.value.currentCatalog
         viewModelScope.launch(Dispatchers.IO) {
             _downloadingEntries.update { it + entry.id }
             try {
+                val client = repository.getAuthenticatedClient(catalog?.username, catalog?.password)
                 val request = Request.Builder().url(downloadUrl).build()
-                val response = httpClient.newCall(request).execute()
+
+                val response = client.newCall(request).execute()
 
                 if (response.isSuccessful) {
                     val body = response.body ?: throw Exception("Empty body")
@@ -136,8 +134,8 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(catalogs = repository.getCatalogs()) }
     }
 
-    fun addCatalog(title: String, url: String) {
-        repository.addCatalog(title, url)
+    fun addCatalog(title: String, url: String, username: String?, password: String?) {
+        repository.addCatalog(title, url, username, password)
         loadCatalogs()
     }
 
@@ -148,7 +146,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCatalog(catalog: OpdsCatalog) {
         urlStack.clear()
-        _uiState.update { it.copy(searchUrlTemplate = null) }
+        _uiState.update { it.copy(searchUrlTemplate = null, currentCatalog = catalog) }
         fetchUrl(catalog.url)
     }
 
@@ -156,23 +154,23 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         fetchUrl(url)
     }
 
-    /**
-     * Handles back navigation within the catalog.
-     * Returns true if it navigated back internally, false if it reached the root (catalog list).
-     */
     fun navigateBack(): Boolean {
         if (urlStack.size > 1) {
             urlStack.removeAt(urlStack.lastIndex)
             val previousUrl = urlStack.last()
-
             urlStack.removeAt(urlStack.lastIndex)
             fetchUrl(previousUrl)
             return true
         } else {
             urlStack.clear()
-            _uiState.update { it.copy(isViewingCatalog = false, currentFeed = null, searchUrlTemplate = null) }
+            _uiState.update { it.copy(isViewingCatalog = false, currentFeed = null, searchUrlTemplate = null, currentCatalog = null) }
             return false
         }
+    }
+
+    fun updateCatalog(id: String, title: String, url: String, username: String?, password: String?) {
+        repository.updateCatalog(id, title, url, username, password)
+        loadCatalogs()
     }
 
     fun search(query: String) {
@@ -194,10 +192,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 "$template${separator}query=${Uri.encode(query)}"
             }
 
-            val secureUrl = finalUrl.replace("http://m.gutenberg.org", "https://m.gutenberg.org")
-                .replace("http://www.gutenberg.org", "https://www.gutenberg.org")
-
-            openFeedUrl(secureUrl)
+            openFeedUrl(finalUrl)
         }
     }
 
