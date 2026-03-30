@@ -1353,7 +1353,8 @@ fun EpubReaderHost(
         view = view,
         showBars = showBars,
         initialIsAppearanceLightStatusBars = initialIsAppearanceLightStatusBars,
-        initialSystemBarsBehavior = initialSystemBarsBehavior
+        initialSystemBarsBehavior = initialSystemBarsBehavior,
+        isDarkTheme = isDarkTheme
     )
 
     var isPagerInitialized by remember(initialLocator) { mutableStateOf(initialLocator == null) }

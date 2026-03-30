@@ -23,7 +23,6 @@ import timber.log.Timber
 import android.view.KeyEvent
 import android.view.View
 import android.view.Window
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -42,11 +41,9 @@ fun EpubReaderSystemUiController(
     view: View,
     showBars: Boolean,
     initialIsAppearanceLightStatusBars: Boolean,
-    initialSystemBarsBehavior: Int
+    initialSystemBarsBehavior: Int,
+    isDarkTheme: Boolean
 ) {
-    val isDarkTheme = isSystemInDarkTheme()
-
-    // 1. Handle Immersive Mode (Enter/Exit)
     DisposableEffect(window, view, initialIsAppearanceLightStatusBars, initialSystemBarsBehavior) {
         if (window == null) {
             Timber.w("Window is null, cannot control system UI.")
@@ -68,7 +65,6 @@ fun EpubReaderSystemUiController(
         }
     }
 
-    // 2. Handle Status Bar Appearance (Dark/Light theme)
     LaunchedEffect(window, view, isDarkTheme) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
@@ -76,7 +72,6 @@ fun EpubReaderSystemUiController(
         }
     }
 
-    // 3. Handle Show/Hide Bars dynamically
     LaunchedEffect(showBars, window, view) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
