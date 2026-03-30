@@ -9,7 +9,8 @@ data class OpdsCatalog(
 data class OpdsFeed(
     val title: String,
     val entries: List<OpdsEntry>,
-    val nextUrl: String?
+    val nextUrl: String?,
+    val searchUrl: String? = null
 )
 
 data class OpdsEntry(

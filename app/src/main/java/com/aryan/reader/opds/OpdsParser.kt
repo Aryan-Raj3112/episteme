@@ -22,6 +22,7 @@ class OpdsParser {
     private fun readFeed(parser: XmlPullParser, baseUrl: String): OpdsFeed {
         var title = ""
         var nextUrl: String? = null
+        var searchUrl: String? = null
         val entries = mutableListOf<OpdsEntry>()
 
         parser.require(XmlPullParser.START_TAG, null, "feed")
@@ -42,16 +43,20 @@ class OpdsParser {
                 "link" -> {
                     val rel = parser.getAttributeValue(null, "rel")
                     val href = parser.getAttributeValue(null, "href")
+                    val type = parser.getAttributeValue(null, "type")
                     if (rel == "next") {
                         nextUrl = resolveUrl(baseUrl, href ?: "")
                         Timber.tag("OpdsDebug").d("Next page found: $nextUrl")
+                    } else if (rel == "search" && type?.contains("application/atom+xml") == true) {
+                        searchUrl = resolveUrl(baseUrl, href ?: "")
+                        Timber.tag("OpdsDebug").d("Search URL found: $searchUrl")
                     }
                     skip(parser)
                 }
                 else -> skip(parser)
             }
         }
-        return OpdsFeed(title, entries, nextUrl)
+        return OpdsFeed(title, entries, nextUrl, searchUrl)
     }
 
     private fun readEntry(parser: XmlPullParser, baseUrl: String): OpdsEntry {
@@ -64,9 +69,12 @@ class OpdsParser {
         var downloadUrl: String? = null
         var downloadMimeType: String? = null
         var navigationUrl: String? = null
+        var currentBestPriority = -1
 
         while (parser.next() != XmlPullParser.END_TAG) {
             if (parser.eventType != XmlPullParser.START_TAG) continue
+
+            Timber.tag("OpdsDebug").v("Entry child tag found: <${parser.name}>")
 
             when (parser.name) {
                 "id" -> id = readText(parser)
@@ -74,32 +82,40 @@ class OpdsParser {
                 "summary", "content" -> summary = readText(parser)
                 "author" -> author = readAuthor(parser)
                 "link" -> {
-                    val rel = parser.getAttributeValue(null, "rel")
-                    val href = parser.getAttributeValue(null, "href")
-                    val type = parser.getAttributeValue(null, "type")
+                    val rel = parser.getAttributeValue(null, "rel") ?: ""
+                    val href = parser.getAttributeValue(null, "href") ?: ""
+                    val type = parser.getAttributeValue(null, "type") ?: ""
 
-                    Timber.tag("OpdsDebug").v("Link found - rel: $rel, type: $type, href: $href")
-
-                    if (href != null) {
+                    if (href.isNotEmpty()) {
                         val absoluteUrl = resolveUrl(baseUrl, href)
 
-                        if (rel?.contains("http://opds-spec.org/image") == true) {
+                        Timber.tag("OpdsDebug").v("Checking Link: rel=$rel | type=$type | title=$title")
+
+                        if (rel.contains("http://opds-spec.org/image")) {
                             if (coverUrl == null || rel.contains("thumbnail")) {
                                 coverUrl = absoluteUrl
                             }
-                        } else if (rel?.contains("http://opds-spec.org/acquisition") == true) {
-                            if (downloadUrl == null || type?.contains("epub") == true || type?.contains("pdf") == true) {
+                        } else if (rel.contains("http://opds-spec.org/acquisition")) {
+                            val formatPriority = when {
+                                type.contains("epub") -> 5
+                                type.contains("pdf") -> 4
+                                type.contains("mobi") || type.contains("x-mobipocket-ebook") -> 3
+                                type.contains("fictionbook") || type.contains("fb2") -> 2
+                                type.contains("txt") || type.contains("text/plain") -> 1
+                                else -> 0
+                            }
+
+                            Timber.tag("OpdsDebug").d("Acquisition candidate: $absoluteUrl | priority=$formatPriority")
+
+                            if (formatPriority >= currentBestPriority) {
+                                currentBestPriority = formatPriority
                                 downloadUrl = absoluteUrl
                                 downloadMimeType = type
                             }
-                        } else if (type?.contains("profile=opds-catalog") == true || type?.contains("application/atom+xml") == true) {
-                            if (navigationUrl == null) {
-                                navigationUrl = absoluteUrl
-                            }
+                        } else if (type.contains("profile=opds-catalog") || type.contains("application/atom+xml")) {
+                            if (navigationUrl == null) navigationUrl = absoluteUrl
                         } else if (rel == "subsection" || rel == "collection" || rel == "start") {
-                            if (navigationUrl == null) {
-                                navigationUrl = absoluteUrl
-                            }
+                            if (navigationUrl == null) navigationUrl = absoluteUrl
                         }
                     }
                     skip(parser)
@@ -127,12 +143,19 @@ class OpdsParser {
     }
 
     private fun readText(parser: XmlPullParser): String {
-        var result = ""
-        if (parser.next() == XmlPullParser.TEXT) {
-            result = parser.text
-            parser.nextTag()
+        val result = StringBuilder()
+        var depth = 1
+
+        while (depth != 0) {
+            when (parser.next()) {
+                XmlPullParser.TEXT, XmlPullParser.CDSECT, XmlPullParser.ENTITY_REF -> {
+                    result.append(parser.text)
+                }
+                XmlPullParser.START_TAG -> depth++
+                XmlPullParser.END_TAG -> depth--
+            }
         }
-        return result.trim()
+        return result.toString().trim()
     }
 
     private fun skip(parser: XmlPullParser) {

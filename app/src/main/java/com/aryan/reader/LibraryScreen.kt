@@ -63,6 +63,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -1849,6 +1850,7 @@ fun OpdsTab(
     val downloadingEntries by opdsViewModel.downloadingEntries.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showAddCatalogDialog by remember { mutableStateOf(false) }
+    var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
 
     // Intercept hardware back button to navigate catalog hierarchy
     BackHandler(enabled = uiState.isViewingCatalog) {
@@ -1863,88 +1865,168 @@ fun OpdsTab(
                     ExtendedFloatingActionButton(
                         text = { Text("Add Catalog") },
                         icon = { Icon(Icons.Default.Add, "Add") },
-                        onClick = { showAddCatalogDialog = true }
-                    )
-                }
-            ) { padding ->
+                        onClick = { showAddCatalogDialog = true })
+                }) { padding ->
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
+                    modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiState.catalogs, key = { it.id }) { catalog ->
+                        val isGutenberg = catalog.url.contains("gutenberg.org")
                         OpdsCatalogCard(
                             catalog = catalog,
                             onClick = { opdsViewModel.openCatalog(catalog) },
-                            onDelete = { opdsViewModel.removeCatalog(catalog.id) }
-                        )
+                            onDelete = if (isGutenberg) null else {
+                                { opdsViewModel.removeCatalog(catalog.id) }
+                            })
                     }
                 }
             }
         } else {
             // Screen 2: Viewing a specific feed/catalog
-            Column(modifier = Modifier.fillMaxSize()) {
-                // OPDS Breadcrumb / Header
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 2.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        IconButton(onClick = { opdsViewModel.navigateBack() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                        }
-                        Text(
-                            text = uiState.currentFeed?.title ?: "Loading...",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+                        var showSearch by remember { mutableStateOf(false) }
+                        var query by remember { mutableStateOf("") }
 
-                if (uiState.currentFeed?.entries?.isEmpty() == true && !uiState.isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("This feed is empty.")
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        val entries = uiState.currentFeed?.entries ?: emptyList()
-                        itemsIndexed(entries, key = { index, item -> "${item.id}_$index" }) { index, entry ->
-
-                            // Trigger pagination when reaching the end
-                            if (index == entries.lastIndex) {
-                                LaunchedEffect(index) { opdsViewModel.loadNextPage() }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().height(64.dp)
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            IconButton(onClick = {
+                                if (showSearch) {
+                                    showSearch = false
+                                    query = ""
+                                } else {
+                                    opdsViewModel.navigateBack()
+                                }
+                            }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                             }
 
-                            if (entry.isNavigation) {
-                                OpdsNavigationCard(entry) { opdsViewModel.openFeedUrl(it) }
-                            } else if (entry.isAcquisition) {
-                                OpdsBookCard(
-                                    entry = entry,
-                                    isDownloading = downloadingEntries.contains(entry.id),
-                                    onDownloadClick = {
-                                        opdsViewModel.downloadBook(entry, context) { downloadedUri ->
-                                            onBookDownloaded(downloadedUri, entry.title)
+                            if (showSearch) {
+                                OutlinedTextField(
+                                    value = query,
+                                    onValueChange = { query = it },
+                                    placeholder = { Text("Search catalog...") },
+                                    modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                                    singleLine = true,
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        disabledContainerColor = Color.Transparent,
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                    ),
+                                    trailingIcon = {
+                                        IconButton(onClick = {
+                                            if (query.isNotBlank()) {
+                                                opdsViewModel.search(query)
+                                                showSearch = false
+                                                query = ""
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.Search, "Search")
                                         }
-                                    }
+                                    },
+                                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                        imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                                    ),
+                                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                        onSearch = {
+                                            if (query.isNotBlank()) {
+                                                opdsViewModel.search(query)
+                                                showSearch = false
+                                                query = ""
+                                            }
+                                        }))
+                            } else {
+                                Text(
+                                    text = uiState.currentFeed?.title ?: "Loading...",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                                 )
+                                if (uiState.searchUrlTemplate != null) {
+                                    IconButton(onClick = { showSearch = true }) {
+                                        Icon(Icons.Default.Search, "Search")
+                                    }
+                                }
                             }
                         }
+                    }
 
-                        if (uiState.isLoading) {
-                            item {
-                                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator()
+                    if (uiState.currentFeed?.entries?.isEmpty() == true && !uiState.isLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("This feed is empty.")
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            val entries = uiState.currentFeed?.entries ?: emptyList()
+                            itemsIndexed(
+                                entries,
+                                key = { index, item -> "${item.id}_$index" }) { index, entry ->
+
+                                if (index == entries.lastIndex) {
+                                    LaunchedEffect(index) { opdsViewModel.loadNextPage() }
+                                }
+
+                                if (entry.isNavigation) {
+                                    OpdsNavigationCard(entry) { opdsViewModel.openFeedUrl(it) }
+                                } else {
+                                    OpdsBookCard(
+                                        entry = entry,
+                                        isDownloading = downloadingEntries.contains(entry.id),
+                                        onDownloadClick = {
+                                            opdsViewModel.downloadBook(
+                                                entry,
+                                                context
+                                            ) { downloadedUri ->
+                                                onBookDownloaded(downloadedUri, entry.title)
+                                            }
+                                        },
+                                        onClick = { selectedEntry = entry }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (uiState.isLoading) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = Color.Black.copy(alpha = 0.12f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                androidx.compose.material3.ElevatedCard(
+                                    shape = androidx.compose.foundation.shape.CircleShape,
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Box(
+                                        Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(28.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1974,11 +2056,24 @@ fun OpdsTab(
                 )
             }
         }
+
+        if (selectedEntry != null) {
+            OpdsBookDetailsSheet(
+                entry = selectedEntry!!,
+                isDownloading = downloadingEntries.contains(selectedEntry!!.id),
+                onDownloadClick = {
+                    opdsViewModel.downloadBook(selectedEntry!!, context) { downloadedUri ->
+                        onBookDownloaded(downloadedUri, selectedEntry!!.title)
+                    }
+                },
+                onDismiss = { selectedEntry = null }
+            )
+        }
     }
 
     if (showAddCatalogDialog) {
         var newTitle by remember { mutableStateOf("") }
-        var newUrl by remember { mutableStateOf("https://") }
+        var newUrl by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { showAddCatalogDialog = false },
@@ -1995,6 +2090,7 @@ fun OpdsTab(
                         value = newUrl,
                         onValueChange = { newUrl = it },
                         label = { Text("URL") },
+                        placeholder = { Text("e.g. https://m.gutenberg.org/ebooks.opds/") },
                         singleLine = true
                     )
                 }
@@ -2016,7 +2112,7 @@ fun OpdsTab(
 }
 
 @Composable
-fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: () -> Unit) {
+fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: (() -> Unit)?) {
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
@@ -2033,8 +2129,10 @@ fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: () -> U
                 Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(catalog.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "Remove")
+            if (onDelete != null) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Remove")
+                }
             }
         }
     }
@@ -2067,8 +2165,9 @@ fun OpdsNavigationCard(entry: OpdsEntry, onClick: (String) -> Unit) {
 }
 
 @Composable
-fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -> Unit) {
+fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -> Unit, onClick: () -> Unit) {
     Surface(
+        onClick = onClick,
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth()
@@ -2097,13 +2196,17 @@ fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -
                 Spacer(modifier = Modifier.height(8.dp))
                 FilledTonalButton(
                     onClick = onDownloadClick,
-                    enabled = !isDownloading,
+                    enabled = !isDownloading && entry.downloadUrl != null,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     if (isDownloading) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Downloading...")
+                    } else if (entry.downloadUrl == null) {
+                        Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Unavailable")
                     } else {
                         Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2111,6 +2214,102 @@ fun OpdsBookCard(entry: OpdsEntry, isDownloading: Boolean, onDownloadClick: () -
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OpdsBookDetailsSheet(
+    entry: OpdsEntry,
+    isDownloading: Boolean,
+    onDownloadClick: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Cover Image
+                AsyncImage(
+                    model = entry.coverUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(width = 120.dp, height = 180.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+
+                // Title, Author, Download
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    entry.author?.let {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    FilledTonalButton(
+                        onClick = onDownloadClick,
+                        enabled = !isDownloading && entry.downloadUrl != null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isDownloading) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Downloading...")
+                        } else if (entry.downloadUrl == null) {
+                            Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Unavailable")
+                        } else {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Download")
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+            if (!entry.summary.isNullOrBlank()) {
+                val cleanSummary = remember(entry.summary) { Jsoup.parse(entry.summary).text() }
+                Text(
+                    text = cleanSummary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Text(
+                    text = "No summary available.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(48.dp))
         }
     }
 }

@@ -23,7 +23,8 @@ data class OpdsScreenState(
     val currentFeed: OpdsFeed? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
-    val isViewingCatalog: Boolean = false
+    val isViewingCatalog: Boolean = false,
+    val searchUrlTemplate: String? = null
 )
 
 class OpdsViewModel(application: Application) : AndroidViewModel(application) {
@@ -47,17 +48,19 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
             val result = repository.fetchFeed(url)
             result.onSuccess { newFeed ->
                 Timber.tag("OpdsDebug").i("ViewModel received feed: ${newFeed.title} with ${newFeed.entries.size} entries")
+                val template = newFeed.searchUrl ?: _uiState.value.searchUrlTemplate
                 if (!isPagination) {
                     if (urlStack.isEmpty() || urlStack.last() != url) {
                         urlStack.add(url)
                     }
-                    _uiState.update { it.copy(isLoading = false, currentFeed = newFeed) }
+                    _uiState.update { it.copy(isLoading = false, currentFeed = newFeed, searchUrlTemplate = template) }
                 } else {
                     _uiState.update { state ->
                         val currentEntries = state.currentFeed?.entries ?: emptyList()
                         state.copy(
                             isLoading = false,
-                            currentFeed = newFeed.copy(entries = currentEntries + newFeed.entries)
+                            currentFeed = newFeed.copy(entries = currentEntries + newFeed.entries),
+                            searchUrlTemplate = template
                         )
                     }
                 }
@@ -94,6 +97,9 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                         entry.downloadMimeType?.contains("cbz") == true -> ".cbz"
                         downloadUrl.endsWith(".epub", ignoreCase = true) -> ".epub"
                         downloadUrl.endsWith(".pdf", ignoreCase = true) -> ".pdf"
+                        downloadUrl.endsWith(".mobi", ignoreCase = true) -> ".mobi"
+                        downloadUrl.endsWith(".fb2", ignoreCase = true) -> ".fb2"
+                        downloadUrl.endsWith(".cbz", ignoreCase = true) -> ".cbz"
                         else -> ".epub"
                     }
 
@@ -107,7 +113,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     withContext(Dispatchers.Main) {
-                        onDownloaded(tempFile.absolutePath.toUri())
+                        onDownloaded(Uri.fromFile(tempFile))
                     }
                 } else {
                     Timber.e("Download failed: ${response.code}")
@@ -142,6 +148,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCatalog(catalog: OpdsCatalog) {
         urlStack.clear()
+        _uiState.update { it.copy(searchUrlTemplate = null) }
         fetchUrl(catalog.url)
     }
 
@@ -180,9 +187,15 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
             return true
         } else {
             urlStack.clear()
-            _uiState.update { it.copy(isViewingCatalog = false, currentFeed = null) }
+            _uiState.update { it.copy(isViewingCatalog = false, currentFeed = null, searchUrlTemplate = null) }
             return false
         }
+    }
+
+    fun search(query: String) {
+        val template = _uiState.value.searchUrlTemplate ?: return
+        val searchUrl = template.replace("{searchTerms}", Uri.encode(query))
+        fetchUrl(searchUrl)
     }
 
     fun clearError() {

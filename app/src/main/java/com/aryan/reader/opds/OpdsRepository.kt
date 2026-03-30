@@ -51,8 +51,7 @@ class OpdsRepository(context: Context) {
 
         if (catalogs.isEmpty()) {
             val defaults = listOf(
-                OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/"),
-                OpdsCatalog(UUID.randomUUID().toString(), "Standard Ebooks", "https://standardebooks.org/opds")
+                OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/")
             )
             saveCatalogs(defaults)
             return defaults
@@ -69,6 +68,10 @@ class OpdsRepository(context: Context) {
 
     fun removeCatalog(id: String) {
         val current = getCatalogs().toMutableList()
+        val toRemove = current.find { it.id == id }
+        if (toRemove?.url?.contains("gutenberg.org") == true) {
+            return
+        }
         current.removeAll { it.id == id }
         saveCatalogs(current)
     }
