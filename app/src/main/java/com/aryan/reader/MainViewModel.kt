@@ -2352,6 +2352,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 FileType.EPUB -> {
                                     epubParser.createEpubBook(
                                         inputStream = inputStream,
+                                        bookId = bookId,
                                         originalBookNameHint = displayName,
                                         parseContent = false
                                     )
@@ -2359,6 +2360,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 FileType.MOBI -> {
                                     mobiParser.createMobiBook(
                                         inputStream = inputStream,
+                                        bookId = bookId,
                                         originalBookNameHint = displayName,
                                         parseContent = false
                                     )
@@ -2366,6 +2368,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 FileType.FB2 -> {
                                     fb2Parser.createFb2Book(
                                         inputStream = inputStream,
+                                        bookId = bookId,
                                         originalBookNameHint = displayName,
                                         parseContent = false
                                     )
@@ -2533,6 +2536,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache for: $bookId")
                         }
                     }
+                }
+                val legacyExtractedDir = File(cacheDir, "extracted_epubs")
+                if (legacyExtractedDir.exists()) {
+                    val deleted = legacyExtractedDir.deleteRecursively()
+                    if (deleted) Timber.d("Sweeper reclaimed storage by deleting legacy extracted_epubs directory")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error during cache sweep: ${e.message}")
@@ -2954,7 +2962,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     appContext.contentResolver.openInputStream(uri).use { inputStream ->
                         if (inputStream == null) throw Exception("Could not open input stream")
                         fb2Parser.createFb2Book(
-                            inputStream,
+                            inputStream = inputStream,
+                            bookId = bookId,
                             originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: "unknown.fb2"
                         )
                     }
@@ -3134,10 +3143,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             throw Exception("Could not open input stream for URI")
                         }
                         mobiParser.createMobiBook(
-                            inputStream,
-                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(
-                                uri, appContext
-                            ) ?: "unknown.mobi"
+                            inputStream = inputStream,
+                            bookId = bookId,
+                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: "unknown.mobi"
                         )
                     }
                 }
@@ -3185,10 +3193,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             throw Exception("Could not open input stream for URI")
                         }
                         epubParser.createEpubBook(
-                            inputStream,
-                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(
-                                uri, appContext
-                            ) ?: "unknown.epub"
+                            inputStream = inputStream,
+                            bookId = bookId,
+                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: "unknown.epub"
                         )
                     }
                 }

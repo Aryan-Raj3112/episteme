@@ -66,6 +66,7 @@ class MetadataExtractionWorker(
                             FileType.EPUB -> {
                                 val book = epubParser.createEpubBook(
                                     inputStream = inputStream,
+                                    bookId = item.bookId,
                                     originalBookNameHint = item.displayName,
                                     parseContent = false
                                 )
@@ -74,7 +75,12 @@ class MetadataExtractionWorker(
                                 book.coverImage?.let { coverPath = recentFilesRepository.saveCoverToCache(it, uri) }
                             }
                             FileType.MOBI -> {
-                                val book = mobiParser.createMobiBook(inputStream, item.displayName, false)
+                                val book = mobiParser.createMobiBook(
+                                    inputStream = inputStream,
+                                    bookId = item.bookId,
+                                    originalBookNameHint = item.displayName,
+                                    parseContent = false
+                                )
                                 book?.let {
                                     title = it.title.takeIf { t -> t.isNotBlank() && t != "content" }
                                     author = it.author.takeIf { a -> a.isNotBlank() && !a.equals("Unknown", ignoreCase = true) }

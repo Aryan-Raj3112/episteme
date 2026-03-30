@@ -18,15 +18,14 @@ class Fb2Parser(private val context: Context) {
 
     suspend fun createFb2Book(
         inputStream: InputStream,
+        bookId: String,
         originalBookNameHint: String,
         parseContent: Boolean = true
     ): EpubBook {
-        val bookId = originalBookNameHint.hashCode().toString()
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
 
-        // Seamless ZIP extraction for .fb2.zip extensions
         var streamToParse = inputStream
         if (originalBookNameHint.endsWith(".zip", ignoreCase = true)) {
             val zis = ZipInputStream(inputStream)

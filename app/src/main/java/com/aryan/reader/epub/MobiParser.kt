@@ -127,6 +127,7 @@ class MobiParser(private val context: Context) {
 
     suspend fun createMobiBook(
         inputStream: InputStream,
+        bookId: String,
         originalBookNameHint: String,
         parseContent: Boolean = true
     ): EpubBook? = withContext(Dispatchers.IO) {
@@ -161,14 +162,12 @@ class MobiParser(private val context: Context) {
         val bookTitle = parsedData.title ?: originalBookNameHint
         val bookAuthor = parsedData.author ?: "Unknown Author"
 
-        val bookIdentifier = bookTitle.asFileName() + "_" + UUID.randomUUID().toString().substring(0, 8)
-        val extractionDir = getBookExtractionDir(bookIdentifier)
+        val extractionDir = File(context.cacheDir, "imported_file_$bookId")
         extractionDir.mkdirs()
 
-        // This map is the key. It maps the 1-based sequential index of an image to its new path.
         val sequentialImageMap = parsedData.resources
             .filter { it.mediaType.startsWith("image/") }
-            .sortedBy { it.uid } // Sort by UID to ensure order is correct
+            .sortedBy { it.uid }
             .mapIndexed { index, resource -> (index + 1) to resource.path }
             .toMap()
 

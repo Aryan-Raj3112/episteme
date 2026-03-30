@@ -92,7 +92,6 @@ class EpubParser(private val context: Context) {
 
     companion object {
         const val TAG = "EpubParser"
-        internal const val EXTRACTED_EPUB_DIR_NAME = "extracted_epubs"
     }
 
     internal val String.decodedURL: String
@@ -102,15 +101,6 @@ class EpubParser(private val context: Context) {
             Timber.w(e, "Failed to decode URL: $this")
             this
         }
-
-    private fun getBookExtractionDir(bookIdentifier: String): File {
-        val parentDir = File(context.cacheDir, EXTRACTED_EPUB_DIR_NAME)
-        if (!parentDir.exists()) {
-            parentDir.mkdirs()
-        }
-        return File(parentDir, bookIdentifier)
-    }
-
 
     private fun parsePageList(pageListElement: Element?, ncxFileParentDir: File): List<EpubPageTarget> {
         if (pageListElement == null) {
@@ -174,15 +164,15 @@ class EpubParser(private val context: Context) {
 
     suspend fun createEpubBook(
         inputStream: InputStream,
+        bookId: String,
         shouldUseToc: Boolean = true,
         originalBookNameHint: String = "streamed_book",
         parseContent: Boolean = true
     ): EpubBook {
         return withContext(Dispatchers.IO) {
-            Timber.d("Parsing EPUB input stream")
+            Timber.d("Parsing EPUB input stream for bookId: $bookId")
 
-            val bookIdentifier = originalBookNameHint.asFileName() + "_" + UUID.randomUUID().toString().substring(0, 8)
-            val extractionDir = getBookExtractionDir(bookIdentifier)
+            val extractionDir = File(context.cacheDir, "imported_file_$bookId")
 
             if (extractionDir.exists()) {
                 extractionDir.deleteRecursively()
@@ -202,7 +192,7 @@ class EpubParser(private val context: Context) {
 
             val document = createEpubDocument(filesMap)
             val book = parseAndCreateEbook(filesMap, document, shouldUseToc, extractionDir.absolutePath,
-                bookIdentifier, parseContent)
+                originalBookNameHint, parseContent)
             return@withContext book
         }
     }
