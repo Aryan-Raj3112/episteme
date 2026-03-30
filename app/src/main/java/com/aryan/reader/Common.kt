@@ -1661,7 +1661,7 @@ fun DeviceVoiceSettingsSheet(
                                 ) {
                                     items(
                                         filteredVoices.size,
-                                        key = { filteredVoices[it].name }) { index ->
+                                        key = { "${filteredVoices[it].name}_$it" }) { index ->
                                         val voice = filteredVoices[index]
                                         val isSelected = voice.name == savedVoiceName
                                         val friendlyName = numberedVoiceNames[voice.name]
