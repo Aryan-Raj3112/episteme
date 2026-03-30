@@ -275,7 +275,6 @@ fun LibraryScreen(
             onSelectSyncFolderClick = onSelectSyncFolderClick,
             onEditFolderFiltersClick = { folder, filters -> viewModel.updateFolderFilters(folder, filters) },
             syncedFolders = uiState.syncedFolders,
-            onAddFolderClick = { uri -> viewModel.addSyncedFolder(uri) },
             onRemoveFolderClick = { folder -> viewModel.removeSyncedFolder(folder) },
             onDisconnectSyncFolderClick = viewModel::disconnectAllSyncedFolders,
             downloadingBookIds = uiState.downloadingBookIds,
@@ -502,7 +501,6 @@ fun LibraryScreenContent(
     isLoading: Boolean,
     isRefreshing: Boolean,
     syncedFolders: List<SyncedFolder>,
-    onAddFolderClick: (android.net.Uri) -> Unit,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
@@ -763,7 +761,7 @@ fun LibraryScreenContent(
                     FolderSyncScreen(
                         syncedFolders = syncedFolders,
                         allRecentFiles = rawLibraryFiles,
-                        onAddFolderClick = onAddFolderClick,
+                        onAddFolderClick = onSelectSyncFolderClick,
                         onRemoveFolderClick = onRemoveFolderClick,
                         onEditFolderFiltersClick = onEditFolderFiltersClick,
                         onScanNowClick = onScanNowClick,
@@ -1473,7 +1471,7 @@ private fun DeleteShelvesConfirmationDialog(
 private fun FolderSyncScreen(
     syncedFolders: List<SyncedFolder>,
     allRecentFiles: List<RecentFileItem>,
-    onAddFolderClick: (android.net.Uri) -> Unit,
+    onAddFolderClick: () -> Unit,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
     onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onScanNowClick: () -> Unit,
@@ -1482,21 +1480,13 @@ private fun FolderSyncScreen(
 ) {
     var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
 
-    val pickFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        uri?.let {
-            onAddFolderClick(it)
-        }
-    }
-
     Scaffold(
         floatingActionButton = {
             if (syncedFolders.size < 3) {
                 ExtendedFloatingActionButton(
                     text = { Text("Add Folder") },
                     icon = { Icon(Icons.Default.Add, "Add") },
-                    onClick = { pickFolderLauncher.launch(null) }
+                    onClick = onAddFolderClick
                 )
             }
         }
@@ -1543,7 +1533,7 @@ private fun FolderSyncScreen(
                 EmptyState(
                     title = "Sync Local Folders",
                     message = "Connect local folders to create a live library. Episteme will monitor files and sync progress.",
-                    onSelectFileClick = { pickFolderLauncher.launch(null) },
+                    onSelectFileClick = onAddFolderClick,
                     primaryButtonText = "Select Folder",
                     modifier = Modifier.fillMaxSize()
                 )
