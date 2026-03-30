@@ -270,18 +270,20 @@ internal object PdfBitmapPool {
     private val pool = ConcurrentLinkedQueue<Bitmap>()
     private const val MAX_POOL_SIZE = 4
 
-    fun get(size: Int): Bitmap {
+    fun get(width: Int, height: Int): Bitmap {
         val iterator = pool.iterator()
         while (iterator.hasNext()) {
             val b = iterator.next()
-            if (b.width == size && b.height == size && !b.isRecycled) {
+            if (b.width == width && b.height == height && !b.isRecycled) {
                 iterator.remove()
                 b.eraseColor(AndroidColor.TRANSPARENT)
                 return b
             }
         }
-        return createBitmap(size, size)
+        return createBitmap(width, height)
     }
+
+    fun get(size: Int): Bitmap = get(size, size)
 
     fun recycle(bitmap: Bitmap) {
         if (!bitmap.isRecycled && pool.size < MAX_POOL_SIZE) {
@@ -1063,7 +1065,8 @@ internal fun PdfPageComposable(
         isScrolling,
         virtualPage
     ) {
-        if (effectiveScale <= 1f) {
+        val needsTiling = effectiveScale > 1f || actualBitmapWidthPx > 3000 || actualBitmapHeightPx > 3000
+        if (!needsTiling) {
             if (tiles.isNotEmpty()) {
                 val oldTiles = tiles
                 tiles = emptyList()
@@ -3303,19 +3306,17 @@ internal fun PdfPageComposable(
                     actualBitmapHeightPx = scaledHeight
                     currentPageRotation = 0
 
-                    val bitmap = PdfBitmapPool.get(maxOf(scaledWidth, scaledHeight))
+                    val MAX_BASE_DIMEN = 3000
+                    var baseW = scaledWidth
+                    var baseH = scaledHeight
+                    if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
+                        val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
+                        baseW = (baseW * downScale).toInt().coerceAtLeast(1)
+                        baseH = (baseH * downScale).toInt().coerceAtLeast(1)
+                    }
 
-                    bitmap.eraseColor(android.graphics.Color.WHITE)
-
-                    val finalBitmap =
-                        if (bitmap.width != scaledWidth || bitmap.height != scaledHeight) {
-                            val scaled = bitmap.scale(scaledWidth, scaledHeight, false)
-                            if (scaled !== bitmap) PdfBitmapPool.recycle(bitmap)
-                            scaled.eraseColor(android.graphics.Color.WHITE)
-                            scaled
-                        } else {
-                            bitmap
-                        }
+                    val finalBitmap = PdfBitmapPool.get(baseW, baseH)
+                    finalBitmap.eraseColor(android.graphics.Color.WHITE)
 
                     val old = bitmapState
                     if (old != null && old !== finalBitmap) {
@@ -3324,10 +3325,6 @@ internal fun PdfPageComposable(
                         }
                     }
                     bitmapState = finalBitmap
-
-                    if (old != null && old !== finalBitmap) {
-                        if (old !== PdfThumbnailCache.get(pageIndex)) old.recycle()
-                    }
                     currentRenderedPageId = targetPageId
 
                     isLoadingPage = false
@@ -3375,15 +3372,24 @@ internal fun PdfPageComposable(
                                 return@withContext null
                             }
 
+                            val MAX_BASE_DIMEN = 3000
+                            var baseW = scaledWidth
+                            var baseH = scaledHeight
+                            if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
+                                val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
+                                baseW = (baseW * downScale).toInt().coerceAtLeast(1)
+                                baseH = (baseH * downScale).toInt().coerceAtLeast(1)
+                            }
+
                             Timber.d(
-                                "Rendering page $pageIndex at ${scaledWidth}x${scaledHeight}"
+                                "Rendering page $pageIndex at ${baseW}x${baseH} (logical: ${scaledWidth}x${scaledHeight})"
                             )
-                            val newBitmap = createBitmap(scaledWidth, scaledHeight)
+                            val newBitmap = createBitmap(baseW, baseH)
                             localBitmap = newBitmap
                             page.renderPageBitmap(
                                 newBitmap,
                                 0, 0,
-                                scaledWidth, scaledHeight,
+                                baseW, baseH,
                                 true
                             )
                             page.close()
@@ -3892,7 +3898,8 @@ private fun PdfBitmapLayer(
                         filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                     )
 
-                    if (effectiveScale > 1f) {
+                    val needsTiling = effectiveScale > 1f || targetWidth > 3000 || targetHeight > 3000
+                    if (needsTiling) {
                         tiles.forEach { tile ->
                             if (!tile.bitmap.isRecycled) {
                                 drawImage(
