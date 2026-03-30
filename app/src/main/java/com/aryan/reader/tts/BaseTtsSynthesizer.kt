@@ -154,12 +154,12 @@ class BaseTtsSynthesizer(private val context: Context) {
                 val targetVoice = availableVoices.find { it.name == preferredVoiceName }
                 if (targetVoice != null) {
                     Timber.d("BaseTts: Setting preferred voice to ${targetVoice.name} (${targetVoice.locale})")
-                    tts?.voice = targetVoice
                     try {
                         tts?.language = targetVoice.locale
                     } catch (e: Exception) {
                         Timber.e(e, "BaseTts: Failed to set language for voice")
                     }
+                    tts?.voice = targetVoice
                 } else {
                     Timber.w("BaseTts: Preferred voice '$preferredVoiceName' not found in current engine.")
                 }
