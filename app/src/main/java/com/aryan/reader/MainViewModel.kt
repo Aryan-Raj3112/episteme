@@ -35,6 +35,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
@@ -1919,7 +1920,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (currentUser != null) {
                 val deviceId = getInstallationId()
                 try {
-                    firestoreRepository.deleteDevice(currentUser.uid, deviceId)
+                    withTimeoutOrNull(3000) {
+                        firestoreRepository.deleteDevice(currentUser.uid, deviceId)
+                    }
                     Timber.i("Device $deviceId unregistered on sign out.")
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to unregister device on sign out.")
@@ -3780,126 +3783,125 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val (folderBooks, managedBooks) = itemsToRemove.partition { it.sourceFolderUri != null }
 
-                if (folderBooks.isNotEmpty()) {
-                    Timber.d("Processing ${folderBooks.size} folder books for deletion.")
+                withContext(Dispatchers.IO) {
+                    if (folderBooks.isNotEmpty()) {
+                        Timber.d("Processing ${folderBooks.size} folder books for deletion.")
 
-                    val idsToDeleteLocally = mutableListOf<String>()
+                        val idsToDeleteLocally = mutableListOf<String>()
 
-                    folderBooks.forEach { item ->
-                        idsToDeleteLocally.add(item.bookId)
-                        pdfTextRepository.clearBookText(item.bookId)
+                        folderBooks.forEach { item ->
+                            idsToDeleteLocally.add(item.bookId)
+                            pdfTextRepository.clearBookText(item.bookId)
 
-                        clearImportedFileCache(item.bookId)
+                            clearImportedFileCache(item.bookId)
 
-                        if (item.uriString != null) {
-                            try {
-                                val fileUri = item.uriString.toUri()
-                                val fileDoc = DocumentFile.fromSingleUri(appContext, fileUri)
-                                if (fileDoc != null && fileDoc.exists()) {
-                                    if (fileDoc.delete()) {
-                                        Timber.i("Physically deleted folder file: ${item.displayName}")
-                                    } else {
-                                        Timber.e("Failed to delete folder file via SAF: ${item.displayName}")
+                            if (item.uriString != null) {
+                                try {
+                                    val fileUri = item.uriString.toUri()
+                                    val fileDoc = DocumentFile.fromSingleUri(appContext, fileUri)
+                                    if (fileDoc != null && fileDoc.exists()) {
+                                        if (fileDoc.delete()) {
+                                            Timber.i("Physically deleted folder file: ${item.displayName}")
+                                        } else {
+                                            Timber.e("Failed to delete folder file via SAF: ${item.displayName}")
+                                        }
                                     }
+                                } catch (e: Exception) {
+                                    Timber.e(e, "Error deleting physical file for ${item.bookId}")
                                 }
-                            } catch (e: Exception) {
-                                Timber.e(e, "Error deleting physical file for ${item.bookId}")
+                            }
+
+                            if (item.sourceFolderUri != null) {
+                                try {
+                                    val rootUri = item.sourceFolderUri.toUri()
+                                    val rootDoc = DocumentFile.fromTreeUri(appContext, rootUri)
+
+                                    if (rootDoc != null) {
+                                        val hiddenMeta = rootDoc.findFile(".${item.bookId}.json")
+                                        val legacyVisibleMeta = rootDoc.findFile("${item.bookId}.json")
+
+                                        hiddenMeta?.delete()
+                                        legacyVisibleMeta?.delete()
+
+                                        Timber.tag("FolderSync")
+                                            .d("Deleted metadata for ${item.bookId} from root.")
+                                    }
+                                } catch (e: Exception) {
+                                    Timber.e(e, "Error deleting metadata file for ${item.bookId}")
+                                }
                             }
                         }
 
-                        // 2. Try to delete the metadata JSON (.bookId.json)
-                        if (item.sourceFolderUri != null) {
-                            try {
-                                val rootUri = item.sourceFolderUri.toUri()
-                                val rootDoc = DocumentFile.fromTreeUri(appContext, rootUri)
-
-                                if (rootDoc != null) {
-                                    val hiddenMeta = rootDoc.findFile(".${item.bookId}.json")
-                                    val legacyVisibleMeta = rootDoc.findFile("${item.bookId}.json")
-
-                                    hiddenMeta?.delete()
-                                    legacyVisibleMeta?.delete()
-
-                                    Timber.tag("FolderSync")
-                                        .d("Deleted metadata for ${item.bookId} from root.")
-                                }
-                            } catch (e: Exception) {
-                                Timber.e(e, "Error deleting metadata file for ${item.bookId}")
-                            }
-                        }
+                        recentFilesRepository.deleteFilePermanently(idsToDeleteLocally)
                     }
 
-                    recentFilesRepository.deleteFilePermanently(idsToDeleteLocally)
-                }
+                    if (managedBooks.isNotEmpty()) {
+                        val currentUser = uiState.value.currentUser
 
-                if (managedBooks.isNotEmpty()) {
-                    val currentUser = uiState.value.currentUser
-
-                    if (canSync && currentUser != null) {
-                        _internalState.update {
-                            it.copy(
-                                isLoading = true,
-                                bannerMessage = BannerMessage("Deleting from all devices...")
-                            )
-                        }
-                        try {
-                            val accessToken =
-                                googleDriveRepository.getAccessToken(appContext) ?: throw Exception(
-                                    "No token"
-                                )
-                            val deviceId = getInstallationId()
-
-                            val remoteFiles = withContext(Dispatchers.IO) {
-                                googleDriveRepository.getFiles(accessToken)?.files.orEmpty()
-                                    .associateBy { it.name }
-                            }
-
-                            for (item in managedBooks) {
-                                recentFilesRepository.markAsDeleted(listOf(item.bookId))
-                                pdfTextRepository.clearBookText(item.bookId)
-                                clearImportedFileCache(item.bookId)
-
-                                firestoreRepository.syncBookMetadata(
-                                    currentUser.uid,
-                                    item.toBookMetadata().copy(isDeleted = true),
-                                    deviceId
-                                )
-
-                                val fileExtension = item.type.name.lowercase()
-                                val fileName = "${item.bookId}.$fileExtension"
-                                remoteFiles[fileName]?.id?.let { fileId ->
-                                    Timber.d("Deleting from Drive: $fileName")
-                                    googleDriveRepository.deleteDriveFile(accessToken, fileId)
-                                }
-
-                                recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
-                            }
-
+                        if (canSync && currentUser != null) {
                             _internalState.update {
                                 it.copy(
-                                    isLoading = false,
-                                    bannerMessage = BannerMessage("Deletion complete.")
+                                    isLoading = true,
+                                    bannerMessage = BannerMessage("Deleting from all devices...")
                                 )
                             }
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error during permanent deletion")
+                            try {
+                                val accessToken =
+                                    googleDriveRepository.getAccessToken(appContext) ?: throw Exception(
+                                        "No token"
+                                    )
+                                val deviceId = getInstallationId()
+
+                                val remoteFiles = googleDriveRepository.getFiles(accessToken)?.files.orEmpty()
+                                    .associateBy { it.name }
+
+                                for (item in managedBooks) {
+                                    recentFilesRepository.markAsDeleted(listOf(item.bookId))
+                                    pdfTextRepository.clearBookText(item.bookId)
+                                    clearImportedFileCache(item.bookId)
+
+                                    firestoreRepository.syncBookMetadata(
+                                        currentUser.uid,
+                                        item.toBookMetadata().copy(isDeleted = true),
+                                        deviceId
+                                    )
+
+                                    val fileExtension = item.type.name.lowercase()
+                                    val fileName = "${item.bookId}.$fileExtension"
+                                    remoteFiles[fileName]?.id?.let { fileId ->
+                                        Timber.d("Deleting from Drive: $fileName")
+                                        googleDriveRepository.deleteDriveFile(accessToken, fileId)
+                                    }
+
+                                    recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
+                                }
+
+                                _internalState.update {
+                                    it.copy(
+                                        isLoading = false,
+                                        bannerMessage = BannerMessage("Deletion complete.")
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                Timber.e(e, "Error during permanent deletion")
+                                recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
+                                managedBooks.forEach { item ->
+                                    clearImportedFileCache(item.bookId)
+                                    pdfTextRepository.clearBookText(item.bookId)
+                                }
+                                _internalState.update {
+                                    it.copy(
+                                        isLoading = false,
+                                        errorMessage = "Cloud sync failed, deleted locally."
+                                    )
+                                }
+                            }
+                        } else {
                             recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
                             managedBooks.forEach { item ->
                                 clearImportedFileCache(item.bookId)
                                 pdfTextRepository.clearBookText(item.bookId)
                             }
-                            _internalState.update {
-                                it.copy(
-                                    isLoading = false,
-                                    errorMessage = "Cloud sync failed, deleted locally."
-                                )
-                            }
-                        }
-                    } else {
-                        recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
-                        managedBooks.forEach { item ->
-                            clearImportedFileCache(item.bookId)
-                            pdfTextRepository.clearBookText(item.bookId)
                         }
                     }
                 }

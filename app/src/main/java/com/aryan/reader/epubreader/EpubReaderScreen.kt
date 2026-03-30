@@ -779,7 +779,7 @@ fun EpubReaderHost(
 
     var currentChapterIndex by rememberSaveable(epubBook.title) {
         mutableIntStateOf(
-            initialLocator?.chapterIndex?.coerceIn(0, chapters.size - 1) ?: 0
+            initialLocator?.chapterIndex?.coerceIn(0, max(0, chapters.size - 1)) ?: 0
         )
     }
 
