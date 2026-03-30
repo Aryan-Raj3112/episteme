@@ -490,50 +490,61 @@ fun ChapterWebView(
                     localWebViewRef = this
                     onWebViewInstanceCreated(this)
                     addJavascriptInterface(
-                        PageInfoBridge(onScrollStateUpdate), "PageInfoReporter"
+                        PageInfoBridge { scrollY, scrollHeight, clientHeight, activeFragmentId ->
+                            this.post { onScrollStateUpdate(scrollY, scrollHeight, clientHeight, activeFragmentId) }
+                        }, "PageInfoReporter"
                     )
                     addJavascriptInterface(
-                        ProgressJsBridge(onTopChunkUpdated), "ProgressReporter"
+                        ProgressJsBridge { chunkIndex ->
+                            this.post { onTopChunkUpdated(chunkIndex) }
+                        }, "ProgressReporter"
                     )
-                    addJavascriptInterface(ContentBridge(onChunkRequested), "ContentBridge")
+                    addJavascriptInterface(ContentBridge { index ->
+                        this.post { onChunkRequested(index) }
+                    }, "ContentBridge")
 
                     addJavascriptInterface(
                         HighlightJsBridge(
-                        onCreateCallback = onHighlightCreated,
-                        onClickCallback = { cfi, text, left, top, right, bottom ->
+                            onCreateCallback = { cfi, text, colorId ->
+                                this.post { onHighlightCreated(cfi, text, colorId) }
+                            },
+                            onClickCallback = { cfi, text, left, top, right, bottom ->
+                                this.post {
+                                    onHighlightClicked()
 
-                            onHighlightClicked()
+                                    val densityValue = density.density
+                                    val locationOnScreen = IntArray(2)
+                                    this.getLocationOnScreen(locationOnScreen)
+                                    val xOffset = locationOnScreen[0]
+                                    val yOffset = locationOnScreen[1]
 
-                            val densityValue = density.density
-                            val locationOnScreen = IntArray(2)
-                            this.getLocationOnScreen(locationOnScreen)
-                            val xOffset = locationOnScreen[0]
-                            val yOffset = locationOnScreen[1]
-
-                            val rect = Rect(
-                                (left * densityValue).toInt() + xOffset,
-                                (top * densityValue).toInt() + yOffset,
-                                (right * densityValue).toInt() + xOffset,
-                                (bottom * densityValue).toInt() + yOffset
-                            )
-
-                            customMenuState = CustomMenuState(
-                                selectedText = text,
-                                selectionBounds = rect,
-                                finishActionModeCallback = {
-                                    localWebViewRef?.evaluateJavascript(
-                                        "javascript:if(window.getSelection) window.getSelection().removeAllRanges();",
-                                        null
+                                    val rect = Rect(
+                                        (left * densityValue).toInt() + xOffset,
+                                        (top * densityValue).toInt() + yOffset,
+                                        (right * densityValue).toInt() + xOffset,
+                                        (bottom * densityValue).toInt() + yOffset
                                     )
-                                },
-                                cfi = cfi,
-                                isExistingHighlight = true
-                            )
-                        }), "HighlightBridge")
+
+                                    customMenuState = CustomMenuState(
+                                        selectedText = text,
+                                        selectionBounds = rect,
+                                        finishActionModeCallback = {
+                                            localWebViewRef?.evaluateJavascript(
+                                                "javascript:if(window.getSelection) window.getSelection().removeAllRanges();",
+                                                null
+                                            )
+                                        },
+                                        cfi = cfi,
+                                        isExistingHighlight = true
+                                    )
+                                }
+                            }
+                        ), "HighlightBridge"
+                    )
 
                     addJavascriptInterface(
                         AutoScrollJsBridge {
-                            onAutoScrollChapterEnd()
+                            this.post { onAutoScrollChapterEnd() }
                         }, "AutoScrollBridge"
                     )
 
@@ -602,15 +613,17 @@ fun ChapterWebView(
                     }
                     addJavascriptInterface(
                         CfiJsBridge(
-                        onCfiReady = { cfi -> currentOnCfiGenerated(cfi) },
-                        onCfiForBookmarkReady = { cfi -> currentOnBookmarkCfiGenerated(cfi) },
-                        onScrollFinishedCallback = { success ->
-                            currentOnScrollFinished(success)
-                        }), "CfiBridge")
+                            onCfiReady = { cfi -> this.post { currentOnCfiGenerated(cfi) } },
+                            onCfiForBookmarkReady = { cfi -> this.post { currentOnBookmarkCfiGenerated(cfi) } },
+                            onScrollFinishedCallback = { success ->
+                                this.post { currentOnScrollFinished(success) }
+                            }
+                        ), "CfiBridge"
+                    )
 
                     addJavascriptInterface(
                         SnippetJsBridge { cfi, snippet ->
-                            currentOnSnippetForBookmarkReady(cfi, snippet)
+                            this.post { currentOnSnippetForBookmarkReady(cfi, snippet) }
                         }, "SnippetBridge"
                     )
                     addJavascriptInterface(TtsJsBridge(ttsScope, onTtsTextReady), "TtsBridge")
