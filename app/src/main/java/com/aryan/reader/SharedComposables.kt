@@ -335,8 +335,11 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
     }
 
     val context = LocalContext.current
+    val isOpdsStream = item.uriString?.startsWith("opds-pse://") == true
     val pathText = remember(item.sourceFolderUri, item.uriString, item.displayName, context) {
-        if (item.sourceFolderUri != null && item.uriString != null) {
+        if (isOpdsStream) {
+            "Source: OPDS Stream"
+        } else if (item.sourceFolderUri != null && item.uriString != null) {
             try {
                 val uri = item.uriString.toUri()
                 val docId = if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {

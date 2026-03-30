@@ -460,16 +460,39 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         title: String,
         urlTemplate: String,
         pageCount: Int,
-        username: String?,
-        password: String?
+        catalogId: String?
     ) {
         val encodedUrl = Uri.encode(urlTemplate)
-        val user = Uri.encode(username ?: "")
-        val pass = Uri.encode(password ?: "")
         val safeId = Uri.encode(bookId)
+        val catId = catalogId?.let { "&catalogId=${Uri.encode(it)}" } ?: ""
 
-        val uriString = "opds-pse://stream?id=$safeId&count=$pageCount&url=$encodedUrl&user=$user&pass=$pass"
+        val uriString = "opds-pse://stream?id=$safeId&count=$pageCount&url=$encodedUrl$catId"
         openBook(uriString.toUri(), bookId, FileType.CBZ, title)
+    }
+
+    fun deleteStreamedBooksForCatalog(catalogId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val filesToDelete = recentFilesRepository.getAllFilesForSync().filter {
+                it.uriString?.contains("catalogId=$catalogId") == true
+            }
+            if (filesToDelete.isNotEmpty()) {
+                val ids = filesToDelete.map { it.bookId }
+                ids.forEach { bookId ->
+                    pdfTextRepository.clearBookText(bookId)
+                    clearImportedFileCache(bookId)
+                    try {
+                        val cacheDir = File(appContext.cacheDir, "opds_stream_${bookId.hashCode()}")
+                        if (cacheDir.exists()) cacheDir.deleteRecursively()
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to clean stream cache for $bookId")
+                    }
+                }
+                recentFilesRepository.deleteFilePermanently(ids)
+                withContext(Dispatchers.Main) {
+                    showBanner("Removed ${filesToDelete.size} streaming books.")
+                }
+            }
+        }
     }
 
     private val _reviewRequestEvent = Channel<Unit>(Channel.BUFFERED)
@@ -1185,6 +1208,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun uploadSingleBookMetadata(book: RecentFileItem) {
         if (!uiState.value.isSyncEnabled) return
+
+        if (book.uriString?.startsWith("opds-pse") == true) {
+            Timber.d("Skipping metadata sync for OPDS stream book: ${book.displayName}")
+            return
+        }
 
         if (book.sourceFolderUri != null) {
             Timber.d("Skipping metadata sync for local folder book: ${book.displayName}")
@@ -2044,11 +2072,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val localBooks = withContext(Dispatchers.IO) {
                 val allFiles = recentFilesRepository.getAllFilesForSync()
-                if (_internalState.value.isFolderSyncEnabled) {
+                val filtered = if (_internalState.value.isFolderSyncEnabled) {
                     allFiles
                 } else {
                     allFiles.filter { it.sourceFolderUri == null }
                 }
+                filtered.filterNot { it.uriString?.startsWith("opds-pse") == true }
             }
 
             val localShelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()).orEmpty()
@@ -2541,6 +2570,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
                 val allDbIds = recentFilesRepository.getAllFilesForSync().map { it.bookId }.toSet()
+                val validStreamHashes = allDbIds.map { it.hashCode().toString() }.toSet()
 
                 cacheDir.listFiles()?.forEach { file ->
                     val name = file.name
@@ -2554,6 +2584,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         if (bookId !in allDbIds) {
                             val deleted = file.deleteRecursively()
                             if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache for: $bookId")
+                        }
+                    } else if (name.startsWith("opds_stream_")) {
+                        val bookIdHash = name.removePrefix("opds_stream_")
+                        if (bookIdHash !in validStreamHashes) {
+                            val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
+                            if (deleted) Timber.d("Sweeper cleaned orphaned OPDS stream cache for hash: $bookIdHash")
                         }
                     }
                 }

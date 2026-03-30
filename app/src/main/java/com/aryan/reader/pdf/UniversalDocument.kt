@@ -24,11 +24,11 @@ import java.io.File
 import me.zhanghai.android.libarchive.Archive
 import me.zhanghai.android.libarchive.ArchiveEntry
 import me.zhanghai.android.libarchive.ArchiveException
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.util.UUID
 import java.util.zip.ZipFile
+import androidx.core.graphics.createBitmap
 
 interface ReaderDocument : AutoCloseable {
     suspend fun getPageCount(): Int
@@ -74,9 +74,8 @@ object DocumentFactory {
             val bookId = uri.getQueryParameter("id") ?: UUID.randomUUID().toString()
             val urlTemplate = uri.getQueryParameter("url") ?: ""
             val count = uri.getQueryParameter("count")?.toIntOrNull() ?: 0
-            val user = uri.getQueryParameter("user")?.takeIf { it.isNotBlank() }
-            val pass = uri.getQueryParameter("pass")?.takeIf { it.isNotBlank() }
-            return OpdsStreamDocumentWrapper(context, bookId, urlTemplate, count, user, pass)
+            val catalogId = uri.getQueryParameter("catalogId")
+            return OpdsStreamDocumentWrapper(context, bookId, urlTemplate, count, catalogId)
         }
         return if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
             val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.${type.name.lowercase()}")
@@ -428,17 +427,36 @@ class OpdsStreamDocumentWrapper(
     private val bookId: String,
     private val urlTemplate: String,
     private val pageCount: Int,
-    private val username: String?,
-    private val password: String?
+    private val catalogId: String?
 ) : ReaderDocument {
     private val cacheDir = File(context.cacheDir, "opds_stream_${bookId.hashCode()}").apply { mkdirs() }
-    private val client = OkHttpClient.Builder()
+
+    private val catalog = catalogId?.let {
+        com.aryan.reader.opds.OpdsRepository(context).getCatalogs().find { c -> c.id == it }
+    }
+
+    private val client = com.aryan.reader.opds.OpdsRepository.sharedHttpClient.newBuilder()
         .apply {
-            if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
-                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(username, password))
+            if (!catalog?.username.isNullOrBlank() && !catalog.password.isNullOrBlank()) {
+                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(catalog.username, catalog.password))
             }
         }
         .build()
+
+    private fun createErrorPageBytes(): ByteArray {
+        val bitmap = createBitmap(800, 1200)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.DKGRAY)
+        val paint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 40f
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("Page Unavailable", 400f, 600f, paint)
+        val stream = java.io.ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+        return stream.toByteArray()
+    }
 
     override suspend fun getPageCount() = pageCount
 
@@ -454,8 +472,19 @@ class OpdsStreamDocumentWrapper(
             }
         }
 
-        // OPDS-PSE defaults to 0-indexed values
-        val url = urlTemplate.replace("{pageNumber}", pageIndex.toString())
+        val finalUrlTemplate = if (catalog != null && urlTemplate.startsWith("http")) {
+            try {
+                val oldUrl = java.net.URL(urlTemplate)
+                val newUrl = java.net.URL(catalog.url)
+                val oldBase = "${oldUrl.protocol}://${oldUrl.authority}"
+                val newBase = "${newUrl.protocol}://${newUrl.authority}"
+                urlTemplate.replace(oldBase, newBase)
+            } catch (_: Exception) {
+                urlTemplate
+            }
+        } else urlTemplate
+
+        val url = finalUrlTemplate.replace("{pageNumber}", pageIndex.toString())
             .replace("{maxWidth}", "1600")
 
         val request = Request.Builder().url(url).build()
@@ -473,7 +502,8 @@ class OpdsStreamDocumentWrapper(
         } catch (e: Exception) {
             Timber.e(e, "Failed to fetch stream page $pageIndex")
         }
-        null
+
+        return@withContext ArchivePageWrapper(createErrorPageBytes())
     }
 
     override suspend fun getTableOfContents() = emptyList<Bookmark>()

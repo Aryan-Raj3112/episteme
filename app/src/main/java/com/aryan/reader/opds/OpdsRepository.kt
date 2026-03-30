@@ -15,12 +15,17 @@ import java.util.UUID
 
 class OpdsRepository(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("reader_opds_prefs", Context.MODE_PRIVATE)
-    private val httpClient = OkHttpClient.Builder().build()
     private val parser = OpdsParser()
 
     companion object {
         private const val KEY_CATALOGS_JSON = "opds_catalogs_json"
+
+        val sharedHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder().build()
+        }
     }
+
+    private val httpClient = sharedHttpClient
 
     fun getCatalogs(): List<OpdsCatalog> {
         val jsonString = prefs.getString(KEY_CATALOGS_JSON, null)

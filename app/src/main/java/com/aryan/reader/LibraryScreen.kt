@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -309,10 +310,10 @@ fun LibraryScreen(
                     title = entry.title,
                     urlTemplate = entry.pseUrlTemplate!!,
                     pageCount = entry.pseCount!!,
-                    username = catalog?.username,
-                    password = catalog?.password
+                    catalogId = catalog?.id
                 )
-            }
+            },
+            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog
         )
 
 
@@ -536,6 +537,7 @@ fun LibraryScreenContent(
     onRemoveFolderClick: (SyncedFolder) -> Unit,
     onOpdsBookDownloaded: (Uri, String) -> Unit,
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
+    onDeleteCatalogStreams: (String) -> Unit,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
@@ -808,7 +810,8 @@ fun LibraryScreenContent(
                         localLibraryFiles = rawLibraryFiles,
                         onBookDownloaded = onOpdsBookDownloaded,
                         onReadBook = onItemClick,
-                        onStreamBook = onStreamOpdsBook
+                        onStreamBook = onStreamOpdsBook,
+                        onDeleteCatalogStreams = onDeleteCatalogStreams
                     )
                 }
             }
@@ -1344,6 +1347,16 @@ private fun LibraryListItem(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                     }
+                    val isOpdsStream = item.uriString?.startsWith("opds-pse://") == true
+                    if (isOpdsStream) {
+                        Icon(
+                            imageVector = Icons.Default.Cloud,
+                            contentDescription = "OPDS Stream",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
 
                     if (isPinned) {
                         Icon(
@@ -1871,6 +1884,7 @@ fun OpdsTab(
     onBookDownloaded: (Uri, String) -> Unit,
     onReadBook: (RecentFileItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
+    onDeleteCatalogStreams: (String) -> Unit,
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
@@ -1880,6 +1894,7 @@ fun OpdsTab(
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
     var showCatalogDialog by remember { mutableStateOf(false) }
     var editingCatalog by remember { mutableStateOf<OpdsCatalog?>(null) }
+    var catalogToDelete by remember { mutableStateOf<OpdsCatalog?>(null) }
 
     BackHandler(enabled = uiState.isViewingCatalog) {
         opdsViewModel.navigateBack()
@@ -1909,7 +1924,7 @@ fun OpdsTab(
                                 }
                             },
                             onDelete = if (catalog.isDefault) null else {
-                                { opdsViewModel.removeCatalog(catalog.id) }
+                                { catalogToDelete = catalog }
                             })
                     }
                 }
@@ -2236,6 +2251,41 @@ fun OpdsTab(
                     showCatalogDialog = false
                     editingCatalog = null
                 }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (catalogToDelete != null) {
+        val streamedBooksCount = localLibraryFiles.count { it.uriString?.contains("catalogId=${catalogToDelete!!.id}") == true }
+        AlertDialog(
+            onDismissRequest = { catalogToDelete = null },
+            title = { Text("Delete Catalog") },
+            text = {
+                Column {
+                    Text("Are you sure you want to delete '${catalogToDelete!!.title}'?")
+                    if (streamedBooksCount > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Deleting this catalog will also permanently remove $streamedBooksCount streaming books associated with it from your library.",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        opdsViewModel.removeCatalog(catalogToDelete!!.id)
+                        if (streamedBooksCount > 0) {
+                            onDeleteCatalogStreams(catalogToDelete!!.id)
+                        }
+                        catalogToDelete = null
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { catalogToDelete = null }) { Text("Cancel") }
             }
         )
     }
