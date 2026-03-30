@@ -460,6 +460,7 @@ fun EpubReaderHost(
     val searchFocusRequester = remember { FocusRequester() }
     val containerFocusRequester = remember { FocusRequester() }
     var isNavigatingToPosition by remember { mutableStateOf(false) }
+    var isSeamlessTransitioning by remember { mutableStateOf(false) }
 
     var isPageSliderVisible by remember { mutableStateOf(false) }
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
@@ -475,6 +476,11 @@ fun EpubReaderHost(
     var chunkTargetOverride by remember { mutableStateOf<Int?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
+
+    var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
+    var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
+    var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
+    var showVisualOptionsSheet by remember { mutableStateOf(false) }
 
     var volumeScrollEnabled by remember {
         mutableStateOf(loadVolumeScrollSetting(context))
@@ -1354,7 +1360,8 @@ fun EpubReaderHost(
         showBars = showBars,
         initialIsAppearanceLightStatusBars = initialIsAppearanceLightStatusBars,
         initialSystemBarsBehavior = initialSystemBarsBehavior,
-        isDarkTheme = isDarkTheme
+        isDarkTheme = isDarkTheme,
+        systemUiMode = systemUiMode
     )
 
     var isPagerInitialized by remember(initialLocator) { mutableStateOf(initialLocator == null) }
@@ -1431,6 +1438,17 @@ fun EpubReaderHost(
                 Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
             }
         }
+    }
+
+    val pageInfoBottomPadding by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (showBars && pageInfoMode == PageInfoMode.SYNC) 45.dp else 0.dp,
+        label = "PageInfoBottomPadding"
+    )
+
+    val isPageInfoVisible = when (pageInfoMode) {
+        PageInfoMode.DEFAULT -> !showBars
+        PageInfoMode.SYNC -> showBars
+        PageInfoMode.HIDDEN -> false
     }
 
     LaunchedEffect(bookmarks, paginator) {
@@ -2031,10 +2049,16 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
+                        val contentBottomPadding = if (showBars || showFormatAdjustmentBars) {
+                            0.dp
+                        } else {
+                            if (pageInfoMode == PageInfoMode.DEFAULT) PAGE_INFO_BAR_HEIGHT else 0.dp
+                        }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(bottom = if (showBars || showFormatAdjustmentBars) 0.dp else PAGE_INFO_BAR_HEIGHT)
+                                .padding(bottom = contentBottomPadding)
                                 .padding(top = 16.dp, start = 16.dp, end = 16.dp)
                                 .testTag("ReaderContainer")
                         ) {
@@ -2049,12 +2073,16 @@ fun EpubReaderHost(
                                 AnimatedContent(
                                     targetState = currentChapterIndex,
                                     transitionSpec = {
-                                        if (targetState > initialState) {
-                                            (slideInVertically { height -> height } + fadeIn())
-                                                .togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                                        if (!pullToTurnEnabled) {
+                                            fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
                                         } else {
-                                            (slideInVertically { height -> -height } + fadeIn())
-                                                .togetherWith(slideOutVertically { height -> height } + fadeOut())
+                                            if (targetState > initialState) {
+                                                (slideInVertically { height -> height } + fadeIn())
+                                                    .togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                                            } else {
+                                                (slideInVertically { height -> -height } + fadeIn())
+                                                    .togetherWith(slideOutVertically { height -> height } + fadeOut())
+                                            }
                                         }
                                     },
                                     label = "ChapterChangeAnimation",
@@ -2292,19 +2320,48 @@ fun EpubReaderHost(
                                                 }
                                             },
                                             onOverScrollTop = { dragAmount ->
-                                                if (targetChapterIndex > 0) {
-                                                    pullToPrevProgress =
-                                                        dragAmount / dragThresholdPx
+                                                if (pullToTurnEnabled) {
+                                                    if (targetChapterIndex > 0) {
+                                                        pullToPrevProgress = dragAmount / dragThresholdPx
+                                                    }
+                                                } else {
+                                                    if (targetChapterIndex > 0 && dragAmount > 20f && !isSeamlessTransitioning) {
+                                                        isSeamlessTransitioning = true
+                                                        webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                                                        scope.launch {
+                                                            delay(20)
+                                                            initialScrollTargetForChapter = ChapterScrollPosition.END
+                                                            currentChapterIndex--
+                                                            if (showBars) showBars = false
+                                                            delay(300)
+                                                            isSeamlessTransitioning = false
+                                                        }
+                                                    }
                                                 }
                                             },
                                             onOverScrollBottom = { dragAmount ->
-                                                if (targetChapterIndex < chapters.size - 1) {
-                                                    pullToNextProgress =
-                                                        dragAmount / dragThresholdPx
+                                                if (pullToTurnEnabled) {
+                                                    if (targetChapterIndex < chapters.size - 1) {
+                                                        pullToNextProgress = dragAmount / dragThresholdPx
+                                                    }
+                                                } else {
+                                                    if (targetChapterIndex < chapters.size - 1 && dragAmount > 20f && !isSeamlessTransitioning) {
+                                                        isSeamlessTransitioning = true
+                                                        webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                                                        scope.launch {
+                                                            delay(20)
+                                                            initialScrollTargetForChapter = ChapterScrollPosition.START
+                                                            currentScrollYPosition = 0
+                                                            currentChapterIndex++
+                                                            if (showBars) showBars = false
+                                                            delay(300)
+                                                            isSeamlessTransitioning = false
+                                                        }
+                                                    }
                                                 }
                                             },
                                             onReleaseOverScrollTop = {
-                                                if (targetChapterIndex > 0 && pullToPrevProgress >= 1.0f) {
+                                                if (pullToTurnEnabled && targetChapterIndex > 0 && pullToPrevProgress >= 1.0f) {
                                                     Timber.d("Swipe-up triggered. Saving position before changing to previous chapter."
                                                     )
                                                     webViewRefForTts?.evaluateJavascript(
@@ -2324,7 +2381,7 @@ fun EpubReaderHost(
                                                 pullToPrevProgress = 0f
                                             },
                                             onReleaseOverScrollBottom = {
-                                                if (targetChapterIndex < chapters.size - 1 && pullToNextProgress >= 1.0f) {
+                                                if (pullToTurnEnabled && targetChapterIndex < chapters.size - 1 && pullToNextProgress >= 1.0f) {
                                                     Timber.d("Swipe-down triggered. Saving position before changing to next chapter."
                                                     )
                                                     webViewRefForTts?.evaluateJavascript(
@@ -2672,7 +2729,7 @@ fun EpubReaderHost(
                                     }
                                 }
 
-                                if (currentChapterIndex > 0) {
+                                if (pullToTurnEnabled && currentChapterIndex > 0) {
                                     ChapterChangeIndicator(
                                         text = "Release for Previous Chapter",
                                         progress = pullToPrevProgress,
@@ -2683,7 +2740,7 @@ fun EpubReaderHost(
                                     )
                                 }
 
-                                if (currentChapterIndex < chapters.size - 1) {
+                                if (pullToTurnEnabled && currentChapterIndex < chapters.size - 1) {
                                     ChapterChangeIndicator(
                                         text = "Release for Next Chapter",
                                         progress = pullToNextProgress,
@@ -2698,10 +2755,12 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
+                        val contentBottomPadding = if (pageInfoMode == PageInfoMode.DEFAULT && !showBars) PAGE_INFO_BAR_HEIGHT else 0.dp
+
                         BoxWithConstraints(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(bottom = PAGE_INFO_BAR_HEIGHT)
+                                .padding(bottom = contentBottomPadding)
                                 .testTag("ReaderContainer")
                         ) {
                             @Suppress("KotlinConstantConditions")
@@ -2992,7 +3051,7 @@ fun EpubReaderHost(
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
-                    visible = renderMode == RenderMode.VERTICAL_SCROLL && !showBars,
+                    visible = renderMode == RenderMode.VERTICAL_SCROLL && isPageInfoVisible,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -3002,7 +3061,7 @@ fun EpubReaderHost(
                             .fillMaxWidth()
                             .height(PAGE_INFO_BAR_HEIGHT)
                             .background(infoBarBgColor)
-                            .padding(bottom = bottomPadding)
+                            .padding(bottom = bottomPadding + pageInfoBottomPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3035,7 +3094,7 @@ fun EpubReaderHost(
 
                 // Page Info Bar (Paginated)
                 AnimatedVisibility(
-                    visible = renderMode == RenderMode.PAGINATED && paginator != null && !showBars && paginatedPagerState.pageCount > 0,
+                    visible = renderMode == RenderMode.PAGINATED && paginator != null && isPageInfoVisible && paginatedPagerState.pageCount > 0,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -3045,7 +3104,7 @@ fun EpubReaderHost(
                             .fillMaxWidth()
                             .height(PAGE_INFO_BAR_HEIGHT)
                             .background(infoBarBgColor)
-                            .padding(bottom = bottomPadding)
+                            .padding(bottom = bottomPadding + pageInfoBottomPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3400,6 +3459,7 @@ fun EpubReaderHost(
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
+                    onOpenVisualOptions = { showVisualOptionsSheet = true },
                     onToggleReflow = if (onToggleReflow != null) {
                         {
                             val activeChapter = if (currentRenderMode == RenderMode.PAGINATED) {
@@ -3947,6 +4007,27 @@ fun EpubReaderHost(
             DeviceVoiceSettingsSheet(
                 isVisible = true,
                 onDismiss = { showDeviceVoiceSettingsSheet = false }
+            )
+        }
+
+        if (showVisualOptionsSheet) {
+            VisualOptionsSheet(
+                systemUiMode = systemUiMode,
+                onSystemUiModeChange = {
+                    systemUiMode = it
+                    saveSystemUiMode(context, it)
+                },
+                pageInfoMode = pageInfoMode,
+                onPageInfoModeChange = {
+                    pageInfoMode = it
+                    savePageInfoMode(context, it)
+                },
+                pullToTurnEnabled = pullToTurnEnabled,
+                onPullToTurnChange = {
+                    pullToTurnEnabled = it
+                    savePullToTurn(context, it)
+                },
+                onDismiss = { showVisualOptionsSheet = false }
             )
         }
 

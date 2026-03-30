@@ -91,6 +91,12 @@ import androidx.core.content.edit
 import com.aryan.reader.R
 import com.aryan.reader.data.CustomFontEntity
 import java.io.File
+import androidx.compose.material3.Switch
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
 private const val TEXT_ALIGN_KEY = "reader_text_align"
@@ -100,6 +106,9 @@ private const val AUTO_SCROLL_SPEED_KEY = "reader_auto_scroll_speed"
 private const val FONT_FAMILY_KEY = "reader_font_family"
 private const val TAP_TO_NAVIGATE_ENABLED_KEY = "tap_to_navigate_enabled"
 private const val VOLUME_SCROLL_ENABLED_KEY = "volume_scroll_enabled"
+private const val SYSTEM_UI_MODE_KEY = "reader_system_ui_mode"
+private const val PAGE_INFO_MODE_KEY = "reader_page_info_mode"
+private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.6f
@@ -117,6 +126,18 @@ enum class ReaderTextAlign(val id: String, val cssValue: String, val iconResId: 
     DEFAULT("default", "", R.drawable.format_align_left, "Default"),
     LEFT("left", "left", R.drawable.format_align_left, "Left"),
     JUSTIFY("justify", "justify", R.drawable.format_align_justify, "Justify")
+}
+
+enum class SystemUiMode(val id: Int, val title: String) {
+    DEFAULT(0, "Always Show"),
+    SYNC(1, "Sync with Menus"),
+    HIDDEN(2, "Always Hide")
+}
+
+enum class PageInfoMode(val id: Int, val title: String) {
+    DEFAULT(0, "Always Show"),
+    SYNC(1, "Sync with Menus"),
+    HIDDEN(2, "Always Hide")
 }
 
 data class FormatSettings(
@@ -163,6 +184,38 @@ fun saveLocalReaderSettings(
         }
         putString(LOCAL_TEXT_ALIGN_PREFIX + bookId, textAlign.id)
     }
+}
+
+fun saveSystemUiMode(context: Context, mode: SystemUiMode) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putInt(SYSTEM_UI_MODE_KEY, mode.id) }
+}
+
+fun loadSystemUiMode(context: Context): SystemUiMode {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val id = prefs.getInt(SYSTEM_UI_MODE_KEY, SystemUiMode.DEFAULT.id)
+    return SystemUiMode.entries.find { it.id == id } ?: SystemUiMode.DEFAULT
+}
+
+fun savePageInfoMode(context: Context, mode: PageInfoMode) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putInt(PAGE_INFO_MODE_KEY, mode.id) }
+}
+
+fun loadPageInfoMode(context: Context): PageInfoMode {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val id = prefs.getInt(PAGE_INFO_MODE_KEY, PageInfoMode.DEFAULT.id)
+    return PageInfoMode.entries.find { it.id == id } ?: PageInfoMode.DEFAULT
+}
+
+fun savePullToTurn(context: Context, enabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PULL_TO_TURN_ENABLED_KEY, enabled) }
+}
+
+fun loadPullToTurn(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PULL_TO_TURN_ENABLED_KEY, true)
 }
 
 fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): FormatSettings {
@@ -588,6 +641,130 @@ fun FontSelectionSheetContent(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VisualOptionsSheet(
+    systemUiMode: SystemUiMode,
+    onSystemUiModeChange: (SystemUiMode) -> Unit,
+    pageInfoMode: PageInfoMode,
+    onPageInfoModeChange: (PageInfoMode) -> Unit,
+    pullToTurnEnabled: Boolean,
+    onPullToTurnChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // System UI
+            Text("System UI (Status & Navigation Bars)", style = MaterialTheme.typography.titleMedium)
+            Text("Control the visibility of the device's system bars.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+            OptionSegmentedControl(
+                options = SystemUiMode.entries,
+                selectedOption = systemUiMode,
+                onOptionSelected = onSystemUiModeChange,
+                getLabel = { it.title }
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Progress Bar
+            Text("Progress Bar", style = MaterialTheme.typography.titleMedium)
+            Text("The reading progress and chapter indicator at the bottom of the screen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+            OptionSegmentedControl(
+                options = PageInfoMode.entries,
+                selectedOption = pageInfoMode,
+                onOptionSelected = onPageInfoModeChange,
+                getLabel = { it.title }
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Pull to change chapter
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPullToTurnChange(!pullToTurnEnabled) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Seamless Chapter Transition", style = MaterialTheme.typography.titleMedium)
+                        Text("Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+fun <T> OptionSegmentedControl(
+    options: List<T>,
+    selectedOption: T,
+    onOptionSelected: (T) -> Unit,
+    getLabel: (T) -> String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        options.forEach { option ->
+            val isSelected = option == selectedOption
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .clickable { onOptionSelected(option) }
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = getLabel(option),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }

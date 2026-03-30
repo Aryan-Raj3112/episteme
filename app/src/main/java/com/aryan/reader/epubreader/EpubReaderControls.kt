@@ -82,6 +82,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -155,6 +156,7 @@ fun EpubReaderTopBar(
     onOpenDeviceVoiceSettings: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
+    onOpenVisualOptions: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
@@ -347,6 +349,18 @@ fun EpubReaderTopBar(
                             HorizontalDivider()
 
                             DropdownMenuItem(
+                                text = { Text("Visual Options") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onOpenVisualOptions()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(20.dp))
+                                }
+                            )
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
                                 text = { Text("Auto Scroll") },
                                 enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
                                 onClick = {
@@ -357,7 +371,6 @@ fun EpubReaderTopBar(
 
                             HorizontalDivider()
 
-                            // *** ADDITION START ***
                             DropdownMenuItem(
                                 text = { Text("TTS Voice Settings") },
                                 onClick = {

@@ -42,7 +42,8 @@ fun EpubReaderSystemUiController(
     showBars: Boolean,
     initialIsAppearanceLightStatusBars: Boolean,
     initialSystemBarsBehavior: Int,
-    isDarkTheme: Boolean
+    isDarkTheme: Boolean,
+    systemUiMode: SystemUiMode
 ) {
     DisposableEffect(window, view, initialIsAppearanceLightStatusBars, initialSystemBarsBehavior) {
         if (window == null) {
@@ -53,13 +54,12 @@ fun EpubReaderSystemUiController(
         Timber.d("Applying immersive mode.")
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        insetsController.hide(WindowInsetsCompat.Type.navigationBars())
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         onDispose {
             Timber.d("Restoring system UI.")
             WindowCompat.setDecorFitsSystemWindows(window, true)
-            insetsController.show(WindowInsetsCompat.Type.navigationBars())
+            insetsController.show(WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.statusBars())
             insetsController.isAppearanceLightStatusBars = initialIsAppearanceLightStatusBars
             insetsController.systemBarsBehavior = initialSystemBarsBehavior
         }
@@ -72,13 +72,25 @@ fun EpubReaderSystemUiController(
         }
     }
 
-    LaunchedEffect(showBars, window, view) {
+    LaunchedEffect(showBars, systemUiMode, window, view) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            if (showBars) {
-                insetsController.show(WindowInsetsCompat.Type.navigationBars())
-            } else {
-                insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+            when (systemUiMode) {
+                SystemUiMode.DEFAULT -> {
+                    insetsController.show(WindowInsetsCompat.Type.statusBars())
+                    if (showBars) insetsController.show(WindowInsetsCompat.Type.navigationBars())
+                    else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+                }
+                SystemUiMode.SYNC -> {
+                    if (showBars) {
+                        insetsController.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+                    } else {
+                        insetsController.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+                    }
+                }
+                SystemUiMode.HIDDEN -> {
+                    insetsController.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+                }
             }
         }
     }

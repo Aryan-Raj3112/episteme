@@ -5970,42 +5970,44 @@ fun PdfViewerScreen(
                             }
 
                             // AI feat
-                            Box {
-                                var showAiFeaturesMenu by remember { mutableStateOf(false) }
-                                TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_ai),
-                                    description = stringResource(R.string.tooltip_ai_desc),
-                                    onClick = { showAiFeaturesMenu = true }
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ai),
-                                        contentDescription = "AI Features"
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showAiFeaturesMenu,
-                                    onDismissRequest = { showAiFeaturesMenu = false }) {
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text("Summarize Page (Page ${currentPage + 1})")
-                                        }, onClick = {
-                                            showAiFeaturesMenu = false
-                                            if (isProUser) {
-                                                showSummarizationPopup = true
-                                                coroutineScope.launch {
-                                                    isSummarizationLoading = true
-                                                    summarizationResult = null
-                                                    summarizeCurrentPage(onUpdate = { result ->
-                                                        summarizationResult = result
-                                                    }, onFinish = {
-                                                        isSummarizationLoading = false
-                                                    })
+                            if (BuildConfig.FLAVOR != "oss") {
+                                Box {
+                                    var showAiFeaturesMenu by remember { mutableStateOf(false) }
+                                    TooltipIconButton(
+                                        text = stringResource(R.string.tooltip_ai),
+                                        description = stringResource(R.string.tooltip_ai_desc),
+                                        onClick = { showAiFeaturesMenu = true }
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ai),
+                                            contentDescription = "AI Features"
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showAiFeaturesMenu,
+                                        onDismissRequest = { showAiFeaturesMenu = false }) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text("Summarize Page (Page ${currentPage + 1})")
+                                            }, onClick = {
+                                                showAiFeaturesMenu = false
+                                                if (isProUser) {
+                                                    showSummarizationPopup = true
+                                                    coroutineScope.launch {
+                                                        isAiDefinitionLoading = true
+                                                        summarizationResult = null
+                                                        summarizeCurrentPage(onUpdate = { result ->
+                                                            summarizationResult = result
+                                                        }, onFinish = {
+                                                            isAiDefinitionLoading = false
+                                                        })
+                                                    }
+                                                } else {
+                                                    showSummarizationUpsellDialog = true
                                                 }
-                                            } else {
-                                                showSummarizationUpsellDialog = true
-                                            }
-                                        }, enabled = !isSummarizationLoading && pdfDocument != null
-                                    )
+                                            }, enabled = !isSummarizationLoading && pdfDocument != null
+                                        )
+                                    }
                                 }
                             }
 
