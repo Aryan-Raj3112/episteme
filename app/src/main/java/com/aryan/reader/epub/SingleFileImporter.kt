@@ -48,21 +48,38 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         type: FileType,
         originalBookNameHint: String,
-        bookId: String
+        bookId: String,
+        parseContent: Boolean = true
     ): EpubBook {
         return when (type) {
-            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId)
-            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId)
-            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId)
-            else -> parsePlainText(inputStream, originalBookNameHint, bookId) // Fallback
+            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
+            else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
         }
     }
 
     private suspend fun parseMarkdown(
         inputStream: InputStream,
         originalBookNameHint: String,
-        bookId: String
+        bookId: String,
+        parseContent: Boolean
     ): EpubBook = withContext(Dispatchers.IO) {
+        if (!parseContent) {
+            return@withContext EpubBook(
+                fileName = originalBookNameHint,
+                title = originalBookNameHint.substringBeforeLast("."),
+                author = "Unknown",
+                language = "en",
+                coverImage = null,
+                chapters = emptyList(),
+                chaptersForPagination = emptyList(),
+                images = emptyList(),
+                pageList = emptyList(),
+                extractionBasePath = "",
+                css = emptyMap()
+            )
+        }
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
@@ -191,8 +208,24 @@ class SingleFileImporter(private val context: Context) {
     private suspend fun parsePlainText(
         inputStream: InputStream,
         originalBookNameHint: String,
-        bookId: String
+        bookId: String,
+        parseContent: Boolean
     ): EpubBook = withContext(Dispatchers.IO) {
+        if (!parseContent) {
+            return@withContext EpubBook(
+                fileName = originalBookNameHint,
+                title = originalBookNameHint.substringBeforeLast("."),
+                author = "Unknown",
+                language = "en",
+                coverImage = null,
+                chapters = emptyList(),
+                chaptersForPagination = emptyList(),
+                images = emptyList(),
+                pageList = emptyList(),
+                extractionBasePath = "",
+                css = emptyMap()
+            )
+        }
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
@@ -347,8 +380,24 @@ class SingleFileImporter(private val context: Context) {
     private suspend fun parseHtml(
         inputStream: InputStream,
         originalBookNameHint: String,
-        bookId: String
+        bookId: String,
+        parseContent: Boolean
     ): EpubBook = withContext(Dispatchers.IO) {
+        if (!parseContent) {
+            return@withContext EpubBook(
+                fileName = originalBookNameHint,
+                title = originalBookNameHint.substringBeforeLast("."),
+                author = "Unknown",
+                language = "en",
+                coverImage = null,
+                chapters = emptyList(),
+                chaptersForPagination = emptyList(),
+                images = emptyList(),
+                pageList = emptyList(),
+                extractionBasePath = "",
+                css = emptyMap()
+            )
+        }
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }

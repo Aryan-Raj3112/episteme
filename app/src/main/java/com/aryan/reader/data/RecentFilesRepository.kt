@@ -89,7 +89,19 @@ class RecentFilesRepository(private val context: Context) {
         }
         coverCacheDir.mkdirs()
         pdfHighlightRepository.clearAll()
-        Timber.d("Cleared all local book data and cover cache.")
+
+        File(context.filesDir, "annotations").deleteRecursively()
+        File(context.filesDir, "pdf_rich_text").deleteRecursively()
+        File(context.filesDir, "page_layouts").deleteRecursively()
+        File(context.filesDir, "pdf_text_boxes").deleteRecursively()
+
+        context.cacheDir.listFiles()?.forEach { file ->
+            val name = file.name
+            if (name.startsWith("imported_file_") || name.startsWith("temp_") || name.startsWith("sync_bundle_")) {
+                if (file.isDirectory) file.deleteRecursively() else file.delete()
+            }
+        }
+        Timber.d("Cleared all local book data, sidecars, and cover cache.")
     }
 
     suspend fun addRecentFile(item: RecentFileItem) = withContext(Dispatchers.IO) {
@@ -289,7 +301,13 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     suspend fun deleteFilesBySourceFolder(folderUriString: String) = withContext(Dispatchers.IO) {
-        recentFileDao.deleteFilesBySourceFolder(folderUriString)
+        val filesToRemove = getFilesBySourceFolder(folderUriString)
+        if (filesToRemove.isNotEmpty()) {
+            Timber.d("DeleteDebug: Cascading deletion for ${filesToRemove.size} files from folder.")
+            deleteFilePermanently(filesToRemove.map { it.bookId })
+        } else {
+            recentFileDao.deleteFilesBySourceFolder(folderUriString)
+        }
     }
 
     suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
@@ -367,6 +385,19 @@ class RecentFilesRepository(private val context: Context) {
                     item.uriString?.let { bookImporter.deleteBookByUriString(it) }
                 } catch (e: Exception) {
                     Timber.w("DeleteDebug: Physical file deletion failed (likely already gone) for ${item.bookId}: ${e.message}")
+                }
+
+                try {
+                    pdfAnnotationRepository.getAnnotationFileForSync(item.bookId)?.delete()
+                    pdfRichTextRepository.getFileForSync(item.bookId).delete()
+                    pageLayoutRepository.getLayoutFile(item.bookId).delete()
+                    pdfTextBoxRepository.getFileForSync(item.bookId).delete()
+                    pdfHighlightRepository.getFileForSync(item.bookId).delete()
+
+                    val cacheDir = File(context.cacheDir, "imported_file_${item.bookId}")
+                    if (cacheDir.exists()) cacheDir.deleteRecursively()
+                } catch (e: Exception) {
+                    Timber.e(e, "Error during deep cleanup of sidecars for ${item.bookId}: ${e.message}")
                 }
             }
             recentFileDao.deleteFilePermanently(itemsToRemove.map { it.bookId })

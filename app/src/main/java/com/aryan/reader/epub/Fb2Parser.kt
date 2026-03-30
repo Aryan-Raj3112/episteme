@@ -18,7 +18,8 @@ class Fb2Parser(private val context: Context) {
 
     suspend fun createFb2Book(
         inputStream: InputStream,
-        originalBookNameHint: String
+        originalBookNameHint: String,
+        parseContent: Boolean = true
     ): EpubBook {
         val bookId = originalBookNameHint.hashCode().toString()
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
@@ -74,7 +75,7 @@ class Fb2Parser(private val context: Context) {
         """.trimIndent()
 
         fun saveChapter() {
-            if (currentChapterHtml.isEmpty()) return
+            if (!parseContent || currentChapterHtml.isEmpty()) return
             chapterCount++
             val fileName = "chapter_$chapterCount.html"
             val file = File(extractionDir, fileName)
@@ -182,12 +183,13 @@ class Fb2Parser(private val context: Context) {
                                 val base64Data = parser.nextText()
                                 try {
                                     val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-                                    val imgFile = File(extractionDir, id)
-                                    withContext(Dispatchers.IO) {
-                                        FileOutputStream(imgFile).use { it.write(bytes) }
+                                    if (parseContent) {
+                                        val imgFile = File(extractionDir, id)
+                                        withContext(Dispatchers.IO) {
+                                            FileOutputStream(imgFile).use { it.write(bytes) }
+                                        }
                                     }
 
-                                    // Add the image to the EpubBook image index
                                     images.add(EpubImage(absPath = id))
 
                                     if (id == coverImageId || (coverImageId == null && id.contains("cover", ignoreCase = true))) {
@@ -245,9 +247,9 @@ class Fb2Parser(private val context: Context) {
             }
         }
 
-        saveChapter() // Save the final chunk of content
+        saveChapter()
 
-        if (chapters.isEmpty()) {
+        if (chapters.isEmpty() && parseContent) {
             if (currentChapterHtml.isNotBlank()) {
                 saveChapter()
             } else {

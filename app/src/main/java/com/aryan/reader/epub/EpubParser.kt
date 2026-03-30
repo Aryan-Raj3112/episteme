@@ -211,6 +211,17 @@ class EpubParser(private val context: Context) {
         val filesMap = mutableMapOf<String, EpubFile>()
         zipFile.use { zf ->
             zf.entries().asSequence().filterNot { it.isDirectory }.forEach { entry ->
+                val isEssential = isEssentialFile(entry.name, parseContent)
+                val isImage = entry.name.matches(Regex(".*\\.(png|jpg|jpeg|gif|webp|svg)$", RegexOption.IGNORE_CASE))
+
+                if (!parseContent) {
+                    if (isEssential || isImage) {
+                        val data = zf.getInputStream(entry).readBytes()
+                        filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
+                    }
+                    return@forEach
+                }
+
                 val outputFile = File(extractionDir, entry.name)
                 outputFile.parentFile?.mkdirs()
                 zf.getInputStream(entry).use { input ->
@@ -219,12 +230,7 @@ class EpubParser(private val context: Context) {
                     }
                 }
 
-                val data = if (isEssentialFile(entry.name, parseContent)) {
-                    outputFile.readBytes()
-                } else {
-                    ByteArray(0)
-                }
-
+                val data = if (isEssential) outputFile.readBytes() else ByteArray(0)
                 filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
             }
         }

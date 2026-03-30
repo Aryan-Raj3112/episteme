@@ -607,6 +607,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             syncFolderMetadata()
         }
 
+        sweepOrphanedCache()
+
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
 
         viewModelScope.launch {
@@ -1511,7 +1513,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             saveSyncedFoldersToPrefs(currentFolders)
             _internalState.update { it.copy(syncedFolders = currentFolders) }
 
-            // Cleanup
+            val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
+            filesToRemove.forEach { pdfTextRepository.clearBookText(it.bookId) }
+
             recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
             try {
                 appContext.contentResolver.releasePersistableUriPermission(
@@ -1638,6 +1642,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val folders = _internalState.value.syncedFolders
             folders.forEach { folder ->
+                val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
+                filesToRemove.forEach { pdfTextRepository.clearBookText(it.bookId) }
+
                 recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
                 try {
                     appContext.contentResolver.releasePersistableUriPermission(
@@ -2349,27 +2356,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                         parseContent = false
                                     )
                                 }
-
                                 FileType.MOBI -> {
                                     mobiParser.createMobiBook(
                                         inputStream = inputStream,
-                                        originalBookNameHint = displayName
+                                        originalBookNameHint = displayName,
+                                        parseContent = false
                                     )
                                 }
-
                                 FileType.FB2 -> {
                                     fb2Parser.createFb2Book(
                                         inputStream = inputStream,
-                                        originalBookNameHint = displayName
+                                        originalBookNameHint = displayName,
+                                        parseContent = false
                                     )
                                 }
-
                                 else -> {
                                     singleFileImporter.importSingleFile(
                                         inputStream,
                                         type,
                                         originalBookNameHint = displayName,
-                                        bookId = bookId
+                                        bookId = bookId,
+                                        parseContent = false
                                     )
                                 }
                             }
@@ -2412,8 +2419,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
                 }
             } else if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+                var cacheFile: File? = null
                 try {
-                    val cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
+                    cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
                     withContext(Dispatchers.IO) {
                         appContext.contentResolver.openInputStream(uri)?.use { input ->
                             cacheFile.outputStream().use { output -> input.copyTo(output) }
@@ -2440,6 +2448,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     archiveDoc.close()
                 } catch (e: Exception) {
                     Timber.e(e, "Error generating CBZ cover")
+                } finally {
+                    try {
+                        if (cacheFile?.exists() == true) {
+                            val deleted = cacheFile.delete()
+                            if (deleted) Timber.d("Successfully deleted temp archive file: ${cacheFile.name}")
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to delete temp archive file")
+                    }
                 }
             }
         }
@@ -2490,6 +2507,37 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun errorMessageShown() {
         _internalState.update { it.copy(errorMessage = null) }
+    }
+
+    private fun sweepOrphanedCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            Timber.d("Running Cache Sweeper to clean up orphaned temporary files...")
+            try {
+                val cacheDir = appContext.cacheDir
+                if (!cacheDir.exists()) return@launch
+
+                val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
+                val allDbIds = recentFilesRepository.getAllFilesForSync().map { it.bookId }.toSet()
+
+                cacheDir.listFiles()?.forEach { file ->
+                    val name = file.name
+                    if (name.startsWith("temp_") || name.startsWith("sync_bundle_")) {
+                        if (file.lastModified() < oneHourAgo) {
+                            val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
+                            if (deleted) Timber.d("Sweeper cleaned old temp file: $name")
+                        }
+                    } else if (name.startsWith("imported_file_")) {
+                        val bookId = name.removePrefix("imported_file_")
+                        if (bookId !in allDbIds) {
+                            val deleted = file.deleteRecursively()
+                            if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache for: $bookId")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error during cache sweep: ${e.message}")
+            }
+        }
     }
 
     private fun getFileNameFromUri(uri: Uri, context: Context): String? {
