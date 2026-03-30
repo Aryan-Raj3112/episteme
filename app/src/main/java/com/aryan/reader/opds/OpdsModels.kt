@@ -3,7 +3,8 @@ package com.aryan.reader.opds
 data class OpdsCatalog(
     val id: String,
     val title: String,
-    val url: String
+    val url: String,
+    val isDefault: Boolean = false
 )
 
 data class OpdsFeed(

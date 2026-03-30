@@ -1873,11 +1873,10 @@ fun OpdsTab(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiState.catalogs, key = { it.id }) { catalog ->
-                        val isGutenberg = catalog.url.contains("gutenberg.org")
                         OpdsCatalogCard(
                             catalog = catalog,
                             onClick = { opdsViewModel.openCatalog(catalog) },
-                            onDelete = if (isGutenberg) null else {
+                            onDelete = if (catalog.isDefault) null else {
                                 { opdsViewModel.removeCatalog(catalog.id) }
                             })
                     }
@@ -1895,72 +1894,82 @@ fun OpdsTab(
                         var showSearch by remember { mutableStateOf(false) }
                         var query by remember { mutableStateOf("") }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().height(64.dp)
-                                .padding(horizontal = 4.dp)
-                        ) {
-                            IconButton(onClick = {
-                                if (showSearch) {
-                                    showSearch = false
-                                    query = ""
-                                } else {
-                                    opdsViewModel.navigateBack()
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().height(64.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    if (showSearch) {
+                                        showSearch = false
+                                        query = ""
+                                    } else {
+                                        opdsViewModel.navigateBack()
+                                    }
+                                }) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                                 }
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                            }
 
-                            if (showSearch) {
-                                OutlinedTextField(
-                                    value = query,
-                                    onValueChange = { query = it },
-                                    placeholder = { Text("Search catalog...") },
-                                    modifier = Modifier.weight(1f).padding(vertical = 4.dp),
-                                    singleLine = true,
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        disabledContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent,
-                                    ),
-                                    trailingIcon = {
-                                        IconButton(onClick = {
-                                            if (query.isNotBlank()) {
-                                                opdsViewModel.search(query)
-                                                showSearch = false
-                                                query = ""
+                                if (showSearch) {
+                                    OutlinedTextField(
+                                        value = query,
+                                        onValueChange = { query = it },
+                                        placeholder = { Text("Search catalog...") },
+                                        modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                                        singleLine = true,
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            disabledContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent,
+                                        ),
+                                        trailingIcon = {
+                                            IconButton(onClick = {
+                                                if (query.isNotBlank()) {
+                                                    opdsViewModel.search(query)
+                                                    showSearch = false
+                                                    query = ""
+                                                }
+                                            }) {
+                                                Icon(Icons.Default.Search, "Search")
                                             }
-                                        }) {
+                                        },
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                                        ),
+                                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                            onSearch = {
+                                                if (query.isNotBlank()) {
+                                                    opdsViewModel.search(query)
+                                                    showSearch = false
+                                                    query = ""
+                                                }
+                                            }))
+                                } else {
+                                    Text(
+                                        text = uiState.currentFeed?.title ?: "Loading...",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                    )
+                                    if (uiState.searchUrlTemplate != null) {
+                                        IconButton(onClick = { showSearch = true }) {
                                             Icon(Icons.Default.Search, "Search")
                                         }
-                                    },
-                                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                        imeAction = androidx.compose.ui.text.input.ImeAction.Search
-                                    ),
-                                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                                        onSearch = {
-                                            if (query.isNotBlank()) {
-                                                opdsViewModel.search(query)
-                                                showSearch = false
-                                                query = ""
-                                            }
-                                        }))
-                            } else {
-                                Text(
-                                    text = uiState.currentFeed?.title ?: "Loading...",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                                )
-                                if (uiState.searchUrlTemplate != null) {
-                                    IconButton(onClick = { showSearch = true }) {
-                                        Icon(Icons.Default.Search, "Search")
                                     }
                                 }
+                            }
+
+                            if (uiState.isLoading) {
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .align(Alignment.BottomCenter)
+                                )
                             }
                         }
                     }
@@ -2003,30 +2012,6 @@ fun OpdsTab(
                                         },
                                         onClick = { selectedEntry = entry }
                                     )
-                                }
-                            }
-                        }
-                    }
-
-                    if (uiState.isLoading) {
-                        Surface(
-                            modifier = Modifier.fillMaxSize(),
-                            color = Color.Black.copy(alpha = 0.12f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                androidx.compose.material3.ElevatedCard(
-                                    shape = androidx.compose.foundation.shape.CircleShape,
-                                    modifier = Modifier.size(56.dp)
-                                ) {
-                                    Box(
-                                        Modifier.fillMaxSize(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(28.dp),
-                                            strokeWidth = 3.dp
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -2126,7 +2111,23 @@ fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onDelete: (() -> 
             Icon(Icons.Default.FolderSpecial, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (catalog.isDefault) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = "Preset",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Text(catalog.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (onDelete != null) {

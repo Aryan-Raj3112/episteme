@@ -156,23 +156,6 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         fetchUrl(url)
     }
 
-    private fun fetchUrl(url: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null, isViewingCatalog = true) }
-
-            val result = repository.fetchFeed(url)
-            result.onSuccess { feed ->
-                if (urlStack.isEmpty() || urlStack.last() != url) {
-                    urlStack.add(url)
-                }
-                _uiState.update { it.copy(isLoading = false, currentFeed = feed) }
-            }.onFailure { e ->
-                Timber.e(e, "Failed to load OPDS feed")
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load feed: ${e.message}") }
-            }
-        }
-    }
-
     /**
      * Handles back navigation within the catalog.
      * Returns true if it navigated back internally, false if it reached the root (catalog list).
@@ -193,9 +176,29 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun search(query: String) {
-        val template = _uiState.value.searchUrlTemplate ?: return
-        val searchUrl = template.replace("{searchTerms}", Uri.encode(query))
-        fetchUrl(searchUrl)
+        val searchLink = _uiState.value.searchUrlTemplate ?: return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+            val template = if (!searchLink.contains("{searchTerms}")) {
+                repository.getSearchTemplate(searchLink) ?: searchLink
+            } else {
+                searchLink
+            }
+
+            val finalUrl = if (template.contains("{searchTerms}")) {
+                template.replace("{searchTerms}", Uri.encode(query))
+            } else {
+                val separator = if (template.contains("?")) "&" else "?"
+                "$template${separator}query=${Uri.encode(query)}"
+            }
+
+            val secureUrl = finalUrl.replace("http://m.gutenberg.org", "https://m.gutenberg.org")
+                .replace("http://www.gutenberg.org", "https://www.gutenberg.org")
+
+            openFeedUrl(secureUrl)
+        }
     }
 
     fun clearError() {

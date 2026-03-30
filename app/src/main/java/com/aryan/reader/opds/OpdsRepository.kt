@@ -30,17 +30,12 @@ class OpdsRepository(context: Context) {
                 val jsonArray = JSONArray(jsonString)
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
-
-                    var url = obj.getString("url")
-                    if (url == "https://standardebooks.org/opds/all") {
-                        url = "https://standardebooks.org/opds"
-                    }
-
                     catalogs.add(
                         OpdsCatalog(
                             id = obj.getString("id"),
                             title = obj.getString("title"),
-                            url = url
+                            url = obj.getString("url"),
+                            isDefault = obj.optBoolean("isDefault", false)
                         )
                     )
                 }
@@ -50,14 +45,40 @@ class OpdsRepository(context: Context) {
         }
 
         if (catalogs.isEmpty()) {
-            val defaults = listOf(
-                OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/")
-            )
-            saveCatalogs(defaults)
-            return defaults
+            catalogs.add(OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/", isDefault = true))
+            saveCatalogs(catalogs)
         }
 
         return catalogs
+    }
+
+    suspend fun getSearchTemplate(openSearchUrl: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(openSearchUrl).build()
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string() ?: return@withContext null
+
+            // Parse the OpenSearch Description XML to find the actual template URL
+            val parser = android.util.Xml.newPullParser()
+            parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+            parser.setInput(body.byteInputStream(), null)
+            var eventType = parser.eventType
+
+            while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name.equals("Url", ignoreCase = true)) {
+                    val type = parser.getAttributeValue(null, "type")
+                    if (type != null && (type.contains("atom+xml") || type.contains("opds+xml"))) {
+                        val template = parser.getAttributeValue(null, "template")
+                        if (template != null) return@withContext template
+                    }
+                }
+                eventType = parser.next()
+            }
+            null
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to fetch OpenSearch template")
+            null
+        }
     }
 
     fun addCatalog(title: String, url: String) {
@@ -69,7 +90,7 @@ class OpdsRepository(context: Context) {
     fun removeCatalog(id: String) {
         val current = getCatalogs().toMutableList()
         val toRemove = current.find { it.id == id }
-        if (toRemove?.url?.contains("gutenberg.org") == true) {
+        if (toRemove?.isDefault == true) {
             return
         }
         current.removeAll { it.id == id }
@@ -83,6 +104,7 @@ class OpdsRepository(context: Context) {
             obj.put("id", catalog.id)
             obj.put("title", catalog.title)
             obj.put("url", catalog.url)
+            obj.put("isDefault", catalog.isDefault)
             jsonArray.put(obj)
         }
         prefs.edit { putString(KEY_CATALOGS_JSON, jsonArray.toString()) }

@@ -43,11 +43,11 @@ class OpdsParser {
                 "link" -> {
                     val rel = parser.getAttributeValue(null, "rel")
                     val href = parser.getAttributeValue(null, "href")
-                    val type = parser.getAttributeValue(null, "type")
+
                     if (rel == "next") {
                         nextUrl = resolveUrl(baseUrl, href ?: "")
                         Timber.tag("OpdsDebug").d("Next page found: $nextUrl")
-                    } else if (rel == "search" && type?.contains("application/atom+xml") == true) {
+                    } else if (rel == "search") {
                         searchUrl = resolveUrl(baseUrl, href ?: "")
                         Timber.tag("OpdsDebug").d("Search URL found: $searchUrl")
                     }
@@ -171,7 +171,9 @@ class OpdsParser {
 
     private fun resolveUrl(baseUrl: String, href: String): String {
         return try {
-            URI.create(baseUrl).resolve(href).toString()
+            val resolved = URI.create(baseUrl).resolve(href).toString()
+            resolved.replace("http://m.gutenberg.org", "https://m.gutenberg.org")
+                .replace("http://www.gutenberg.org", "https://www.gutenberg.org")
         } catch (_: Exception) {
             href
         }
