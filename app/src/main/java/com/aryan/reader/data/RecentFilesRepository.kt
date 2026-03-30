@@ -130,7 +130,8 @@ class RecentFilesRepository(private val context: Context) {
                 isRecent = item.isRecent,
                 isDeleted = item.isDeleted,
                 sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri,
-                highlights = item.highlightsJson ?: existingItem.highlights
+                highlights = item.highlightsJson ?: existingItem.highlights,
+                fileSize = if (item.fileSize > 0) item.fileSize else existingItem.fileSize
             )
         } else {
             item.toRecentFileEntity()

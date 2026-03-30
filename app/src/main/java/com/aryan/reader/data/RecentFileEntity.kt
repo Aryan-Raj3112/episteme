@@ -50,5 +50,6 @@ data class RecentFileEntity(
     @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?,
     @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean,
     @ColumnInfo(defaultValue = "NULL") val customName: String?,
-    @ColumnInfo(defaultValue = "NULL") val highlights: String?
+    @ColumnInfo(defaultValue = "NULL") val highlights: String?,
+    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long
 )

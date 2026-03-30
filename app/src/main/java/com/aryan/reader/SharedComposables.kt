@@ -101,6 +101,8 @@ import timber.log.Timber
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.log10
+import kotlin.math.pow
 
 internal const val PRIVACY_POLICY_URL = "https://aryan-raj3112.github.io/reader-policy/privacy-policy.html"
 internal const val TERMS_URL = "https://aryan-raj3112.github.io/reader-policy/terms-and-conditions.html"
@@ -121,6 +123,13 @@ class CustomTabUriHandler(private val context: Context) : UriHandler {
             context.startActivity(browserIntent)
         }
     }
+}
+
+fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "Unknown"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (log10(bytes.toDouble()) / log10(1024.0)).toInt()
+    return String.format(Locale.US, "%.2f %s", bytes / 1024.0.pow(digitGroups.toDouble()), units[digitGroups])
 }
 
 @Composable
@@ -446,6 +455,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                         InfoRowDetailed("Author", it)
                     }
                     InfoRowDetailed("Format", item.type.name)
+                    InfoRowDetailed("Size", formatFileSize(item.fileSize))
                     InfoRowDetailed("Added", formattedDate)
                     InfoRowDetailed(
                         label = "Location",

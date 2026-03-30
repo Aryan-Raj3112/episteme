@@ -61,6 +61,22 @@ class MetadataExtractionWorker(
                     var title: String? = null
                     var author: String? = null
 
+                    val fileSize = try {
+                        if (uri.scheme == "file") {
+                            uri.path?.let { File(it).length() } ?: 0L
+                        } else {
+                            appContext.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                                if (cursor.moveToFirst()) {
+                                    val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                                    if (sizeIndex != -1) cursor.getLong(sizeIndex) else 0L
+                                } else 0L
+                            } ?: 0L
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag("MetadataWorker").e(e, "Failed to get file size for ${item.displayName}")
+                        0L
+                    }
+
                     appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
                         when (type) {
                             FileType.EPUB -> {
@@ -99,15 +115,15 @@ class MetadataExtractionWorker(
                         }
                     }
 
-                    if (coverPath != null || title != null || author != null) {
+                    if (coverPath != null || title != null || author != null || fileSize > 0L) {
                         val updatedItem = item.copy(
                             coverImagePath = coverPath ?: item.coverImagePath,
                             title = title ?: item.title ?: item.displayName,
-                            author = author ?: item.author
+                            author = author ?: item.author,
+                            fileSize = if (fileSize > 0L) fileSize else item.fileSize
                         )
                         recentFilesRepository.addRecentFile(updatedItem)
-                        Timber.tag("MetadataWorker").d("Updated local metadata for: ${item.displayName}")
-
+                        Timber.tag("MetadataWorker").d("Updated local metadata/size for: ${item.displayName} ($fileSize bytes)")
                     }
 
                 } catch (e: Exception) {
