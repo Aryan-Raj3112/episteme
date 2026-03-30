@@ -148,10 +148,29 @@ abstract class BookCacheDao {
     @Query("DELETE FROM processed_chapter_metadata")
     protected abstract suspend fun deleteAllChapterMetadata()
 
+    @Query("DELETE FROM configuration_cache WHERE bookId = :bookId")
+    abstract suspend fun deleteConfigurationCacheForBook(bookId: String)
+
+    @Transaction
+    open suspend fun deleteEntireBookCache(bookId: String) {
+        deleteBook(bookId)
+        deleteChaptersForBook(bookId)
+        deleteAnchorsForBook(bookId)
+        deleteConfigurationCacheForBook(bookId)
+    }
+
+    @Query("DELETE FROM anchor_index")
+    abstract suspend fun clearAnchors()
+
+    @Query("DELETE FROM configuration_cache")
+    abstract suspend fun clearConfigurationCache()
+
     @Transaction
     open suspend fun clearAllCache() {
         clearProcessedBooks()
         clearProcessedChapters()
+        clearAnchors()
+        clearConfigurationCache()
     }
 
     @Query("SELECT * FROM configuration_cache WHERE bookId = :bookId AND configHash = :configHash")

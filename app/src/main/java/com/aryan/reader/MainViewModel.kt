@@ -484,8 +484,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (filesToDelete.isNotEmpty()) {
                 val ids = filesToDelete.map { it.bookId }
                 ids.forEach { bookId ->
-                    pdfTextRepository.clearBookText(bookId)
-                    clearImportedFileCache(bookId)
+                    cleanupBookDataLocally(bookId)
                     try {
                         val cacheDir = File(appContext.cacheDir, "opds_stream_${bookId.hashCode()}")
                         if (cacheDir.exists()) cacheDir.deleteRecursively()
@@ -844,14 +843,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             Timber.d("Deleting book permanently from reader: $bookId")
 
-            pdfTextRepository.clearBookText(bookId)
-            try {
-                val cacheDir = File(appContext.cacheDir, "imported_file_$bookId")
-                if (cacheDir.exists()) cacheDir.deleteRecursively()
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to clear cache for $bookId")
-            }
-
+            cleanupBookDataLocally(bookId)
             recentFilesRepository.deleteFilePermanently(listOf(bookId))
 
             withContext(Dispatchers.Main) {
@@ -1573,7 +1565,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update { it.copy(syncedFolders = currentFolders) }
 
             val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
-            filesToRemove.forEach { pdfTextRepository.clearBookText(it.bookId) }
+            filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
 
             recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
             try {
@@ -1684,8 +1676,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val idsToRemove = filesToRemove.map { it.bookId }
 
                     idsToRemove.forEach { bookId ->
-                        pdfTextRepository.clearBookText(bookId)
-                        clearImportedFileCache(bookId)
+                        cleanupBookDataLocally(bookId)
                     }
                     recentFilesRepository.deleteFilePermanently(idsToRemove)
                 }
@@ -1702,7 +1693,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val folders = _internalState.value.syncedFolders
             folders.forEach { folder ->
                 val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
-                filesToRemove.forEach { pdfTextRepository.clearBookText(it.bookId) }
+                filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
 
                 recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
                 try {
@@ -1915,6 +1906,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 recentFilesRepository.clearAllLocalData()
+                clearBookCache()
                 pdfTextRepository.clearAllText()
                 pdfTextBoxRepository.clearAll()
                 prefs.edit { remove(KEY_LAST_SYNC_TIMESTAMP) }
@@ -2903,6 +2895,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private suspend fun cleanupBookDataLocally(bookId: String) {
+        pdfTextRepository.clearBookText(bookId)
+        clearImportedFileCache(bookId)
+        bookCacheDao.deleteEntireBookCache(bookId)
+    }
+
     private fun clearImportedFileCache(bookId: String) {
         try {
             val cacheDir = File(appContext.cacheDir, "imported_file_$bookId")
@@ -3889,7 +3887,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                         folderBooks.forEach { item ->
                             idsToDeleteLocally.add(item.bookId)
-                            pdfTextRepository.clearBookText(item.bookId)
+                            cleanupBookDataLocally(item.bookId)
 
                             clearImportedFileCache(item.bookId)
 
@@ -3955,8 +3953,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                                 for (item in managedBooks) {
                                     recentFilesRepository.markAsDeleted(listOf(item.bookId))
-                                    pdfTextRepository.clearBookText(item.bookId)
-                                    clearImportedFileCache(item.bookId)
+                                    cleanupBookDataLocally(item.bookId)
 
                                     firestoreRepository.syncBookMetadata(
                                         currentUser.uid,
@@ -3984,8 +3981,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 Timber.e(e, "Error during permanent deletion")
                                 recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
                                 managedBooks.forEach { item ->
-                                    clearImportedFileCache(item.bookId)
-                                    pdfTextRepository.clearBookText(item.bookId)
+                                    cleanupBookDataLocally(item.bookId)
                                 }
                                 _internalState.update {
                                     it.copy(
@@ -3997,8 +3993,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         } else {
                             recentFilesRepository.deleteFilePermanently(managedBooks.map { it.bookId })
                             managedBooks.forEach { item ->
-                                clearImportedFileCache(item.bookId)
-                                pdfTextRepository.clearBookText(item.bookId)
+                                cleanupBookDataLocally(item.bookId)
                             }
                         }
                     }
@@ -4116,8 +4111,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val reflowBookIds = reflowBooks.map { it.bookId }
 
                 reflowBookIds.forEach { bookId ->
-                    clearImportedFileCache(bookId)
-                    pdfTextRepository.clearBookText(bookId)
+                    cleanupBookDataLocally(bookId)
                 }
 
                 recentFilesRepository.deleteFilePermanently(reflowBookIds)
