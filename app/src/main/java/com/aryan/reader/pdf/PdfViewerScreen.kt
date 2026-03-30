@@ -3215,8 +3215,11 @@ fun PdfViewerScreen(
 
                 Timber.i("PDF document loaded optimistically. Total Pages: $totalPages.")
             }
-        } catch (e: Exception) {
-            if (e.javaClass.name.contains("PasswordException") || e.cause?.javaClass?.name?.contains("PasswordException") == true) {
+        } catch (e: Throwable) {
+            val errorString = e.toString()
+            val causeString = e.cause?.toString() ?: ""
+
+            if (errorString.contains("PasswordException") || causeString.contains("PasswordException")) {
                 Timber.w("PDF is password protected or password incorrect.")
                 withContext(Dispatchers.Main) {
                     if (documentPassword != null) {
