@@ -47,6 +47,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -57,9 +59,16 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.FileOpen
+import androidx.compose.material.icons.outlined.Gavel
+import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -79,10 +88,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -518,7 +529,7 @@ private fun InfoRowDetailed(
         val scrollModifier = if (isScrollable) {
             Modifier
                 .heightIn(max = 66.dp)
-                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .verticalScroll(rememberScrollState())
         } else Modifier
 
         Text(
@@ -589,50 +600,196 @@ fun AboutDialog(onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("About Episteme") },
-        text = {
-            Column {
-                Text(
-                    "Version: ${BuildConfig.VERSION_NAME} (Build: ${BuildConfig.VERSION_CODE})",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 12.dp)
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary
                 )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Episteme",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (isOss) "Open Source Version" else "Playstore Version",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "Version ${BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Build ${BuildConfig.VERSION_CODE}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
-                // Only show legal links in the Pro version
-                if (!isOss) {
-                    HorizontalDivider()
+                Spacer(modifier = Modifier.height(16.dp))
+
+                HorizontalDivider()
+
+                if (isOss) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.Code,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Open Source",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
+
+                    InfoRow(
+                        icon = Icons.Outlined.Code,
+                        text = "GitHub Repository",
+                        subtitle = "Browse source code, star, and fork",
+                        onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") }
+                    )
+
+                    InfoRow(
+                        icon = Icons.Outlined.BugReport,
+                        text = "Report an Issue",
+                        subtitle = "File a bug or feature request",
+                        onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme/issues") }
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
+                        text = "Legal",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    InfoRow(
+                        icon = Icons.Outlined.Policy,
                         text = "Privacy Policy",
-                        style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { uriHandler.openUri(PRIVACY_POLICY_URL) }
-                            .padding(vertical = 8.dp)
+                        subtitle = "How we handle your data",
+                        onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
                     )
-                    Text(
+
+                    InfoRow(
+                        icon = Icons.Outlined.Gavel,
                         text = "Terms of Service",
-                        style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { uriHandler.openUri(TERMS_URL) }
-                            .padding(vertical = 8.dp)
+                        subtitle = "Usage terms and conditions",
+                        onClick = { uriHandler.openUri(TERMS_URL) }
                     )
-                    Text(
+
+                    InfoRow(
+                        icon = Icons.Outlined.FileOpen,
                         text = "Licenses",
-                        style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { uriHandler.openUri(LICENSES_URL) }
-                            .padding(vertical = 8.dp)
+                        subtitle = "Libraries",
+                        onClick = { uriHandler.openUri(LICENSES_URL) }
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.padding(horizontal = 8.dp)
+            ) {
+                Text("Close", fontWeight = FontWeight.Medium)
+            }
         }
     )
+}
+
+@Composable
+private fun InfoRow(
+    icon: ImageVector,
+    text: String,
+    subtitle: String? = null,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp, horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable
