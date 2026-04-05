@@ -344,6 +344,7 @@ fun ChapterWebView(
     onWordSelectedForAiDefinition: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
+    onNoteRequested: (String?) -> Unit,
     onContentReadyForSummarization: suspend (String) -> Unit,
     currentFontFamily: ReaderFont,
     customFontPath: String? = null,
@@ -989,7 +990,19 @@ fun ChapterWebView(
                                     }
                                     customMenuState = null
                                 },
-                                onHighlight = null, // Highlight handles itself above in the Colors Row
+                                onNote = {
+                                    if (state.isExistingHighlight && state.cfi != null) {
+                                        onNoteRequested(state.cfi)
+                                    } else {
+                                        onNoteRequested(null)
+                                        localWebViewRef?.evaluateJavascript(
+                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.id}');", null
+                                        )
+                                    }
+                                    state.finishActionModeCallback()
+                                    customMenuState = null
+                                },
+                                onHighlight = null,
                                 onTts = {
                                     localWebViewRef?.evaluateJavascript(
                                         "javascript:window.TtsBridgeHelper.extractAndRelayTextFromSelection();",

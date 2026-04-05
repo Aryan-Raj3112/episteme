@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
@@ -96,7 +97,8 @@ data class UserHighlight(
     val cfi: String,
     val text: String,
     val color: HighlightColor,
-    val chapterIndex: Int
+    val chapterIndex: Int,
+    val note: String? = null
 )
 
 fun escapeJsString(value: String): String {
@@ -182,6 +184,7 @@ fun saveHighlightsToPrefs(context: Context, bookTitle: String, highlights: List<
             put("text", h.text)
             put("colorId", h.color.id)
             put("chapterIndex", h.chapterIndex)
+            put("note", h.note ?: "")
         }
         jsonArray.put(obj)
     }
@@ -200,13 +203,15 @@ fun loadHighlightsFromPrefs(context: Context, bookTitle: String): List<UserHighl
             val obj = jsonArray.getJSONObject(i)
             val colorId = obj.getString("colorId")
             val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+            val noteStr = obj.optString("note", "")
             list.add(
                 UserHighlight(
                     id = obj.optString("id", UUID.randomUUID().toString()),
                     cfi = obj.getString("cfi"),
                     text = obj.getString("text"),
                     color = color,
-                    chapterIndex = obj.getInt("chapterIndex")
+                    chapterIndex = obj.getInt("chapterIndex"),
+                    note = noteStr.takeIf { it.isNotBlank() }
                 )
             )
         }
@@ -225,13 +230,15 @@ fun parseHighlightsJson(jsonString: String?): List<UserHighlight> {
             val obj = jsonArray.getJSONObject(i)
             val colorId = obj.getString("colorId")
             val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+            val noteStr = obj.optString("note", "")
             list.add(
                 UserHighlight(
-                    id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                    id = obj.optString("id", UUID.randomUUID().toString()),
                     cfi = obj.getString("cfi"),
                     text = obj.getString("text"),
                     color = color,
-                    chapterIndex = obj.getInt("chapterIndex")
+                    chapterIndex = obj.getInt("chapterIndex"),
+                    note = noteStr.takeIf { it.isNotBlank() }
                 )
             )
         }
@@ -250,6 +257,7 @@ fun highlightsToJson(highlights: List<UserHighlight>): String {
             put("text", h.text)
             put("colorId", h.color.id)
             put("chapterIndex", h.chapterIndex)
+            put("note", h.note ?: "")
         }
         jsonArray.put(obj)
     }
@@ -286,6 +294,7 @@ fun processAndAddHighlight(
     var finalEndPath = newEndPath
     var finalEndOffset = newEndOffset
     var finalText = newText
+    var finalNote: String? = null
 
     while (iterator.hasNext()) {
         val existing = iterator.next()
@@ -317,6 +326,7 @@ fun processAndAddHighlight(
 
         if (!isDisjoint) {
             iterator.remove()
+            if (existing.note != null && finalNote == null) finalNote = existing.note
             val unionStartCmp = comparePaths(finalStartPath, exStartPath)
             if (unionStartCmp > 0 || (unionStartCmp == 0 && finalStartOffset > exStartOffset)) {
                 finalStartPath = exStartPath
@@ -335,7 +345,8 @@ fun processAndAddHighlight(
         cfi = "$finalStartPath:$finalStartOffset|$finalEndPath:$finalEndOffset",
         text = finalText,
         color = newColor,
-        chapterIndex = chapterIndex
+        chapterIndex = chapterIndex,
+        note = finalNote
     ))
 }
 
@@ -479,4 +490,83 @@ fun PaletteManagerDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AnnotationBottomSheet(
+    highlight: UserHighlight,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var noteText by remember { mutableStateOf(highlight.note ?: "") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+        ) {
+            // Header with Color
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(16.dp).background(highlight.color.color, CircleShape))
+                Spacer(Modifier.width(8.dp))
+                Text("Highlight & Note", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            }
+            Spacer(Modifier.height(16.dp))
+
+            // Highlighted text snippet
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.padding(12.dp)) {
+                    Box(modifier = Modifier.width(4.dp).height(IntrinsicSize.Min).background(highlight.color.color, RoundedCornerShape(50)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "\"${highlight.text}\"",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                        maxLines = 3,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            // Note TextField
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                placeholder = { Text("Add a note...") },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                maxLines = 5
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text("Delete Highlight")
+                }
+                Button(onClick = { onSave(noteText) }) {
+                    Text("Save Note")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }

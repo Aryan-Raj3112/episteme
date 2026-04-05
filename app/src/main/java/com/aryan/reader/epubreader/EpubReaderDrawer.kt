@@ -29,6 +29,7 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -65,6 +66,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -213,7 +215,8 @@ fun EpubReaderDrawerSheet(
     onNavigateToHighlight: (UserHighlight) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit,
     onRenameBookmark: (Bookmark, String) -> Unit,
-    onDeleteHighlight: (UserHighlight) -> Unit
+    onDeleteHighlight: (UserHighlight) -> Unit,
+    onEditNote: (UserHighlight) -> Unit
 ) {
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
@@ -236,7 +239,7 @@ fun EpubReaderDrawerSheet(
                 Tab(
                     selected = drawerPagerState.currentPage == 2,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(2) } },
-                    text = { Text(stringResource(R.string.tab_highlights)) }
+                    text = { Text("Annotations") }
                 )
             }
 
@@ -267,7 +270,8 @@ fun EpubReaderDrawerSheet(
                         userHighlights = userHighlights,
                         chapters = chapters,
                         onNavigateToHighlight = onNavigateToHighlight,
-                        onDeleteHighlight = onDeleteHighlight
+                        onDeleteHighlight = onDeleteHighlight,
+                        onEditNote = onEditNote
                     )
                 }
             }
@@ -639,12 +643,14 @@ private fun BookmarksList(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun HighlightsList(
     userHighlights: List<UserHighlight>,
     chapters: List<EpubChapter>,
     onNavigateToHighlight: (UserHighlight) -> Unit,
-    onDeleteHighlight: (UserHighlight) -> Unit
+    onDeleteHighlight: (UserHighlight) -> Unit,
+    onEditNote: (UserHighlight) -> Unit // ADDED
 ) {
     if (userHighlights.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -653,76 +659,125 @@ private fun HighlightsList(
     } else {
         var highlightMenuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
         var showHighlightDeleteDialogFor by remember { mutableStateOf<UserHighlight?>(null) }
+        var filterWithNotesOnly by remember { mutableStateOf(false) } // ADDED
 
         val listState = rememberLazyListState()
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 4.dp)
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(
-                    items = userHighlights.sortedBy { it.chapterIndex },
-                    key = { it.id }
-                ) { highlight ->
-                    val chapterTitle = chapters.getOrNull(highlight.chapterIndex)?.title ?: stringResource(R.string.unknown_chapter)
-
-                    ListItem(
-                        headlineContent = {
-                            Text(
-                                text = highlight.text,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        },
-                        supportingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .background(highlight.color.color, CircleShape)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    text = chapterTitle,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        trailingContent = {
-                            Box {
-                                IconButton(onClick = { highlightMenuExpandedFor = highlight }) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = stringResource(R.string.content_desc_options)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = highlightMenuExpandedFor == highlight,
-                                    onDismissRequest = { highlightMenuExpandedFor = null }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_delete)) },
-                                        onClick = {
-                                            showHighlightDeleteDialogFor = highlight
-                                            highlightMenuExpandedFor = null
-                                        }
-                                    )
-                                }
-                            }
-                        },
-                        modifier = Modifier.clickable { onNavigateToHighlight(highlight) }
-                    )
-                    HorizontalDivider()
-                }
+                androidx.compose.material3.FilterChip(
+                    selected = !filterWithNotesOnly,
+                    onClick = { filterWithNotesOnly = false },
+                    label = { Text("All") }
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = filterWithNotesOnly,
+                    onClick = { filterWithNotesOnly = true },
+                    label = { Text("With Notes") }
+                )
             }
 
-            VerticalScrollbar(
-                listState = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            val filteredHighlights = if (filterWithNotesOnly) {
+                userHighlights.filter { !it.note.isNullOrBlank() }
+            } else {
+                userHighlights
+            }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().padding(end = 4.dp)
+                ) {
+                    items(
+                        items = filteredHighlights.sortedBy { it.chapterIndex },
+                        key = { it.id }
+                    ) { highlight ->
+                        val chapterTitle = chapters.getOrNull(highlight.chapterIndex)?.title ?: stringResource(R.string.unknown_chapter)
+
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    text = highlight.text,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            },
+                            supportingContent = {
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .background(highlight.color.color, CircleShape)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = chapterTitle,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (!highlight.note.isNullOrBlank()) {
+                                        Spacer(Modifier.height(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                text = highlight.note,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                                modifier = Modifier.padding(12.dp),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            trailingContent = {
+                                Box {
+                                    IconButton(onClick = { highlightMenuExpandedFor = highlight }) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = stringResource(R.string.content_desc_options)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = highlightMenuExpandedFor == highlight,
+                                        onDismissRequest = { highlightMenuExpandedFor = null }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (highlight.note.isNullOrBlank()) "Add Note" else "Edit Note") },
+                                            onClick = {
+                                                onEditNote(highlight)
+                                                highlightMenuExpandedFor = null
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.action_delete)) },
+                                            onClick = {
+                                                showHighlightDeleteDialogFor = highlight
+                                                highlightMenuExpandedFor = null
+                                            }
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.clickable { onNavigateToHighlight(highlight) }
+                        )
+                        HorizontalDivider()
+                    }
+                }
+
+                VerticalScrollbar(
+                    listState = listState,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
         }
 
         showHighlightDeleteDialogFor?.let { highlightToDelete ->

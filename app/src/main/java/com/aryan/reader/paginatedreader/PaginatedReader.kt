@@ -1,22 +1,3 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
 // PaginatedReader.kt
 package com.aryan.reader.paginatedreader
 
@@ -64,6 +45,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -513,6 +495,7 @@ fun PaginatedReaderScreen(
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onStartTtsFromSelection: (String, Int) -> Unit,
+    onNoteRequested: (String?) -> Unit,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -848,6 +831,7 @@ fun PaginatedReaderScreen(
             onTranslate = onTranslate,
             onSearch = onSearch,
             onStartTtsFromSelection = onStartTtsFromSelection,
+            onNoteRequested = onNoteRequested,
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
@@ -1424,6 +1408,7 @@ internal fun PaginatedReaderContent(
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onStartTtsFromSelection: (String, Int) -> Unit,
+    onNoteRequested: (String?) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
@@ -2571,281 +2556,375 @@ internal fun PaginatedReaderContent(
                 }, onDismissRequest = { state.onHide() }) {
                     PaginatedTextSelectionMenu(
                         onCopy = {
-                            isForDictionary = false
-                            isForHighlight = false
-                            state.onCopy()
-                            state.onHide()
-                        }, onSelectAll = {
-                            state.onSelectAll?.invoke()
-                            state.onHide()
-                        }, onTts = {
-                            isForHighlight = true
-                            state.onCopy()
-                            isForHighlight = false
+                        isForDictionary = false
+                        isForHighlight = false
+                        state.onCopy()
+                        state.onHide()
+                    }, onSelectAll = {
+                        state.onSelectAll?.invoke()
+                        state.onHide()
+                    }, onTts = {
+                        isForHighlight = true
+                        state.onCopy()
+                        isForHighlight = false
 
-                            capturedTextForAction?.let { text ->
-                                val selectionRect = state.rect
-                                var geometricSuccess = false
-                                val candidates = blockLayoutMap.filter { (_, triple) ->
-                                    val (_, coords, _) = triple
-                                    if (!coords.isAttached) return@filter false
-                                    val pos = coords.positionInWindow()
-                                    val size = coords.size.toSize()
-                                    Rect(pos, size).overlaps(selectionRect)
-                                }
-                                if (candidates.isNotEmpty()) {
-                                    try {
-                                        val sorted = candidates.entries.sortedBy { it.value.second.positionInWindow().y }
-                                        val firstEntry = sorted.first()
-                                        val startCfi: String = firstEntry.key
-                                        val startTriple = firstEntry.value
+                        capturedTextForAction?.let { text ->
+                            val selectionRect = state.rect
+                            var geometricSuccess = false
+                            val candidates = blockLayoutMap.filter { (_, triple) ->
+                                val (_, coords, _) = triple
+                                if (!coords.isAttached) return@filter false
+                                val pos = coords.positionInWindow()
+                                val size = coords.size.toSize()
+                                Rect(pos, size).overlaps(selectionRect)
+                            }
+                            if (candidates.isNotEmpty()) {
+                                try {
+                                    val sorted = candidates.entries.sortedBy { it.value.second.positionInWindow().y }
+                                    val firstEntry = sorted.first()
+                                    val startCfi: String = firstEntry.key
+                                    val startTriple = firstEntry.value
 
-                                        val startLayout: TextLayoutResult = startTriple.first
-                                        val startCoords: LayoutCoordinates = startTriple.second
-                                        val startAbsOffset: Int = startTriple.third
+                                    val startLayout: TextLayoutResult = startTriple.first
+                                    val startCoords: LayoutCoordinates = startTriple.second
+                                    val startAbsOffset: Int = startTriple.third
 
-                                        val localStart = startCoords.windowToLocal(selectionRect.topLeft)
-                                        val finalStartOffset = startLayout.getOffsetForPosition(localStart)
-                                        val absStart: Int = finalStartOffset + startAbsOffset
+                                    val localStart = startCoords.windowToLocal(selectionRect.topLeft)
+                                    val finalStartOffset = startLayout.getOffsetForPosition(localStart)
+                                    val absStart: Int = finalStartOffset + startAbsOffset
 
-                                        onStartTtsFromSelection(startCfi, absStart)
-                                        geometricSuccess = true
-                                    } catch(e: Exception) {
-                                        Timber.e(e, "TTS Selection error")
-                                    }
-                                }
-                                if (!geometricSuccess) {
-                                    val pageInfo = onGetPage(pagerState.currentPage)
-                                    val firstCfi = pageInfo?.content?.firstOrNull { it.cfi != null }?.cfi
-                                    if (firstCfi != null) {
-                                        onStartTtsFromSelection(firstCfi, 0)
-                                    }
+                                    onStartTtsFromSelection(startCfi, absStart)
+                                    geometricSuccess = true
+                                } catch(e: Exception) {
+                                    Timber.e(e, "TTS Selection error")
                                 }
                             }
-                            state.onHide()
-                        }, onDictionary = {
-                            isForDictionary = true
-                            state.onCopy()
-                            isForDictionary = false
-                            state.onHide()
-                        }, onTranslate = {
-                            state.onCopy()
-                            onTranslate(capturedTextForAction ?: "")
-                            state.onHide()
-                        }, onSearch = {
-                            onSearch(capturedTextForAction ?: "")
-                            state.onHide()
-                        }, onHighlight = { color ->
-                            Timber.d("Menu: Highlight option clicked. Color: ${color.id}")
-                            isForHighlight = true
-                            state.onCopy()
-                            isForHighlight = false
-
-                            capturedTextForAction?.let { text ->
-                                val selectionRect = state.rect
-                                Timber.d("Menu: Selection Rect: $selectionRect")
-
-                                var geometricSuccess = false
-                                val candidates = blockLayoutMap.filter { (_, triple) ->
-                                    val (_, coords, _) = triple
-                                    if (!coords.isAttached) return@filter false
-                                    val pos = coords.positionInWindow()
-                                    val size = coords.size.toSize()
-                                    val blockRect = Rect(pos, size)
-                                    val overlaps = blockRect.overlaps(selectionRect)
-                                    overlaps
+                            if (!geometricSuccess) {
+                                val pageInfo = onGetPage(pagerState.currentPage)
+                                val firstCfi = pageInfo?.content?.firstOrNull { it.cfi != null }?.cfi
+                                if (firstCfi != null) {
+                                    onStartTtsFromSelection(firstCfi, 0)
                                 }
+                            }
+                        }
+                        state.onHide()
+                    }, onDictionary = {
+                        isForDictionary = true
+                        state.onCopy()
+                        isForDictionary = false
+                        state.onHide()
+                    }, onTranslate = {
+                        state.onCopy()
+                        onTranslate(capturedTextForAction ?: "")
+                        state.onHide()
+                    }, onSearch = {
+                        onSearch(capturedTextForAction ?: "")
+                        state.onHide()
+                    }, onHighlight = { color ->
+                            val handleHighlightAction = { selectedColor: HighlightColor, isNote: Boolean ->
+                                Timber.d("Menu: Highlight option clicked. Color: ${selectedColor.id}")
+                                isForHighlight = true
+                                state.onCopy()
+                                isForHighlight = false
 
-                                if (candidates.isNotEmpty()) {
-                                    Timber.d(
-                                        "Menu: Geometric candidates found: ${candidates.keys}"
-                                    )
-                                    try {
-                                        val sorted = candidates.entries.sortedBy {
-                                            it.value.second.positionInWindow().y
-                                        }
-                                        val (startCfi, startTriple) = sorted.first()
-                                        val (endCfi, endTriple) = sorted.last()
-                                        val (startLayout, startCoords, startAbsOffset) = startTriple
-                                        val (endLayout, endCoords, endAbsOffset) = endTriple
-                                        val localStart =
-                                            startCoords.windowToLocal(selectionRect.topLeft)
-                                        val localEnd = endCoords.windowToLocal(
-                                            selectionRect.bottomRight
-                                        )
-                                        var finalStartOffset =
-                                            startLayout.getOffsetForPosition(localStart)
-                                        var finalEndOffset = endLayout.getOffsetForPosition(localEnd)
-                                        var finalEndCfi = endCfi
-                                        val startText = startLayout.layoutInput.text.text
+                                capturedTextForAction?.let { text ->
+                                    val selectionRect = state.rect
+                                    var geometricSuccess = false
+                                    val candidates = blockLayoutMap.filter { (_, triple) ->
+                                        val (_, coords, _) = triple
+                                        if (!coords.isAttached) return@filter false
+                                        val pos = coords.positionInWindow()
+                                        val size = coords.size.toSize()
+                                        val blockRect = Rect(pos, size)
+                                        blockRect.overlaps(selectionRect)
+                                    }
 
-                                        if (startCfi == endCfi) {
-                                            val matches = mutableListOf<Int>()
-                                            var idx = startText.indexOf(text)
-                                            while (idx != -1) {
-                                                matches.add(idx)
-                                                idx = startText.indexOf(text, idx + 1)
-                                            }
-                                            if (matches.isNotEmpty()) {
-                                                val bestMatch = matches.minBy {
-                                                    abs(it - finalStartOffset)
-                                                }
-                                                finalStartOffset = bestMatch
-                                                finalEndOffset = bestMatch + text.length
-                                                Timber.d(
-                                                    "Refined Single-Block Offset: $finalStartOffset"
-                                                )
-                                            }
-                                        } else {
-                                            val endText = endLayout.layoutInput.text.text
+                                    if (candidates.isNotEmpty()) {
+                                        try {
+                                            val sorted = candidates.entries.sortedBy { it.value.second.positionInWindow().y }
+                                            val (startCfi, startTriple) = sorted.first()
+                                            val (endCfi, endTriple) = sorted.last()
+                                            val (startLayout, startCoords, startAbsOffset) = startTriple
+                                            val (endLayout, endCoords, endAbsOffset) = endTriple
+                                            val localStart = startCoords.windowToLocal(selectionRect.topLeft)
+                                            val localEnd = endCoords.windowToLocal(selectionRect.bottomRight)
+                                            var finalStartOffset = startLayout.getOffsetForPosition(localStart)
+                                            var finalEndOffset = endLayout.getOffsetForPosition(localEnd)
+                                            var finalEndCfi = endCfi
+                                            val startText = startLayout.layoutInput.text.text
 
-                                            fun findBestMatch(
-                                                source: String,
-                                                query: String,
-                                                targetOffset: Int,
-                                                isSuffix: Boolean
-                                            ): Int {
-                                                if (query.isEmpty()) return -1
-                                                var bestIdx = -1
-                                                var minDiff = Int.MAX_VALUE
-                                                var idx = source.indexOf(query)
+                                            if (startCfi == endCfi) {
+                                                val matches = mutableListOf<Int>()
+                                                var idx = startText.indexOf(text)
                                                 while (idx != -1) {
-                                                    val cmpPoint = if (isSuffix) idx + query.length
-                                                    else idx
-                                                    val diff = abs(cmpPoint - targetOffset)
-                                                    if (diff < minDiff) {
-                                                        minDiff = diff
-                                                        bestIdx = idx
-                                                    }
-                                                    idx = source.indexOf(query, idx + 1)
+                                                    matches.add(idx)
+                                                    idx = startText.indexOf(text, idx + 1)
                                                 }
-                                                return bestIdx
-                                            }
-
-                                            var sMatch = -1
-                                            var eMatch = -1
-                                            var usedSuffixLen = 0
-
-                                            val maxChunk = minOf(text.length, 50)
-                                            for (len in maxChunk downTo 3) {
-                                                val prefix = text.take(len).trim()
-                                                if (prefix.isNotEmpty()) {
-                                                    val idx = findBestMatch(
-                                                        startText,
-                                                        prefix,
-                                                        finalStartOffset,
-                                                        isSuffix = false
-                                                    )
-                                                    if (idx != -1) {
-                                                        sMatch = idx
-                                                        Timber.d(
-                                                            "Refined Start: Found prefix '$prefix' at $idx"
-                                                        )
-                                                        break
-                                                    }
+                                                if (matches.isNotEmpty()) {
+                                                    val bestMatch = matches.minBy { abs(it - finalStartOffset) }
+                                                    finalStartOffset = bestMatch
+                                                    finalEndOffset = bestMatch + text.length
                                                 }
-                                            }
+                                            } else {
+                                                val endText = endLayout.layoutInput.text.text
 
-                                            for (len in maxChunk downTo 3) {
-                                                val suffix = text.takeLast(len).trim()
-                                                if (suffix.isNotEmpty()) {
-                                                    val idx = findBestMatch(
-                                                        endText,
-                                                        suffix,
-                                                        finalEndOffset,
-                                                        isSuffix = true
-                                                    )
-                                                    if (idx != -1) {
-                                                        eMatch = idx
-                                                        usedSuffixLen = suffix.length
-                                                        Timber.d(
-                                                            "Refined End: Found suffix '$suffix' at $idx"
-                                                        )
-                                                        break
+                                                fun findBestMatch(source: String, query: String, targetOffset: Int, isSuffix: Boolean): Int {
+                                                    if (query.isEmpty()) return -1
+                                                    var bestIdx = -1
+                                                    var minDiff = Int.MAX_VALUE
+                                                    var idx = source.indexOf(query)
+                                                    while (idx != -1) {
+                                                        val cmpPoint = if (isSuffix) idx + query.length else idx
+                                                        val diff = abs(cmpPoint - targetOffset)
+                                                        if (diff < minDiff) {
+                                                            minDiff = diff
+                                                            bestIdx = idx
+                                                        }
+                                                        idx = source.indexOf(query, idx + 1)
+                                                    }
+                                                    return bestIdx
+                                                }
+
+                                                var sMatch = -1
+                                                var eMatch = -1
+                                                var usedSuffixLen = 0
+
+                                                val maxChunk = minOf(text.length, 50)
+                                                for (len in maxChunk downTo 3) {
+                                                    val prefix = text.take(len).trim()
+                                                    if (prefix.isNotEmpty()) {
+                                                        val idx = findBestMatch(startText, prefix, finalStartOffset, isSuffix = false)
+                                                        if (idx != -1) { sMatch = idx; break }
                                                     }
                                                 }
+                                                for (len in maxChunk downTo 3) {
+                                                    val suffix = text.takeLast(len).trim()
+                                                    if (suffix.isNotEmpty()) {
+                                                        val idx = findBestMatch(endText, suffix, finalEndOffset, isSuffix = true)
+                                                        if (idx != -1) { eMatch = idx; usedSuffixLen = suffix.length; break }
+                                                    }
+                                                }
+
+                                                if (sMatch != -1 && eMatch != -1) {
+                                                    finalStartOffset = sMatch
+                                                    finalEndOffset = eMatch + usedSuffixLen
+                                                } else if (eMatch == -1) {
+                                                    val fitIdx = startText.indexOf(text)
+                                                    if (fitIdx != -1) {
+                                                        finalEndCfi = startCfi
+                                                        finalStartOffset = fitIdx
+                                                        finalEndOffset = fitIdx + text.length
+                                                    }
+                                                }
                                             }
 
-                                            if (sMatch != -1 && eMatch != -1) {
-                                                finalStartOffset = sMatch
-                                                finalEndOffset = eMatch + usedSuffixLen
-                                            } else if (eMatch == -1) {
-                                                Timber.d(
-                                                    "Refined: Suffix not found in end block. Checking single block fit."
-                                                )
-                                                val fitIdx = startText.indexOf(text)
-                                                if (fitIdx != -1) {
-                                                    finalEndCfi = startCfi
-                                                    finalStartOffset = fitIdx
-                                                    finalEndOffset = fitIdx + text.length
-                                                }
+                                            val absStart = finalStartOffset + startAbsOffset
+                                            val absEnd = finalEndOffset + if (startCfi == finalEndCfi) startAbsOffset else endAbsOffset
+
+                                            val rangeCfi = if (startCfi == finalEndCfi) {
+                                                val actualStart = minOf(absStart, absEnd)
+                                                val actualEnd = maxOf(absStart, absEnd).coerceAtLeast(actualStart + 1)
+                                                "$startCfi:$actualStart|$finalEndCfi:$actualEnd"
+                                            } else {
+                                                "$startCfi:$absStart|$finalEndCfi:$absEnd"
+                                            }
+
+                                            if (isNote) onNoteRequested(null)
+                                            onHighlightCreated(rangeCfi, text, selectedColor.id)
+                                            geometricSuccess = true
+                                        } catch (e: Exception) {
+                                            Timber.e(e, "Menu: Geometric calculation failed.")
+                                        }
+                                    }
+
+                                    if (!geometricSuccess) {
+                                        val pageContent = onGetPage(pagerState.currentPage)
+                                        val textBlocks = pageContent?.content?.filterIsInstance<TextContentBlock>()?.filter { it.cfi != null } ?: emptyList()
+
+                                        var startBlock: TextContentBlock? = null
+                                        var endBlock: TextContentBlock? = null
+                                        var startOffsetRel = -1
+                                        var endOffsetRel = -1
+
+                                        for (block in textBlocks) {
+                                            val content = block.content.text
+                                            val idx = content.indexOf(text)
+                                            if (idx != -1) {
+                                                startBlock = block
+                                                endBlock = block
+                                                startOffsetRel = idx
+                                                endOffsetRel = idx + text.length
+                                                break
                                             }
                                         }
+                                        endBlock = startBlock
 
-                                        val absStart = finalStartOffset + startAbsOffset
-                                        val absEnd =
-                                            finalEndOffset + if (startCfi == finalEndCfi) startAbsOffset
-                                            else endAbsOffset
+                                        if (startBlock != null) {
+                                            val startAbs = startBlock.startCharOffsetInSource + startOffsetRel
+                                            val endAbs = endBlock.startCharOffsetInSource + (if (endOffsetRel != -1) endOffsetRel else startOffsetRel + text.length)
+                                            val rangeCfi = "${startBlock.cfi}:$startAbs|${endBlock.cfi}:$endAbs"
 
-                                        val rangeCfi = if (startCfi == finalEndCfi) {
-                                            val actualStart = minOf(absStart, absEnd)
-                                            val actualEnd = maxOf(absStart, absEnd).coerceAtLeast(
-                                                actualStart + 1
-                                            )
-                                            "$startCfi:$actualStart|$finalEndCfi:$actualEnd"
-                                        } else {
-                                            "$startCfi:$absStart|$finalEndCfi:$absEnd"
+                                            if (isNote) onNoteRequested(null)
+                                            onHighlightCreated(rangeCfi, text, selectedColor.id)
                                         }
-
-                                        Timber.d("Menu: Geometric Success. CFI: $rangeCfi")
-                                        onHighlightCreated(rangeCfi, text, color.id)
-                                        geometricSuccess = true
-                                    } catch (e: Exception) {
-                                        Timber.e(e, "Menu: Geometric calculation failed.")
                                     }
                                 }
-
-                                if (!geometricSuccess) {
-                                    Timber.w("Menu: Falling back to text search.")
-                                    val pageContent = onGetPage(pagerState.currentPage)
-                                    val textBlocks =
-                                        pageContent?.content?.filterIsInstance<TextContentBlock>()
-                                            ?.filter { it.cfi != null } ?: emptyList()
-
-                                    var startBlock: TextContentBlock? = null
-                                    var endBlock: TextContentBlock? = null
-                                    var startOffsetRel = -1
-                                    var endOffsetRel = -1
-
-                                    for (block in textBlocks) {
-                                        val content = block.content.text
-                                        val idx = content.indexOf(text)
-                                        if (idx != -1) {
-                                            startBlock = block
-                                            endBlock = block
-                                            startOffsetRel = idx
-                                            endOffsetRel = idx + text.length
-                                            break
-                                        }
-                                    }
-
-                                    endBlock = startBlock
-
-                                    if (startBlock != null) {
-                                        val startAbs =
-                                            startBlock.startCharOffsetInSource + startOffsetRel
-                                        val endAbs =
-                                            endBlock.startCharOffsetInSource + (if (endOffsetRel != -1) endOffsetRel
-                                            else startOffsetRel + text.length)
-                                        onHighlightCreated(
-                                            "${startBlock.cfi}:$startAbs|${endBlock.cfi}:$endAbs",
-                                            text,
-                                            color.id
-                                        )
-                                    }
-                                }
+                                state.onHide()
                             }
-                            state.onHide()
+                            handleHighlightAction(color, false)
+                        },
+                        onNote = {
+                            // Note: triggers a yellow highlight by default, then asks for note text
+                            val handleHighlightAction = { selectedColor: HighlightColor, isNote: Boolean ->
+                                isForHighlight = true
+                                state.onCopy()
+                                isForHighlight = false
+
+                                capturedTextForAction?.let { text ->
+                                    val selectionRect = state.rect
+                                    var geometricSuccess = false
+                                    val candidates = blockLayoutMap.filter { (_, triple) ->
+                                        val (_, coords, _) = triple
+                                        if (!coords.isAttached) return@filter false
+                                        val pos = coords.positionInWindow()
+                                        val size = coords.size.toSize()
+                                        val blockRect = Rect(pos, size)
+                                        blockRect.overlaps(selectionRect)
+                                    }
+
+                                    if (candidates.isNotEmpty()) {
+                                        try {
+                                            val sorted = candidates.entries.sortedBy { it.value.second.positionInWindow().y }
+                                            val (startCfi, startTriple) = sorted.first()
+                                            val (endCfi, endTriple) = sorted.last()
+                                            val (startLayout, startCoords, startAbsOffset) = startTriple
+                                            val (endLayout, endCoords, endAbsOffset) = endTriple
+                                            val localStart = startCoords.windowToLocal(selectionRect.topLeft)
+                                            val localEnd = endCoords.windowToLocal(selectionRect.bottomRight)
+                                            var finalStartOffset = startLayout.getOffsetForPosition(localStart)
+                                            var finalEndOffset = endLayout.getOffsetForPosition(localEnd)
+                                            var finalEndCfi = endCfi
+                                            val startText = startLayout.layoutInput.text.text
+
+                                            if (startCfi == endCfi) {
+                                                val matches = mutableListOf<Int>()
+                                                var idx = startText.indexOf(text)
+                                                while (idx != -1) {
+                                                    matches.add(idx)
+                                                    idx = startText.indexOf(text, idx + 1)
+                                                }
+                                                if (matches.isNotEmpty()) {
+                                                    val bestMatch = matches.minBy { abs(it - finalStartOffset) }
+                                                    finalStartOffset = bestMatch
+                                                    finalEndOffset = bestMatch + text.length
+                                                }
+                                            } else {
+                                                val endText = endLayout.layoutInput.text.text
+
+                                                fun findBestMatch(source: String, query: String, targetOffset: Int, isSuffix: Boolean): Int {
+                                                    if (query.isEmpty()) return -1
+                                                    var bestIdx = -1
+                                                    var minDiff = Int.MAX_VALUE
+                                                    var idx = source.indexOf(query)
+                                                    while (idx != -1) {
+                                                        val cmpPoint = if (isSuffix) idx + query.length else idx
+                                                        val diff = abs(cmpPoint - targetOffset)
+                                                        if (diff < minDiff) {
+                                                            minDiff = diff
+                                                            bestIdx = idx
+                                                        }
+                                                        idx = source.indexOf(query, idx + 1)
+                                                    }
+                                                    return bestIdx
+                                                }
+
+                                                var sMatch = -1
+                                                var eMatch = -1
+                                                var usedSuffixLen = 0
+
+                                                val maxChunk = minOf(text.length, 50)
+                                                for (len in maxChunk downTo 3) {
+                                                    val prefix = text.take(len).trim()
+                                                    if (prefix.isNotEmpty()) {
+                                                        val idx = findBestMatch(startText, prefix, finalStartOffset, isSuffix = false)
+                                                        if (idx != -1) { sMatch = idx; break }
+                                                    }
+                                                }
+                                                for (len in maxChunk downTo 3) {
+                                                    val suffix = text.takeLast(len).trim()
+                                                    if (suffix.isNotEmpty()) {
+                                                        val idx = findBestMatch(endText, suffix, finalEndOffset, isSuffix = true)
+                                                        if (idx != -1) { eMatch = idx; usedSuffixLen = suffix.length; break }
+                                                    }
+                                                }
+
+                                                if (sMatch != -1 && eMatch != -1) {
+                                                    finalStartOffset = sMatch
+                                                    finalEndOffset = eMatch + usedSuffixLen
+                                                } else if (eMatch == -1) {
+                                                    val fitIdx = startText.indexOf(text)
+                                                    if (fitIdx != -1) {
+                                                        finalEndCfi = startCfi
+                                                        finalStartOffset = fitIdx
+                                                        finalEndOffset = fitIdx + text.length
+                                                    }
+                                                }
+                                            }
+
+                                            val absStart = finalStartOffset + startAbsOffset
+                                            val absEnd = finalEndOffset + if (startCfi == finalEndCfi) startAbsOffset else endAbsOffset
+
+                                            val rangeCfi = if (startCfi == finalEndCfi) {
+                                                val actualStart = minOf(absStart, absEnd)
+                                                val actualEnd = maxOf(absStart, absEnd).coerceAtLeast(actualStart + 1)
+                                                "$startCfi:$actualStart|$finalEndCfi:$actualEnd"
+                                            } else {
+                                                "$startCfi:$absStart|$finalEndCfi:$absEnd"
+                                            }
+
+                                            if (isNote) onNoteRequested(null)
+                                            onHighlightCreated(rangeCfi, text, selectedColor.id)
+                                            geometricSuccess = true
+                                        } catch (e: Exception) {
+                                            Timber.e(e, "Menu: Geometric calculation failed.")
+                                        }
+                                    }
+
+                                    if (!geometricSuccess) {
+                                        val pageContent = onGetPage(pagerState.currentPage)
+                                        val textBlocks = pageContent?.content?.filterIsInstance<TextContentBlock>()?.filter { it.cfi != null } ?: emptyList()
+
+                                        var startBlock: TextContentBlock? = null
+                                        var endBlock: TextContentBlock? = null
+                                        var startOffsetRel = -1
+                                        var endOffsetRel = -1
+
+                                        for (block in textBlocks) {
+                                            val content = block.content.text
+                                            val idx = content.indexOf(text)
+                                            if (idx != -1) {
+                                                startBlock = block
+                                                endBlock = block
+                                                startOffsetRel = idx
+                                                endOffsetRel = idx + text.length
+                                                break
+                                            }
+                                        }
+                                        endBlock = startBlock
+
+                                        if (startBlock != null) {
+                                            val startAbs = startBlock.startCharOffsetInSource + startOffsetRel
+                                            val endAbs = endBlock.startCharOffsetInSource + (if (endOffsetRel != -1) endOffsetRel else startOffsetRel + text.length)
+                                            val rangeCfi = "${startBlock.cfi}:$startAbs|${endBlock.cfi}:$endAbs"
+
+                                            if (isNote) onNoteRequested(null)
+                                            onHighlightCreated(rangeCfi, text, selectedColor.id)
+                                        }
+                                    }
+                                }
+                                state.onHide()
+                            }
+                            handleHighlightAction(HighlightColor.YELLOW, true)
                         }, onDelete = null, isProUser = isProUser, isOss = isOss,
                         activeHighlightPalette = activeHighlightPalette,
                         onOpenPaletteManager = { showPaletteManager = true }
@@ -2860,36 +2939,42 @@ internal fun PaginatedReaderContent(
                 }, onDismissRequest = { activeSelection = null }) {
                     PaginatedTextSelectionMenu(
                         onCopy = {
-                            val clipboardManager =
-                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Copied Text", sel.text)
-                            clipboardManager.setPrimaryClip(clip)
-                            activeSelection = null
-                        }, onSelectAll = null, onDictionary = {
-                            if (isProUser || countWords(sel.text) <= 1) {
-                                onWordSelectedForAiDefinition(sel.text)
-                            } else {
-                                onShowDictionaryUpsellDialog()
-                            }
-                            activeSelection = null
-                        }, onTranslate = {
-                            onTranslate(sel.text)
-                            activeSelection = null
-                        }, onSearch = {
-                            onSearch(sel.text)
-                            activeSelection = null
-                        }, onTts = {
-                            onStartTtsFromSelection(sel.baseCfi, sel.startOffset)
-                            activeSelection = null
-                        }, onHighlight = { color ->
-                            Timber.d(
-                                "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
-                            )
-                            val finalCfi = if (sel.startOffset > 0) "${sel.baseCfi}:${sel.startOffset}"
-                            else sel.baseCfi
-                            onHighlightCreated(finalCfi, sel.text, color.id)
-                            activeSelection = null
-                        }, onDelete = null, isProUser = isProUser, isOss = isOss,
+                        val clipboardManager =
+                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Copied Text", sel.text)
+                        clipboardManager.setPrimaryClip(clip)
+                        activeSelection = null
+                    }, onSelectAll = null, onDictionary = {
+                        if (isProUser || countWords(sel.text) <= 1) {
+                            onWordSelectedForAiDefinition(sel.text)
+                        } else {
+                            onShowDictionaryUpsellDialog()
+                        }
+                        activeSelection = null
+                    }, onTranslate = {
+                        onTranslate(sel.text)
+                        activeSelection = null
+                    }, onSearch = {
+                        onSearch(sel.text)
+                        activeSelection = null
+                    }, onTts = {
+                        onStartTtsFromSelection(sel.baseCfi, sel.startOffset)
+                        activeSelection = null
+                    }, onHighlight = { color ->
+                        Timber.d(
+                            "CustomSelection: Highlight clicked. Text: '${sel.text}', BaseCFI: ${sel.baseCfi}, StartOffset: ${sel.startOffset}"
+                        )
+                        val finalCfi = if (sel.startOffset > 0) "${sel.baseCfi}:${sel.startOffset}"
+                        else sel.baseCfi
+                        onHighlightCreated(finalCfi, sel.text, color.id)
+                        activeSelection = null
+                    }, onNote = {
+                        onNoteRequested(null)
+                        val finalCfi = if (sel.startOffset > 0) "${sel.baseCfi}:${sel.startOffset}" else sel.baseCfi
+                        onHighlightCreated(finalCfi, sel.text, HighlightColor.YELLOW.id)
+                        activeSelection = null
+                    },
+                        onDelete = null, isProUser = isProUser, isOss = isOss,
                         activeHighlightPalette = activeHighlightPalette,
                         onOpenPaletteManager = { showPaletteManager = true }
                     )
@@ -2966,6 +3051,10 @@ internal fun PaginatedReaderContent(
                             Timber.d("Menu: Updating highlight color to ${color.id}")
                             onHighlightDeleted(highlight.cfi)
                             onHighlightCreated(highlight.cfi, highlight.text, color.id)
+                            activeHighlightForMenu = null
+                        },
+                        onNote = {
+                            onNoteRequested(highlight.cfi)
                             activeHighlightForMenu = null
                         },
                         onDelete = {
@@ -3050,6 +3139,7 @@ fun PaginatedTextSelectionMenu(
     onTranslate: () -> Unit,
     onSearch: () -> Unit,
     onHighlight: ((HighlightColor) -> Unit)?,
+    onNote: (() -> Unit)? = null,
     onDelete: (() -> Unit)?,
     onTts: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
@@ -3102,6 +3192,10 @@ fun PaginatedTextSelectionMenu(
             actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = onDictionary))
             actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = onTranslate))
             actions.add(MenuActionItem(iconRes = R.drawable.search, label = "Search", onClick = onSearch))
+
+            if (onNote != null) {
+                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = "Note", onClick = onNote))
+            }
 
             if (onSelectAll != null) {
                 actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = onSelectAll))

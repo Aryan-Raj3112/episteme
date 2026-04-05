@@ -477,6 +477,9 @@ fun EpubReaderHost(
     var sliderStartPage by remember { mutableIntStateOf(0) }
     var startPageThumbnail by remember { mutableStateOf<Bitmap?>(null) }
 
+    var pendingNoteForNewHighlight by remember { mutableStateOf(false) }
+    var highlightToNoteCfi by remember { mutableStateOf<String?>(null) }
+
     var showJustifyWarningDialog by remember { mutableStateOf(false) }
     var isNavigatingByToc by remember { mutableStateOf(false) }
 
@@ -1956,7 +1959,10 @@ fun EpubReaderHost(
                             webViewRefForTts?.evaluateJavascript(jsCommand, null)
                         }
                     }
-                }
+                },
+                onEditNote = { highlight ->
+                    highlightToNoteCfi = highlight.cfi
+                },
             )
         }
     ) {
@@ -2253,6 +2259,17 @@ fun EpubReaderHost(
                                                     )
                                                     userHighlights.add(highlight)
                                                     Timber.d("Kotlin: Added new highlight")
+                                                }
+                                                if (pendingNoteForNewHighlight) {
+                                                    pendingNoteForNewHighlight = false
+                                                    highlightToNoteCfi = cfi
+                                                }
+                                            },
+                                            onNoteRequested = { cfi ->
+                                                if (cfi != null) {
+                                                    highlightToNoteCfi = cfi
+                                                } else {
+                                                    pendingNoteForNewHighlight = true
                                                 }
                                             },
                                             onHighlightDeleted = { cfi ->
@@ -2903,6 +2920,17 @@ fun EpubReaderHost(
                                         chapterIndex = currentChapterInPaginatedMode ?: 0,
                                         currentList = userHighlights
                                     )
+                                    if (pendingNoteForNewHighlight) {
+                                        pendingNoteForNewHighlight = false
+                                        highlightToNoteCfi = cfi
+                                    }
+                                },
+                                onNoteRequested = { cfi ->
+                                    if (cfi != null) {
+                                        highlightToNoteCfi = cfi
+                                    } else {
+                                        pendingNoteForNewHighlight = true
+                                    }
                                 },
                                 onHighlightDeleted = { cfi ->
                                     val toRemove = userHighlights.find { it.cfi == cfi }
@@ -3933,6 +3961,40 @@ fun EpubReaderHost(
                         }
                     }
                 }
+
+                if (highlightToNoteCfi != null) {
+                    val targetHighlight = userHighlights.find {
+                        it.cfi == highlightToNoteCfi || (highlightToNoteCfi != null && it.cfi.contains(highlightToNoteCfi!!))
+                    }
+                    if (targetHighlight != null) {
+                        AnnotationBottomSheet(
+                            highlight = targetHighlight,
+                            onDismiss = { highlightToNoteCfi = null },
+                            onSave = { noteText ->
+                                val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+                                if (index != -1) {
+                                    userHighlights[index] = targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                                }
+                                highlightToNoteCfi = null
+                            },
+                            onDelete = {
+                                val highlightToDelete = targetHighlight
+                                userHighlights.remove(highlightToDelete)
+
+                                if (currentRenderMode == RenderMode.VERTICAL_SCROLL && highlightToDelete.chapterIndex == currentChapterIndex) {
+                                    val cssClass = highlightToDelete.color.cssClass
+                                    val cfiParts = highlightToDelete.cfi.split("|")
+                                    cfiParts.forEach { partCfi ->
+                                        val jsCommand = "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClass');"
+                                        webViewRefForTts?.evaluateJavascript(jsCommand, null)
+                                    }
+                                }
+                                highlightToNoteCfi = null
+                            }
+                        )
+                    }
+                }
+
                 CustomTopBanner(bannerMessage = bannerMessage)
             }
         }
