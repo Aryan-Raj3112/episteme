@@ -380,4 +380,84 @@
     <string name="error_cloud_sync_failed_deleted_locally">Cloud sync failed, deleted locally.</string>
     <string name="banner_books_removed_library">%1$d book(s) removed from library.</string>
     <string name="banner_reflow_cache_cleared">Reflow cache &amp; generated text views cleared.</string>
+
+    <!-- Common.kt: SearchTopBar & SearchNavigationControls -->
+    <string name="search_in_book">Search in book…</string>
+    <string name="content_desc_close_search">Close Search</string>
+    <string name="content_desc_clear_search">Clear Search</string>
+    <string name="content_desc_hide_results">Hide Results</string>
+    <string name="content_desc_show_results">Show Results</string>
+    <string name="content_desc_prev_result">Previous Search Result</string>
+    <string name="content_desc_next_result">Next Search Result</string>
+    <string name="search_no_results_simple">No results found.</string>
+
+    <!-- Common.kt: SummarizationPopup -->
+    <string name="generating_summary">Generating summary…</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_read_aloud">Read aloud</string>
+    <string name="action_copy">Copy</string>
+    <string name="no_summary_generated">No summary could be generated.</string>
+
+    <!-- Common.kt: AiDefinitionPopup -->
+    <string name="ai_thinking">Thinking…</string>
+    <string name="content_desc_open_dictionary">Open in Dictionary App</string>
+    <string name="ai_no_definition">AI could not provide a definition.</string>
+    <string name="ai_asking_about">Asking AI about \'%1$s\'…</string>
+
+    <!-- Common.kt: TtsSettingsSheet -->
+    <string name="tts_settings">Text-to-Speech Settings</string>
+    <string name="tts_stop_to_change_settings">Please stop playback to change settings.</string>
+    <string name="tts_synthesis_mode">Synthesis Mode</string>
+    <string name="tts_mode_on_device">On-Device</string>
+    <string name="tts_mode_cloud_hq">Cloud (HQ)</string>
+    <string name="tts_voice_selection">Voice Selection</string>
+    <string name="tts_play_sample">Play Sample</string>
+
+    <!-- Common.kt: DeviceVoiceSettingsSheet -->
+    <string name="tts_device_voice_settings">On-Device Voice Settings</string>
+    <string name="content_desc_close_settings">Close Settings</string>
+    <string name="tts_system_default">System Default</string>
+    <string name="tts_system_default_desc">Matches your Android system settings</string>
+    <string name="content_desc_selected">Selected</string>
+    <string name="tts_loading_voices">Loading voices…</string>
+    <string name="tts_no_voices">No voices available on this device.</string>
+    <string name="tts_specific_voices">Specific Voices</string>
+    <string name="tts_available_voices_count">Available Voices (%1$d)</string>
+    <string name="tts_no_voices_for_language">No voices found for this language.</string>
+    <string name="tts_voice_variant">Variant: %1$s</string>
+    <string name="tts_voice_sample_text">This is a sample of %1$s.</string>
+
+    <!-- Common.kt: ReaderThemePanel & ThemeBuilderView -->
+    <string name="reading_themes">Reading Themes</string>
+    <string name="theme_presets">Presets</string>
+    <string name="theme_my_themes">My Themes</string>
+    <string name="theme_no_custom">No custom themes yet. Tap \'+\' to create one.</string>
+    <string name="theme_new">New Theme</string>
+    <string name="theme_edit">Edit Theme</string>
+    <string name="theme_name">Theme Name</string>
+    <string name="theme_preview_quote">So many books, so little time.</string>
+    <string name="theme_preview_author">- Frank Zappa</string>
+    <string name="theme_low_contrast_warning">⚠️ Low contrast! This might cause eye strain.</string>
+    <string name="theme_page_color">Page Color</string>
+    <string name="theme_text_color">Text Color</string>
+    <string name="theme_color_live_preview">Live Preview</string>
+    <string name="theme_color_preview_text">Reading is dreaming.</string>
+    <string name="theme_color_hex">Hex</string>
+
+    <!-- Common.kt: RGB Inputs -->
+    <string name="color_r">R</string>
+    <string name="color_g">G</string>
+    <string name="color_b">B</string>
+
+    <!-- Common.kt: fetchAiDefinition -->
+    <string name="error_text_empty">Text is empty.</string>
+    <string name="error_ai_empty_definition">AI returned an empty definition.</string>
+    <string name="error_could_not_get_definition">Could not get definition.</string>
+    <string name="error_unknown_server">An unknown server error occurred.</string>
+    <string name="error_network_check_connection">Network error. Check connection.</string>
+
+    <!-- Common.kt: fetchRecap -->
+    <string name="error_not_enough_context">Not enough context for a recap.</string>
+    <string name="error_parse_recap">Failed to parse recap.</string>
+    <string name="error_network_recap">Network error during recap generation.</string>
 </resources>

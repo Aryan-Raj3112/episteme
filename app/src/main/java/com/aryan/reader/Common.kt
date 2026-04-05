@@ -1,5 +1,5 @@
 // Common.kt
-@file:kotlin.OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class)
 
 package com.aryan.reader
 
@@ -389,14 +389,14 @@ fun SearchTopBar(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Close Search"
+                    contentDescription = stringResource(R.string.content_desc_close_search)
                 )
             }
 
             TextField(
                 value = searchState.searchQuery,
                 onValueChange = { searchState.onQueryChange(it) },
-                placeholder = { Text("Search in book...") },
+                placeholder = { Text(stringResource(R.string.search_in_book)) },
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focusRequester)
@@ -425,7 +425,7 @@ fun SearchTopBar(
                 ) {
                     Icon(
                         Icons.Default.Close,
-                        contentDescription = "Clear Search"
+                        contentDescription = stringResource(R.string.content_desc_clear_search)
                     )
                 }
             }
@@ -446,7 +446,10 @@ fun SearchTopBar(
             ) {
                 Icon(
                     imageVector = if (searchState.showSearchResultsPanel) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                    contentDescription = if (searchState.showSearchResultsPanel) "Hide Results" else "Show Results"
+                    contentDescription = stringResource(
+                        if (searchState.showSearchResultsPanel) R.string.content_desc_hide_results
+                        else R.string.content_desc_show_results
+                    )
                 )
             }
         }
@@ -474,7 +477,7 @@ fun SearchNavigationControls(
                 onClick = { onNavigate(searchState.currentSearchResultIndex - 1) },
                 enabled = searchState.currentSearchResultIndex > 0
             ) {
-                Icon(Icons.Default.ArrowDropUp, contentDescription = "Previous Search Result")
+                Icon(Icons.Default.ArrowDropUp, contentDescription = stringResource(R.string.content_desc_prev_result))
             }
 
             Text(
@@ -489,7 +492,7 @@ fun SearchNavigationControls(
                 onClick = { onNavigate(searchState.currentSearchResultIndex + 1) },
                 enabled = searchState.currentSearchResultIndex < searchState.searchResultsCount - 1
             ) {
-                Icon(Icons.Default.ArrowDropDown, contentDescription = "Next Search Result")
+                Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.content_desc_next_result))
             }
         }
     }
@@ -549,7 +552,7 @@ fun SummarizationPopup(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         CircularProgressIndicator()
-                        Text("Generating summary...", modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.generating_summary), modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
                     }
                 } else if (result != null) {
                     val summaryText = result.summary
@@ -596,7 +599,7 @@ fun SummarizationPopup(
                             ) {
                                 Icon(
                                     imageVector = if (isTtsSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                    contentDescription = if (isTtsSessionActive) "Stop" else "Read aloud"
+                                    contentDescription = stringResource(if (isTtsSessionActive) R.string.action_stop else R.string.action_read_aloud)
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
@@ -605,7 +608,7 @@ fun SummarizationPopup(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy"
+                                    contentDescription = stringResource(R.string.action_copy)
                                 )
                             }
                         }
@@ -656,7 +659,7 @@ fun SummarizationPopup(
                             onTextLayout = { textLayoutResult = it }
                         )
                     } else {
-                        Text("No summary could be generated.", style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.no_summary_generated), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
@@ -711,7 +714,7 @@ fun AiDefinitionPopup(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         CircularProgressIndicator()
-                        Text("Thinking...", modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.ai_thinking), modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
                     }
                 } else if (result != null) {
                     word?.let {
@@ -771,7 +774,7 @@ fun AiDefinitionPopup(
                             ) {
                                 Icon(
                                     imageVector = if (isTtsSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                    contentDescription = if (isTtsSessionActive) "Stop" else "Read aloud"
+                                    contentDescription = stringResource(if (isTtsSessionActive) R.string.action_stop else R.string.action_read_aloud)
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
@@ -780,14 +783,14 @@ fun AiDefinitionPopup(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy"
+                                    contentDescription = stringResource(R.string.action_copy)
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
                             IconButton(onClick = onOpenExternalDictionary) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.dictionary),
-                                    contentDescription = "Open in Dictionary App"
+                                    contentDescription = stringResource(R.string.content_desc_open_dictionary)
                                 )
                             }
                         }
@@ -839,11 +842,11 @@ fun AiDefinitionPopup(
                             onTextLayout = { textLayoutResult = it }
                         )
                     } else {
-                        Text("AI could not provide a definition.", style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.ai_no_definition), style = MaterialTheme.typography.bodyLarge)
                     }
                 } else if (word != null) {
                     Text(
-                        text = "Asking AI about '$word'...",
+                        text = stringResource(R.string.ai_asking_about, word),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(vertical = 24.dp),
                         maxLines = 1,
@@ -874,13 +877,13 @@ fun SearchResultsPanel(
             }
             results.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No results found.", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
                 }
             }
             else -> {
                 Column {
                     Text(
-                        text = "${results.size} " + if (results.size == 1) "result found" else "results found",
+                        text = LocalContext.current.resources.getQuantityString(R.plurals.search_results_count, results.size, results.size),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier
                             .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -907,12 +910,13 @@ fun SearchResultsPanel(
 
 suspend fun fetchAiDefinition(
     text: String,
+    context: Context,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
 ) {
     if (text.isBlank()) {
-        onError("Text is empty.")
+        onError(context.getString(R.string.error_text_empty))
         onFinish()
         return
     }
@@ -961,16 +965,16 @@ suspend fun fetchAiDefinition(
                 }
                 Timber.d("Definition: Finished reading stream.")
                 if (!hasReceivedData) {
-                    onError("AI returned an empty definition.")
+                    onError(context.getString(R.string.error_ai_empty_definition))
                 }
             } else {
                 val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
                 val errorDetail = try { errorBody?.let { JSONObject(it).getString("detail") } } catch (_: Exception) { "Could not get definition." }
-                onError("Error: $responseCode. ${errorDetail ?: "An unknown server error occurred."}")
+                onError("${responseCode}. ${errorDetail ?: context.getString(R.string.error_unknown_server)}")
             }
         } catch (e: Exception) {
             Timber.e(e, "Network error fetching AI definition: ${e.message}")
-            onError("Network error. Check connection.")
+            onError(context.getString(R.string.error_network_check_connection))
         } finally {
             connection?.disconnect()
             onFinish()
@@ -1091,12 +1095,13 @@ class SummaryCacheManager(context: Context) {
 suspend fun fetchRecap(
     pastSummaries: List<String>,
     currentText: String,
+    context: Context,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
 ) {
     if (pastSummaries.isEmpty() && currentText.isBlank()) {
-        onError("Not enough context for a recap.")
+        onError(context.getString(R.string.error_not_enough_context))
         onFinish()
         return
     }
@@ -1143,14 +1148,14 @@ suspend fun fetchRecap(
                         }
                     }
                 }
-                if (!hasReceivedData) onError("Failed to parse recap.")
+                if (!hasReceivedData) onError(context.getString(R.string.error_parse_recap))
             } else {
                 val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
-                onError("Error: $responseCode. ${errorBody ?: ""}")
+                onError("${responseCode}. ${errorBody ?: ""}")
             }
         } catch (e: Exception) {
             Timber.e(e, "Recap error: ${e.message}")
-            onError("Network error during recap generation.")
+            onError(context.getString(R.string.error_network_recap))
         } finally {
             connection?.disconnect()
             onFinish()
@@ -1194,7 +1199,7 @@ fun TtsSettingsSheet(
                     .padding(bottom = 24.dp)
             ) {
                 Text(
-                    text = "Text-to-Speech Settings",
+                    text = stringResource(R.string.tts_settings),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -1213,7 +1218,7 @@ fun TtsSettingsSheet(
                             Icon(Icons.Default.Stop, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                             Spacer(Modifier.width(12.dp))
                             Text(
-                                "Please stop playback to change settings.",
+                                stringResource(R.string.tts_stop_to_change_settings),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -1222,7 +1227,7 @@ fun TtsSettingsSheet(
                 }
 
                 Text(
-                    text = "Synthesis Mode",
+                    text = stringResource(R.string.tts_synthesis_mode),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 8.dp)
@@ -1239,7 +1244,7 @@ fun TtsSettingsSheet(
                 ) {
                     TtsPlaybackManager.TtsMode.entries.forEach { mode ->
                         val isSelected = currentMode == mode
-                        val label = if (mode == TtsPlaybackManager.TtsMode.BASE) "On-Device" else "Cloud (HQ)"
+                        val label = if (mode == TtsPlaybackManager.TtsMode.BASE) stringResource(R.string.tts_mode_on_device) else stringResource(R.string.tts_mode_cloud_hq)
                         val icon = if (mode == TtsPlaybackManager.TtsMode.BASE) Icons.Default.Smartphone else Icons.Default.Cloud
 
                         Surface(
@@ -1271,7 +1276,7 @@ fun TtsSettingsSheet(
 
                 if (currentMode == TtsPlaybackManager.TtsMode.CLOUD) {
                     Text(
-                        text = "Voice Selection",
+                        text = stringResource(R.string.tts_voice_selection),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -1306,7 +1311,7 @@ fun TtsSettingsSheet(
                                             } else {
                                                 Icon(
                                                     imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                                    contentDescription = "Play Sample",
+                                                    contentDescription = stringResource(R.string.tts_play_sample),
                                                     tint = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
@@ -1503,13 +1508,13 @@ fun DeviceVoiceSettingsSheet(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "On-Device Voice Settings",
+                                text = stringResource(R.string.tts_device_voice_settings),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = onDismiss) {
-                                Icon(Icons.Default.Close, contentDescription = "Close Settings")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_close_settings))
                             }
                         }
 
@@ -1534,19 +1539,19 @@ fun DeviceVoiceSettingsSheet(
                                 Spacer(Modifier.width(16.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "System Default",
+                                        text = stringResource(R.string.tts_system_default),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "Matches your Android system settings",
+                                        text = stringResource(R.string.tts_system_default_desc),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                 }
                                 if (savedVoiceName == null) {
                                     Icon(
                                         Icons.Default.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(R.string.content_desc_selected),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -1562,7 +1567,7 @@ fun DeviceVoiceSettingsSheet(
                             ) {
                                 CircularProgressIndicator()
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("Loading voices...", modifier = Modifier.padding(top = 48.dp))
+                                Text(stringResource(R.string.tts_loading_voices), modifier = Modifier.padding(top = 48.dp))
                             }
                         } else if (allVoices.isEmpty()) {
                             Box(
@@ -1570,7 +1575,7 @@ fun DeviceVoiceSettingsSheet(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "No voices available on this device.",
+                                    stringResource(R.string.tts_no_voices),
                                     color = MaterialTheme.colorScheme.error
                                 )
                             }
@@ -1583,7 +1588,7 @@ fun DeviceVoiceSettingsSheet(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Specific Voices",
+                                    text = stringResource(R.string.tts_specific_voices),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -1597,7 +1602,7 @@ fun DeviceVoiceSettingsSheet(
                                         .clickable { expandedLanguageMenu = true },
                                     shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.surface,
-                                    border = androidx.compose.foundation.BorderStroke(
+                                    border = BorderStroke(
                                         1.dp, MaterialTheme.colorScheme.outlineVariant
                                     )
                                 ) {
@@ -1644,7 +1649,7 @@ fun DeviceVoiceSettingsSheet(
 
                             if (filteredVoices.isNotEmpty()) {
                                 Text(
-                                    text = "Available Voices (${filteredVoices.size})",
+                                    text = stringResource(R.string.tts_available_voices_count, filteredVoices.size),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
@@ -1676,13 +1681,13 @@ fun DeviceVoiceSettingsSheet(
                                                 )
                                             },
                                             supportingContent = if (voice.locale.variant.isNotEmpty()) {
-                                                { Text("Variant: ${voice.locale.variant}") }
+                                                { Text(stringResource(R.string.tts_voice_variant, voice.locale.variant)) }
                                             } else null,
                                             leadingContent = {
                                                 if (isSelected) {
                                                     Icon(
                                                         Icons.Default.Check,
-                                                        contentDescription = "Selected",
+                                                        contentDescription = stringResource(R.string.content_desc_selected),
                                                         tint = MaterialTheme.colorScheme.primary
                                                     )
                                                 } else {
@@ -1698,8 +1703,7 @@ fun DeviceVoiceSettingsSheet(
                                                         Timber.e(e, "Failed to set language for sample")
                                                     }
                                                     ttsEngine?.voice = voice
-                                                    val sampleText =
-                                                        "This is a sample of ${voice.locale.displayLanguage}."
+                                                    val sampleText = context.getString(R.string.tts_voice_sample_text, voice.locale.displayLanguage)
                                                     ttsEngine?.speak(
                                                         sampleText,
                                                         TextToSpeech.QUEUE_FLUSH,
@@ -1709,7 +1713,7 @@ fun DeviceVoiceSettingsSheet(
                                                 }) {
                                                     Icon(
                                                         imageVector = Icons.Default.PlayArrow,
-                                                        contentDescription = "Play Sample",
+                                                        contentDescription = stringResource(R.string.tts_play_sample),
                                                         tint = MaterialTheme.colorScheme.primary
                                                     )
                                                 }
@@ -1736,7 +1740,7 @@ fun DeviceVoiceSettingsSheet(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        "No voices found for this language.",
+                                        stringResource(R.string.tts_no_voices_for_language),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -2164,14 +2168,13 @@ fun ReaderThemePanel(
                         .padding(16.dp)
                         .padding(bottom = 16.dp)
                 ) {
-                    Text(
-                        "Reading Themes",
+                    Text(stringResource(R.string.reading_themes),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    Text("Presets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
                     ThemeGrid(themes = builtInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
 
@@ -2181,7 +2184,7 @@ fun ReaderThemePanel(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("My Themes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         IconButton(onClick = { editingTheme = null; showBuilder = true }, modifier = Modifier.size(24.dp)) {
                             Icon(Icons.Default.Add, contentDescription = "Create Theme", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -2189,7 +2192,7 @@ fun ReaderThemePanel(
                     Spacer(Modifier.height(8.dp))
 
                     if (customThemes.isEmpty()) {
-                        Text("No custom themes yet. Tap '+' to create one.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         ThemeGrid(
                             themes = customThemes,
@@ -2290,7 +2293,7 @@ fun ThemeBuilderView(
             .padding(16.dp)
     ) {
         Text(
-            text = if (initialTheme == null) "New Theme" else "Edit Theme",
+            text = stringResource(if (initialTheme == null) R.string.theme_new else R.string.theme_edit),
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface
@@ -2302,7 +2305,7 @@ fun ThemeBuilderView(
             androidx.compose.material3.OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Theme Name") },
+                label = { Text(stringResource(R.string.theme_name)) },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 singleLine = true
             )
@@ -2325,14 +2328,12 @@ fun ThemeBuilderView(
                     } else this
                 }) {
                     Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                        Text(
-                            text = "So many books, so little time.",
+                        Text(text = stringResource(R.string.theme_preview_quote),
                             color = txtColor,
                             style = MaterialTheme.typography.titleMedium
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "- Frank Zappa",
+                        Text(text = stringResource(R.string.theme_preview_author),
                             color = txtColor,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.fillMaxWidth(),
@@ -2344,8 +2345,7 @@ fun ThemeBuilderView(
 
             // Animated Contrast Warning
             AnimatedVisibility(visible = contrast < 4.5f) {
-                Text(
-                    "⚠️ Low contrast! This might cause eye strain.",
+                Text(stringResource(R.string.theme_low_contrast_warning),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(bottom = 8.dp)
@@ -2357,13 +2357,13 @@ fun ThemeBuilderView(
             // Sleek Color Swatches
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 ColorSwatchItem(
-                    label = "Page Color",
+                    label = stringResource(R.string.theme_page_color),
                     color = bgColor,
                     onClick = { editingColorType = "bg" },
                     modifier = Modifier.weight(1f)
                 )
                 ColorSwatchItem(
-                    label = "Text Color",
+                    label = stringResource(R.string.theme_text_color),
                     color = txtColor,
                     onClick = { editingColorType = "text" },
                     modifier = Modifier.weight(1f)
@@ -2379,13 +2379,13 @@ fun ThemeBuilderView(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onCancel) {
-                Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.width(8.dp))
             Button(onClick = {
                 onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, isCustom = true))
             }) {
-                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
+                Text(stringResource(R.string.action_save), color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
@@ -2393,7 +2393,7 @@ fun ThemeBuilderView(
     editingColorType?.let { type ->
         ThemeColorPickerDialog(
             initialColor = if (type == "bg") bgColor else txtColor,
-            title = if (type == "bg") "Page Color" else "Text Color",
+            title = if (type == "bg") stringResource(R.string.theme_page_color) else stringResource(R.string.theme_text_color),
             bgColor = bgColor,
             textColor = txtColor,
             editingColorType = type,
@@ -2502,14 +2502,12 @@ fun ThemeColorPickerDialog(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Live Preview",
+                        Text(text = stringResource(R.string.theme_color_live_preview),
                             color = liveTextColor,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "Reading is dreaming.",
+                        Text(text = stringResource(R.string.theme_color_preview_text),
                             color = liveTextColor,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -2553,7 +2551,7 @@ fun ThemeColorPickerDialog(
                         modifier = Modifier.weight(1.6f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("Hex", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
                         HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
                     }
@@ -2562,18 +2560,15 @@ fun ThemeColorPickerDialog(
                         modifier = Modifier.weight(2.4f),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        RgbInputColumn(
-                            label = "R", value = currentColor.red,
+                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(
-                            label = "G", value = currentColor.green,
+                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(
-                            label = "B", value = currentColor.blue,
+                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
                         )
@@ -2593,7 +2588,7 @@ fun ThemeColorPickerDialog(
                             containerColor = Color.White
                         )
                     ) {
-                        Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.action_save), color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 }
             }

@@ -19,13 +19,17 @@
  */
 package com.aryan.reader.epubreader
 
+import android.content.Context
+import androidx.compose.foundation.layout.fillMaxWidth
 import timber.log.Timber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.R
@@ -137,6 +141,7 @@ suspend fun executeRecapLogic(
     characterLimit: Int,
     summaryCacheManager: SummaryCacheManager,
     paginator: IPaginator?,
+    context: Context,
     onProgressUpdate: (String) -> Unit,
     onResultUpdate: (String) -> Unit,
     onError: (String) -> Unit,
@@ -216,6 +221,7 @@ suspend fun executeRecapLogic(
     fetchRecap(
         pastSummaries = pastSummaries,
         currentText = finalContextText,
+        context = context,
         onUpdate = { chunk -> onResultUpdate(chunk) },
         onError = { error -> onError(error) },
         onFinish = { onFinish() }
@@ -272,8 +278,18 @@ fun EpubReaderAiOverlays(
         AlertDialog(
             onDismissRequest = onDismissSummarizationUpsell,
             icon = { Icon(painter = painterResource(id = R.drawable.summarize), contentDescription = null) },
-            title = { Text("Unlock Chapter Summarization") },
-            text = { Text("Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.") },
+            title = {
+                Text(
+                    text = "Unlock Chapter Summarization",
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Text(
+                    text = "Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.",
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     onDismissSummarizationUpsell()

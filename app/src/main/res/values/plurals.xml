@@ -12,4 +12,8 @@
         <item quantity="one">%1$d shelf</item>
         <item quantity="other">%1$d shelves</item>
     </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d result found</item>
+        <item quantity="other">%1$d results found</item>
+    </plurals>
 </resources>

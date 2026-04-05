@@ -145,6 +145,7 @@ import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
@@ -259,6 +260,7 @@ import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.FileType
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderTheme
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchTopBar
@@ -276,6 +278,7 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
+import com.aryan.reader.pdf.data.PdfHighlightRepository
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
@@ -294,6 +297,7 @@ import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -314,6 +318,9 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -370,13 +377,13 @@ private fun loadPdfThemeId(context: Context): String {
 }
 
 val PdfBuiltInThemes = listOf(
-    com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
-    com.aryan.reader.ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true),
-    com.aryan.reader.ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
-    com.aryan.reader.ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
-    com.aryan.reader.ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
-    com.aryan.reader.ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    com.aryan.reader.ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+    ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true),
+    ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
+    ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
+    ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
+    ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
+    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
 )
 
 object PdfiumCoreProvider {
@@ -1453,7 +1460,7 @@ fun PdfViewerScreen(
     val pdfTextRepository = remember(context) { PdfTextRepository(context) }
     val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
     val textBoxRepository = remember(context) { PdfTextBoxRepository(context) }
-    val highlightRepository = remember(context) { com.aryan.reader.pdf.data.PdfHighlightRepository(context) }
+    val highlightRepository = remember(context) { PdfHighlightRepository(context) }
 
     var allAnnotations by remember { mutableStateOf<Map<Int, List<PdfAnnotation>>>(emptyMap()) }
 
@@ -1932,14 +1939,14 @@ fun PdfViewerScreen(
                 val dx = (currentPoint.x - startPoint.x) * aspectRatio
                 val dy = (currentPoint.y - startPoint.y)
 
-                val angleRad = kotlin.math.atan2(dy, dx)
-                val angleDeg = (angleRad * 180 / kotlin.math.PI)
-                val absAngle = kotlin.math.abs(angleDeg)
+                val angleRad = atan2(dy, dx)
+                val angleDeg = (angleRad * 180 / PI)
+                val absAngle = abs(angleDeg)
 
                 val threshold = 10.0
 
-                val isHorizontal = absAngle < threshold || kotlin.math.abs(absAngle - 180.0) < threshold
-                val isVertical = kotlin.math.abs(absAngle - 90.0) < threshold
+                val isHorizontal = absAngle < threshold || abs(absAngle - 180.0) < threshold
+                val isVertical = abs(absAngle - 90.0) < threshold
 
                 if (isHorizontal) {
                     currentPoint.copy(y = startPoint.y)
@@ -2215,7 +2222,7 @@ fun PdfViewerScreen(
                 }
                 Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage")
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) {
+                if (e is CancellationException) {
                     Timber.tag("PdfPositionDebug").w("UI: Restoration cancelled (likely new recomposition)")
                 } else {
                     Timber.tag("PdfPositionDebug").e(e, "UI: Restoration error.")
@@ -2544,19 +2551,16 @@ fun PdfViewerScreen(
                             isAiDefinitionLoading = true
                             aiDefinitionResult = null
                             fetchAiDefinition(
-                                text = text,
-                                onUpdate = { chunk ->
-                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                    aiDefinitionResult = AiDefinitionResult(
-                                        definition = currentDefinition + chunk
-                                    )
-                                },
-                                onError = { error ->
-                                    aiDefinitionResult = AiDefinitionResult(error = error)
-                                },
-                                onFinish = {
-                                    isAiDefinitionLoading = false
-                                }
+                                text = text, onUpdate = { chunk ->
+                                val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                aiDefinitionResult = AiDefinitionResult(
+                                    definition = currentDefinition + chunk
+                                )
+                            }, onError = { error ->
+                                aiDefinitionResult = AiDefinitionResult(error = error)
+                            }, onFinish = {
+                                isAiDefinitionLoading = false
+                            }, context = context
                             )
                         }
                     } else {
@@ -3562,7 +3566,7 @@ fun PdfViewerScreen(
         pagerState.currentPage
     ) {
         if (paginationDraggingOriginPage != null) {
-            val distance = kotlin.math.abs(pagerState.currentPage - paginationDraggingOriginPage)
+            val distance = abs(pagerState.currentPage - paginationDraggingOriginPage)
             (distance + 1).coerceAtLeast(1)
         } else {
             1
@@ -4155,7 +4159,7 @@ fun PdfViewerScreen(
                                             }
                                         ) { pageIndex ->
                                             val isVisiblePage = remember(pagerState.currentPage, pageIndex) {
-                                                kotlin.math.abs(pagerState.currentPage - pageIndex) <= 1
+                                                abs(pagerState.currentPage - pageIndex) <= 1
                                             }
                                             val isPageBookmarked by remember(bookmarks, pageIndex) {
                                                 derivedStateOf {
@@ -5675,7 +5679,7 @@ fun PdfViewerScreen(
                                 )
                             }
                             Spacer(Modifier.height(8.dp))
-                            androidx.compose.material3.LinearProgressIndicator(
+                            LinearProgressIndicator(
                                 progress = { reflowProgressValue },
                                 modifier = Modifier.fillMaxWidth().height(6.dp),
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
