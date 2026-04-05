@@ -17,6 +17,7 @@
  *
  * mail: epistemereader@gmail.com
  */
+// SharedComposables.kt
 package com.aryan.reader
 
 import android.content.Context
@@ -31,7 +32,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,22 +53,18 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -76,6 +72,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -88,12 +85,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -102,7 +99,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -146,34 +142,29 @@ fun formatFileSize(bytes: Long): String {
 @Composable
 fun LegalText(
     modifier: Modifier = Modifier,
-    prefixText: String, // Changed from baseText
+    prefixText: String,
     textAlign: TextAlign = TextAlign.Center
 ) {
     val uriHandler = LocalUriHandler.current
+
+    val fullAgreementText = stringResource(R.string.legal_agreement_full, prefixText, stringResource(R.string.legal_terms_of_service), stringResource(R.string.legal_privacy_policy))
+    val termsText = stringResource(R.string.legal_terms_of_service)
+    val privacyText = stringResource(R.string.legal_privacy_policy)
+
     val annotatedString = buildAnnotatedString {
-        append("$prefixText you agree to our ")
-        pushStringAnnotation(tag = "terms", annotation = TERMS_URL)
-        withStyle(
-            style = SpanStyle(
-                color = MaterialTheme.colorScheme.primary,
-                textDecoration = TextDecoration.Underline
-            )
-        ) {
-            append("Terms of Service")
+        append(fullAgreementText)
+
+        val termsStartIndex = fullAgreementText.indexOf(termsText)
+        if (termsStartIndex >= 0) {
+            addStringAnnotation(tag = "terms", annotation = TERMS_URL, start = termsStartIndex, end = termsStartIndex + termsText.length)
+            addStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline), start = termsStartIndex, end = termsStartIndex + termsText.length)
         }
-        pop()
-        append(" and acknowledge you have read our ")
-        pushStringAnnotation(tag = "privacy", annotation = PRIVACY_POLICY_URL)
-        withStyle(
-            style = SpanStyle(
-                color = MaterialTheme.colorScheme.primary,
-                textDecoration = TextDecoration.Underline
-            )
-        ) {
-            append("Privacy Policy")
+
+        val privacyStartIndex = fullAgreementText.indexOf(privacyText)
+        if (privacyStartIndex >= 0) {
+            addStringAnnotation(tag = "privacy", annotation = PRIVACY_POLICY_URL, start = privacyStartIndex, end = privacyStartIndex + privacyText.length)
+            addStyle(style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline), start = privacyStartIndex, end = privacyStartIndex + privacyText.length)
         }
-        pop()
-        append(".")
     }
 
     @Suppress("DEPRECATION")
@@ -225,30 +216,30 @@ fun ContextualTopAppBar(
     onDeleteClick: () -> Unit
 ) {
     CustomTopAppBar(
-        title = { Text("$selectedItemCount selected") },
+        title = { Text(stringResource(R.string.items_selected_count, selectedItemCount)) },
         navigationIcon = {
             IconButton(onClick = onNavIconClick) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Clear Selection")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.clear_selection))
             }
         },
         actions = {
             if (onPinClick != null) {
                 IconButton(onClick = onPinClick) {
-                    Icon(Icons.Filled.PushPin, contentDescription = "Pin/Unpin")
+                    Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
                 }
             }
             if (selectedItemCount == 1 && onInfoClick != null) {
                 IconButton(onClick = onInfoClick) {
-                    Icon(Icons.Filled.Info, contentDescription = "Info")
+                    Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
                 }
             }
             if (onSelectAllClick != null) {
                 IconButton(onClick = onSelectAllClick) {
-                    Icon(Icons.Filled.SelectAll, contentDescription = "Select All")
+                    Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
                 }
             }
             IconButton(onClick = onDeleteClick) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
             }
         }
     )
@@ -302,21 +293,21 @@ fun DeleteConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     isPermanentDelete: Boolean = false,
-    containsFolderItems: Boolean = false // New parameter
+    containsFolderItems: Boolean = false
 ) {
-    val title = if (isPermanentDelete) "Delete File(s) Permanently" else "Remove from Recents"
+    val title = if (isPermanentDelete) stringResource(R.string.dialog_delete_permanently) else stringResource(R.string.dialog_remove_from_recents)
 
     val text = if (isPermanentDelete) {
         if (containsFolderItems) {
-            "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone."
+            stringResource(R.string.dialog_warning_folder_sync_delete)
         } else {
-            "Do you want to permanently delete $count selected file(s) from your device? This action cannot be undone."
+            stringResource(R.string.dialog_permanently_delete_desc, count)
         }
     } else {
-        "Do you want to remove $count selected file(s) from the recent files list? It will reappear if you open it again from the library."
+        stringResource(R.string.dialog_remove_recents_desc, count)
     }
 
-    val confirmText = if (isPermanentDelete) "Delete" else "Remove"
+    val confirmText = if (isPermanentDelete) stringResource(R.string.action_delete) else stringResource(R.string.action_remove)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -336,7 +327,7 @@ fun DeleteConfirmationDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -407,7 +398,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    "File Information",
+                    stringResource(R.string.file_information),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -415,7 +406,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                 androidx.compose.material3.OutlinedTextField(
                     value = editingName,
                     onValueChange = { editingName = it },
-                    label = { Text("Book Name") },
+                    label = { Text(stringResource(R.string.book_name)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 64.dp, max = 130.dp),
@@ -425,14 +416,14 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                         IconButton(onClick = {
                             clipboardManager.setText(AnnotatedString(editingName))
                         }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Name", modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.copy_name), modifier = Modifier.size(20.dp))
                         }
                     }
                 )
 
                 if (hasCustomName) {
                     Text(
-                        text = "Original Name: $originalName",
+                        text = stringResource(R.string.original_name, originalName),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
@@ -447,11 +438,11 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                         modifier = Modifier.align(Alignment.End),
                         contentPadding = PaddingValues(0.dp)
                     ) {
-                        Text("Revert to Original")
+                        Text(stringResource(R.string.revert_to_original))
                     }
                 } else if (originalName != item.displayName) {
                     Text(
-                        text = "File Name: ${item.displayName}",
+                        text = stringResource(R.string.file_name, item.displayName),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -463,18 +454,27 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
 
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
-                        InfoRowDetailed("Author", it)
+                        InfoRowDetailed(stringResource(R.string.author), it)
                     }
-                    InfoRowDetailed("Format", item.type.name)
-                    InfoRowDetailed("Size", formatFileSize(item.fileSize))
-                    InfoRowDetailed("Added", formattedDate)
+                    InfoRowDetailed(stringResource(R.string.format), item.type.name)
+                    InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))
+                    InfoRowDetailed(stringResource(R.string.added), formattedDate)
+
+                    val pathTextFinal = if (isOpdsStream) {
+                        stringResource(R.string.source_opds)
+                    } else if (pathText == "In-App Storage") {
+                        stringResource(R.string.source_in_app)
+                    } else {
+                        pathText.replace("Internal storage", stringResource(R.string.internal_storage))
+                    }
+
                     InfoRowDetailed(
-                        label = "Location",
-                        value = pathText,
+                        label = stringResource(R.string.location),
+                        value = pathTextFinal,
                         maxLines = 4,
                         isScrollable = true,
                         onCopy = {
-                            clipboardManager.setText(AnnotatedString(pathText))
+                            clipboardManager.setText(AnnotatedString(pathTextFinal))
                         }
                     )
                 }
@@ -485,7 +485,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
                     Spacer(modifier = Modifier.width(8.dp))
                     androidx.compose.material3.Button(onClick = {
                         val finalName = editingName.trim()
@@ -497,7 +497,7 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                             }
                         }
                         onDismiss()
-                    }) { Text("Save") }
+                    }) { Text(stringResource(R.string.action_save)) }
                 }
             }
         }
@@ -509,7 +509,7 @@ private fun InfoRowDetailed(
     label: String,
     value: String,
     maxLines: Int = 1,
-    isScrollable: Boolean = false, // ADD THIS
+    isScrollable: Boolean = false,
     onCopy: (() -> Unit)? = null
 ) {
     Row(
@@ -603,123 +603,101 @@ fun AboutDialog(onDismiss: () -> Unit) {
         shape = RoundedCornerShape(24.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
+                Text(
+                    text = stringResource(R.string.about_app_name),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Episteme",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (isOss) "Open Source Version" else "Playstore Version",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (isOss) stringResource(R.string.about_oss_version) else stringResource(R.string.about_play_version),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(12.dp)
-                    ) {
-                        Text(
-                            text = "Version ${BuildConfig.VERSION_NAME}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Build ${BuildConfig.VERSION_CODE}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Text(
+                    text = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = stringResource(R.string.about_build_code, BuildConfig.VERSION_CODE.toString()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                HorizontalDivider()
+                Spacer(modifier = Modifier.height(20.dp))
 
                 if (isOss) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Outlined.Code,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Open Source",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    InfoRow(
-                        icon = Icons.Outlined.Code,
-                        text = "GitHub Repository",
-                        subtitle = "Browse source code, star, and fork",
+                    AboutInfoRow(
+                        icon = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.github),
+                                contentDescription = stringResource(R.string.about_github),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        text = stringResource(R.string.about_github),
+                        subtitle = stringResource(R.string.about_github_desc),
                         onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") }
                     )
-
-                    InfoRow(
-                        icon = Icons.Outlined.BugReport,
-                        text = "Report an Issue",
-                        subtitle = "File a bug or feature request",
-                        onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme/issues") }
-                    )
                 } else {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Legal",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    InfoRow(
-                        icon = Icons.Outlined.Policy,
-                        text = "Privacy Policy",
-                        subtitle = "How we handle your data",
+                    AboutInfoRow(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Policy,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        text = stringResource(R.string.about_privacy),
+                        subtitle = stringResource(R.string.about_privacy_desc),
                         onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
                     )
 
-                    InfoRow(
-                        icon = Icons.Outlined.Gavel,
-                        text = "Terms of Service",
-                        subtitle = "Usage terms and conditions",
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    AboutInfoRow(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Gavel,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        text = stringResource(R.string.about_terms),
+                        subtitle = stringResource(R.string.about_terms_desc),
                         onClick = { uriHandler.openUri(TERMS_URL) }
                     )
 
-                    InfoRow(
-                        icon = Icons.Outlined.FileOpen,
-                        text = "Licenses",
-                        subtitle = "Libraries",
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    AboutInfoRow(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Outlined.FileOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        text = stringResource(R.string.legal_licenses),
+                        subtitle = stringResource(R.string.about_licenses_desc),
                         onClick = { uriHandler.openUri(LICENSES_URL) }
                     )
                 }
@@ -731,50 +709,40 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 shape = RoundedCornerShape(50),
                 modifier = Modifier.padding(horizontal = 8.dp)
             ) {
-                Text("Close", fontWeight = FontWeight.Medium)
+                Text(stringResource(R.string.action_close), fontWeight = FontWeight.Medium)
             }
         }
     )
 }
 
 @Composable
-private fun InfoRow(
-    icon: ImageVector,
+private fun AboutInfoRow(
+    icon: @Composable () -> Unit,
     text: String,
     subtitle: String? = null,
     onClick: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    OutlinedCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp, horizontal = 16.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(16.dp))
+            icon()
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Bold
                 )
                 if (subtitle != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -782,10 +750,11 @@ private fun InfoRow(
                     )
                 }
             }
+            Spacer(modifier = Modifier.width(4.dp))
             Icon(
-                imageVector = Icons.Outlined.ChevronRight,
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -798,7 +767,7 @@ fun EmptyState(
     message: String,
     onSelectFileClick: () -> Unit,
     modifier: Modifier = Modifier,
-    primaryButtonText: String = "Select a File",
+    primaryButtonText: String = stringResource(R.string.empty_select_file),
     secondaryButtonText: String? = null,
     onSecondaryClick: (() -> Unit)? = null
 ) {
@@ -858,19 +827,15 @@ fun SelectFileButton(onClick: () -> Unit, text: String) {
 fun ClearCloudDataConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Clear All Synced Data?") },
-        text = { Text("Are you sure you want to permanently delete all of your book data from the cloud? This will also wipe your local library to prevent re-syncing. This action cannot be undone.") },
+        title = { Text(stringResource(R.string.clear_cloud_data_title)) },
+        text = { Text(stringResource(R.string.clear_cloud_data_desc)) },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text("DELETE ALL DATA")
-            }
+            ) { Text(stringResource(R.string.delete_all_data)) }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
 }
 
@@ -904,4 +869,24 @@ fun AutoSizeText(
             }
         }
     )
+}
+
+@Composable
+fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolean = false) {
+    val containerColor = if (overlay) androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.secondaryContainer
+    val contentColor = if (overlay) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(4.dp),
+        color = containerColor,
+        contentColor = contentColor
+    ) {
+        Text(
+            text = type.name.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
 }

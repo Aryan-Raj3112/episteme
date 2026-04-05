@@ -1,6 +1,244 @@
 <resources>
     <string name="app_name">Episteme</string>
 
+    <!-- General Actions & Words -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_ok">OK</string>
+    <string name="action_close">Close</string>
+    <string name="action_add">Add</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_back">Back</string>
+    <string name="action_search">Search</string>
+    <string name="action_clear">Clear</string>
+
+    <!-- Shared Composables & Dialogs -->
+    <string name="legal_agreement_full">%1$s you agree to our %2$s and acknowledge you have read our %3$s.</string>
+    <string name="legal_terms_of_service">Terms of Service</string>
+    <string name="legal_privacy_policy">Privacy Policy</string>
+    <string name="legal_licenses">Licenses</string>
+    <string name="items_selected_count">%1$d selected</string>
+    <string name="clear_selection">Clear Selection</string>
+    <string name="pin_unpin">Pin/Unpin</string>
+    <string name="info">Info</string>
+    <string name="select_all">Select All</string>
+    <string name="dialog_delete_permanently">Delete File(s) Permanently</string>
+    <string name="dialog_remove_from_recents">Remove from Recents</string>
+    <string name="dialog_warning_folder_sync_delete">Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.</string>
+    <string name="dialog_permanently_delete_desc">Do you want to permanently delete %1$d selected file(s) from your device? This action cannot be undone.</string>
+    <string name="dialog_remove_recents_desc">Do you want to remove %1$d selected file(s) from the recent files list? It will reappear if you open it again from the library.</string>
+    <string name="file_information">File Information</string>
+    <string name="book_name">Book Name</string>
+    <string name="copy_name">Copy Name</string>
+    <string name="original_name">Original Name: %1$s</string>
+    <string name="revert_to_original">Revert to Original</string>
+    <string name="file_name">File Name: %1$s</string>
+    <string name="author">Author</string>
+    <string name="format">Format</string>
+    <string name="size">Size</string>
+    <string name="added">Added</string>
+    <string name="location">Location</string>
+    <string name="source_opds">Source: OPDS Stream</string>
+    <string name="source_in_app">In-App Storage</string>
+    <string name="internal_storage">Internal storage</string>
+    <string name="about_title">About Episteme</string>
+    <string name="about_version">Version: %1$s (Build: %2$d)</string>
+    <string name="empty_select_file">Select a File</string>
+    <string name="clear_cloud_data_title">Clear All Synced Data?</string>
+    <string name="clear_cloud_data_desc">Are you sure you want to permanently delete all of your book data from the cloud? This will also wipe your local library to prevent re-syncing. This action cannot be undone.</string>
+    <string name="delete_all_data">DELETE ALL DATA</string>
+
+    <!-- Navigation & Home -->
+    <string name="nav_home">Home</string>
+    <string name="nav_library">Library</string>
+    <string name="recent_files">Recent Files</string>
+    <string name="your_library_empty">Your Library is Empty</string>
+    <string name="your_library_empty_desc">Select a file to read, or sync a local folder to automatically import books.</string>
+    <string name="no_recent_files">No Recent Files</string>
+    <string name="no_recent_files_desc">Open a file from your library to see it here.</string>
+    <string name="setup_folder_sync">Setup Folder Sync</string>
+    <string name="sync_folder">Sync Folder</string>
+    <string name="local_folder">Local Folder</string>
+    <string name="opds_stream">OPDS Stream</string>
+    <string name="pinned">Pinned</string>
+    <string name="progress_complete">%1$d%% complete</string>
+    <string name="not_available_locally">Not available locally</string>
+
+    <!-- Drawer Menu -->
+    <string name="drawer_sign_in">Sign in with Google</string>
+    <string name="drawer_by_signing_in">By signing in,</string>
+    <string name="drawer_pro_unlocked">Episteme Pro</string>
+    <string name="drawer_upgrade_pro">Upgrade to Episteme Pro</string>
+    <string name="drawer_sync_library">Sync Library</string>
+    <string name="drawer_backup_local_folders">Cloud sync for Local Folders</string>
+    <string name="drawer_backup_desc">Upload books from your synced folders to Google Drive.</string>
+    <string name="drawer_custom_fonts">Custom Fonts</string>
+    <string name="drawer_help_feedback">Help &amp; Feedback</string>
+    <string name="drawer_sign_out">Sign Out</string>
+
+    <!-- Top Bar Options -->
+    <string name="options_recent_limit">Recent Files Limit</string>
+    <string name="options_no_limit">No limit</string>
+    <string name="options_files_limit">%1$d files</string>
+    <string name="options_clear_book_cache">Clear Book Cache</string>
+    <string name="options_clear_reflow_cache">Clear Reflow Cache</string>
+
+    <!-- Library Screen -->
+    <string name="library_title">Library</string>
+    <string name="search_placeholder">Search title or author…</string>
+    <string name="filter_types">Types: %1$s</string>
+    <string name="filter_folders">Folders: %1$d</string>
+    <string name="filter_status">Status: %1$s</string>
+    <string name="tab_all_books">All Books</string>
+    <string name="tab_shelves">Shelves</string>
+    <string name="tab_folders">Folders</string>
+    <string name="tab_catalogs">Catalogs</string>
+    <string name="no_results_found">No results found for \"%1$s\"</string>
+    <string name="library_empty_desc">Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.</string>
+    <string name="fab_add_file">Add file</string>
+    <string name="fab_new_shelf">New shelf</string>
+    <string name="create_new_shelf">Create New Shelf</string>
+    <string name="shelf_name_hint">Shelf Name</string>
+    <string name="action_create">Create</string>
+    <string name="menu_rename_shelf">Rename shelf</string>
+    <string name="menu_delete_shelf">Delete shelf</string>
+    <string name="fab_add_books">Add books</string>
+    <string name="shelf_empty">This shelf is empty</string>
+    <string name="add_to_shelf">Add to %1$s</string>
+    <string name="fab_add_count">ADD (%1$d)</string>
+    <string name="no_unshelved_books">No unshelved books to add</string>
+    <string name="all_books_in_shelf">All books are already in this shelf</string>
+    <string name="dialog_rename_shelf">Rename Shelf</string>
+    <string name="dialog_delete_shelf">Delete Shelf?</string>
+    <string name="dialog_delete_shelf_desc">Are you sure you want to delete the \'%1$s\' shelf? All books will be moved to Unshelved.</string>
+    <string name="dialog_remove_from_shelf">Remove from Shelf?</string>
+    <string name="dialog_remove_from_shelf_desc">Are you sure you want to remove %1$d %2$s from the \'%3$s\' shelf? The book(s) will remain in your library and appear under Unshelved.</string>
+    <string name="dialog_delete_shelves">Delete %1$s?</string>
+    <string name="dialog_delete_shelves_desc">Are you sure you want to delete the %1$d selected %2$s? All books within will be moved to Unshelved.</string>
+
+    <!-- Folder Sync -->
+    <string name="sync_local_folders">Sync Local Folders</string>
+    <string name="sync_folders_desc">Connect local folders to create a live library. Episteme will monitor files and sync progress.</string>
+    <string name="fab_add_folder">Add Folder</string>
+    <string name="scan_all">Scan All</string>
+    <string name="scanning">Scanning…</string>
+    <string name="sync_meta">Sync Meta</string>
+    <string name="last_sync">LAST SYNC</string>
+    <string name="books_count">BOOKS</string>
+    <string name="menu_edit_filters">Edit Filters</string>
+    <string name="menu_remove_folder">Remove Folder</string>
+    <string name="filter_file_types">Filter File Types</string>
+    <string name="filter_file_types_desc">Select the file types you want to sync from this folder:</string>
+    <string name="filter_library">Filter Library</string>
+    <string name="filter_file_type">File Type</string>
+    <string name="filter_source_folder">Source Folder</string>
+    <string name="filter_read_status">Read Status</string>
+    <string name="clear_all">Clear All</string>
+
+    <!-- OPDS -->
+    <string name="fab_add_catalog">Add Catalog</string>
+    <string name="search_catalog_placeholder">Search catalog…</string>
+    <string name="feed_empty">This feed is empty.</string>
+    <string name="status_downloading">Downloading…</string>
+    <string name="action_stream">Stream</string>
+    <string name="action_unavailable">Unavailable</string>
+    <string name="action_download">Download</string>
+    <string name="action_stream_now">Stream Now</string>
+    <string name="action_read">Read</string>
+    <string name="no_supported_formats">No supported formats available.</string>
+    <string name="publisher">PUBLISHER</string>
+    <string name="published">PUBLISHED</string>
+    <string name="language">LANGUAGE</string>
+    <string name="synopsis">Synopsis</string>
+    <string name="edit_catalog">Edit Catalog</string>
+    <string name="add_opds_catalog">Add OPDS Catalog</string>
+    <string name="catalog_name">Catalog Name</string>
+    <string name="url">URL</string>
+    <string name="url_placeholder">e.g. http://192.168.1.50:8080/opds</string>
+    <string name="auth_optional">Authentication (Optional)</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="delete_catalog">Delete Catalog</string>
+    <string name="delete_catalog_desc">Are you sure you want to delete \'%1$s\'?</string>
+    <string name="delete_catalog_warning">Deleting this catalog will also permanently remove %1$d streaming books associated with it from your library.</string>
+    <string name="preset_label">Preset</string>
+
+    <!-- Pro Screen -->
+    <string name="free_plan">Free Plan</string>
+    <string name="price_free">$0</string>
+    <string name="forever_free">Forever free</string>
+    <string name="feature_multiple_formats">Multiple Formats</string>
+    <string name="feature_multiple_formats_desc">Supports PDF, EPUB, MOBI, AZW3</string>
+    <string name="feature_tts">Android Text-to-Speech</string>
+    <string name="feature_tts_desc">Listen to your books with built-in TTS</string>
+    <string name="feature_dict">Basic Dictionary</string>
+    <string name="feature_dict_desc">Look up single words quickly</string>
+    <string name="current_plan">Current Plan</string>
+    <string name="pro_sale_off">50%% OFF</string>
+    <string name="loading_price">Loading price…</string>
+    <string name="one_time_payment">One-time payment</string>
+    <string name="lifetime_access">Lifetime Access</string>
+    <string name="early_access_sale">Early Access Sale</string>
+    <string name="pro_includes">Everything in Free, plus:</string>
+    <string name="feature_cloud_sync">Cloud Sync Across Devices</string>
+    <string name="feature_cloud_sync_desc">Keep your entire library, including book files and reading progress, synced across up to 4 devices.</string>
+    <string name="feature_summarize">Summarization</string>
+    <string name="feature_summarize_desc">Get quick summaries of chapters or pages</string>
+    <string name="feature_smart_dict">Smart Dictionary</string>
+    <string name="feature_smart_dict_desc">Search phrases and even paragraphs, not just single words</string>
+    <string name="feature_priority">Priority Feature Requests</string>
+    <string name="feature_priority_desc">Your suggestions get prioritized</string>
+    <string name="pro_unlocked">Pro Features Unlocked!</string>
+    <string name="sign_in_required">Sign in Required</string>
+    <string name="verifying_purchase">Verifying purchase…</string>
+    <string name="existing_purchase_found">Existing Purchase Found</string>
+    <string name="get_lifetime_access">Get Lifetime Access</string>
+    <string name="upgrade_unavailable">Upgrade currently unavailable. Please check your internet and try again.</string>
+    <string name="sign_in_to_purchase">Please sign in to your Google account to purchase Episteme Pro.</string>
+    <string name="verifying_purchase_desc">This may take a few moments. Your Pro status will be updated automatically.</string>
+    <string name="dialog_existing_purchase_desc">This device already has a Pro purchase, but it\'s linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.</string>
+    <string name="dialog_early_access_desc">You\'re getting Episteme Pro at a special discounted price during our early access period! This is a limited-time offer.</string>
+    <string name="dialog_sign_in_required_desc">Please sign in to your Google account to purchase Episteme Pro and unlock all premium features.</string>
+    <string name="action_not_now">Not Now</string>
+    <string name="action_got_it">Got It!</string>
+
+    <!-- Fonts -->
+    <string name="custom_fonts">Custom Fonts</string>
+    <string name="import_font">Import Font</string>
+    <string name="no_custom_fonts">No Custom Fonts</string>
+    <string name="import_fonts_desc">Import TTF or OTF files to use them in your books.</string>
+    <string name="font_preview_text">Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:</string>
+    <string name="font_preview_error">Preview unavailable (Invalid font file)</string>
+    <string name="dialog_delete_font">Delete Font?</string>
+    <string name="dialog_delete_font_desc">Are you sure you want to delete \'%1$s\'? This will remove it from all your devices if sync is on.</string>
+
+    <!-- Feedback -->
+    <string name="get_in_touch">Get in Touch</string>
+    <string name="feedback_desc">Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or send us an email.</string>
+    <string name="github_issues">GitHub Issues</string>
+    <string name="github_issues_desc">Report bugs, request features, and track development progress.</string>
+    <string name="email_support">Email Support</string>
+    <string name="email_support_desc">Contact us directly via email for any other inquiries.</string>
+
+    <!-- Dialogs -->
+    <string name="dialog_unlock_pro">Unlock Episteme Pro</string>
+    <string name="dialog_unlock_pro_desc">Sync across devices is a Pro feature. Unlock all pro features with a single, one-time purchase.</string>
+    <string name="action_upgrade">Upgrade</string>
+    <string name="dialog_confirm_sign_out">Confirm Sign Out</string>
+    <string name="dialog_confirm_sign_out_desc">Are you sure you want to sign out?</string>
+    <string name="device_limit_reached">Device Limit Reached</string>
+    <string name="device_limit_reached_desc">To use Episteme Pro on this device, please remove one of your existing registered devices.</string>
+    <string name="last_seen">Last seen: %1$s</string>
+    <string name="dialog_destructive_action">Confirm Destructive Action</string>
+    <string name="dialog_destructive_action_desc">This will permanently delete all your books and reading progress from this device AND from your Google Drive account. This action cannot be undone. Are you sure?</string>
+    <string name="dialog_clear_book_cache">Clear Book Cache</string>
+    <string name="dialog_clear_book_cache_desc">This will clear all processed pages in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.</string>
+    <string name="action_confirm_clear">Confirm &amp; Clear</string>
+    <string name="dialog_clear_reflow_cache">Clear Reflow Cache</string>
+    <string name="dialog_clear_reflow_cache_desc">This will delete all generated \'Text View\' versions of your PDFs and clear their associated images/HTML cache. Your original PDFs will remain untouched.</string>
+
     <!-- Tooltip titles -->
     <string name="tooltip_back">Back</string>
     <string name="tooltip_dictionary">Dictionary</string>

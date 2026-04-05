@@ -1,0 +1,14 @@
+<resources>
+    <plurals name="book_count">
+        <item quantity="one">%d book</item>
+        <item quantity="other">%d books</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">shelf</item>
+        <item quantity="other">shelves</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">book</item>
+        <item quantity="other">books</item>
+    </plurals>
+</resources>

@@ -114,6 +114,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -336,17 +337,17 @@ fun HomeScreen(
                             if (recentFilesForHome.isEmpty()) {
                                 if (uiState.recentFiles.isEmpty()) {
                                     EmptyState(
-                                        title = "Your Library is Empty",
-                                        message = "Select a file to read, or sync a local folder to automatically import books.",
+                                        title = stringResource(R.string.your_library_empty),
+                                        message = stringResource(R.string.your_library_empty_desc),
                                         onSelectFileClick = onSelectFileClick,
                                         modifier = Modifier.weight(1f),
-                                        secondaryButtonText = "Setup Folder Sync",
+                                        secondaryButtonText = stringResource(R.string.setup_folder_sync),
                                         onSecondaryClick = { viewModel.navigateToFolderSync() }
                                     )
                                 } else {
                                     EmptyState(
-                                        title = "No Recent Files",
-                                        message = "Open a file from your library to see it here.",
+                                        title = stringResource(R.string.no_recent_files),
+                                        message = stringResource(R.string.no_recent_files_desc),
                                         onSelectFileClick = onSelectFileClick,
                                         modifier = Modifier.weight(1f)
                                     )
@@ -409,8 +410,8 @@ fun HomeScreen(
 
                     if (showClearBookCacheDialog) {
                         DangerousFolderActionDialog(
-                            title = "Clear Book Cache",
-                            message = "This will clear all processed page in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.",
+                            title = stringResource(R.string.dialog_clear_book_cache),
+                            message = stringResource(R.string.dialog_clear_book_cache_desc),
                             onConfirm = {
                                 viewModel.clearBookCache()
                                 showClearBookCacheDialog = false
@@ -436,8 +437,8 @@ fun HomeScreen(
 
                     if (showClearReflowCacheDialog) {
                         DangerousFolderActionDialog(
-                            title = "Clear Reflow Cache",
-                            message = "This will delete all generated 'Text View' versions of your PDFs and clear their associated images/HTML cache. Your original PDFs will remain untouched.",
+                            title = stringResource(R.string.dialog_clear_reflow_cache),
+                            message = stringResource(R.string.dialog_clear_reflow_cache_desc),
                             onConfirm = {
                                 viewModel.clearReflowCache()
                                 showClearReflowCacheDialog = false
@@ -528,10 +529,10 @@ private fun RecentFilesContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 androidx.compose.material3.Button(onClick = onSelectFileClick) {
-                    Text("Select File")
+                    Text(stringResource(R.string.empty_select_file))
                 }
                 androidx.compose.material3.Button(onClick = onNavigateToFolderSync) {
-                    Text("Sync Folder")
+                    Text(stringResource(R.string.sync_folder))
                 }
             }
         }
@@ -570,7 +571,7 @@ private fun RecentFilesGrid(
 
     Column(modifier = modifier) {
         Text(
-            text = "Recent Files",
+            text = stringResource(R.string.recent_files),
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(bottom = 8.dp, top = 24.dp)
         )
@@ -650,7 +651,7 @@ fun RecentFileCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Folder,
-                            contentDescription = "Local Folder",
+                            contentDescription = stringResource(R.string.local_folder),
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onSecondaryContainer
                         )
@@ -671,7 +672,7 @@ fun RecentFileCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Cloud,
-                            contentDescription = "OPDS Stream",
+                            contentDescription = stringResource(R.string.opds_stream),
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onTertiaryContainer
                         )
@@ -691,7 +692,7 @@ fun RecentFileCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.PushPin,
-                            contentDescription = "Pinned",
+                            contentDescription = stringResource(R.string.pinned),
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -710,7 +711,7 @@ fun RecentFileCard(
                         } else {
                             Icon(
                                 imageVector = Icons.Filled.Info,
-                                contentDescription = "Not available locally",
+                                contentDescription = stringResource(R.string.not_available_locally),
                                 modifier = Modifier.size(48.dp),
                                 tint = Color.White
                             )
@@ -745,7 +746,7 @@ fun RecentFileCard(
                 ) {
                     item.progressPercentage?.let { progress ->
                         Text(
-                            text = "${progress.toInt()}% complete",
+                            text = stringResource(R.string.progress_complete, progress.toInt()),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -788,7 +789,7 @@ fun DefaultTopAppBar(
         // Recent Files Limit Menu
         Box {
             IconButton(onClick = { showLimitMenu = true }) {
-                Icon(Icons.Default.FormatListNumbered, contentDescription = "Recent Files Limit")
+                Icon(Icons.Default.FormatListNumbered, contentDescription = stringResource(R.string.options_recent_limit))
             }
             DropdownMenu(
                 expanded = showLimitMenu, onDismissRequest = { showLimitMenu = false }
@@ -796,7 +797,7 @@ fun DefaultTopAppBar(
                 val limitOptions = listOf(0, 10, 20, 50, 100)
                 limitOptions.forEach { limit ->
                     DropdownMenuItem(
-                        text = { Text(if (limit == 0) "No limit" else "$limit files") },
+                        text = { Text(if (limit == 0) stringResource(R.string.options_no_limit) else stringResource(R.string.options_files_limit, limit)) },
                         onClick = {
                             onRecentFilesLimitChange(limit)
                             showLimitMenu = false
@@ -816,17 +817,17 @@ fun DefaultTopAppBar(
             }
             DropdownMenu(
                 expanded = showOptionsMenu, onDismissRequest = { showOptionsMenu = false }) {
-                DropdownMenuItem(text = { Text("About") }, onClick = {
+                DropdownMenuItem(text = { Text(stringResource(R.string.about_title)) }, onClick = {
                     onAboutClick()
                     showOptionsMenu = false
                 })
 
                 HorizontalDivider()
-                DropdownMenuItem(text = { Text("Clear Book Cache") }, onClick = {
+                DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_book_cache)) }, onClick = {
                     onClearCache()
                     showOptionsMenu = false
                 })
-                DropdownMenuItem(text = { Text("Clear Reflow Cache") }, onClick = {
+                DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_reflow_cache)) }, onClick = {
                     onClearReflowCache()
                     showOptionsMenu = false
                 })
@@ -905,12 +906,8 @@ private fun AppDrawerContent(
                     // Signed-out: Show Sign In button at the top
                     Spacer(modifier = Modifier.height(8.dp))
                     NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                Icons.Outlined.AccountCircle, contentDescription = "Sign In"
-                            )
-                        },
-                        label = { Text("Sign in with Google") },
+                        icon = { Icon(Icons.Outlined.AccountCircle, contentDescription = null) },
+                        label = { Text(stringResource(R.string.drawer_sign_in)) },
                         selected = false,
                         onClick = onSignInClick,
                         modifier = Modifier.padding(horizontal = 12.dp)
@@ -918,7 +915,7 @@ private fun AppDrawerContent(
 
                     // LegalText
                     LegalText(
-                        prefixText = "By signing in,",
+                        prefixText = stringResource(R.string.drawer_by_signing_in),
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                         textAlign = TextAlign.Start
                     )
@@ -928,14 +925,9 @@ private fun AppDrawerContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 NavigationDrawerItem(
-                    icon = {
-                        Icon(
-                            Icons.Default.VerifiedUser, contentDescription = "Episteme Pro"
-                        )
-                    },
+                    icon = { Icon(Icons.Default.VerifiedUser, contentDescription = null) },
                     label = {
-                        val text =
-                            if (uiState.isProUser) "Episteme Pro" else "Upgrade to Episteme Pro"
+                        val text = if (uiState.isProUser) stringResource(R.string.drawer_pro_unlocked) else stringResource(R.string.drawer_upgrade_pro)
                         Text(text)
                     },
                     selected = false,
@@ -946,12 +938,9 @@ private fun AppDrawerContent(
                 // Sync Toggle Item
                 if (uiState.currentUser != null) {
                     NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.sync),
-                                contentDescription = "Sync Library"
-                            )
-                        }, label = { Text("Sync Library") }, badge = {
+                        icon = { Icon(painterResource(id = R.drawable.sync), contentDescription = null) },
+                        label = { Text(stringResource(R.string.drawer_sync_library)) },
+                        badge = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (!uiState.isProUser) {
                                     Icon(
@@ -979,17 +968,12 @@ private fun AppDrawerContent(
                 }
                 if (uiState.currentUser != null && uiState.isSyncEnabled) {
                     NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.FolderSpecial,
-                                contentDescription = "Backup Local Folders"
-                            )
-                        },
+                        icon = { Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = null) },
                         label = {
                             Column {
-                                Text("Cloud sync for Local Folders")
+                                Text(stringResource(R.string.drawer_backup_local_folders))
                                 Text(
-                                    "Upload books from your synced folders to Google Drive).",
+                                    stringResource(R.string.drawer_backup_desc),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1026,26 +1010,16 @@ private fun AppDrawerContent(
             }
 
             NavigationDrawerItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(id = R.drawable.fonts),
-                        contentDescription = "Custom Fonts"
-                    )
-                },
-                label = { Text("Custom Fonts") },
+                icon = { Icon(painterResource(id = R.drawable.fonts), contentDescription = null) },
+                label = { Text(stringResource(R.string.drawer_custom_fonts)) },
                 selected = false,
                 onClick = onFontsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
 
             NavigationDrawerItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(id = R.drawable.feedback),
-                        contentDescription = "Feedback"
-                    )
-                },
-                label = { Text("Help & Feedback") },
+                icon = { Icon(painterResource(id = R.drawable.feedback), contentDescription = null) },
+                label = { Text(stringResource(R.string.drawer_help_feedback)) },
                 selected = false,
                 onClick = { navController.navigate("feedback_screen_route") },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1054,13 +1028,8 @@ private fun AppDrawerContent(
             if (!isOss) {
                 if (uiState.currentUser != null) {
                     NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.logout),
-                                contentDescription = "Sign Out"
-                            )
-                        },
-                        label = { Text("Sign Out") },
+                        icon = { Icon(painterResource(id = R.drawable.logout), contentDescription = null) },
+                        label = { Text(stringResource(R.string.drawer_sign_out)) },
                         selected = false,
                         onClick = onSignOutClick,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1136,13 +1105,13 @@ fun UpgradeDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.VerifiedUser, contentDescription = null) },
-        title = { Text("Unlock Episteme Pro") },
-        text = { Text("Sync across devices is a Pro feature. Unlock all pro features with a single, one-time purchase.") },
+        title = { Text(stringResource(R.string.dialog_unlock_pro)) },
+        text = { Text(stringResource(R.string.dialog_unlock_pro_desc)) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Upgrade") }
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_upgrade)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         })
 }
 
@@ -1150,18 +1119,18 @@ fun UpgradeDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 fun SignOutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Confirm Sign Out") },
-        text = { Text("Are you sure you want to sign out?") },
+        title = { Text(stringResource(R.string.dialog_confirm_sign_out)) },
+        text = { Text(stringResource(R.string.dialog_confirm_sign_out_desc)) },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Text("Sign Out")
+                Text(stringResource(R.string.drawer_sign_out))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         })
 }
 
@@ -1185,13 +1154,13 @@ fun DeviceManagementScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Device Limit Reached",
+                text = stringResource(R.string.device_limit_reached),
                 style = MaterialTheme.typography.headlineMedium,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "To use Episteme Pro on this device, please remove one of your existing registered devices.",
+                text = stringResource(R.string.device_limit_reached_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
@@ -1218,14 +1187,14 @@ fun DeviceManagementScreen(
                                     Text(device.deviceName, fontWeight = FontWeight.SemiBold)
                                     device.lastSeen?.let {
                                         Text(
-                                            "Last seen: ${dateFormatter.format(it)}",
+                                            stringResource(R.string.last_seen, dateFormatter.format(it)),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
                                 TextButton(onClick = { onRemoveDevice(device.deviceId) }) {
-                                    Text("Remove")
+                                    Text(stringResource(R.string.action_remove))
                                 }
                             }
                         }
@@ -1241,18 +1210,18 @@ fun ClearAllDataConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Info, contentDescription = null) },
-        title = { Text("Confirm Destructive Action") },
-        text = { Text("This will permanently delete all your books and reading progress from this device AND from your Google Drive account. This action cannot be undone. Are you sure?") },
+        title = { Text(stringResource(R.string.dialog_destructive_action)) },
+        text = { Text(stringResource(R.string.dialog_destructive_action_desc)) },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Text("Delete Everything")
+                Text(stringResource(R.string.action_delete))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         })
 }
 
@@ -1315,12 +1284,12 @@ fun DangerousFolderActionDialog(
                     contentColor = MaterialTheme.colorScheme.error
                 )
             ) {
-                Text("Confirm & Clear")
+                Text(stringResource(R.string.action_confirm_clear))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

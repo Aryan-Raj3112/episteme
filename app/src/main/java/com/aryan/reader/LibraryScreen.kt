@@ -115,6 +115,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -138,8 +140,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@Composable
 private fun getBookCountString(count: Int): String {
-    return if (count == 1) "1 book" else "$count books"
+    return pluralStringResource(id = R.plurals.book_count, count, count)
 }
 
 @Composable
@@ -542,7 +545,7 @@ fun LibraryScreenContent(
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     var showSortMenu by remember { mutableStateOf(false) }
-    val tabTitles = listOf("All Books", "Shelves", "Folders", "Catalogs")
+    val tabTitles = listOf(stringResource(R.string.tab_all_books), stringResource(R.string.tab_shelves), stringResource(R.string.tab_folders), stringResource(R.string.tab_catalogs))
     val searchFocusRequester = remember { FocusRequester() }
 
     var textFieldValue by remember(isSearchActive) {
@@ -761,8 +764,8 @@ fun LibraryScreenContent(
                         }
                     } else if (recentFiles.isEmpty()) {
                         EmptyState(
-                            title = "Your Library is Empty",
-                            message = "Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.",
+                            title = stringResource(R.string.your_library_empty),
+                            message = stringResource(R.string.library_empty_desc),
                             onSelectFileClick = onSelectFileClick,
                             modifier = Modifier.fillMaxSize()
                         )
@@ -1488,16 +1491,16 @@ private fun RemoveFromShelfConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val bookStr = if (count == 1) "book" else "books"
+    val bookStr = pluralStringResource(id = R.plurals.book_word, count)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Remove from Shelf?") },
-        text = { Text("Are you sure you want to remove $count $bookStr from the '$shelfName' shelf? The book(s) will remain in your library and appear under Unshelved.") },
+        title = { Text(stringResource(R.string.dialog_remove_from_shelf)) },
+        text = { Text(stringResource(R.string.dialog_remove_from_shelf_desc, count, bookStr, shelfName)) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Remove") }
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_remove)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -1508,16 +1511,16 @@ private fun DeleteShelvesConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val shelfStr = if (count == 1) "shelf" else "shelves"
+    val shelfStr = pluralStringResource(id = R.plurals.shelf_count, count)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete $shelfStr?") },
-        text = { Text("Are you sure you want to delete the $count selected $shelfStr? All books within will be moved to Unshelved.") },
+        title = { Text(stringResource(R.string.dialog_delete_shelves, shelfStr)) },
+        text = { Text(stringResource(R.string.dialog_delete_shelves_desc, count, shelfStr)) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Delete") }
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_delete)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
