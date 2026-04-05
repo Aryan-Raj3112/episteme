@@ -2427,14 +2427,14 @@ internal fun PdfPageComposable(
                     val tapYInBitmap = tapInContentCoords.y
 
                     coroutineScope.launch {
-                        val wasHandled = withContext(Dispatchers.IO) {
+                        val nativeResult = withContext(Dispatchers.IO) {
                             try {
                                 pdfDocumentItem.openPage(pdfPageIndex)?.use { page ->
                                     val pagePtr = page.getNativePointer()
 
                                     if (pagePtr == 0L) {
                                         Timber.tag("PdfInteraction").e("Could not find native pointer for page $pdfPageIndex")
-                                        return@withContext false
+                                        return@withContext 0
                                     }
 
                                     val pdfCoords = page.mapDeviceCoordsToPage(
@@ -2442,134 +2442,150 @@ internal fun PdfPageComposable(
                                         currentPageRotation, tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt()
                                     )
 
-                                    NativePdfiumBridge.performClick(pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble())
-                                } ?: false
+                                    val docPtr = try {
+                                        val pdfDocKt = (pdfDocumentItem as? PdfDocumentWrapper)?.pdfDocument
+                                        if (pdfDocKt != null) {
+                                            val documentField = pdfDocKt.javaClass.getDeclaredField("document").apply { isAccessible = true }
+                                            val docUInstance = documentField.get(pdfDocKt)
+                                            if (docUInstance != null) {
+                                                val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
+                                                ptrField.get(docUInstance) as Long
+                                            } else 0L
+                                        } else 0L
+                                    } catch (e: Exception) { 0L }
+
+                                    Timber.tag("PdfLinkDiagnostic").i("Extracted docPtr: $docPtr | pagePtr: $pagePtr")
+
+                                    val linkInfo = NativePdfiumBridge.getLinkInfoAtPoint(
+                                        docPtr, pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble()
+                                    )
+
+                                    if (linkInfo != null) {
+                                        Timber.tag("PdfLinkDiagnostic").i(">>> Native Link Info Extracted: $linkInfo")
+                                        if (linkInfo.startsWith("URI:")) {
+                                            val url = linkInfo.substringAfter("URI:")
+                                            withContext(Dispatchers.Main) { onLinkClicked(url) }
+                                            return@withContext 1
+                                        } else if (linkInfo.startsWith("PAGE:")) {
+                                            val targetPage = linkInfo.substringAfter("PAGE:").toIntOrNull()
+                                            if (targetPage != null && targetPage >= 0) {
+                                                withContext(Dispatchers.Main) { onInternalLinkClicked(targetPage) }
+                                                return@withContext 1
+                                            }
+                                        }
+                                    }
+
+                                    val clickHandled = NativePdfiumBridge.performClick(pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble())
+                                    if (clickHandled) {
+                                        return@withContext 2
+                                    }
+                                    return@withContext 0
+                                } ?: 0
                             } catch (e: Exception) {
                                 Timber.tag("PdfInteraction").e(e, "Interaction error")
-                                false
+                                0
                             }
                         }
 
-                        if (wasHandled) {
+                        if (nativeResult == 2) {
                             Timber.tag("PdfInteraction").i("Action detected. Refreshing page.")
                             tiles = emptyList()
                             bitmapState = null
                             isLoadingPage = true
                             currentRenderedPageId = "ACTION_${System.currentTimeMillis()}"
+                            return@launch
+                        } else if (nativeResult == 1) {
+                            return@launch
                         }
-                    }
 
-                    val annotHitTolerance = with(density) { 24.dp.toPx() } / inputScale
-                    val hitTolerance = with(density) { 16.dp.toPx() } / inputScale
+                        val annotHitTolerance = with(density) { 24.dp.toPx() } / inputScale
+                        val hitTolerance = with(density) { 16.dp.toPx() } / inputScale
 
-                    Timber.d(
-                        "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})"
-                    )
+                        Timber.d("detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})")
 
-                    var tappedRect: Rect? = null
-                    val hitHighlightPair = userHighlightScreenRects.findLast { pair ->
-                        val hit = pair.second.find { r ->
-                            val hitLeft = r.left - hitTolerance
-                            val hitTop = r.top - hitTolerance
-                            val hitRight = r.right + hitTolerance
-                            val hitBottom = r.bottom + hitTolerance
+                        var tappedRect: Rect? = null
+                        val hitHighlightPair = userHighlightScreenRects.findLast { pair ->
+                            val hit = pair.second.find { r ->
+                                val hitLeft = r.left - hitTolerance
+                                val hitTop = r.top - hitTolerance
+                                val hitRight = r.right + hitTolerance
+                                val hitBottom = r.bottom + hitTolerance
 
-                            tapXInBitmap in hitLeft..hitRight &&
-                                    tapYInBitmap >= hitTop && tapYInBitmap <= hitBottom
+                                tapXInBitmap in hitLeft..hitRight && tapYInBitmap >= hitTop && tapYInBitmap <= hitBottom
+                            }
+                            if (hit != null) {
+                                tappedRect = hit
+                                true
+                            } else false
                         }
-                        if (hit != null) {
-                            tappedRect = hit
-                            true
-                        } else false
-                    }
 
-                    val standardHit = standardAnnotScreenRects.findLast { (annot, screenRect) ->
-                        if (annot.subtype == 2) return@findLast false
+                        val standardHit = standardAnnotScreenRects.findLast { (annot, screenRect) ->
+                            if (annot.subtype == 2) return@findLast false
 
-                        val left = min(screenRect.left, screenRect.right)
-                        val right = max(screenRect.left, screenRect.right)
-                        val top = min(screenRect.top, screenRect.bottom)
-                        val bottom = max(screenRect.top, screenRect.bottom)
+                            val left = min(screenRect.left, screenRect.right)
+                            val right = max(screenRect.left, screenRect.right)
+                            val top = min(screenRect.top, screenRect.bottom)
+                            val bottom = max(screenRect.top, screenRect.bottom)
 
-                        val inflatedHitBox = Rect(
-                            (left - annotHitTolerance).toInt(),
-                            (top - annotHitTolerance).toInt(),
-                            (right + annotHitTolerance).toInt(),
-                            (bottom + annotHitTolerance).toInt()
-                        )
+                            val inflatedHitBox = Rect(
+                                (left - annotHitTolerance).toInt(),
+                                (top - annotHitTolerance).toInt(),
+                                (right + annotHitTolerance).toInt(),
+                                (bottom + annotHitTolerance).toInt()
+                            )
 
-                        val isHit = inflatedHitBox.contains(tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt())
-
-                        isHit
-                    }
-
-                    if (standardHit != null) {
-                        val (annot, screenRect) = standardHit
-                        customMenuState = CustomPdfMenuState(
-                            selectedText = annot.contents ?: "No comment",
-                            anchorRect = screenRect,
-                            charRange = Pair(-1, -1),
-                            isComment = true,
-                            author = annot.author,
-                            annotation = annot
-                        )
-                        return@detectTapGestures
-                    }
-
-                    if (hitHighlightPair != null && tappedRect != null) {
-                        val hitHighlight = hitHighlightPair.first
-
-                        val combinedRect = Rect(hitHighlightPair.second.first())
-                        hitHighlightPair.second.forEach { combinedRect.union(it) }
-
-                        customMenuState = CustomPdfMenuState(
-                            selectedText = hitHighlight.text,
-                            anchorRect = combinedRect,
-                            charRange = hitHighlight.range,
-                            isExistingHighlight = true,
-                            highlightId = hitHighlight.id
-                        )
-                        return@detectTapGestures
-                    }
-
-                    Timber.d(
-                        "detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})"
-                    )
-
-                    val clickedLink = pageLinks.firstOrNull { link ->
-                        link.tapBounds.contains(
-                            tapXInBitmap.toInt(), tapYInBitmap.toInt()
-                        )
-                    }
-
-                    if (clickedLink != null) {
-                        Timber.d(
-                            "PdfPageComposable: Link clicked. Ignoring selection logic."
-                        )
-                        if (clickedLink.destPageIdx != null && clickedLink.destPageIdx >= 0) {
-                            onInternalLinkClicked(clickedLink.destPageIdx)
-                        } else if (clickedLink.url != null) {
-                            onLinkClicked(clickedLink.url)
+                            inflatedHitBox.contains(tapInContentCoords.x.toInt(), tapInContentCoords.y.toInt())
                         }
-                        return@detectTapGestures
-                    }
 
-                    val wasMenuVisible = customMenuState != null
-                    val wasSelectionVisible =
-                        selectionCharRange.value != null || ocrSelectionSymbolIndices != null
+                        if (standardHit != null) {
+                            val (annot, screenRect) = standardHit
+                            customMenuState = CustomPdfMenuState(
+                                selectedText = annot.contents ?: "No comment",
+                                anchorRect = screenRect,
+                                charRange = Pair(-1, -1),
+                                isComment = true,
+                                author = annot.author,
+                                annotation = annot
+                            )
+                            return@launch
+                        }
 
-                    Timber.d(
-                        "PdfPageComposable: State check - MenuVisible=$wasMenuVisible, SelectionVisible=$wasSelectionVisible"
-                    )
+                        if (hitHighlightPair != null && tappedRect != null) {
+                            val hitHighlight = hitHighlightPair.first
+                            val combinedRect = Rect(hitHighlightPair.second.first())
+                            hitHighlightPair.second.forEach { combinedRect.union(it) }
 
-                    if (wasMenuVisible || wasSelectionVisible) {
-                        Timber.d(
-                            "PdfPageComposable: Clearing selection/menu."
-                        )
-                        customMenuState = null
-                        selectionCharRange.value = null
-                        ocrSelectionSymbolIndices = null
-                        coroutineScope.launch {
+                            customMenuState = CustomPdfMenuState(
+                                selectedText = hitHighlight.text,
+                                anchorRect = combinedRect,
+                                charRange = hitHighlight.range,
+                                isExistingHighlight = true,
+                                highlightId = hitHighlight.id
+                            )
+                            return@launch
+                        }
+
+                        val clickedLink = pageLinks.firstOrNull { link ->
+                            link.tapBounds.contains(tapXInBitmap.toInt(), tapYInBitmap.toInt())
+                        }
+
+                        if (clickedLink != null) {
+                            Timber.d("PdfPageComposable: Fallback pageLinks intercepted click.")
+                            if (clickedLink.destPageIdx != null && clickedLink.destPageIdx >= 0) {
+                                onInternalLinkClicked(clickedLink.destPageIdx)
+                            } else if (clickedLink.url != null) {
+                                onLinkClicked(clickedLink.url)
+                            }
+                            return@launch
+                        }
+
+                        val wasMenuVisible = customMenuState != null
+                        val wasSelectionVisible = selectionCharRange.value != null || ocrSelectionSymbolIndices != null
+
+                        if (wasMenuVisible || wasSelectionVisible) {
+                            customMenuState = null
+                            selectionCharRange.value = null
+                            ocrSelectionSymbolIndices = null
                             updateSelectionVisuals(
                                 pdfDocumentItem,
                                 pdfPageIndex,
@@ -2578,12 +2594,9 @@ internal fun PdfPageComposable(
                                 actualBitmapHeightPx,
                                 currentPageRotation,
                             )
+                        } else {
+                            currentOnSingleTap()
                         }
-                    } else {
-                        Timber.d(
-                            "PdfPageComposable: No selection active. Calling onSingleTap()."
-                        )
-                        currentOnSingleTap()
                     }
                 }, onDoubleTap = { tapOffset ->
                     if (isZoomEnabled && !isVerticalScroll) {

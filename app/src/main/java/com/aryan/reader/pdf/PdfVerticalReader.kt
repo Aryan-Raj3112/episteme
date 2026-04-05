@@ -333,20 +333,20 @@ internal fun PdfVerticalReader(
         val panXAnimatable = remember { Animatable(if ((screenWidth * fitZoom) < screenWidth) (screenWidth - (screenWidth * fitZoom)) / 2f else 0f) }
         val panYAnimatable = remember { Animatable(0f) }
 
+        var isResizing by remember { mutableStateOf(false) }
         var previousScreenWidth by remember { mutableFloatStateOf(0f) }
-        LaunchedEffect(screenWidth, screenHeight) {
-            if (previousScreenWidth > 0f && previousScreenWidth != screenWidth) {
-                if (zoomAnimatable.value <= 1.1f) {
-                    val centeredX = if ((screenWidth * fitZoom) < screenWidth) {
-                        (screenWidth - (screenWidth * fitZoom)) / 2f
-                    } else 0f
+        var previousScreenHeight by remember { mutableFloatStateOf(0f) }
+        val targetPageDuringResize = remember { mutableIntStateOf(-1) }
 
-                    zoomAnimatable.snapTo(fitZoom)
-                    panXAnimatable.snapTo(centeredX)
-                    onZoomChange(fitZoom)
+        if (previousScreenWidth != screenWidth || previousScreenHeight != screenHeight) {
+            if (previousScreenWidth > 0f) {
+                isResizing = true
+                if (targetPageDuringResize.intValue == -1) {
+                    targetPageDuringResize.intValue = state.currentPage
                 }
             }
             previousScreenWidth = screenWidth
+            previousScreenHeight = screenHeight
         }
 
         var isInitialLayout by remember { mutableStateOf(true) }
@@ -354,20 +354,50 @@ internal fun PdfVerticalReader(
 
         LaunchedEffect(layoutState.pages) {
             if (!isInitialLayout) {
-                val targetPageIdx = state.currentPage
+                val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
+                    targetPageDuringResize.intValue
+                } else {
+                    state.currentPage
+                }
+
                 val newLayout = layoutState.pages
                 val pageLayout = newLayout.getOrNull(targetPageIdx)
 
                 if (pageLayout != null) {
                     val currentZoom = zoomAnimatable.value
-                    val targetPanY = headerHeightPx - (pageLayout.y * currentZoom)
-                    val zoomedDocHeight = layoutState.totalHeight * currentZoom
+                    val isFit = currentZoom <= 1.1f
+                    val targetZoom = if (isFit) fitZoom else currentZoom
+
+                    val targetPanY = headerHeightPx - (pageLayout.y * targetZoom)
+                    val zoomedDocHeight = layoutState.totalHeight * targetZoom
                     val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
                     val finalPanY = targetPanY.coerceIn(minPanY, headerHeightPx)
 
-                    Timber.tag("PdfZoomDiagnostics").i("Layout changed (Orientation/Size). Snapping to Page $targetPageIdx at PanY: $finalPanY")
-                    panYAnimatable.snapTo(finalPanY)
+                    val targetPanX = if (isFit) {
+                        if ((screenWidth * targetZoom) < screenWidth) {
+                            (screenWidth - (screenWidth * targetZoom)) / 2f
+                        } else 0f
+                    } else {
+                        panXAnimatable.value
+                    }
+
+                    panXAnimatable.updateBounds(null, null)
+                    panYAnimatable.updateBounds(null, null)
+
+                    coroutineScope {
+                        launch { zoomAnimatable.snapTo(targetZoom) }
+                        launch { panXAnimatable.snapTo(targetPanX) }
+                        launch { panYAnimatable.snapTo(finalPanY) }
+                    }
+
+                    panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
+                    state.currentPage = targetPageIdx
+                    if (isFit) onZoomChange(targetZoom)
                 }
+
+                delay(50)
+                isResizing = false
+                targetPageDuringResize.intValue = -1
             }
             isInitialLayout = false
         }
@@ -410,9 +440,9 @@ internal fun PdfVerticalReader(
         var isDragging by remember { mutableStateOf(false) }
 
         LaunchedEffect(
-            totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging
+            totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging, isResizing
         ) {
-            if (zoomAnimatable.isRunning || panXAnimatable.isRunning || panYAnimatable.isRunning || isInteracting || isFlinging) {
+            if (zoomAnimatable.isRunning || panXAnimatable.isRunning || panYAnimatable.isRunning || isInteracting || isFlinging || isResizing) {
                 return@LaunchedEffect
             }
 
@@ -641,9 +671,10 @@ internal fun PdfVerticalReader(
             selectedTool,
             zoomAnimatable.value,
             isInteracting,
-            isFlinging
+            isFlinging,
+            isResizing
         ) {
-            if (isInteracting || isFlinging) return@LaunchedEffect
+            if (isInteracting || isFlinging || isResizing) return@LaunchedEffect
 
             val currentZoom = zoomAnimatable.value
             val zoomedDocHeight = totalDocHeight * currentZoom
@@ -1255,11 +1286,11 @@ internal fun PdfVerticalReader(
                 }
             }
 
-            LaunchedEffect(visiblePages, screenHeight) {
+            LaunchedEffect(visiblePages, screenHeight, isResizing) {
                 snapshotFlow {
                     Pair(panYAnimatable.value, zoomAnimatable.value)
                 }.collectLatest { (panY, zoom) ->
-                    if (visiblePages.isNotEmpty()) {
+                    if (!isResizing && visiblePages.isNotEmpty()) {
                         state.firstVisiblePage = visiblePages.first().index
                         state.lastVisiblePage = visiblePages.last().index
 

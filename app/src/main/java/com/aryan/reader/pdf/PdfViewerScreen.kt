@@ -47,6 +47,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.widthIn
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
@@ -97,6 +98,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -111,10 +113,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
@@ -1078,6 +1082,35 @@ private fun getFastFileId(context: Context, uri: Uri): String {
     return result
 }
 
+private data class DocumentCacheItem(
+    val doc: ReaderDocument,
+    val pfd: ParcelFileDescriptor,
+    val totalPages: Int,
+    val pageAspectRatios: List<Float>,
+    val flatTableOfContents: List<TocEntry>
+)
+
+private class DocumentCache(val maxSize: Int = 3) {
+    val cache = object : android.util.LruCache<String, DocumentCacheItem>(maxSize) {
+        override fun entryRemoved(
+            evicted: Boolean,
+            key: String,
+            oldValue: DocumentCacheItem,
+            newValue: DocumentCacheItem?
+        ) {
+            if (evicted) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try { oldValue.doc.close() } catch (e: Exception) { Timber.e(e) }
+                    try { oldValue.pfd.close() } catch (e: Exception) { Timber.e(e) }
+                }
+            }
+        }
+    }
+    fun put(key: String, item: DocumentCacheItem) { cache.put(key, item) }
+    fun get(key: String): DocumentCacheItem? = cache.get(key)
+    fun evictAll() { cache.evictAll() }
+}
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt")
 @ExperimentalMaterial3Api
@@ -1110,6 +1143,8 @@ fun PdfViewerScreen(
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+    val documentCache = remember { DocumentCache(3) }
+    val tabStateMap = remember { mutableStateMapOf<String, Int>() }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         PdfBuiltInThemes.find { it.id == currentThemeId }
@@ -1149,30 +1184,39 @@ fun PdfViewerScreen(
     var isBackgroundIndexing by remember { mutableStateOf(false) }
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
-    var currentBookId by remember { mutableStateOf<String?>(null) }
-    val bookId = currentBookId ?: pdfUri.toString().hashCode().toString()
-
-    LaunchedEffect(bookId) {
-        isScrollLocked = loadPdfScrollLocked(context, bookId)
-        isFullScreen = loadPdfFullScreen(context, bookId)
-    }
-
     val uiState by viewModel.uiState.collectAsState()
+    val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
+    val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
+
+    var showNewTabSheet by remember { mutableStateOf(false) }
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    val isTabsEnabled = uiState.isTabsEnabled
+    val openTabs = uiState.openTabs
+    val activeTabBookId = uiState.activeTabBookId
+    val originalFileName by remember(uiState.recentFiles,  effectivePdfUri) {
+        derivedStateOf {
+            uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }?.displayName
+                ?: effectivePdfUri.lastPathSegment ?: "Document.pdf"
+        }
+    }
+    var currentBookId by remember { mutableStateOf<String?>(null) }
+    val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
+    val view = LocalView.current
+    var isDockDragging by remember { mutableStateOf(false) }
+    var initialScrollDone by remember { mutableStateOf(false) }
+
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
     val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId) {
         derivedStateOf {
             uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
         }
     }
-    val originalFileName by remember(uiState.recentFiles, pdfUri) {
-        derivedStateOf {
-            uiState.recentFiles.find { it.uriString == pdfUri.toString() }?.displayName
-                ?: pdfUri.lastPathSegment ?: "Document.pdf"
-        }
+
+    LaunchedEffect(bookId) {
+        isScrollLocked = loadPdfScrollLocked(context, bookId)
+        isFullScreen = loadPdfFullScreen(context, bookId)
     }
-    val view = LocalView.current
-    var isDockDragging by remember { mutableStateOf(false) }
-    var initialScrollDone by remember { mutableStateOf(false) }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
@@ -1254,7 +1298,7 @@ fun PdfViewerScreen(
             Timber.tag("PdfPrint").d("Starting print job: $jobName")
             printManager.print(
                 jobName,
-                PdfPrintDocumentAdapter(context, pdfUri, originalFileName),
+                PdfPrintDocumentAdapter(context, effectivePdfUri, originalFileName),
                 null
             )
         } catch (e: Exception) {
@@ -1471,6 +1515,8 @@ fun PdfViewerScreen(
         mutableStateMapOf<Int, MutableList<PdfAnnotation>>()
     }
 
+    var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
+
     var areAnnotationsLoaded by remember { mutableStateOf(false) }
 
     val richTextRepository = remember(context) { PdfRichTextRepository(context) }
@@ -1513,6 +1559,7 @@ fun PdfViewerScreen(
             if (initialScrollDone) {
                 Timber.tag("PdfPositionDebug").v("UI: Tracking | currentPage: $currentPage | pendingRestorePage updated")
                 pendingRestorePage = currentPage
+                currentBookId?.let { tabStateMap[it] = currentPage }
             }
         }
     }
@@ -1822,7 +1869,7 @@ fun PdfViewerScreen(
 
     val onInsertPage: () -> Unit = {
         coroutineScope.launch {
-            val targetIndex = currentPage + 1
+            val targetIndex = (currentPage + 1).coerceIn(0, virtualPages.size)
             Timber.tag("RichTextMigration").i("INSERT: User requested blank page at index $targetIndex")
 
             val (refWidth, refHeight) = withContext(Dispatchers.IO) {
@@ -2195,13 +2242,15 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(isDocumentReady, totalDisplayPages, displayMode) {
+    LaunchedEffect(isDocumentReady, totalDisplayPages, displayMode, currentBookId) {
         if (isDocumentReady && !initialScrollDone) {
             val pageCount = totalDisplayPages
             if (pageCount <= 0) return@LaunchedEffect
 
             val targetPage = pendingRestorePage?.coerceIn(0, pageCount - 1) ?: 0
-            Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount")
+            Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount | BookId: $currentBookId")
+
+            delay(100)
 
             try {
                 when (displayMode) {
@@ -2209,21 +2258,35 @@ fun PdfViewerScreen(
                         if (pagerState.currentPage != targetPage) {
                             pagerState.scrollToPage(targetPage)
                         }
-                        initialScrollDone = true
                     }
                     DisplayMode.VERTICAL_SCROLL -> {
-                        while (verticalReaderState.snapToPageHandler == null) {
+                        var attempts = 0
+                        while (verticalReaderState.snapToPageHandler == null && attempts < 100) {
                             delay(16)
+                            attempts++
                         }
-                        Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
-                        verticalReaderState.snapToPage(targetPage)
-                        initialScrollDone = true
+                        if (verticalReaderState.snapToPageHandler != null) {
+                            Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
+                            verticalReaderState.snapToPage(targetPage)
+
+                            var waitAttempts = 0
+                            while (verticalReaderState.currentPage != targetPage && waitAttempts < 20) {
+                                delay(16)
+                                waitAttempts++
+                            }
+                        } else {
+                            Timber.tag("PdfPositionDebug").w("UI: snapToPageHandler is null after timeout")
+                        }
                     }
                 }
-                Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage")
+
+                delay(50)
+                initialScrollDone = true
+                Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage | initialScrollDone: $initialScrollDone")
             } catch (e: Exception) {
-                if (e is CancellationException) {
+                if (e is CancellationException || e.javaClass.name.contains("CancellationException")) {
                     Timber.tag("PdfPositionDebug").w("UI: Restoration cancelled (likely new recomposition)")
+                    throw e
                 } else {
                     Timber.tag("PdfPositionDebug").e(e, "UI: Restoration error.")
                     initialScrollDone = true
@@ -2433,7 +2496,7 @@ fun PdfViewerScreen(
                             }
 
                             viewModel.savePdfWithAnnotations(
-                                sourceUri = pdfUri,
+                                sourceUri = effectivePdfUri,
                                 destUri = uri,
                                 annotations = allAnnotations,
                                 richTextPageLayouts = currentRichTextLayouts,
@@ -2446,7 +2509,7 @@ fun PdfViewerScreen(
                 }
 
                 SaveMode.ORIGINAL -> {
-                    viewModel.saveOriginalPdf(pdfUri, uri)
+                    viewModel.saveOriginalPdf(effectivePdfUri, uri)
                 }
 
                 else -> {}
@@ -2773,6 +2836,7 @@ fun PdfViewerScreen(
     fun isAnnotationHit(
         annotation: PdfAnnotation,
         hitPoint: PdfPoint,
+        lastHitPoint: PdfPoint?,
         pageAspectRatio: Float,
         threshold: Float
     ): Boolean {
@@ -2781,11 +2845,37 @@ fun PdfViewerScreen(
         val effectiveThreshold = threshold + (annotation.strokeWidth / 2f)
         val thresholdSq = effectiveThreshold * effectiveThreshold
 
+        fun distSqToEraser(px: Float, pyScaled: Float): Float {
+            val e1x = hitPoint.x
+            val e1yScaled = hitPoint.y / pageAspectRatio
+            if (lastHitPoint == null) {
+                val dx = px - e1x
+                val dy = pyScaled - e1yScaled
+                return dx * dx + dy * dy
+            }
+            val e0x = lastHitPoint.x
+            val e0yScaled = lastHitPoint.y / pageAspectRatio
+
+            val ex = e1x - e0x
+            val ey = e1yScaled - e0yScaled
+            val segLenSq = (ex * ex + ey * ey)
+            if (segLenSq < 1e-8f) {
+                val dx = px - e1x
+                val dy = pyScaled - e1yScaled
+                return dx * dx + dy * dy
+            }
+            val t = ((px - e0x) * ex + (pyScaled - e0yScaled) * ey) / segLenSq
+            val tClamped = t.coerceIn(0f, 1f)
+            val closestX = e0x + ex * tClamped
+            val closestY = e0yScaled + ey * tClamped
+            val dx = px - closestX
+            val dy = pyScaled - closestY
+            return dx * dx + dy * dy
+        }
+
         if (annotation.points.size == 1) {
             val p = annotation.points[0]
-            val dx = (p.x - hitPoint.x)
-            val dy = (p.y - hitPoint.y) / pageAspectRatio
-            return (dx * dx + dy * dy) < thresholdSq
+            return distSqToEraser(p.x, p.y / pageAspectRatio) < thresholdSq
         }
 
         for (i in 0 until annotation.points.size - 1) {
@@ -2807,6 +2897,11 @@ fun PdfViewerScreen(
             val distSq = (pax - closestX) * (pax - closestX) + (pay - closestY) * (pay - closestY)
 
             if (distSq < thresholdSq) return true
+
+            if (lastHitPoint != null) {
+                if (distSqToEraser(a.x, a.y / pageAspectRatio) < thresholdSq) return true
+                if (distSqToEraser(b.x, b.y / pageAspectRatio) < thresholdSq) return true
+            }
         }
 
         return false
@@ -2878,7 +2973,7 @@ fun PdfViewerScreen(
                 val chunks = splitTextIntoChunks(textToChunk)
 
                 val bookTitle = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
-                    ?: pdfUri.lastPathSegment ?: "Document"
+                    ?: effectivePdfUri.lastPathSegment ?: "Document"
                 val pageTitle = "Page ${pageToRead + 1}"
 
                 val ttsChunks = chunks.mapIndexed { index, text -> TtsChunk(text, "", index) }
@@ -3040,8 +3135,13 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(pdfUri, pdfiumCore, documentPassword) {
-        Timber.d("LaunchedEffect: Loading PDF document for URI: $pdfUri")
+    LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
+        Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
+
+        Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: ${uiState.activeTabBookId}, isLoading: $isLoadingDocument")
+
+        bookmarks = loadPdfBookmarksFromJson(uiState.initialBookmarksJson ?: initialBookmarksJson)
+
         isLoadingDocument = true
         isDocumentReady = false
         errorMessage = null
@@ -3052,7 +3152,7 @@ fun PdfViewerScreen(
         ocrUsedForCurrentPageTts = false
         flatTableOfContents = emptyList()
 
-        val fastId = getFastFileId(context, pdfUri)
+        val fastId = getFastFileId(context, effectivePdfUri)
         val selectedId = uiState.selectedBookId
 
         if (selectedId != null && selectedId != fastId) {
@@ -3063,43 +3163,47 @@ fun PdfViewerScreen(
             currentBookId = fastId
         }
 
-        val oldDoc = pdfDocument
-        val oldPfd = pfdState
+        val cachedItem = documentCache.get(currentBookId!!)
+        if (cachedItem != null) {
+            Timber.tag("PdfTabSync").i("UI: Restoring from cache for $currentBookId")
+            pdfDocument = cachedItem.doc
+            pfdState = cachedItem.pfd
+            totalPages = cachedItem.totalPages
+            pageAspectRatios = cachedItem.pageAspectRatios
+            flatTableOfContents = cachedItem.flatTableOfContents
+
+            val mapPage = tabStateMap[currentBookId!!]
+            val uiPage = uiState.initialPageInBook
+            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$initialPage")
+
+            pendingRestorePage = mapPage ?: uiPage ?: initialPage
+            initialScrollDone = false
+            isDocumentReady = true
+            isLoadingDocument = false
+            return@LaunchedEffect
+        }
+
+        val mapPageInit = tabStateMap[currentBookId!!]
+        val uiPageInit = uiState.initialPageInBook
+        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$initialPage")
+        pendingRestorePage = mapPageInit ?: uiPageInit ?: initialPage
+        initialScrollDone = false
 
         pdfDocument = null
         pfdState = null
         totalPages = 0
 
-        if (oldDoc != null || oldPfd != null) {
-            withContext(Dispatchers.IO) {
-                oldDoc?.let {
-                    try {
-                        it.close()
-                    } catch (e: Exception) {
-                        Timber.e(e)
-                    }
-                }
-                oldPfd?.let {
-                    try {
-                        it.close()
-                    } catch (e: Exception) {
-                        Timber.e(e)
-                    }
-                }
-            }
-        }
-
         var currentPfdOpened: ParcelFileDescriptor? = null
         try {
             withContext(Dispatchers.IO) {
-                Timber.d("Opening ParcelFileDescriptor for URI: $pdfUri")
+                Timber.tag("PdfTabSync").v("UI: Opening PFD for $effectivePdfUri")
 
                 if (pdfUri.scheme != "opds-pse") {
-                    currentPfdOpened = context.contentResolver.openFileDescriptor(pdfUri, "r")
+                    currentPfdOpened = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
                     if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
                 }
 
-                val doc = DocumentFactory.loadDocument(context, pdfUri, uiState.selectedFileType ?: FileType.PDF, documentPassword, pdfiumCore)
+                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, uiState.selectedFileType ?: FileType.PDF, documentPassword, pdfiumCore)
 
                 if (!isActive) {
                     doc.close()
@@ -3180,6 +3284,17 @@ fun PdfViewerScreen(
                     isDocumentReady = true
                     isLoadingDocument = false
 
+                    documentCache.put(
+                        currentBookId!!,
+                        DocumentCacheItem(
+                            doc = doc,
+                            pfd = currentPfdOpened!!,
+                            totalPages = pagesCount,
+                            pageAspectRatios = ratios,
+                            flatTableOfContents = flatTableOfContents
+                        )
+                    )
+
                     withContext(Dispatchers.Main) {
                         showPasswordDialog = false
                         isPasswordError = false
@@ -3220,9 +3335,11 @@ fun PdfViewerScreen(
                     isLoadingDocument = false
                 }
 
-                Timber.i("PDF document loaded optimistically. Total Pages: $totalPages.")
+                Timber.tag("PdfTabSync").v("UI: Pdfium Document created. Page count: $pagesCount")
             }
         } catch (e: Throwable) {
+            if (e is CancellationException || e.javaClass.name.contains("CancellationException")) throw e
+            Timber.tag("PdfTabSync").e(e, "UI: Error in load effect for $effectivePdfUri")
             val errorString = e.toString()
             val causeString = e.cause?.toString() ?: ""
 
@@ -3297,28 +3414,22 @@ fun PdfViewerScreen(
             ttsController.stop()
             PdfBitmapPool.clear()
             PdfThumbnailCache.clear()
+            documentCache.evictAll()
+
             val docToClose = pdfDocument
             val pfdToClose = pfdState
             pdfDocument = null
             pfdState = null
 
             if (docToClose != null || pfdToClose != null) {
-                coroutineScope.launch(Dispatchers.IO) {
+                CoroutineScope(Dispatchers.IO).launch {
                     docToClose?.let {
                         Timber.d("Closing PDF document in onDispose.")
-                        try {
-                            it.close()
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error closing document in onDispose")
-                        }
+                        try { it.close() } catch (e: Exception) { Timber.e(e, "Error closing document") }
                     }
                     pfdToClose?.let {
                         Timber.d("Closing ParcelFileDescriptor in onDispose: $it")
-                        try {
-                            it.close()
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error closing ParcelFileDescriptor in onDispose")
-                        }
+                        try { it.close() } catch (e: Exception) { Timber.e(e, "Error closing ParcelFileDescriptor") }
                     }
                 }
             }
@@ -3329,7 +3440,7 @@ fun PdfViewerScreen(
 
     var isOcrScanning by remember { mutableStateOf(false) }
 
-    LaunchedEffect(pdfUri, currentBookId, totalPages) {
+    LaunchedEffect(effectivePdfUri, currentBookId, totalPages) {
         if (currentBookId == null || totalPages == 0) return@LaunchedEffect
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
         if (uiState.selectedFileType != FileType.PDF) return@LaunchedEffect
@@ -3359,7 +3470,7 @@ fun PdfViewerScreen(
                     "Indexer: Starting background indexing for ${totalPages - existingPages.size} pages."
                 )
 
-                bgPfd = context.contentResolver.openFileDescriptor(pdfUri, "r")
+                bgPfd = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
                 if (bgPfd != null) {
                     bgDoc = pdfiumCore.newDocument(bgPfd, documentPassword)
 
@@ -4223,6 +4334,13 @@ fun PdfViewerScreen(
 
                                             val currentSelectedTool by rememberUpdatedState(selectedTool)
 
+                                            val currentStrokeColorState by rememberUpdatedState(
+                                                currentStrokeColor
+                                            )
+                                            val currentStrokeWidthState by rememberUpdatedState(
+                                                currentStrokeWidth
+                                            )
+
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
                                                 remember(pageIndex) {
                                                     { point: PdfPoint ->
@@ -4231,8 +4349,9 @@ fun PdfViewerScreen(
                                                             val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                             val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                             }
+                                                            lastEraserPoint = point
                                                             if (toRemove.isNotEmpty()) {
                                                                 val batch =
                                                                     erasedAnnotationsFromStroke.getOrPut(
@@ -4259,13 +4378,6 @@ fun PdfViewerScreen(
                                                     }
                                                 }
 
-                                            val currentStrokeColorState by rememberUpdatedState(
-                                                currentStrokeColor
-                                            )
-                                            val currentStrokeWidthState by rememberUpdatedState(
-                                                currentStrokeWidth
-                                            )
-
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawStartPagination =
                                                 remember(pageIndex) {
                                                     { point: PdfPoint ->
@@ -4274,11 +4386,12 @@ fun PdfViewerScreen(
                                                         } else {
                                                             if (currentSelectedTool == InkType.TEXT) {
                                                             } else if (currentSelectedTool == InkType.ERASER) {
+                                                                lastEraserPoint = point
                                                                 erasedAnnotationsFromStroke.clear()
                                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                                 val toRemove = existing.filter {
-                                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                                 }
                                                                 if (toRemove.isNotEmpty()) {
                                                                     val batch =
@@ -4617,12 +4730,13 @@ fun PdfViewerScreen(
                                                 } else {
                                                     if (currentSelectedTool == InkType.TEXT) {
                                                     } else if (currentSelectedTool == InkType.ERASER) {
+                                                        lastEraserPoint = point
                                                         erasedAnnotationsFromStroke.clear()
 
                                                         val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                         val existing = allAnnotations[pageIndex] ?: emptyList()
                                                         val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                         }
                                                         if (toRemove.isNotEmpty()) {
                                                             val batch =
@@ -4660,8 +4774,9 @@ fun PdfViewerScreen(
                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                 }
+                                                lastEraserPoint = point
                                                 if (toRemove.isNotEmpty()) {
                                                     val batch =
                                                         erasedAnnotationsFromStroke.getOrPut(
@@ -5229,413 +5344,494 @@ fun PdfViewerScreen(
                     modifier = Modifier.align(Alignment.TopCenter)
                 ) {
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 4.dp
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (searchState.isSearchActive) {
-                                SearchTopBar(
-                                    searchState = searchState,
-                                    focusRequester = focusRequester,
-                                    onCloseSearch = {
-                                        searchState.isSearchActive = false
-                                        searchState.onQueryChange("")
-                                        keyboardController?.hide()
-                                        focusManager.clearFocus()
-                                    })
-                            } else {
-                                TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_back),
-                                    description = stringResource(R.string.tooltip_back_desc),
-                                    onClick = { saveStateAndExit() }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back"
-                                    )
-                                }
-                                val currentPageForDisplay =
-                                    if (displayMode == DisplayMode.PAGINATION) {
-                                        pagerState.currentPage
-                                    } else {
-                                        verticalReaderState.currentPage
-                                    }
-                                val titleText = when {
-                                    isLoadingDocument -> "Loading PDF..."
-                                    errorMessage != null -> "Error loading PDF"
-                                    totalPages > 0 && pagerState.pageCount > 0 -> "Page ${currentPageForDisplay + 1} of $totalPages"
-                                    totalPages > 0 && pagerState.pageCount == 0 -> "Loading page..."
-                                    else -> "PDF Viewer"
-                                }
-                                Text(
-                                    text = titleText,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .padding(start = 12.dp)
-                                        .weight(1f)
-                                        .testTag("PageNumberIndicator")
-                                )
-
-                                TooltipIconButton(
-                                    text = "Theme",
-                                    description = "Theme Settings",
-                                    onClick = { showThemePanel = true }
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.palette),
-                                        contentDescription = "Theme Settings",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                TooltipIconButton(
-                                    text = if (isScrollLocked)
-                                        stringResource(R.string.tooltip_unlock_pan)
-                                    else
-                                        stringResource(R.string.tooltip_lock_pan),
-                                    description = if (isScrollLocked)
-                                        stringResource(R.string.tooltip_unlock_pan_desc)
-                                    else
-                                        stringResource(R.string.tooltip_lock_pan_desc),
-                                    onClick = {
-                                        isScrollLocked = !isScrollLocked
-                                        savePdfScrollLocked(context, bookId, isScrollLocked)
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                        contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_fullscreen),
-                                    description = stringResource(R.string.tooltip_fullscreen_desc),
-                                    onClick = {
-                                        isFullScreen = true
-                                        savePdfFullScreen(context, bookId, true)
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = "Enter Full Screen",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_dictionary),
-                                    description = stringResource(R.string.tooltip_dictionary_desc),
-                                    onClick = { showDictionarySettingsSheet = true }
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.dictionary),
-                                        contentDescription = "Dictionary Settings",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                if (BuildConfig.DEBUG) {
-                                    TooltipIconButton(text = "Pen Playground", onClick = { showPenPlayground = true }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Star,
-                                            contentDescription = "Open Pen Playground",
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-
-                                    TooltipIconButton(text = "Import SVG", onClick = {
-                                        val page = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
-
-                                        coroutineScope.launch(Dispatchers.IO) {
-                                            val svgAnnotations = SvgToAnnotationConverter.importSvgFromAssets(
-                                                context = context,
-                                                fileName = "demo_art.svg",
-                                                pageIndex = page
-                                            )
-
-                                            withContext(Dispatchers.Main) {
-                                                if (svgAnnotations.isNotEmpty()) {
-                                                    val existing = allAnnotations[page] ?: emptyList()
-                                                    allAnnotations = allAnnotations + (page to (existing + svgAnnotations))
-
-                                                    svgAnnotations.forEach { annot ->
-                                                        undoStack.add(HistoryAction.Add(page, annot))
-                                                    }
-                                                    redoStack.clear()
-
-                                                    snackbarHostState.showSnackbar("Imported ${svgAnnotations.size} SVG strokes!")
-                                                } else {
-                                                    snackbarHostState.showSnackbar("Failed to import SVG or empty.")
-                                                }
-                                            }
-                                        }
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Brush,
-                                            contentDescription = "Import SVG",
-                                            tint = Color(0xFFE91E63)
-                                        )
-                                    }
-                                }
-
-                                Box {
-                                    var showMoreMenu by remember { mutableStateOf(false) }
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().height(56.dp)
+                                    .padding(horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (searchState.isSearchActive) {
+                                    SearchTopBar(
+                                        searchState = searchState,
+                                        focusRequester = focusRequester,
+                                        onCloseSearch = {
+                                            searchState.isSearchActive = false
+                                            searchState.onQueryChange("")
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                        })
+                                } else {
                                     TooltipIconButton(
-                                        text = stringResource(R.string.tooltip_more_options),
-                                        description = stringResource(R.string.tooltip_more_options_desc),
-                                        onClick = { showMoreMenu = true }
-                                    ) {
+                                        text = stringResource(R.string.tooltip_back),
+                                        description = stringResource(R.string.tooltip_back_desc),
+                                        onClick = { saveStateAndExit() }) {
                                         Icon(
-                                            imageVector = Icons.Default.MoreVert,
-                                            contentDescription = "More Options"
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                            contentDescription = "Back"
+                                        )
+                                    }
+                                    val currentPageForDisplay =
+                                        if (displayMode == DisplayMode.PAGINATION) {
+                                            pagerState.currentPage
+                                        } else {
+                                            verticalReaderState.currentPage
+                                        }
+                                    val titleText = when {
+                                        isLoadingDocument -> "Loading PDF..."
+                                        errorMessage != null -> "Error loading PDF"
+                                        totalPages > 0 && pagerState.pageCount > 0 -> "Page ${currentPageForDisplay + 1} of $totalPages"
+                                        totalPages > 0 && pagerState.pageCount == 0 -> "Loading page..."
+                                        else -> "PDF Viewer"
+                                    }
+                                    Text(
+                                        text = titleText,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(start = 12.dp).weight(1f)
+                                            .testTag("PageNumberIndicator")
+                                    )
+
+                                    TooltipIconButton(
+                                        text = "Theme",
+                                        description = "Theme Settings",
+                                        onClick = { showThemePanel = true }) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.palette),
+                                            contentDescription = "Theme Settings",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
 
-                                    // Main "More" menu
-                                    DropdownMenu(
-                                        expanded = showMoreMenu,
-                                        onDismissRequest = { showMoreMenu = false }) {
-                                        if (BuildConfig.IS_PRO) {
-                                            DropdownMenuItem(
-                                                text = { Text("OCR Language") },
-                                                onClick = {
-                                                    showMoreMenu = false
-                                                    hasSelectedOcrLanguage = true
-                                                    showOcrLanguageDialog = true
-                                                }
+                                    TooltipIconButton(
+                                        text = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan)
+                                        else stringResource(R.string.tooltip_lock_pan),
+                                        description = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan_desc)
+                                        else stringResource(R.string.tooltip_lock_pan_desc),
+                                        onClick = {
+                                            isScrollLocked = !isScrollLocked
+                                            savePdfScrollLocked(context, bookId, isScrollLocked)
+                                        }) {
+                                        Icon(
+                                            imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                            contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    TooltipIconButton(
+                                        text = stringResource(R.string.tooltip_fullscreen),
+                                        description = stringResource(R.string.tooltip_fullscreen_desc),
+                                        onClick = {
+                                            isFullScreen = true
+                                            savePdfFullScreen(context, bookId, true)
+                                        }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fullscreen,
+                                            contentDescription = "Enter Full Screen",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    TooltipIconButton(
+                                        text = stringResource(R.string.tooltip_dictionary),
+                                        description = stringResource(R.string.tooltip_dictionary_desc),
+                                        onClick = { showDictionarySettingsSheet = true }) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.dictionary),
+                                            contentDescription = "Dictionary Settings",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (BuildConfig.DEBUG) {
+                                        TooltipIconButton(
+                                            text = "Pen Playground",
+                                            onClick = { showPenPlayground = true }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Star,
+                                                contentDescription = "Open Pen Playground",
+                                                tint = MaterialTheme.colorScheme.primary
                                             )
-                                            HorizontalDivider()
                                         }
 
-                                        DropdownMenuItem(
-                                            text = { Text("Reading Mode: Vertical scroll") },
-                                            enabled = !isTtsSessionActive,
-                                            onClick = {
-                                                displayMode = DisplayMode.VERTICAL_SCROLL
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (displayMode == DisplayMode.VERTICAL_SCROLL) {
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Check,
-                                                        contentDescription = "Selected"
-                                                    )
-                                                }
-                                            })
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("Reading Mode: Paginated") },
-                                            enabled = !isTtsSessionActive,
-                                            onClick = {
-                                                displayMode = DisplayMode.PAGINATION
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (displayMode == DisplayMode.PAGINATION) {
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Check,
-                                                        contentDescription = "Selected"
-                                                    )
-                                                }
-                                            })
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("Keep Screen On") },
-                                            onClick = {
-                                                isKeepScreenOn = !isKeepScreenOn
-                                                saveKeepScreenOn(context, isKeepScreenOn)
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (isKeepScreenOn) {
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Check,
-                                                        contentDescription = "Selected"
-                                                    )
-                                                }
-                                            }
-                                        )
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("Auto Scroll") },
-                                            enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
-                                            onClick = {
-                                                showMoreMenu = false
-                                                isAutoScrollModeActive = true
-                                                isAutoScrollPlaying = true
-                                                showBars = !isMusicianMode
-                                            }
-                                        )
+                                        TooltipIconButton(text = "Import SVG", onClick = {
+                                            val page =
+                                                if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("TTS Voice Settings") },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                showDeviceVoiceSettingsSheet = true
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.GraphicEq,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val svgAnnotations =
+                                                    SvgToAnnotationConverter.importSvgFromAssets(
+                                                        context = context,
+                                                        fileName = "demo_art.svg",
+                                                        pageIndex = page
+                                                    )
 
-                                        if (BuildConfig.DEBUG) {
+                                                withContext(Dispatchers.Main) {
+                                                    if (svgAnnotations.isNotEmpty()) {
+                                                        val existing =
+                                                            allAnnotations[page] ?: emptyList()
+                                                        allAnnotations =
+                                                            allAnnotations + (page to (existing + svgAnnotations))
+
+                                                        svgAnnotations.forEach { annot ->
+                                                            undoStack.add(
+                                                                HistoryAction.Add(
+                                                                    page,
+                                                                    annot
+                                                                )
+                                                            )
+                                                        }
+                                                        redoStack.clear()
+
+                                                        snackbarHostState.showSnackbar("Imported ${svgAnnotations.size} SVG strokes!")
+                                                    } else {
+                                                        snackbarHostState.showSnackbar("Failed to import SVG or empty.")
+                                                    }
+                                                }
+                                            }
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Brush,
+                                                contentDescription = "Import SVG",
+                                                tint = Color(0xFFE91E63)
+                                            )
+                                        }
+                                    }
+
+                                    Box {
+                                        var showMoreMenu by remember { mutableStateOf(false) }
+                                        TooltipIconButton(
+                                            text = stringResource(R.string.tooltip_more_options),
+                                            description = stringResource(R.string.tooltip_more_options_desc),
+                                            onClick = { showMoreMenu = true }) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = "More Options"
+                                            )
+                                        }
+
+                                        // Main "More" menu
+                                        DropdownMenu(
+                                            expanded = showMoreMenu,
+                                            onDismissRequest = { showMoreMenu = false }) {
+                                            if (BuildConfig.IS_PRO) {
+                                                DropdownMenuItem(
+                                                    text = { Text("OCR Language") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        hasSelectedOcrLanguage = true
+                                                        showOcrLanguageDialog = true
+                                                    })
+                                                HorizontalDivider()
+                                            }
+
                                             DropdownMenuItem(
-                                                text = { Text("TTS Settings (Debug)") },
+                                                text = { Text("Reading Mode: Vertical scroll") },
+                                                enabled = !isTtsSessionActive,
+                                                onClick = {
+                                                    displayMode = DisplayMode.VERTICAL_SCROLL
+                                                    showMoreMenu = false
+                                                },
+                                                trailingIcon = {
+                                                    if (displayMode == DisplayMode.VERTICAL_SCROLL) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Check,
+                                                            contentDescription = "Selected"
+                                                        )
+                                                    }
+                                                })
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("Reading Mode: Paginated") },
+                                                enabled = !isTtsSessionActive,
+                                                onClick = {
+                                                    displayMode = DisplayMode.PAGINATION
+                                                    showMoreMenu = false
+                                                },
+                                                trailingIcon = {
+                                                    if (displayMode == DisplayMode.PAGINATION) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Check,
+                                                            contentDescription = "Selected"
+                                                        )
+                                                    }
+                                                })
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("Keep Screen On") },
+                                                onClick = {
+                                                    isKeepScreenOn = !isKeepScreenOn
+                                                    saveKeepScreenOn(context, isKeepScreenOn)
+                                                    showMoreMenu = false
+                                                },
+                                                trailingIcon = {
+                                                    if (isKeepScreenOn) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Check,
+                                                            contentDescription = "Selected"
+                                                        )
+                                                    }
+                                                })
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("Auto Scroll") },
+                                                enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
                                                 onClick = {
                                                     showMoreMenu = false
-                                                    showTtsSettingsSheet = true
+                                                    isAutoScrollModeActive = true
+                                                    isAutoScrollPlaying = true
+                                                    showBars = !isMusicianMode
+                                                })
+
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("TTS Voice Settings") },
+                                                onClick = {
+                                                    showMoreMenu = false
+                                                    showDeviceVoiceSettingsSheet = true
                                                 },
                                                 leadingIcon = {
-                                                    Icon(painter = painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp))
-                                                }
-                                            )
-                                        }
+                                                    Icon(
+                                                        imageVector = Icons.Default.GraphicEq,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                })
 
-                                        HorizontalDivider()
-                                        DropdownMenuItem(text = {
-                                            Text(
-                                                if (isBookmarked) "Remove bookmark"
-                                                else "Bookmark this page"
-                                            )
-                                        }, onClick = {
-                                            showMoreMenu = false
-                                            onBookmarkClick()
-                                        })
-                                        HorizontalDivider()
+                                            if (BuildConfig.DEBUG) {
+                                                DropdownMenuItem(
+                                                    text = { Text("TTS Settings (Debug)") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        showTtsSettingsSheet = true
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            painter = painterResource(id = R.drawable.text_to_speech),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    })
+                                            }
 
-                                        DropdownMenuItem(
-                                            text = { Text("Insert Blank Page") },
-                                            onClick = {
+                                            HorizontalDivider()
+                                            DropdownMenuItem(text = {
+                                                Text(
+                                                    if (isBookmarked) "Remove bookmark"
+                                                    else "Bookmark this page"
+                                                )
+                                            }, onClick = {
                                                 showMoreMenu = false
-                                                onInsertPage()
+                                                onBookmarkClick()
                                             })
+                                            HorizontalDivider()
 
-                                        val canDelete =
-                                            virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage
-                                        if (canDelete) {
                                             DropdownMenuItem(
-                                                text = { Text("Delete Page") },
+                                                text = { Text("Insert Blank Page") },
                                                 onClick = {
                                                     showMoreMenu = false
-                                                    onDeletePage()
+                                                    onInsertPage()
+                                                })
+
+                                            val canDelete =
+                                                virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage
+                                            if (canDelete) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Delete Page") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        onDeletePage()
+                                                    },
+                                                    colors = MenuDefaults.itemColors(
+                                                        textColor = MaterialTheme.colorScheme.error
+                                                    )
+                                                )
+                                            }
+
+                                            HorizontalDivider()
+
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        when {
+                                                            isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
+                                                            hasReflowFile -> "Open Text View"
+                                                            else -> "Generate Text View"
+                                                        }
+                                                    )
                                                 },
-                                                colors = MenuDefaults.itemColors(
-                                                    textColor = MaterialTheme.colorScheme.error
-                                                )
-                                            )
-                                        }
+                                                enabled = pdfDocument != null && !isReflowingThisBook,
+                                                onClick = {
+                                                    showMoreMenu = false
 
-                                        HorizontalDivider()
+                                                    coroutineScope.launch {
+                                                        if (richTextController != null) {
+                                                            withContext(NonCancellable) { richTextController.saveImmediate() }
+                                                        }
+                                                        saveAllData(true).join()
 
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    when {
-                                                        isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
-                                                        hasReflowFile -> "Open Text View"
-                                                        else -> "Generate Text View"
-                                                    }
-                                                )
-                                            },
-                                            enabled = pdfDocument != null && !isReflowingThisBook,
-                                            onClick = {
-                                                showMoreMenu = false
+                                                        val resolvedPage =
+                                                            if (!initialScrollDone && currentPage == 0) {
+                                                                pendingRestorePage ?: 0
+                                                            } else {
+                                                                currentPage
+                                                            }
 
-                                                coroutineScope.launch {
-                                                    if (richTextController != null) {
-                                                        withContext(NonCancellable) { richTextController.saveImmediate() }
-                                                    }
-                                                    saveAllData(true).join()
-
-                                                    val resolvedPage = if (!initialScrollDone && currentPage == 0) {
-                                                        pendingRestorePage ?: 0
-                                                    } else {
-                                                        currentPage
-                                                    }
-
-                                                    if (hasReflowFile) {
-                                                        val item = uiState.allRecentFiles.find { it.bookId == reflowBookId }
-                                                        if (item != null) {
-                                                            viewModel.switchToFileSeamlessly(item, resolvedPage)
+                                                        if (hasReflowFile) {
+                                                            val item =
+                                                                uiState.allRecentFiles.find { it.bookId == reflowBookId }
+                                                            if (item != null) {
+                                                                viewModel.switchToFileSeamlessly(
+                                                                    item,
+                                                                    resolvedPage
+                                                                )
+                                                            } else {
+                                                                viewModel.generateAndImportReflowFile(
+                                                                    pdfBookId = bookId,
+                                                                    pdfUri = effectivePdfUri,
+                                                                    originalTitle = originalFileName,
+                                                                    autoOpenPage = resolvedPage
+                                                                )
+                                                            }
                                                         } else {
                                                             viewModel.generateAndImportReflowFile(
                                                                 pdfBookId = bookId,
-                                                                pdfUri = pdfUri,
+                                                                pdfUri = effectivePdfUri,
                                                                 originalTitle = originalFileName,
                                                                 autoOpenPage = resolvedPage
                                                             )
                                                         }
-                                                    } else {
-                                                        viewModel.generateAndImportReflowFile(
-                                                            pdfBookId = bookId,
-                                                            pdfUri = pdfUri,
-                                                            originalTitle = originalFileName,
-                                                            autoOpenPage = resolvedPage
-                                                        )
                                                     }
-                                                }
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.format_size),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
-
-                                        HorizontalDivider()
-
-                                        DropdownMenuItem(text = { Text("Share") }, onClick = {
-                                            showMoreMenu = false
-                                            showShareDialog = true
-                                        }, leadingIcon = {
-                                            Icon(
-                                                Icons.Default.Share, contentDescription = null
-                                            )
-                                        })
-                                        if (uiState.selectedFileType == FileType.PDF) {
-                                            DropdownMenuItem(
-                                                text = { Text("Save copy to device") },
-                                                onClick = {
-                                                    showMoreMenu = false
-                                                    showSaveDialog = true
                                                 },
                                                 leadingIcon = {
                                                     Icon(
-                                                        Icons.Default.Save,
-                                                        contentDescription = null
+                                                        painter = painterResource(id = R.drawable.format_size),
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(20.dp)
                                                     )
                                                 })
-                                        }
-                                        if (uiState.selectedFileType == FileType.PDF) {
-                                            DropdownMenuItem(text = { Text("Print") }, onClick = {
+
+                                            HorizontalDivider()
+
+                                            DropdownMenuItem(text = { Text("Share") }, onClick = {
                                                 showMoreMenu = false
-                                                onPrintDocument()
+                                                showShareDialog = true
                                             }, leadingIcon = {
                                                 Icon(
-                                                    painter = painterResource(id = R.drawable.print),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
+                                                    Icons.Default.Share, contentDescription = null
                                                 )
                                             })
+                                            if (uiState.selectedFileType == FileType.PDF) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Save copy to device") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        showSaveDialog = true
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            Icons.Default.Save,
+                                                            contentDescription = null
+                                                        )
+                                                    })
+                                            }
+                                            if (uiState.selectedFileType == FileType.PDF) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Print") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        onPrintDocument()
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            painter = painterResource(id = R.drawable.print),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF) {
+                                LazyRow(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                    verticalAlignment = Alignment.Bottom
+                                ) {
+                                    items(openTabs, key = { it.bookId }) { tab ->
+                                        val isSelected = tab.bookId == activeTabBookId
+                                        val bgColor = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent
+                                        val contentColor = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+
+                                        Row(
+                                            modifier = Modifier
+                                                .height(if (isSelected) 44.dp else 36.dp)
+                                                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                                                .background(bgColor)
+                                                .clickable {
+                                                    Timber.tag("PdfTabSync").i("UI: Tab clicked: ${tab.bookId}")
+                                                    if (tab.bookId != activeTabBookId) {
+                                                        coroutineScope.launch {
+                                                            Timber.tag("PdfTabSync").d("UI: Dispatching switchTab for ${tab.bookId}")
+                                                            currentBookId?.let { tabStateMap[it] = currentPage }
+                                                            saveAllData(true).join()
+                                                            viewModel.switchTab(tab.bookId)
+                                                        }
+                                                    } else {
+                                                        Timber.tag("PdfTabSync").d("UI: Ignored click - Tab already active.")
+                                                    }
+                                                }
+                                                .padding(horizontal = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // Tab Title
+                                            Text(
+                                                text = tab.customName ?: tab.title ?: tab.displayName,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.widthIn(max = 140.dp),
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = contentColor
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            IconButton(
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        if (isSelected) saveAllData(true).join()
+                                                        viewModel.closeTab(tab.bookId)
+                                                        if (isSelected && openTabs.size == 1) {
+                                                            onNavigateBack()
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Close Tab", modifier = Modifier.size(16.dp), tint = contentColor)
+                                            }
+                                        }
+                                    }
+
+                                    item {
+                                        IconButton(
+                                            onClick = { showNewTabSheet = true },
+                                            modifier = Modifier
+                                                .padding(start = 8.dp, bottom = 4.dp)
+                                                .size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "New Tab",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
                                 }
@@ -6168,8 +6364,6 @@ fun PdfViewerScreen(
                     val popupPlacementConfig =
                         remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx) {
                             val margin = 16.dp
-                            with(density) { boxMaxHeightFloat.toDp() }
-
                             val dockTopY = when (dockLocation) {
                                 DockLocation.TOP -> 0f
                                 DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
@@ -6183,10 +6377,10 @@ fun PdfViewerScreen(
                             if (isDockInBottomHalf) {
                                 val distFromBottom = boxMaxHeightFloat - dockTopY
                                 val paddingBottom = with(density) { distFromBottom.toDp() } + margin
-                                Triple(Alignment.BottomCenter, 0.dp, paddingBottom)
+                                Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
                             } else {
                                 val paddingTop = with(density) { dockBottomY.toDp() } + margin
-                                Triple(Alignment.TopCenter, paddingTop, 0.dp)
+                                Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
                             }
                         }
 
@@ -6804,6 +6998,57 @@ fun PdfViewerScreen(
                         onConfirm = { password -> documentPassword = password })
                 }
 
+                if (showNewTabSheet) {
+                    androidx.compose.material3.ModalBottomSheet(
+                        onDismissRequest = { showNewTabSheet = false },
+                        sheetState = sheetState,
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ) {
+                        val pdfFiles = remember(uiState.rawLibraryFiles, openTabs) {
+                            val openIds = openTabs.map { it.bookId }
+                            uiState.rawLibraryFiles
+                                .filter { it.type == FileType.PDF && it.bookId !in openIds }
+                                .sortedByDescending { it.timestamp }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp)
+                        ) {
+                            Text(
+                                text = "Add PDF to Tab",
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                            if (pdfFiles.isEmpty()) {
+                                Text(
+                                    "No other PDFs found in your library.",
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                                    items(pdfFiles, key = { it.bookId }) { file ->
+                                        ListItem(
+                                            headlineContent = { Text(file.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                            supportingContent = { file.author?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                                            modifier = Modifier.clickable {
+                                                coroutineScope.launch {
+                                                    sheetState.hide()
+                                                    showNewTabSheet = false
+                                                    viewModel.switchTab(file.bookId)
+                                                }
+                                            }
+                                        )
+                                        HorizontalDivider()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (showPenPlayground) {
                     Box(
                         modifier = Modifier
@@ -7109,7 +7354,7 @@ fun PdfViewerScreen(
 
                                         viewModel.sharePdf(
                                             activityContext = context,
-                                            sourceUri = pdfUri,
+                                            sourceUri = effectivePdfUri,
                                             annotations = allAnnotations,
                                             richTextPageLayouts = currentRichTextLayouts,
                                             textBoxes = textBoxes.toList(),

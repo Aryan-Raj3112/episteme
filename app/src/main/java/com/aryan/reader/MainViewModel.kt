@@ -236,6 +236,10 @@ data class ReaderScreenState(
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
     val recentFilesLimit: Int = 0,
+    val isTabsEnabled: Boolean = false,
+    val openTabIds: List<String> = emptyList(),
+    val openTabs: List<RecentFileItem> = emptyList(),
+    val activeTabBookId: String? = null,
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -335,7 +339,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             else null,
             pinnedHomeBookIds = prefs.getStringSet(KEY_PINNED_HOME, emptySet()) ?: emptySet(),
             pinnedLibraryBookIds = prefs.getStringSet(KEY_PINNED_LIBRARY, emptySet()) ?: emptySet(),
-            recentFilesLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0)
+            recentFilesLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
+            isTabsEnabled = prefs.getBoolean(KEY_TABS_ENABLED, false),
+            openTabIds = prefs.getString(KEY_OPEN_TAB_IDS, null)?.let {
+                try {
+                    val arr = JSONArray(it)
+                    List(arr.length()) { i -> arr.getString(i) }
+                } catch(_: Exception) { emptyList() }
+            } ?: emptyList(),
+            activeTabBookId = prefs.getString(KEY_ACTIVE_TAB, null),
         )
     )
 
@@ -394,6 +406,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (internalState.recentFilesLimit > 0) combined.take(internalState.recentFilesLimit) else combined
         }
 
+        val allBaseFiles = recentFilesFromDb.filterNot { it.bookId.endsWith("_reflow") }
+        val openTabsList = internalState.openTabIds.mapNotNull { tabId ->
+            allBaseFiles.find { it.bookId == tabId }
+        }
+
         val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
             baseVisibleFiles.any { dbItem -> dbItem.uriString == contextItem.uriString }
         }.toSet()
@@ -433,6 +450,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             rawLibraryFiles = baseVisibleFiles,
             contextualActionItems = validContextualItems,
             shelves = allShelves,
+            openTabs = openTabsList,
             booksAvailableForAdding = booksAvailableForAdding
         )
     }.stateIn(
@@ -440,6 +458,103 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ReaderScreenState()
     )
+
+    fun setTabsEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }
+        _internalState.update { it.copy(isTabsEnabled = enabled) }
+        if (!enabled) {
+            val active = _internalState.value.activeTabBookId
+            val newTabs = if (active != null) listOf(active) else emptyList()
+            prefs.edit { putString(KEY_OPEN_TAB_IDS, JSONArray(newTabs).toString()) }
+            _internalState.update { it.copy(openTabIds = newTabs) }
+        }
+    }
+
+    fun switchTab(bookId: String) {
+        Timber.tag("PdfTabSync").i("ViewModel: switchTab called for bookId: $bookId")
+        val item = uiState.value.rawLibraryFiles.find { it.bookId == bookId } ?: run {
+            Timber.tag("PdfTabSync").e("ViewModel: switchTab FAILED - BookId $bookId not found in library")
+            return
+        }
+
+        val currentTabs = _internalState.value.openTabIds.toMutableList()
+        if (!currentTabs.contains(bookId)) {
+            if (currentTabs.size >= 20) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
+                }
+                return
+            }
+            currentTabs.add(bookId)
+        }
+
+        prefs.edit {
+            putString(KEY_ACTIVE_TAB, bookId)
+            putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
+        }
+
+        val uri = item.getUri()
+        Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId. URI found: ${uri != null}")
+
+        uri?.let {
+            Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
+            _internalState.update { state ->
+                state.copy(
+                    openTabIds = currentTabs,
+                    activeTabBookId = bookId,
+                    selectedPdfUri = it,
+                    selectedBookId = bookId,
+                    selectedFileType = item.type,
+                    initialPageInBook = item.lastPage,
+                    initialBookmarksJson = item.bookmarksJson,
+                    isLoading = false,
+                    errorMessage = null
+                )
+            }
+
+            viewModelScope.launch {
+                addFileToRecent(
+                    it,
+                    item.type,
+                    bookId,
+                    customDisplayName = item.displayName,
+                    isRecent = true,
+                    sourceFolderUri = item.sourceFolderUri
+                )
+            }
+        } ?: run {
+            _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
+        }
+    }
+
+    fun closeTab(bookId: String) {
+        Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
+        val currentTabs = _internalState.value.openTabIds.toMutableList()
+        currentTabs.remove(bookId)
+
+        if (currentTabs.isEmpty()) {
+            prefs.edit {
+                remove(KEY_OPEN_TAB_IDS)
+                remove(KEY_ACTIVE_TAB)
+            }
+            _internalState.update { it.copy(openTabIds = emptyList(), activeTabBookId = null) }
+            clearSelectedFile()
+        } else {
+            val activeTab = _internalState.value.activeTabBookId
+            if (activeTab == bookId) {
+                val nextTabId = currentTabs.last()
+                prefs.edit {
+                    putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
+                    putString(KEY_ACTIVE_TAB, nextTabId)
+                }
+                _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = nextTabId) }
+                switchTab(nextTabId)
+            } else {
+                prefs.edit { putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString()) }
+                _internalState.update { it.copy(openTabIds = currentTabs) }
+            }
+        }
+    }
 
     fun onSearchQueryChange(newQuery: String) {
         _internalState.update {
@@ -2643,6 +2758,67 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return fileName ?: uri.lastPathSegment
     }
 
+    fun onFilesSelected(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+
+        if (uris.size == 1) {
+            onFileSelected(uris.first(), isFromRecent = false)
+            return
+        }
+
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(
+                    bannerMessage = BannerMessage(
+                        message = appContext.getString(R.string.banner_importing_multiple, uris.size),
+                        isPersistent = true
+                    ),
+                    contextualActionItems = emptySet()
+                )
+            }
+
+            var importedCount = 0
+
+            withContext(Dispatchers.IO) {
+                for (externalUri in uris) {
+                    val importResult = prepareBookForImport(externalUri)
+                    if (importResult != null) {
+                        val (internalUri, bookId, type) = importResult
+                        val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
+
+                        addFileToRecent(
+                            uri = internalUri,
+                            type = type,
+                            bookId = bookId,
+                            customDisplayName = displayName,
+                            isRecent = false,
+                            sourceFolderUri = null
+                        )
+                        importedCount++
+                    } else {
+                        val hash = FileHasher.calculateSha256 {
+                            appContext.contentResolver.openInputStream(externalUri)
+                        }
+                        if (hash != null && recentFilesRepository.getFileByBookId(hash) != null) {
+                            importedCount++
+                        }
+                    }
+                }
+            }
+
+            _internalState.update {
+                it.copy(
+                    bannerMessage = BannerMessage(
+                        message = "Imported $importedCount books. You can find them in the Library tab.",
+                        isPersistent = false
+                    )
+                )
+            }
+
+            Timber.tag("BulkImport").i("Bulk import complete. $importedCount files processed.")
+        }
+    }
+
     fun onFileSelected(uri: Uri, isFromRecent: Boolean = false) {
         if (isFromRecent) {
             Timber.i("Opening recent file: $uri")
@@ -2904,11 +3080,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun openBook(
-        uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null
+        uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false
     ) {
         val openBookStartTime = System.currentTimeMillis()
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
+
+        if (_internalState.value.isTabsEnabled && type == FileType.PDF) {
+            val currentTabs = _internalState.value.openTabIds.toMutableList()
+            if (!currentTabs.contains(bookId)) {
+                if (currentTabs.size >= 20) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
+                    }
+                    return
+                }
+                currentTabs.add(bookId)
+            }
+            prefs.edit {
+                putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
+                putString(KEY_ACTIVE_TAB, bookId)
+            }
+            _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
+        }
 
         if (uri.scheme != "opds-pse") {
             try {
@@ -2980,6 +3174,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         isRecent = true,
                         sourceFolderUri = null
                     )
+
+                    if (!suppressNavigation) {
+                        Timber.tag("FileSwitch").d("PDF state updated, emitting navigation event")
+                        _navigationEvent.send(NavigationEvent("pdf_viewer", bookId, uri))
+                    } else {
+                        Timber.tag("FileSwitch").d("PDF state updated, suppressing navigation event for smooth transition")
+                    }
                 }
             } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX) {
                 viewModelScope.launch {
@@ -3010,6 +3211,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             initialBookmarksJson = recentItem?.bookmarksJson,
                             initialHighlightsJson = recentItem?.highlightsJson,
                         )
+                    }
+
+                    if (!suppressNavigation) {
+                        Timber.tag("FileSwitch").d("EPUB state updated, emitting navigation event")
+                        _navigationEvent.send(NavigationEvent("epub_reader", bookId, uri))
                     }
 
                     when (type) {
@@ -4152,5 +4358,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
         private const val KEY_RECENT_FILES_LIMIT = "recent_files_limit"
+        private const val KEY_TABS_ENABLED = "tabs_enabled"
+        private const val KEY_OPEN_TAB_IDS = "open_tab_ids"
+        private const val KEY_ACTIVE_TAB = "active_tab_book_id"
     }
 }

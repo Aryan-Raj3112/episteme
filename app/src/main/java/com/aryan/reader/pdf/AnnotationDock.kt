@@ -21,14 +21,15 @@ package com.aryan.reader.pdf
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -76,6 +77,7 @@ fun AnnotationDock(
     onToggleStylusOnlyMode: () -> Unit
 ) {
     val showFullDock = isSticky || !isMinimized
+    val scrollState = rememberScrollState()
 
     val dockHeight = 56.dp
     val buttonSize = 36.dp
@@ -93,7 +95,9 @@ fun AnnotationDock(
             modifier = modifier.height(dockHeight)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = horizontalPadding),
+                modifier = Modifier
+                    .padding(horizontal = horizontalPadding)
+                    .horizontalScroll(scrollState),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing)
             ) {
@@ -234,8 +238,6 @@ fun AnnotationDock(
                         onClick = { if(!isMinimized) onToolClick(InkType.ERASER) }
                     )
                 }
-
-                Spacer(modifier = Modifier.weight(1f))
 
                 // Undo
                 Box(

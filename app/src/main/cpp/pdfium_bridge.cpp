@@ -39,7 +39,19 @@ typedef void* (*FPDFLink_GetAnnot_t)(void* link);
 typedef int (*FPDFAnnot_GetFlags_t)(void* annot);
 typedef int (*FPDFAnnot_SetFlags_t)(void* annot, int flags);
 typedef unsigned long (*FPDFAnnot_GetFormFieldName_t)(void* hFPDFTextPage, void* annot, void* buffer, unsigned long buflen);
+typedef void* (*FPDFLink_GetLinkAtPoint_t)(void* page, double x, double y);
+typedef unsigned long (*FPDFAction_GetURIPath_t)(void* document, void* action, void* buffer, unsigned long buflen);
+typedef void* (*FPDFLink_GetDest_t)(void* document, void* link);
+typedef void* (*FPDFAction_GetDest_t)(void* document, void* action);
+typedef int (*FPDFDest_GetDestPageIndex_t)(void* document, void* dest);
+typedef unsigned long (*FPDFAction_GetFilePath_t)(void* action, void* buffer, unsigned long buflen);
 
+static FPDFLink_GetLinkAtPoint_t get_link_at_point_func = nullptr;
+static FPDFAction_GetURIPath_t get_uri_path_func = nullptr;
+static FPDFLink_GetDest_t get_dest_func = nullptr;
+static FPDFAction_GetDest_t get_action_dest_func = nullptr;
+static FPDFDest_GetDestPageIndex_t get_dest_page_index_func = nullptr;
+static FPDFAction_GetFilePath_t get_file_path_func = nullptr;
 static std::mutex g_pdfium_mutex;
 static FPDFLink_GetAnnot_t get_link_annot_func = nullptr;
 static FPDFLink_GetAction_t get_link_action_func = nullptr;
@@ -123,6 +135,13 @@ static bool init_pdfium() {
     get_action_type_func     = (FPDFAction_GetType_t)       dlsym(pdfium_handle, "FPDFAction_GetType");
     get_link_annot_func      = (FPDFLink_GetAnnot_t)        dlsym(pdfium_handle, "FPDFLink_GetAnnot");
     get_form_field_name_func = (FPDFAnnot_GetFormFieldName_t) dlsym(pdfium_handle, "FPDFAnnot_GetFormFieldName");
+
+    get_link_at_point_func = (FPDFLink_GetLinkAtPoint_t) dlsym(pdfium_handle, "FPDFLink_GetLinkAtPoint");
+    get_uri_path_func = (FPDFAction_GetURIPath_t) dlsym(pdfium_handle, "FPDFAction_GetURIPath");
+    get_dest_func = (FPDFLink_GetDest_t) dlsym(pdfium_handle, "FPDFLink_GetDest");
+    get_action_dest_func = (FPDFAction_GetDest_t) dlsym(pdfium_handle, "FPDFAction_GetDest");
+    get_dest_page_index_func = (FPDFDest_GetDestPageIndex_t) dlsym(pdfium_handle, "FPDFDest_GetDestPageIndex");
+    get_file_path_func = (FPDFAction_GetFilePath_t) dlsym(pdfium_handle, "FPDFAction_GetFilePath");
 
     // --- Validation & Logging ---
     bool success = get_annot_count_func && get_annot_func && get_annot_subtype_func &&
@@ -442,7 +461,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass cl
     int count = get_annot_count_func(page);
     void* hitAnnot = nullptr;
 
-    // 1. Find which annotation was clicked
+    LOGI("PdfLinkDiagnostic: [C++] performClick at x=%f, y=%f (Total annots: %d)", x, y, count);
+
     for (int i = 0; i < count; i++) {
         void* annot = get_annot_func(page, i);
         if (!annot) continue;
@@ -456,6 +476,12 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass cl
 
             if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
                 hitAnnot = annot;
+                int subtype = get_annot_subtype_func(hitAnnot);
+                LOGI("PdfLinkDiagnostic: [C++] HIT! Annot Index %d, Subtype %d", i, subtype);
+                if (get_annot_flags_func) {
+                    int flags = get_annot_flags_func(hitAnnot);
+                    LOGI("PdfLinkDiagnostic: [C++] Flags for hit annot: %d", flags);
+                }
                 break;
             }
         }
@@ -491,4 +517,92 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass cl
     }
 
     return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_getLinkInfoAtPoint(JNIEnv *env, jclass clazz, jlong docPtr, jlong pagePtr, jdouble x, jdouble y) {
+    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium()) {
+        LOGE("PdfLinkDiagnostic: init_pdfium failed.");
+        return nullptr;
+    }
+    if (!get_link_at_point_func) {
+        LOGE("PdfLinkDiagnostic: get_link_at_point_func is null.");
+        return nullptr;
+    }
+    if (pagePtr == 0 || docPtr == 0) {
+        LOGE("PdfLinkDiagnostic: Missing Pointers -> pagePtr=%ld, docPtr=%ld", (long)pagePtr, (long)docPtr);
+        return nullptr;
+    }
+
+    void* page = reinterpret_cast<void*>(pagePtr);
+    void* wrapperDoc = reinterpret_cast<void*>(docPtr);
+
+    void* doc = wrapperDoc ? *(void**)wrapperDoc : nullptr;
+
+    if (!doc) {
+        LOGE("PdfLinkDiagnostic: Dereferenced doc pointer is null!");
+        return nullptr;
+    }
+
+    LOGI("PdfLinkDiagnostic: Checking native link at x=%f, y=%f", x, y);
+
+    void* link = get_link_at_point_func(page, x, y);
+    if (!link) {
+        LOGI("PdfLinkDiagnostic: No FPDF_LINK found at point.");
+        return nullptr;
+    }
+
+    LOGI("PdfLinkDiagnostic: FPDF_LINK found!");
+
+    if (get_link_action_func && get_action_type_func) {
+        void* action = get_link_action_func(link);
+        if (action) {
+            unsigned long type = get_action_type_func(action);
+            LOGI("PdfLinkDiagnostic: Action Type = %lu", type);
+
+            if (type == 3 && get_uri_path_func) { // 3 = URI
+                unsigned long len = get_uri_path_func(doc, action, nullptr, 0);
+                if (len > 0) {
+                    std::vector<char> buffer(len);
+                    get_uri_path_func(doc, action, buffer.data(), len);
+                    std::string uri(buffer.data());
+                    LOGI("PdfLinkDiagnostic: Extracted Action URI = %s", uri.c_str());
+                    std::string result = "URI:" + uri;
+                    return env->NewStringUTF(result.c_str());
+                }
+            } else if (type == 1 && get_action_dest_func && get_dest_page_index_func) { // 1 = GoTo
+                void* dest = get_action_dest_func(doc, action);
+                if (dest) {
+                    int pageIndex = get_dest_page_index_func(doc, dest);
+                    LOGI("PdfLinkDiagnostic: Extracted Action GoTo Page = %d", pageIndex);
+                    std::string result = "PAGE:" + std::to_string(pageIndex);
+                    return env->NewStringUTF(result.c_str());
+                }
+            } else if ((type == 2 || type == 4) && get_file_path_func) { // 2 = RemoteGoTo, 4 = Launch
+                unsigned long len = get_file_path_func(action, nullptr, 0);
+                if (len > 0) {
+                    std::vector<char> buffer(len);
+                    get_file_path_func(action, buffer.data(), len);
+                    std::string path(buffer.data());
+                    LOGI("PdfLinkDiagnostic: Extracted File Path = %s", path.c_str());
+                    std::string result = "URI:" + path;
+                    return env->NewStringUTF(result.c_str());
+                }
+            }
+        }
+    }
+
+    if (get_dest_func && get_dest_page_index_func) {
+        void* dest = get_dest_func(doc, link);
+        if (dest) {
+            int pageIndex = get_dest_page_index_func(doc, dest);
+            LOGI("PdfLinkDiagnostic: Extracted Direct Dest Page = %d", pageIndex);
+            std::string result = "PAGE:" + std::to_string(pageIndex);
+            return env->NewStringUTF(result.c_str());
+        }
+    }
+
+    LOGI("PdfLinkDiagnostic: Link found but payload was empty or unsupported.");
+    return nullptr;
 }
