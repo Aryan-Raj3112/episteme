@@ -306,41 +306,42 @@ class SingleFileImporter(private val context: Context) {
                 .replace(">", "&gt;")
         }
 
-        val reader = inputStream.bufferedReader()
         var inParagraph = false
 
-        while (true) {
-            val line = reader.readLine()
-            if (line == null) {
-                if (inParagraph) {
-                    currentChapterContent.append("</p>\n")
-                }
-                break
-            }
-
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                if (inParagraph) {
-                    currentChapterContent.append("</p>\n")
-                    inParagraph = false
+        inputStream.bufferedReader().use { reader ->
+            while (true) {
+                val line = reader.readLine()
+                if (line == null) {
+                    if (inParagraph) {
+                        currentChapterContent.append("</p>\n")
+                    }
+                    break
                 }
 
-                if (currentChapterContent.length >= chapterTargetSize) {
-                    flushChapter()
-                }
-            } else {
-                if (!inParagraph) {
-                    currentChapterContent.append("<p>")
-                    inParagraph = true
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) {
+                    if (inParagraph) {
+                        currentChapterContent.append("</p>\n")
+                        inParagraph = false
+                    }
+
+                    if (currentChapterContent.length >= chapterTargetSize) {
+                        flushChapter()
+                    }
                 } else {
-                    currentChapterContent.append(" ")
-                }
-                currentChapterContent.append(escapeHtml(trimmed))
+                    if (!inParagraph) {
+                        currentChapterContent.append("<p>")
+                        inParagraph = true
+                    } else {
+                        currentChapterContent.append(" ")
+                    }
+                    currentChapterContent.append(escapeHtml(trimmed))
 
-                if (currentChapterContent.length >= chapterTargetSize * 2) {
-                    currentChapterContent.append("</p>\n")
-                    flushChapter()
-                    inParagraph = false
+                    if (currentChapterContent.length >= chapterTargetSize * 2) {
+                        currentChapterContent.append("</p>\n")
+                        flushChapter()
+                        inParagraph = false
+                    }
                 }
             }
         }
@@ -590,9 +591,10 @@ class SingleFileImporter(private val context: Context) {
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")
 
-        val converter = DocumentConverter()
-        val result = converter.convertToHtml(inputStream)
-        val htmlContent = result.value ?: ""
+        val htmlContent = inputStream.use { stream ->
+            val converter = DocumentConverter()
+            converter.convertToHtml(stream).value ?: ""
+        }
 
         Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
