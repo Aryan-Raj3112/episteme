@@ -311,7 +311,8 @@ fun HomeScreen(
                                 onShowDeviceManagement = viewModel::showDeviceManagementForDebug,
                                 onFolderSyncToggle = viewModel::setFolderSyncEnabled,
                                 onClearReflowCache = { showClearReflowCacheDialog = true },
-                                onRecentFilesLimitChange = viewModel::setRecentFilesLimit
+                                onRecentFilesLimitChange = viewModel::setRecentFilesLimit,
+                                onTabsToggle = viewModel::setTabsEnabled
                             )
                         } else {
                             ContextualTopAppBar(
@@ -769,7 +770,8 @@ fun DefaultTopAppBar(
     onAboutClick: () -> Unit,
     onShowDeviceManagement: () -> Unit,
     onFolderSyncToggle: (Boolean) -> Unit,
-    onRecentFilesLimitChange: (Int) -> Unit
+    onRecentFilesLimitChange: (Int) -> Unit,
+    onTabsToggle: (Boolean) -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -820,6 +822,17 @@ fun DefaultTopAppBar(
                 DropdownMenuItem(text = { Text(stringResource(R.string.about_title)) }, onClick = {
                     onAboutClick()
                     showOptionsMenu = false
+                })
+
+                HorizontalDivider()
+
+                DropdownMenuItem(text = { Text("Enable Multi-Tab Reading") }, onClick = {
+                    onTabsToggle(!uiState.isTabsEnabled)
+                    showOptionsMenu = false
+                }, trailingIcon = {
+                    if (uiState.isTabsEnabled) {
+                        Icon(Icons.Default.Check, contentDescription = "Enabled")
+                    }
                 })
 
                 HorizontalDivider()
