@@ -248,7 +248,7 @@ fun HomeScreen(
                 try {
                     fallbackFilePickerLauncher.launch("*/*")
                 } catch (_: android.content.ActivityNotFoundException) {
-                    viewModel.showBanner("No file manager found. Please install a file manager app.", isError = true)
+                    viewModel.showBanner(context.getString(R.string.error_no_file_manager), isError = true)
                 }
             }
         }
@@ -834,12 +834,11 @@ fun DefaultTopAppBar(
 
                 if (BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss") {
                     HorizontalDivider()
-                    DropdownMenuItem(text = { Text("[Debug] Show Device Management") }, onClick = {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.debug_show_device_management)) }, onClick = {
                         onShowDeviceManagement()
                         showOptionsMenu = false
                     })
-                    DropdownMenuItem(
-                        text = { Text("[Debug] Clear Cloud & Local Data") },
+                    DropdownMenuItem(text = { Text(stringResource(R.string.debug_clear_cloud_local_data)) },
                         onClick = {
                             onClearCloudData()
                             showOptionsMenu = false
@@ -1004,7 +1003,7 @@ private fun AppDrawerContent(
                         modifier = Modifier.size(64.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "Episteme OSS", style = MaterialTheme.typography.titleMedium)
+                    Text(text = stringResource(R.string.app_name_oss), style = MaterialTheme.typography.titleMedium)
                 }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
@@ -1046,7 +1045,7 @@ private fun AppDrawerContent(
                 var scaledTextStyle by remember { mutableStateOf(baseStyle) }
 
                 Text(
-                    text = "Privacy Policy  •  Terms of Service  •  Licenses",
+                    text = stringResource(R.string.legal_footer_combined),
                     style = scaledTextStyle,
                     maxLines = 1,
                     softWrap = false,
@@ -1067,29 +1066,21 @@ private fun AppDrawerContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Privacy Policy",
+                        text = stringResource(R.string.legal_privacy_policy),
                         style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.clickable { uriHandler.openUri(PRIVACY_POLICY_URL) },
                         softWrap = false
                     )
+                    Text("  •  ", style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                     Text(
-                        "  •  ",
-                        style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                        softWrap = false
-                    )
-                    Text(
-                        text = "Terms of Service",
+                        text = stringResource(R.string.legal_terms_of_service),
                         style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.clickable { uriHandler.openUri(TERMS_URL) },
                         softWrap = false
                     )
+                    Text("  •  ", style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                     Text(
-                        "  •  ",
-                        style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                        softWrap = false
-                    )
-                    Text(
-                        text = "Licenses",
+                        text = stringResource(R.string.legal_licenses),
                         style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.clickable { uriHandler.openUri(LICENSES_URL) },
                         softWrap = false
@@ -1245,7 +1236,7 @@ fun FpsMonitor(modifier: Modifier = Modifier) {
     }
 
     Text(
-        text = "FPS: $fps",
+        text = stringResource(R.string.debug_fps, fps),
         color = Color.Green,
         style = MaterialTheme.typography.labelLarge,
         modifier = modifier

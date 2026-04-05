@@ -40,13 +40,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.launch
 
-sealed class BottomBarScreen(val route: String, val label: String, val iconResId: Int) {
-    object Home : BottomBarScreen("home", "Home", R.drawable.home)
-    object Library : BottomBarScreen("library", "Library", R.drawable.library_books)
+sealed class BottomBarScreen(val route: String, val stringResId: Int, val iconResId: Int) {
+    object Home : BottomBarScreen("home", R.string.nav_home, R.drawable.home)
+    object Library : BottomBarScreen("library", R.string.nav_library, R.drawable.library_books)
 }
 
 private val bottomBarItems = listOf(
@@ -94,14 +95,10 @@ fun MainScreen(
                 NavigationBar {
                     bottomBarItems.forEachIndexed { index, screen ->
                         NavigationBarItem(
-                            icon = { Icon(painterResource(id = screen.iconResId), contentDescription = screen.label) },
-                            label = { Text(screen.label) },
+                            icon = { Icon(painterResource(id = screen.iconResId), contentDescription = stringResource(screen.stringResId)) },
+                            label = { Text(stringResource(screen.stringResId)) },
                             selected = pagerState.currentPage == index,
-                            onClick = {
-                                scope.launch {
-                                    pagerState.animateScrollToPage(index)
-                                }
-                            }
+                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } }
                         )
                     }
                 }

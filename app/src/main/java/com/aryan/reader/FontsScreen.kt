@@ -59,6 +59,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -97,10 +98,10 @@ fun FontsScreen(
     )
 
     Scaffold(
-        modifier = Modifier.statusBarsPadding(), // Fixes content flowing under status bar
+        modifier = Modifier.statusBarsPadding(),
         topBar = {
             CustomTopAppBar(
-                title = { Text("Custom Fonts") },
+                title = { Text(stringResource(R.string.custom_fonts)) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -109,12 +110,11 @@ fun FontsScreen(
             )
         },
         floatingActionButton = {
-            // Hide FAB when empty state is visible (list is empty)
             if (fonts.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = { pickFontLauncher.launch(fontMimeTypes) },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("Import Font") }
+                    text = { Text(stringResource(R.string.import_font)) }
                 )
             }
         }
@@ -122,15 +122,14 @@ fun FontsScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (fonts.isEmpty()) {
                 EmptyState(
-                    title = "No Custom Fonts",
-                    message = "Import TTF or OTF files to use them in your books.",
+                    title = stringResource(R.string.no_custom_fonts),
+                    message = stringResource(R.string.import_fonts_desc),
                     onSelectFileClick = { pickFontLauncher.launch(fontMimeTypes) },
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    // Padding bottom 88.dp allows scrolling past the FloatingActionButton
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -223,14 +222,14 @@ fun FontListItem(
             ) {
                 if (customTypeface != null) {
                     Text(
-                        text = "Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:",
+                        text = stringResource(R.string.font_preview_text),
                         fontFamily = customTypeface,
                         fontSize = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 } else {
                     Text(
-                        text = "Preview unavailable (Invalid font file)",
+                        text = stringResource(R.string.font_preview_error),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -255,18 +254,18 @@ fun DeleteFontConfirmationDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete Font?") },
-        text = { Text("Are you sure you want to delete '$fontName'? This will remove it from all your devices if sync is on.") },
+        title = { Text(stringResource(R.string.dialog_delete_font)) },
+        text = { Text(stringResource(R.string.dialog_delete_font_desc, fontName)) },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Text("Delete")
+                Text(stringResource(R.string.action_delete))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }

@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -61,7 +62,7 @@ import timber.log.Timber
 private fun launchEmailFeedback(context: android.content.Context) {
     val intent = Intent(Intent.ACTION_SENDTO).apply {
         data = "mailto:epistemereader@gmail.com".toUri()
-        putExtra(Intent.EXTRA_SUBJECT, "Feedback: Episteme Reader")
+        putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.feedback_email_subject))
     }
     try {
         context.startActivity(intent)
@@ -82,7 +83,7 @@ fun FeedbackScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Help & Feedback") },
+                title = { Text(stringResource(R.string.drawer_help_feedback)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -109,16 +110,14 @@ fun FeedbackScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "Get in Touch",
+            Text(text = stringResource(R.string.get_in_touch),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-                text = "Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or send us an email.",
+            Text(text = stringResource(R.string.feedback_desc),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -128,8 +127,8 @@ fun FeedbackScreen(
             Spacer(modifier = Modifier.height(48.dp))
 
             FeedbackOptionCard(
-                title = "GitHub Issues",
-                description = "Report bugs, request features, and track development progress.",
+                title = stringResource(R.string.github_issues),
+                description = stringResource(R.string.github_issues_desc),
                 icon = {
                     Icon(
                         painter = painterResource(id = R.drawable.github),
@@ -146,8 +145,8 @@ fun FeedbackScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             FeedbackOptionCard(
-                title = "Email Support",
-                description = "Contact us directly via email for any other inquiries.",
+                title = stringResource(R.string.email_support),
+                description = stringResource(R.string.email_support_desc),
                 icon = {
                     Icon(
                         imageVector = Icons.Outlined.Email,

@@ -1,14 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <plurals name="book_count">
-        <item quantity="one">%d book</item>
-        <item quantity="other">%d books</item>
-    </plurals>
-    <plurals name="shelf_count">
-        <item quantity="one">shelf</item>
-        <item quantity="other">shelves</item>
+        <item quantity="one">%1$d book</item>
+        <item quantity="other">%1$d books</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="one">book</item>
         <item quantity="other">books</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d shelf</item>
+        <item quantity="other">%1$d shelves</item>
     </plurals>
 </resources>

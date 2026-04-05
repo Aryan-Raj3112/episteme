@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -175,8 +176,7 @@ fun ProScreen(
                             shape = CircleShape
                         ),
                     text = {
-                        AutoSizeText(
-                            "Free",
+                        AutoSizeText(stringResource(R.string.tab_free),
                             style = LocalTextStyle.current.copy(
                                 color = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = FontWeight.SemiBold
@@ -209,8 +209,7 @@ fun ProScreen(
                                 tint = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            AutoSizeText(
-                                "Episteme Pro",
+                            AutoSizeText(stringResource(R.string.drawer_pro_unlocked),
                                 style = LocalTextStyle.current.copy(
                                     color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.SemiBold
@@ -267,19 +266,16 @@ private fun FreeTierCard() {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "Free Plan",
+            Text(stringResource(R.string.free_plan),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "$0",
+            Text(stringResource(R.string.price_free),
                 style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = "Forever free",
+            Text(stringResource(R.string.forever_free),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -289,23 +285,20 @@ private fun FreeTierCard() {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.Start
             ) {
-                FeatureListItem(iconRes = R.drawable.library_books, text = "Multiple Formats")
-                Text(
-                    text = "Supports PDF, EPUB, MOBI, AZW3",
+                FeatureListItem(iconRes = R.drawable.library_books, text = stringResource(R.string.feature_multiple_formats))
+                Text(stringResource(R.string.feature_multiple_formats_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.text_to_speech, text = "Android Text-to-Speech")
-                Text(
-                    text = "Listen to your books with built-in TTS",
+                FeatureListItem(iconRes = R.drawable.text_to_speech, text = stringResource(R.string.feature_tts))
+                Text(stringResource(R.string.feature_tts_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.dictionary, text = "Basic Dictionary")
-                Text(
-                    text = "Look up single words quickly",
+                FeatureListItem(iconRes = R.drawable.dictionary, text = stringResource(R.string.feature_dict))
+                Text(stringResource(R.string.feature_dict_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
@@ -325,7 +318,7 @@ private fun FreeTierCard() {
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             ) {
-                Text("Current Plan", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.current_plan), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -386,8 +379,7 @@ private fun ProTierCard(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Episteme Pro",
+                Text(stringResource(R.string.drawer_pro_unlocked),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
@@ -404,8 +396,7 @@ private fun ProTierCard(
                             withStyle(style = SpanStyle(textDecoration = TextDecoration.LineThrough)) {
                                 append(originalFormattedPrice)
                             }
-                            append(" 50% OFF")
-                        },
+                            append(" " + stringResource(R.string.pro_sale_off)) },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -416,16 +407,14 @@ private fun ProTierCard(
                         fontWeight = FontWeight.Bold
                     )
                 } else {
-                    Text(
-                        text = "Loading price...",
+                    Text(stringResource(R.string.loading_price),
                         style = MaterialTheme.typography.displaySmall.copy(fontSize = 32.sp),
                         fontWeight = FontWeight.Bold
                     )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "One-time payment",
+                    Text(stringResource(R.string.one_time_payment),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -435,8 +424,7 @@ private fun ProTierCard(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     ) {
-                        Text(
-                            text = "Lifetime Access",
+                        Text(stringResource(R.string.lifetime_access),
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
@@ -461,7 +449,7 @@ private fun ProTierCard(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text("Early Access Sale", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.early_access_sale), style = MaterialTheme.typography.labelLarge)
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -471,36 +459,31 @@ private fun ProTierCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.Start
             ) {
-                Text(
-                    text = "Everything in Free, plus:",
+                Text(stringResource(R.string.pro_includes),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.cloud_sync, text = "Cloud Sync Across Devices")
-                Text(
-                    text = "Keep your entire library, including book files and reading progress, synced across up to 4 devices.",
+                FeatureListItem(iconRes = R.drawable.cloud_sync, text = stringResource(R.string.feature_cloud_sync))
+                Text(stringResource(R.string.feature_cloud_sync_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.summarize, text = "Summarization")
-                Text(
-                    text = "Get quick summaries of chapters or pages",
+                FeatureListItem(iconRes = R.drawable.summarize, text = stringResource(R.string.feature_summarize))
+                Text(stringResource(R.string.feature_summarize_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.dictionary, text = "Smart Dictionary")
-                Text(
-                    text = "Search phrases and even paragraphs, not just single words",
+                FeatureListItem(iconRes = R.drawable.dictionary, text = stringResource(R.string.feature_smart_dict))
+                Text(stringResource(R.string.feature_smart_dict_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
                 )
-                FeatureListItem(iconRes = R.drawable.chat_bubble, text = "Priority Feature Requests")
-                Text(
-                    text = "Your suggestions get prioritized",
+                FeatureListItem(iconRes = R.drawable.chat_bubble, text = stringResource(R.string.feature_priority))
+                Text(stringResource(R.string.feature_priority_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
@@ -526,8 +509,7 @@ private fun ProTierCard(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Pro Features Unlocked!",
+                    Text(stringResource(R.string.pro_unlocked),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
@@ -547,7 +529,7 @@ private fun ProTierCard(
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             )
                         ) {
-                            AutoSizeText("Sign in Required", style = LocalTextStyle.current.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
+                            AutoSizeText(stringResource(R.string.sign_in_required), style = LocalTextStyle.current.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
                         }
                     }
                     proUpgradeState.isVerifying -> {
@@ -565,7 +547,7 @@ private fun ProTierCard(
                                 color = LocalContentColor.current
                             )
                             Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                            Text("Verifying purchase...")
+                            Text(stringResource(R.string.verifying_purchase))
                         }
                     }
                     localPurchaseExistsForOtherAccount -> {
@@ -582,7 +564,7 @@ private fun ProTierCard(
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                            AutoSizeText("Existing Purchase Found")
+                            AutoSizeText(stringResource(R.string.existing_purchase_found))
                         }
                     }
                     productDetails != null -> {
@@ -604,7 +586,7 @@ private fun ProTierCard(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                                AutoSizeText("Get Lifetime Access", style = LocalTextStyle.current.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
+                                AutoSizeText(stringResource(R.string.get_lifetime_access), style = LocalTextStyle.current.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
                             }
                         }
                     }
@@ -614,8 +596,7 @@ private fun ProTierCard(
                         }
                     }
                     else -> {
-                        Text(
-                            text = "Upgrade currently unavailable. Please check your internet and try again.",
+                        Text(stringResource(R.string.upgrade_unavailable),
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -628,16 +609,14 @@ private fun ProTierCard(
                 Spacer(modifier = Modifier.height(16.dp)) // Increased spacing
                 when {
                     !isUserSignedIn -> {
-                        Text(
-                            text = "Please sign in to your Google account to purchase Episteme Pro.",
+                        Text(stringResource(R.string.sign_in_to_purchase),
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     proUpgradeState.isVerifying -> {
-                        Text(
-                            text = "This may take a few moments. Your Pro status will be updated automatically.",
+                        Text(stringResource(R.string.verifying_purchase_desc),
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center
                         )
@@ -691,10 +670,10 @@ fun ExistingPurchaseDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Info, contentDescription = null) },
-        title = { Text("Existing Purchase Found") },
-        text = { Text("This device already has a Pro purchase, but it's linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.") },
+        title = { Text(stringResource(R.string.existing_purchase_found)) },
+        text = { Text(stringResource(R.string.dialog_existing_purchase_desc)) },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("OK") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) }
         }
     )
 }
@@ -704,10 +683,10 @@ fun EarlyAccessInfoDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Info, contentDescription = null) },
-        title = { Text("Early Access Sale") },
-        text = { Text("You're getting Episteme Pro at a special discounted price during our early access period! This is a limited-time offer.") },
+        title = { Text(stringResource(R.string.early_access_sale)) },
+        text = { Text(stringResource(R.string.dialog_early_access_desc)) },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Got It!") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_got_it)) }
         }
     )
 }
@@ -716,14 +695,14 @@ fun EarlyAccessInfoDialog(onDismiss: () -> Unit) {
 fun SignInRequiredDialog(onSignInClick: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(painter = painterResource(id = R.drawable.crown), contentDescription = null) }, // Using crown icon for Pro
-        title = { Text("Sign In Required") },
-        text = { Text("Please sign in to your Google account to purchase Episteme Pro and unlock all premium features.") },
+        icon = { Icon(painter = painterResource(id = R.drawable.crown), contentDescription = null) },
+        title = { Text(stringResource(R.string.sign_in_required)) },
+        text = { Text(stringResource(R.string.dialog_sign_in_required_desc)) },
         confirmButton = {
-            TextButton(onClick = onSignInClick) { Text("Sign In") }
+            TextButton(onClick = onSignInClick) { Text(stringResource(R.string.drawer_sign_in)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Not Now") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_not_now)) }
         }
     )
 }

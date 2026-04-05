@@ -149,6 +149,7 @@ private fun getBookCountString(count: Int): String {
 fun LibraryScreen(
     viewModel: MainViewModel,
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedItems = uiState.contextualActionItems
     val isContextualModeActive = selectedItems.isNotEmpty()
@@ -190,7 +191,7 @@ fun LibraryScreen(
         try {
             pickFolderLauncher.launch(null)
         } catch (_: android.content.ActivityNotFoundException) {
-            viewModel.showBanner("Your device doesn't support folder selection. You can still import files individually.", isError = true)
+            viewModel.showBanner(context.getString(R.string.error_folder_selection_unsupported), isError = true)
         }
     }
 
@@ -225,7 +226,7 @@ fun LibraryScreen(
             try {
                 fallbackFilePickerLauncher.launch("*/*")
             } catch (_: android.content.ActivityNotFoundException) {
-                viewModel.showBanner("No file manager found. Please install a file manager app.", isError = true)
+                viewModel.showBanner(context.getString(R.string.error_no_file_manager), isError = true)
             }
         }
     }
@@ -304,7 +305,7 @@ fun LibraryScreen(
             isLoading = uiState.isLoading,
             isRefreshing = uiState.isRefreshing,
             onOpdsBookDownloaded = { uri, title ->
-                viewModel.showBanner("Downloaded $title")
+                viewModel.showBanner(context.getString(R.string.banner_downloaded, title))
                 viewModel.onFileSelected(uri, isFromRecent = false)
             },
             onStreamOpdsBook = { entry, catalog ->
@@ -545,7 +546,12 @@ fun LibraryScreenContent(
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     var showSortMenu by remember { mutableStateOf(false) }
-    val tabTitles = listOf(stringResource(R.string.tab_all_books), stringResource(R.string.tab_shelves), stringResource(R.string.tab_folders), stringResource(R.string.tab_catalogs))
+    val tabTitles = listOf(
+        stringResource(R.string.tab_all_books),
+        stringResource(R.string.tab_shelves),
+        stringResource(R.string.tab_folders),
+        stringResource(R.string.tab_catalogs)
+    )
     val searchFocusRequester = remember { FocusRequester() }
 
     var textFieldValue by remember(isSearchActive) {
@@ -606,7 +612,7 @@ fun LibraryScreenContent(
                                     textFieldValue = it
                                     onSearchQueryChange(it.text)
                                 },
-                                placeholder = { Text("Search title or author...") },
+                                placeholder = { Text(stringResource(R.string.search_placeholder)) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(vertical = 4.dp)
@@ -630,8 +636,7 @@ fun LibraryScreenContent(
                         }
                     }
                 } else {
-                    CustomTopAppBar(
-                        title = { Text("Library") },
+                    CustomTopAppBar(title = { Text(stringResource(R.string.library_title)) },
                         actions = {
                             if (pagerState.currentPage == 0) {
                                 IconButton(onClick = onFilterClick) {
@@ -701,21 +706,21 @@ fun LibraryScreenContent(
                             if (libraryFilters.fileTypes.isNotEmpty()) {
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(fileTypes = emptySet())) },
-                                    label = { Text("Types: ${libraryFilters.fileTypes.joinToString { it.name }}") },
+                                    label = { Text(stringResource(R.string.filter_types, libraryFilters.fileTypes.joinToString { it.name })) },
                                     trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
                                 )
                             }
                             if (libraryFilters.sourceFolders.isNotEmpty()) {
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(sourceFolders = emptySet())) },
-                                    label = { Text("Folders: ${libraryFilters.sourceFolders.size}") },
+                                    label = { Text(stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size)) },
                                     trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
                                 )
                             }
                             if (libraryFilters.readStatus != ReadStatusFilter.ALL) {
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(readStatus = ReadStatusFilter.ALL)) },
-                                    label = { Text("Status: ${libraryFilters.readStatus.displayName}") },
+                                    label = { Text(stringResource(R.string.filter_status, libraryFilters.readStatus.displayName)) },
                                     trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
                                 )
                             }
@@ -730,7 +735,7 @@ fun LibraryScreenContent(
                     0 -> {
                         if (recentFiles.isNotEmpty()) {
                             ExtendedFloatingActionButton(
-                                text = { Text("Add file") },
+                                text = { Text(stringResource(R.string.fab_add_file)) },
                                 icon = { Icon(Icons.Default.Add, contentDescription = "Add file") },
                                 onClick = onSelectFileClick,
                                 modifier = Modifier.padding(16.dp)
@@ -739,7 +744,7 @@ fun LibraryScreenContent(
                     }
                     1 -> {
                         ExtendedFloatingActionButton(
-                            text = { Text("New shelf") },
+                            text = { Text(stringResource(R.string.fab_new_shelf)) },
                             icon = { Icon(Icons.Default.Add, contentDescription = "New shelf") },
                             onClick = onNewShelfClick,
                             modifier = Modifier.padding(16.dp)
@@ -760,7 +765,7 @@ fun LibraryScreenContent(
                 0 -> {
                     if (recentFiles.isEmpty() && searchQuery.isNotEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("No results found for \"$searchQuery\"")
+                            Text(stringResource(R.string.no_results_found, searchQuery))
                         }
                     } else if (recentFiles.isEmpty()) {
                         EmptyState(
@@ -853,12 +858,12 @@ private fun CreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create New Shelf") },
+        title = { Text(stringResource(R.string.create_new_shelf)) },
         text = {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                placeholder = { Text("Shelf Name") },
+                placeholder = { Text(stringResource(R.string.shelf_name_hint)) },
                 singleLine = true,
                 modifier = Modifier.focusRequester(focusRequester)
             )
@@ -868,12 +873,12 @@ private fun CreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit
                 onClick = { onConfirm(text) },
                 enabled = text.isNotBlank()
             ) {
-                Text("Create")
+                Text(stringResource(R.string.action_create))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -984,14 +989,14 @@ private fun ShelfDetailScreen(
                                     onDismissRequest = { showMoreMenu = false }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Rename shelf") },
+                                        text = { Text(stringResource(R.string.menu_rename_shelf)) },
                                         onClick = {
                                             onRenameShelf()
                                             showMoreMenu = false
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Delete shelf") },
+                                        text = { Text(stringResource(R.string.menu_delete_shelf)) },
                                         onClick = {
                                             onDeleteShelf()
                                             showMoreMenu = false
@@ -1009,7 +1014,7 @@ private fun ShelfDetailScreen(
                 ExtendedFloatingActionButton(
                     onClick = onAddBooksClick,
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("Add books") }
+                    text = { Text(stringResource(R.string.fab_add_books)) }
                 )
             }
         }
@@ -1019,7 +1024,7 @@ private fun ShelfDetailScreen(
                 modifier = Modifier.fillMaxSize().padding(paddingValues),
                 contentAlignment = Alignment.Center
             ) {
-                Text("This shelf is empty", style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.shelf_empty), style = MaterialTheme.typography.bodyLarge)
             }
         } else {
             LazyColumn(
@@ -1062,7 +1067,7 @@ private fun AddBooksModeScreen(
         modifier = Modifier.statusBarsPadding(),
         topBar = {
             CustomTopAppBar(
-                title = { Text("Add to $shelfName") },
+                title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -1130,7 +1135,7 @@ private fun AddBooksModeScreen(
         floatingActionButton = {
             if (selectedBookUris.isNotEmpty()) {
                 ExtendedFloatingActionButton(
-                    text = { Text("ADD (${selectedBookUris.size})") },
+                    text = { Text(stringResource(R.string.fab_add_count, selectedBookUris.size)) },
                     icon = { Icon(Icons.Default.Check, contentDescription = "Add books") },
                     onClick = onAddSelectedBooks
                 )
@@ -1143,7 +1148,7 @@ private fun AddBooksModeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (currentSource == AddBooksSource.UNSHELVED) "No unshelved books to add" else "All books are already in this shelf",
+                    text = if (currentSource == AddBooksSource.UNSHELVED) stringResource(R.string.no_unshelved_books) else stringResource(R.string.all_books_in_shelf),
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
@@ -1434,12 +1439,12 @@ private fun RenameShelfDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename Shelf") },
+        title = { Text(stringResource(R.string.menu_rename_shelf)) },
         text = {
             OutlinedTextField(
                 value = textFieldValue,
                 onValueChange = { textFieldValue = it },
-                placeholder = { Text("Shelf Name") },
+                placeholder = { Text(stringResource(R.string.shelf_name_hint)) },
                 singleLine = true,
                 modifier = Modifier.focusRequester(focusRequester)
             )
@@ -1449,12 +1454,12 @@ private fun RenameShelfDialog(
                 onClick = { onConfirm(textFieldValue.text) },
                 enabled = textFieldValue.text.isNotBlank() && textFieldValue.text != initialName
             ) {
-                Text("Rename")
+                Text(stringResource(R.string.action_rename))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -1473,13 +1478,13 @@ private fun DeleteShelfConfirmationDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete Shelf?") },
-        text = { Text("Are you sure you want to delete the '$shelfName' shelf? All books will be moved to Unshelved.") },
+        title = { Text(stringResource(R.string.dialog_delete_shelf)) },
+        text = { Text(stringResource(R.string.dialog_delete_shelf_desc)) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Delete") }
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_delete)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -1542,7 +1547,7 @@ private fun FolderSyncScreen(
         floatingActionButton = {
             if (syncedFolders.size < 3) {
                 ExtendedFloatingActionButton(
-                    text = { Text("Add Folder") },
+                    text = { Text(stringResource(R.string.fab_add_folder)) },
                     icon = { Icon(Icons.Default.Add, "Add") },
                     onClick = onAddFolderClick
                 )
@@ -1573,7 +1578,7 @@ private fun FolderSyncScreen(
                             Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isLoading) "Scanning..." else "Scan All")
+                        Text(if (isLoading) stringResource(R.string.scanning) else stringResource(R.string.scan_all))
                     }
 
                     androidx.compose.material3.OutlinedButton(
@@ -1584,15 +1589,15 @@ private fun FolderSyncScreen(
                     ) {
                         Icon(painterResource(id = R.drawable.sync), null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Sync Meta")
+                        Text(stringResource(R.string.sync_meta))
                     }
                 }
             } else {
                 EmptyState(
-                    title = "Sync Local Folders",
-                    message = "Connect local folders to create a live library. Episteme will monitor files and sync progress.",
+                    title = stringResource(R.string.sync_local_folders),
+                    message = stringResource(R.string.sync_folders_desc),
                     onSelectFileClick = onAddFolderClick,
-                    primaryButtonText = "Select Folder",
+                    primaryButtonText = stringResource(R.string.action_select_folder),
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -1635,7 +1640,7 @@ private fun FolderCard(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
-    val lastScanText = if (folder.lastScanTime == 0L) "Never" else dateFormat.format(Date(folder.lastScanTime))
+    val lastScanText = if (folder.lastScanTime == 0L) stringResource(R.string.never) else dateFormat.format(Date(folder.lastScanTime))
 
     val folderFiles = remember(allRecentFiles, folder.uriString) {
         allRecentFiles.filter { it.sourceFolderUri == folder.uriString }
@@ -1679,14 +1684,14 @@ private fun FolderCard(
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(
-                            text = { Text("Edit Filters") },
+                            text = { Text(stringResource(R.string.menu_edit_filters)) },
                             onClick = {
                                 showMenu = false
                                 onEditFiltersClick(folder)
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Remove Folder") },
+                            text = { Text(stringResource(R.string.menu_remove_folder)) },
                             onClick = {
                                 showMenu = false
                                 onRemoveClick(folder)
@@ -1704,7 +1709,7 @@ private fun FolderCard(
             Row(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "LAST SYNC",
+                        text = stringResource(R.string.last_sync),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
@@ -1714,7 +1719,7 @@ private fun FolderCard(
 
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "BOOKS",
+                        text = stringResource(R.string.books_count),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
@@ -1733,7 +1738,7 @@ private fun FolderCard(
                     countsByType.forEach { (type, count) ->
                         AssistChip(
                             onClick = { },
-                            label = { Text("${type.name}: $count") }
+                            label = { Text(stringResource(R.string.folder_filter_count, type.name, count)) }
                         )
                     }
                 }
@@ -1752,11 +1757,11 @@ private fun EditFolderFiltersDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Filter File Types") },
+        title = { Text(stringResource(R.string.filter_file_types)) },
         text = {
             Column {
                 Text(
-                    text = "Select the file types you want to sync from this folder:",
+                    stringResource(R.string.filter_file_types_desc),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1786,10 +1791,10 @@ private fun EditFolderFiltersDialog(
             TextButton(
                 onClick = { onConfirm(selectedTypes) },
                 enabled = selectedTypes.isNotEmpty()
-            ) { Text("Save") }
+            ) { Text(stringResource(R.string.action_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -1815,9 +1820,9 @@ fun LibraryFilterSheet(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Filter Library", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.filter_library), style = MaterialTheme.typography.titleLarge)
 
-            Text("File Type", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.filter_file_type), style = MaterialTheme.typography.titleMedium)
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1835,7 +1840,7 @@ fun LibraryFilterSheet(
             }
 
             if (syncedFolders.isNotEmpty()) {
-                Text("Source Folder", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.filter_source_folder), style = MaterialTheme.typography.titleMedium)
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1853,7 +1858,7 @@ fun LibraryFilterSheet(
                 }
             }
 
-            Text("Read Status", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.filter_read_status), style = MaterialTheme.typography.titleMedium)
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1869,11 +1874,11 @@ fun LibraryFilterSheet(
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { currentFilters = LibraryFilters() }) {
-                    Text("Clear All")
+                    Text(stringResource(R.string.clear_all))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 androidx.compose.material3.Button(onClick = { onApply(currentFilters); onDismiss() }) {
-                    Text("Apply")
+                    Text(stringResource(R.string.action_apply))
                 }
             }
             Spacer(modifier = Modifier.height(32.dp))
@@ -1933,7 +1938,7 @@ fun OpdsTab(
                 }
 
                 ExtendedFloatingActionButton(
-                    text = { Text("Add Catalog") },
+                    text = { Text(stringResource(R.string.fab_add_catalog)) },
                     icon = { Icon(Icons.Default.Add, "Add") },
                     onClick = {
                         editingCatalog = null
@@ -1984,7 +1989,7 @@ fun OpdsTab(
                                     OutlinedTextField(
                                         value = query,
                                         onValueChange = { query = it },
-                                        placeholder = { Text("Search catalog...") },
+                                        placeholder = { Text(stringResource(R.string.search_catalog_placeholder)) },
                                         modifier = Modifier.weight(1f).padding(vertical = 4.dp)
                                             .focusRequester(searchFocusRequester),
                                         singleLine = true,
@@ -2020,7 +2025,7 @@ fun OpdsTab(
                                     )
                                 } else {
                                     Text(
-                                        text = uiState.currentFeed?.title ?: "Loading...",
+                                        text = uiState.currentFeed?.title ?: stringResource(R.string.status_loading),
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
@@ -2048,7 +2053,7 @@ fun OpdsTab(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("This feed is empty.")
+                            Text(stringResource(R.string.feed_empty))
                         }
                     } else {
                         val facets = uiState.currentFeed?.facets ?: emptyList()
@@ -2069,7 +2074,7 @@ fun OpdsTab(
                                             FilterChip(
                                                 selected = activeFacet?.isActive == true,
                                                 onClick = { expanded = true },
-                                                label = { Text("${groupName}: ${activeFacet?.title ?: "Select"}") },
+                                                label = { Text(stringResource(R.string.filter_facet, groupName, activeFacet?.title ?: stringResource(R.string.action_select))) },
                                                 trailingIcon = {
                                                     Icon(
                                                         Icons.Default.ArrowDropDown,
@@ -2197,24 +2202,23 @@ fun OpdsTab(
                 showCatalogDialog = false
                 editingCatalog = null
             },
-            title = { Text(if (isEditMode) "Edit Catalog" else "Add OPDS Catalog") },
+            title = { Text(if (isEditMode) stringResource(R.string.edit_catalog) else stringResource(R.string.add_opds_catalog)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = newTitle,
                         onValueChange = { newTitle = it },
-                        label = { Text("Catalog Name") },
+                        label = { Text(stringResource(R.string.catalog_name)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = newUrl,
                         onValueChange = { newUrl = it },
-                        label = { Text("URL") },
-                        placeholder = { Text("e.g. http://192.168.1.50:8080/opds") },
+                        label = { Text(stringResource(R.string.url)) },
+                        placeholder = { Text(stringResource(R.string.url_placeholder)) },
                         singleLine = true
                     )
-                    Text(
-                        "Authentication (Optional)",
+                    Text(stringResource(R.string.auth_optional),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 8.dp)
@@ -2222,13 +2226,13 @@ fun OpdsTab(
                     OutlinedTextField(
                         value = newUsername,
                         onValueChange = { newUsername = it },
-                        label = { Text("Username") },
+                        label = { Text(stringResource(R.string.username)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = newPassword,
                         onValueChange = { newPassword = it },
-                        label = { Text("Password") },
+                        label = { Text(stringResource(R.string.password)) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password)
@@ -2247,13 +2251,13 @@ fun OpdsTab(
                         editingCatalog = null
                     },
                     enabled = newTitle.isNotBlank() && newUrl.isNotBlank()
-                ) { Text("Save") }
+                ) { Text(stringResource(R.string.action_save)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showCatalogDialog = false
                     editingCatalog = null
-                }) { Text("Cancel") }
+                }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }
@@ -2262,14 +2266,14 @@ fun OpdsTab(
         val streamedBooksCount = localLibraryFiles.count { it.uriString?.contains("catalogId=${catalogToDelete!!.id}") == true }
         AlertDialog(
             onDismissRequest = { catalogToDelete = null },
-            title = { Text("Delete Catalog") },
+            title = { Text(stringResource(R.string.delete_catalog)) },
             text = {
                 Column {
-                    Text("Are you sure you want to delete '${catalogToDelete!!.title}'?")
+                    Text(stringResource(R.string.delete_catalog_desc, catalogToDelete!!.title))
                     if (streamedBooksCount > 0) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Deleting this catalog will also permanently remove $streamedBooksCount streaming books associated with it from your library.",
+                            stringResource(R.string.delete_catalog_warning, streamedBooksCount),
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -2285,10 +2289,10 @@ fun OpdsTab(
                         catalogToDelete = null
                     },
                     colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { catalogToDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { catalogToDelete = null }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }
@@ -2317,8 +2321,7 @@ fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onEdit: (() -> Un
                             color = MaterialTheme.colorScheme.secondaryContainer,
                             shape = MaterialTheme.shapes.small
                         ) {
-                            Text(
-                                text = "Preset",
+                            Text(stringResource(R.string.preset_label),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -2422,12 +2425,12 @@ fun OpdsBookCard(
                     ) {
                         Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Read")
+                        Text(stringResource(R.string.action_read))
                     }
                 } else if (isDownloading) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Downloading...", style = MaterialTheme.typography.labelMedium)
+                            Text(stringResource(R.string.status_downloading), style = MaterialTheme.typography.labelMedium)
                             Spacer(modifier = Modifier.weight(1f))
                             if (progress != null) {
                                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
@@ -2449,7 +2452,7 @@ fun OpdsBookCard(
                             ) {
                                 Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Stream")
+                                Text(stringResource(R.string.action_stream))
                             }
                         }
 
@@ -2468,11 +2471,11 @@ fun OpdsBookCard(
                                 if (uniqueAcquisitions.isEmpty()) {
                                     Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Unavailable")
+                                    Text(stringResource(R.string.action_unavailable))
                                 } else {
                                     Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Download")
+                                    Text(stringResource(R.string.action_download))
                                 }
                             }
                         }
@@ -2589,14 +2592,14 @@ fun OpdsBookDetailsSheet(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = "Read")
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Read", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.action_read), fontWeight = FontWeight.Bold)
                 }
             }
 
             if (isDownloading) {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Downloading...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.status_downloading), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.weight(1f))
                         if (progress != null) {
                             Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
@@ -2621,14 +2624,13 @@ fun OpdsBookDetailsSheet(
                     ) {
                         Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Stream Now", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.action_stream_now), fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                 }
 
                 if (uniqueAcquisitions.isNotEmpty()) {
-                    Text(
-                        "Download Format",
+                    Text(stringResource(R.string.download_format),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2646,7 +2648,7 @@ fun OpdsBookDetailsSheet(
                     }
                 }
             } else {
-                Text("No supported formats available.", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.no_supported_formats), color = MaterialTheme.colorScheme.error)
             }
 
             if (entry.categories.isNotEmpty()) {
@@ -2684,20 +2686,20 @@ fun OpdsBookDetailsSheet(
                     ) {
                         entry.publisher?.takeIf { it.isNotBlank() }?.let {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("PUBLISHER", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.publisher), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
                         entry.published?.takeIf { it.isNotBlank() }?.let {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("PUBLISHED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.published), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 val cleanDate = it.substringBefore("T")
                                 Text(cleanDate, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
                         }
                         entry.language?.takeIf { it.isNotBlank() }?.let {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("LANGUAGE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.language), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(it.uppercase(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
                         }
@@ -2706,7 +2708,7 @@ fun OpdsBookDetailsSheet(
             }
 
             if (!entry.summary.isNullOrBlank()) {
-                Text("Synopsis", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                 val cleanSummary = remember(entry.summary) {
                     val preProcessed = entry.summary

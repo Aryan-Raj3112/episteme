@@ -13,6 +13,9 @@
     <string name="action_back">Back</string>
     <string name="action_search">Search</string>
     <string name="action_clear">Clear</string>
+    <string name="action_apply">Apply</string>
+    <string name="tab_free">Free</string>
+    <string name="action_save_catalog">Save</string>
 
     <!-- Shared Composables & Dialogs -->
     <string name="legal_agreement_full">%1$s you agree to our %2$s and acknowledge you have read our %3$s.</string>
@@ -142,9 +145,11 @@
     <string name="search_catalog_placeholder">Search catalog…</string>
     <string name="feed_empty">This feed is empty.</string>
     <string name="status_downloading">Downloading…</string>
+    <string name="status_loading">Loading…</string>
     <string name="action_stream">Stream</string>
     <string name="action_unavailable">Unavailable</string>
     <string name="action_download">Download</string>
+    <string name="download_format">Download Format</string>
     <string name="action_stream_now">Stream Now</string>
     <string name="action_read">Read</string>
     <string name="no_supported_formats">No supported formats available.</string>
@@ -156,7 +161,7 @@
     <string name="add_opds_catalog">Add OPDS Catalog</string>
     <string name="catalog_name">Catalog Name</string>
     <string name="url">URL</string>
-    <string name="url_placeholder">e.g. http://192.168.1.50:8080/opds</string>
+    <string name="url_placeholder">http://192.168.1.50:8080/opds</string>
     <string name="auth_optional">Authentication (Optional)</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
@@ -296,4 +301,20 @@
     <string name="tooltip_hide_results_desc">Collapse the search results panel</string>
     <string name="tooltip_prev_result_desc">Jump to the previous search match in the document</string>
     <string name="tooltip_next_result_desc">Jump to the next search match in the document</string>
+
+    <string name="action_sign_in">Sign In</string>
+    <string name="action_select_folder">Select Folder</string>
+    <string name="action_select">Select</string>
+    <string name="legal_footer_combined">Privacy Policy  •  Terms of Service  •  Licenses</string>
+    <string name="app_name_oss">Episteme OSS</string>
+    <string name="debug_show_device_management">[Debug] Show Device Management</string>
+    <string name="debug_clear_cloud_local_data">[Debug] Clear Cloud &amp; Local Data</string>
+    <string name="debug_fps">FPS: %1$d</string>
+    <string name="error_folder_selection_unsupported">Your device doesn\'t support folder selection. You can still import files individually.</string>
+    <string name="error_no_file_manager">No file manager found. Please install a file manager app.</string>
+    <string name="feedback_email_subject">Feedback: Episteme Reader</string>
+    <string name="banner_downloaded">Downloaded %1$s</string>
+    <string name="filter_facet">%1$s: %2$s</string>
+    <string name="never">Never</string>
+    <string name="folder_filter_count">%1$s: %2$d</string>
 </resources>
