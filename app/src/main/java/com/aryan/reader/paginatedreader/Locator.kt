@@ -167,12 +167,14 @@ class LocatorConverter(
         val bestMatch = findBestMatchingBlock(allBlocks, baseCfiPath)
 
         if (bestMatch != null) {
+            Timber.tag("PosSaveDiag").d("Found best match for baseCfiPath $baseCfiPath -> blockIndex=${bestMatch.blockIndex}, actualBlockCfi=${bestMatch.cfi}")
             Locator(
                 chapterIndex = chapterIndex,
                 blockIndex = bestMatch.blockIndex,
                 charOffset = charOffset
             )
         } else {
+            Timber.tag("PosSaveDiag").e("No semantic block match found for baseCfiPath $baseCfiPath inside ${allBlocks.size} parsed blocks")
             null
         }
     }

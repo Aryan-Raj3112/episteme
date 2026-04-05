@@ -588,7 +588,9 @@
             300,
         );
 
-        if (window.reportScrollState) {
+        if (window.triggerInitialScrollStateReport) {
+            window.triggerInitialScrollStateReport();
+        } else if (window.reportScrollState) {
             setTimeout(window.reportScrollState, 60);
         }
     };
@@ -693,26 +695,20 @@
 
     window.triggerInitialScrollStateReport = function () {
         var attempts = 0;
-        var maxAttempts = 7;
-        var baseInterval = 100;
+        var maxAttempts = 15;
 
         function tryReport() {
             attempts++;
-            window.reportScrollState();
-            var currentClientHeight = document.documentElement.clientHeight || window.innerHeight || 0;
-
-            if (currentClientHeight > 0) {
-                setTimeout(window.reportScrollState, 50);
-                return;
+            if (window.reportScrollState) {
+                window.reportScrollState();
             }
 
             if (attempts < maxAttempts) {
-                var retryDelay = baseInterval + attempts * 50;
-                setTimeout(tryReport, retryDelay);
+                setTimeout(tryReport, 200);
             }
         }
 
-        setTimeout(tryReport, baseInterval);
+        setTimeout(tryReport, 50);
     };
 
     window.scrollToChapterStart = function () {
@@ -1418,223 +1414,131 @@
     }
 
     function resolveCfiPath(rootElement, path) {
-        log(`Attempting to resolve path '${path}' from root <$ {
-            rootElement.tagName
-        }
-
-        >`);
         let currentNode = rootElement;
         const steps = path.substring(1).split("/").map(Number);
 
         for (let i = 0; i < steps.length; i++) {
             const cfiIndex = steps[i];
+            if (!currentNode) return null;
 
-            if (!currentNode) {
-                log(`Traversal failed: currentNode became null before step $ {
-                    i
+            // Handle virtualized content container specially
+            if (currentNode.id === 'content-container') {
+                const childNodeIndex = (cfiIndex - 2) / 2;
+                let chunkIndex = Math.floor(childNodeIndex / 20);
+                let indexInChunk = childNodeIndex % 20;
+
+                let chunkElement = currentNode.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
+                if (chunkElement) {
+                    let elementsInChunk = Array.from(chunkElement.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE);
+                    if (indexInChunk >= 0 && indexInChunk < elementsInChunk.length) {
+                        currentNode = elementsInChunk[indexInChunk];
+                        continue;
+                    }
                 }
-
-                (CFI index $ {
-                        cfiIndex
-                    }).`);
                 return null;
             }
 
-            const elementChildren = Array.from(currentNode.childNodes).filter((node) => node.nodeType === Node.ELEMENT_NODE);
+            let elementChildren = Array.from(currentNode.childNodes).filter((node) => node.nodeType === Node.ELEMENT_NODE);
             const childNodeIndex = (cfiIndex - 2) / 2;
 
             if (childNodeIndex >= 0 && childNodeIndex < elementChildren.length) {
                 currentNode = elementChildren[childNodeIndex];
             } else {
-                const childrenTags = elementChildren
-                    .map(
-                        (node) => `<$ {
-                    node.tagName || "TEXT"
-                }
-
-                >`,
-                    )
-                    .join(", ");
-
-                log(`Step $ {
-                    i
-                }
-
-                : FAILED. CFI index $ {
-                    cfiIndex
-                }
-
-                (child index $ {
-                        childNodeIndex
-
-                    }) is out of bounds for $ {
-                    elementChildren.length
-                }
-
-                element children: [$ {
-                    childrenTags
-                }
-
-                ]`);
-
-                log(`Parent Node HTML at failure point (<$ {
-                        currentNode.tagName
-                    }
-
-                    >): $ {
-                    currentNode.innerHTML.substring(0, 300)
-                }
-
-                ...`); // ADD THIS LINE
-                return null; // Path is invalid from this root
+                return null;
             }
         }
-
         return currentNode;
     }
 
     window.getNodeAndOffsetFromCfi = function (cfi) {
-        log(`getNodeAndOffsetFromCfi called with: $ {
-            cfi
-        }
-
-        `);
-
         try {
             var pathParts = cfi.split(":");
             var nodePath = pathParts[0];
             var charOffset = pathParts.length > 1 ? parseInt(pathParts[1], 10) : 0;
 
-            log(`Parsed CFI: path=$ {
-                nodePath
-            }
-
-            , offset=$ {
-                charOffset
-            }
-
-            `);
-
             let cfiRoot = document.getElementById("content-container") || document.body;
             let pathToResolve = nodePath;
 
-            const firstChunk = cfiRoot.querySelector("[data-chunk-index]");
-
-            if (firstChunk && pathToResolve.startsWith("/4/")) {
-                log(`Paginator CFI detected. Adjusting root to first chunk and stripping '/4' from path.`);
-                cfiRoot = firstChunk;
+            // Strip the /4 prefix because cfiRoot (content-container or body) represents /4
+            if (pathToResolve.startsWith("/4/")) {
                 pathToResolve = "/" + pathToResolve.substring(3);
+            } else if (pathToResolve === "/4") {
+                pathToResolve = "";
             }
 
-            log(`CFI Root is <$ {
-                cfiRoot.tagName
+            if (!pathToResolve) {
+                return { node: cfiRoot, offset: charOffset };
             }
-
-            >, Path to resolve is $ {
-                pathToResolve
-            }
-
-            `);
 
             let resolvedNode = resolveCfiPath(cfiRoot, pathToResolve);
 
-            log(`Resolution attempt #1 (from CFI root) result: $ {
-                resolvedNode ? resolvedNode.tagName : 'null'
-            }
-
-            `);
-
-            if (!resolvedNode) {
-                log("Resolution failed from all roots.");
-                return null;
-            }
+            if (!resolvedNode) return null;
 
             let currentNode = resolvedNode;
-
-            log(`Successfully resolved containing element: <$ {
-                currentNode.tagName || 'TEXT_NODE'
-            }
-
-            >`);
 
             if (currentNode.nodeType === Node.ELEMENT_NODE) {
                 const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_TEXT, null, false);
                 const firstTextNode = treeWalker.nextNode();
-
                 if (firstTextNode) {
-                    log(`Found first text node inside element to apply offset.`);
                     currentNode = firstTextNode;
-                } else {
-                    log(`Could not find a text node inside the target element. Using the element itself.`);
                 }
             }
 
             return { node: currentNode, offset: charOffset };
         } catch (e) {
-            log(`ERROR in getNodeAndOffsetFromCfi: $ {
-                e.message
-            }
-
-            `);
             return null;
         }
     };
 
     window.getCfiPathForElement = function (element, charOffset) {
         const logStack = [];
-
         try {
-            var path = [];
+            var path =[];
             var currentNode = element;
 
             if (currentNode.nodeType === Node.TEXT_NODE) {
-                logStack.push(`Initial node is a TEXT_NODE. Calculating cumulative offset.`);
-
-                // --- FIX: Accumulate offsets from previous siblings ---
                 var accumulatedOffset = charOffset || 0;
                 var sibling = currentNode.previousSibling;
-
                 while (sibling) {
                     if (sibling.nodeType === Node.TEXT_NODE) {
                         accumulatedOffset += sibling.nodeValue.length;
                     } else if (sibling.nodeType === Node.ELEMENT_NODE) {
-                        // Elements like <em>, <b> contribute text content to the flow
                         accumulatedOffset += (sibling.textContent || "").length;
                     }
-
                     sibling = sibling.previousSibling;
                 }
-
-                logStack.push(`Original offset: $ {
-                    charOffset
-                }
-
-                , Cumulative offset: $ {
-                    accumulatedOffset
-                }
-
-                `);
                 charOffset = accumulatedOffset;
-                // -----------------------------------------------------
-
-                logStack.push(`Using its parent <$ {
-                    currentNode.parentNode.tagName
-                }
-
-                > for path generation.`);
                 currentNode = currentNode.parentNode;
             }
 
             const root = document.getElementById("content-container") || document.body;
 
-            logStack.push(`Using <$ {
-                root.tagName
-            }
-
-            id='${root.id}' class='${root.className}' > as the consistent CFI root.`);
-
             while (currentNode && currentNode !== root && currentNode.parentNode) {
-                const parentNode = currentNode.parentNode;
+                let parentNode = currentNode.parentNode;
+
+                if (parentNode.classList && parentNode.classList.contains('chunk-container')) {
+                    let trueParent = parentNode.parentNode;
+                    let elementSiblingsInChunk = Array.from(parentNode.childNodes).filter(node => node.nodeType === Node.ELEMENT_NODE);
+                    let indexInChunk = elementSiblingsInChunk.indexOf(currentNode);
+
+                    if (indexInChunk === -1) {
+                        currentNode = trueParent;
+                        continue;
+                    }
+
+                    let chunkIndex = parseInt(parentNode.dataset.chunkIndex, 10);
+                    let elementsInPrecedingChunks = chunkIndex * 20;
+
+                    let trueIndex = elementsInPrecedingChunks + indexInChunk;
+                    let cfiIndex = trueIndex * 2 + 2;
+                    path.unshift(cfiIndex);
+
+                    logStack.push(`Chunk ${chunkIndex}, IdxInChunk ${indexInChunk}, TrueIdx ${trueIndex} -> CFI /${cfiIndex}`);
+
+                    currentNode = trueParent;
+                    continue;
+                }
+
                 const elementSiblings = Array.from(parentNode.childNodes).filter((node) => node.nodeType === Node.ELEMENT_NODE);
                 const nodeIndex = elementSiblings.indexOf(currentNode);
 
@@ -1645,110 +1549,56 @@
 
                 const cfiIndex = nodeIndex * 2 + 2;
                 path.unshift(cfiIndex);
-
-                const childrenTags = elementSiblings
-                    .map(
-                        (node) => `<$ {
-                    node.tagName || "TEXT"
-                }
-
-                >`,
-                    )
-                    .join(", ");
-
-                logStack.push(`GENERATION: Parent <$ {
-                    parentNode.tagName
-                }
-
-                > has $ {
-                    elementSiblings.length
-                }
-
-                element children: [$ {
-                    childrenTags
-                }
-
-                ]. Current node <$ {
-                    currentNode.tagName
-                }
-
-                > is at index $ {
-                    nodeIndex
-                }
-
-                , becoming CFI step $ {
-                    cfiIndex
-                }
-
-                . Path: /$ {
-                    path.join('/')
-                }
-
-                `);
-
                 currentNode = parentNode;
             }
 
-            var cfi = `/` + path.join("/");
-
+            var cfi = "/4";
+            if (path.length > 0) {
+                 cfi += "/" + path.join("/");
+            }
             if (charOffset !== undefined && charOffset > 0) {
                 cfi += ":" + charOffset;
             }
-
-            logStack.push(`Final CFI generated: $ {
-                cfi
-            }
-
-            `);
-
+            logStack.push(`Generated CFI: ${cfi}`);
             return { cfi: cfi, log: logStack };
         } catch (e) {
-            logStack.push(`ERROR in getCfiPathForElement: $ {
-                e.message
-            }
-
-            `);
-
-            return { cfi: `/2`, log: logStack };
+            logStack.push("Error: " + e.message);
+            return { cfi: "/4/2", log: logStack };
         }
     };
 
     window.getCurrentCfi = function() {
-        const debugLog = [];
-        let finalCfi = "/2"; // Fallback to root
-
-        function logCfi(m) { debugLog.push(m); }
+        const debugLog =[];
+        let finalCfi = "/4/2";
 
         try {
             const viewportX = window.innerWidth / 2;
-            // Probe slightly further down to avoid headers/padding issues
-            const viewportY = window.VIEWPORT_PADDING_TOP + 50;
+            let viewportY = window.VIEWPORT_PADDING_TOP + 5;
+            let topElement = null;
 
-            logCfi("Probing for CFI at " + viewportX + "," + viewportY);
+            for (let i = 0; i < 10; i++) {
+                let el = document.elementFromPoint(viewportX, viewportY);
+                if (el && el.id !== 'content-container' &&
+                    !(el.classList && el.classList.contains('chunk-container') && el.innerText.trim() === "")) {
+                    topElement = el;
+                    break;
+                }
+                viewportY += 15;
+            }
 
-            let topElement = document.elementFromPoint(viewportX, viewportY);
-
-            // FIX: Ignore empty chunk containers or the container wrapper itself
-            if (topElement && (topElement.id === 'content-container' ||
-                (topElement.classList && topElement.classList.contains('chunk-container') && topElement.innerText.trim() === ""))) {
-
-                logCfi("Hit empty chunk or container. scanning for first visible content...");
-                // Fallback: Query specifically for content elements
-                const elements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, span, div.chunk-container');
+            if (!topElement || topElement.id === 'content-container' || (topElement.classList && topElement.classList.contains('chunk-container'))) {
+                const elements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, span');
                 for (let i = 0; i < elements.length; i++) {
                     const el = elements[i];
                     const rect = el.getBoundingClientRect();
-                    // Find first element that is effectively visible below the top padding
                     if (rect.bottom > window.VIEWPORT_PADDING_TOP && el.innerText.trim().length > 0) {
                         topElement = el;
-                        logCfi("Found alternative content element: <" + el.tagName + ">");
                         break;
                     }
                 }
             }
 
             if (!topElement) {
-                logCfi("No element found. Fallback to body first child.");
                 topElement = document.body.firstElementChild;
             }
 
@@ -1756,9 +1606,6 @@
                  return JSON.stringify({ cfi: finalCfi, log: debugLog });
             }
 
-            logCfi("Selected Reference Element: <" + topElement.tagName + "> ID:" + topElement.id);
-
-            // Try caret range for precision
             let range = null;
             if (document.caretRangeFromPoint) {
                 range = document.caretRangeFromPoint(viewportX, viewportY);
@@ -1770,27 +1617,22 @@
             if (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
                  nodeForCfi = range.startContainer;
                  offsetForCfi = range.startOffset;
-                 logCfi("Precision match via caretRangeFromPoint.");
+                 debugLog.push(`Caret range hit successfully at offset ${offsetForCfi}`);
             } else {
-                 // Walker fallback
                  const treeWalker = document.createTreeWalker(topElement, NodeFilter.SHOW_TEXT, null, false);
                  let firstTextNode = treeWalker.nextNode();
                  nodeForCfi = (firstTextNode && firstTextNode.textContent.trim().length > 0) ? firstTextNode : topElement;
                  offsetForCfi = 0;
-                 logCfi("Fallback match via TreeWalker.");
             }
 
             const cfiResult = window.getCfiPathForElement(nodeForCfi, offsetForCfi);
             finalCfi = cfiResult.cfi;
-            // Merge logs
             if (cfiResult.log) debugLog.push(...cfiResult.log);
 
         } catch (e) {
             debugLog.push("Error in getCurrentCfi: " + e.message);
         }
 
-        // We intentionally do not use TAG_BM here as this is called frequently on scroll.
-        // The CfiBridge in Kotlin logs this separately.
         return JSON.stringify({ cfi: finalCfi, log: debugLog });
     };
 
@@ -1801,7 +1643,6 @@
     }
 
     window.scrollToCfi = function(cfi) {
-        logBm("scrollToCfi called with: " + cfi);
         let cleanCfi = cfi;
 
         if (cfi && cfi.includes('@')) {
@@ -1809,7 +1650,6 @@
         }
 
         if (!cleanCfi || !cleanCfi.startsWith('/')) {
-            logBm("Invalid CFI format, aborting scroll.");
             if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                  window.CfiBridge.onScrollFinished(false);
             }
@@ -1818,23 +1658,22 @@
 
         let attempts = 0;
         const maxAttempts = 20;
+        let stabilizingFrames = 0;
+        const maxStabilizingFrames = 8;
 
         function attemptScroll() {
             attempts++;
-            logBm("Scroll Attempt " + attempts + "/" + maxAttempts + " for " + cleanCfi);
 
             try {
                 const location = window.getNodeAndOffsetFromCfi(cleanCfi);
 
                 if (location && location.node) {
-                    logBm("Target node FOUND. Node: " + location.node.nodeName);
-
                     if (!document.body.contains(location.node)) {
-                         logBm("Node found but detached. Retrying...");
                          if (attempts < maxAttempts) setTimeout(attemptScroll, 100);
                          return;
                     }
 
+                    let targetScrollY = 0;
                     if (location.node.nodeType === Node.TEXT_NODE && location.offset > 0) {
                         try {
                             const range = document.createRange();
@@ -1844,51 +1683,56 @@
                             const rect = range.getBoundingClientRect();
 
                             if (rect.top !== 0 || rect.bottom !== 0) {
-                                const targetScrollY = window.scrollY + rect.top - window.VIEWPORT_PADDING_TOP;
-                                window.scrollTo({ top: targetScrollY, behavior: 'auto' });
-                                setTimeout(() => {
-                                    window.reportScrollState();
-                                    if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
-                                        window.CfiBridge.onScrollFinished(true);
-                                    }
-                                }, 150);
-                                return;
+                                targetScrollY = window.scrollY + rect.top - (window.VIEWPORT_PADDING_TOP + 5);
                             }
-                        } catch (e) {
-                            logBm("Precise scroll failed: " + e.message);
-                        }
+                        } catch (e) { }
                     }
 
-                    const targetElement = (location.node.nodeType === Node.TEXT_NODE) ? location.node.parentNode : location.node;
-                    targetElement.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
+                    if (targetScrollY === 0) {
+                        const targetElement = (location.node.nodeType === Node.TEXT_NODE) ? location.node.parentNode : location.node;
+                        const rect = targetElement.getBoundingClientRect();
+                        targetScrollY = window.scrollY + rect.top - (window.VIEWPORT_PADDING_TOP + 5);
+                    }
 
-                    setTimeout(() => {
-                        if (window.VIEWPORT_PADDING_TOP > 0) window.scrollBy(0, -window.VIEWPORT_PADDING_TOP);
-                        window.reportScrollState();
-                        if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
-                            window.CfiBridge.onScrollFinished(true);
-                        }
-                    }, 150);
+                    if (Math.abs(window.scrollY - targetScrollY) > 1) {
+                        window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                    }
+
+                    stabilizingFrames++;
+                    if (stabilizingFrames < maxStabilizingFrames) {
+                        setTimeout(attemptScroll, 100);
+                    } else {
+                        setTimeout(() => {
+                            window.reportScrollState();
+                            if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
+                                window.CfiBridge.onScrollFinished(true);
+                            }
+                        }, 50);
+                    }
 
                 } else {
                     if (attempts < maxAttempts) {
                         setTimeout(attemptScroll, 100);
                     } else {
-                        logBm("Max attempts reached. Scroll failed.");
                         if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                             window.CfiBridge.onScrollFinished(false);
                         }
                     }
                 }
             } catch (e) {
-                logBm("Fatal error: " + e.message);
                 if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                     window.CfiBridge.onScrollFinished(false);
                 }
             }
         }
 
-        attemptScroll();
+        if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(function() {
+                attemptScroll();
+            });
+        } else {
+            attemptScroll();
+        }
     };
 
     window.getElementByCfi = function(cfi) {
@@ -2026,10 +1870,9 @@
             if (container) {
                 container.querySelectorAll(".chunk-container").forEach((div) => {
                     let idx = parseInt(div.dataset.chunkIndex, 10);
-                    let content = div.innerHTML; // Don't trim, keep original HTML structure
+                    let content = div.innerHTML;
 
                     if (content.trim().length > 0) {
-                        // FIX: Assign to specific index, don't overwrite the whole array
                         this.chunksData[idx] = content;
                         this.chunkHeights[idx] = div.getBoundingClientRect().height;
                     }
@@ -2045,6 +1888,7 @@
             this.observer = new IntersectionObserver(
                 (entries) => {
                     let scrollAdjust = 0;
+                    let domChanged = false;
 
                     entries.forEach((entry) => {
                         let div = entry.target;
@@ -2062,6 +1906,7 @@
 
                                 let newHeight = div.getBoundingClientRect().height;
                                 this.chunkHeights[idx] = newHeight;
+                                domChanged = true;
 
                                 if (div.getBoundingClientRect().top < 0) {
                                     scrollAdjust += (newHeight - oldHeight);
@@ -2076,6 +1921,7 @@
                                 this.chunkHeights[idx] = oldHeight;
                                 div.style.height = oldHeight + "px";
                                 div.innerHTML = "";
+                                domChanged = true;
                             }
                         }
                     });
@@ -2083,8 +1929,12 @@
                     if (scrollAdjust !== 0) {
                         window.scrollBy(0, scrollAdjust);
                     }
+
+                    if (domChanged && window.reportScrollState) {
+                        setTimeout(window.reportScrollState, 50);
+                    }
                 },
-                { rootMargin: "2500px 0px" } // Keep large margin for smooth scrolling
+                { rootMargin: "2500px 0px" }
             );
 
             document.querySelectorAll(".chunk-container").forEach((div) => {
@@ -2114,6 +1964,11 @@
                 if (div.getBoundingClientRect().bottom < 0) {
                     window.scrollBy(0, newHeight - oldHeight);
                 }
+
+                if (window.reportScrollState) {
+                    setTimeout(window.reportScrollState, 50);
+                }
+
                 if (window.CURRENT_HIGHLIGHTS) {
                     window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
                 }

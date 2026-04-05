@@ -483,7 +483,7 @@ fun EpubReaderHost(
     var showJustifyWarningDialog by remember { mutableStateOf(false) }
     var isNavigatingByToc by remember { mutableStateOf(false) }
 
-    var chunkTargetOverride by remember { mutableStateOf<Int?>(null) }
+    var chunkTargetOverride by remember { mutableStateOf(initialLocator?.let { it.blockIndex / 20 }) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -957,6 +957,8 @@ fun EpubReaderHost(
             skipChapterRequest = false
             if (ttsShouldStartOnChapterLoad && currentChapterIndex < chapters.size - 1) {
                 Timber.d("Executing skip chapter request for continuous TTS.")
+                currentScrollYPosition = 0
+                currentScrollHeightValue = 0
                 currentChapterIndex++
             } else {
                 ttsShouldStartOnChapterLoad = false
@@ -1212,6 +1214,7 @@ fun EpubReaderHost(
             initialScrollTargetForChapter = ChapterScrollPosition.START
             cfiToLoad = null
             currentScrollYPosition = 0
+            currentScrollHeightValue = 0
             currentChapterIndex = nextIndex
         },
         onToggleTtsStartOnLoad = { shouldStart -> ttsShouldStartOnChapterLoad = shouldStart },
@@ -1362,7 +1365,17 @@ fun EpubReaderHost(
         chapterHead = result.head
         chapterChunks = result.chunks
         isChapterParsing = false
-        loadUpToChunkIndex = result.startChunkIndex
+
+        if (initialScrollTargetForChapter == ChapterScrollPosition.END) {
+            loadUpToChunkIndex = max(0, result.chunks.size - 1)
+            loadedChunkCount = result.chunks.size
+            topVisibleChunkIndex = loadUpToChunkIndex
+        } else {
+            loadUpToChunkIndex = result.startChunkIndex
+            loadedChunkCount = min(result.chunks.size, result.startChunkIndex + 2)
+            topVisibleChunkIndex = 0
+        }
+
         Timber.tag("ReflowPaginationDiag").d("EpubReaderScreen: loadChapterContent finished. chapterChunks.size=${chapterChunks.size}, isChapterParsing=$isChapterParsing")
 
         if (chunkTargetOverride != null) {
@@ -1371,9 +1384,6 @@ fun EpubReaderHost(
         if (isInitialCfiLoad) {
             isInitialCfiLoad = false
         }
-
-        loadedChunkCount = 1
-        topVisibleChunkIndex = 0
     }
 
     EpubReaderSystemUiController(
@@ -1604,6 +1614,8 @@ fun EpubReaderHost(
             coroutineScope = scope,
             onVerticalChapterChange = { chapterIdx, chunkIdx, result ->
                 initialScrollTargetForChapter = ChapterScrollPosition.START
+                currentScrollYPosition = 0
+                currentScrollHeightValue = 0
                 currentChapterIndex = chapterIdx
                 searchHighlightTarget = result
                 loadUpToChunkIndex = chunkIdx
@@ -1674,6 +1686,7 @@ fun EpubReaderHost(
                                 if (targetChapterIndex != currentChapterIndex) {
                                     initialScrollTargetForChapter = null
                                     currentScrollYPosition = 0
+                                    currentScrollHeightValue = 0
                                     currentChapterIndex = targetChapterIndex
                                 } else {
                                     if (entry.fragmentId != null) {
@@ -1718,6 +1731,7 @@ fun EpubReaderHost(
                                 if (index != currentChapterIndex) {
                                     initialScrollTargetForChapter = ChapterScrollPosition.START
                                     currentScrollYPosition = 0
+                                    currentScrollHeightValue = 0
                                     currentChapterIndex = index
                                     pullToNextProgress = 0f
                                     pullToPrevProgress = 0f
@@ -1773,6 +1787,8 @@ fun EpubReaderHost(
                                     } else {
                                         0
                                     }
+                                    currentScrollYPosition = 0
+                                    currentScrollHeightValue = 0
                                     currentChapterIndex = bookmark.chapterIndex
                                 }
                                 else {
@@ -1876,6 +1892,8 @@ fun EpubReaderHost(
 
                                 if (highlight.chapterIndex != currentChapterIndex) {
                                     chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) targetChunk else 0
+                                    currentScrollYPosition = 0
+                                    currentScrollHeightValue = 0
                                     currentChapterIndex = highlight.chapterIndex
                                 } else {
                                     if (targetChunk != null && targetChunk >= 0) {
@@ -2069,7 +2087,8 @@ fun EpubReaderHost(
                         onNavigateChapter = { offset, target ->
                             scope.launch {
                                 initialScrollTargetForChapter = target
-                                if (target == ChapterScrollPosition.START) currentScrollYPosition = 0
+                                currentScrollYPosition = 0
+                                currentScrollHeightValue = 0
                                 currentChapterIndex += offset
                             }
                         },
@@ -2147,19 +2166,19 @@ fun EpubReaderHost(
                                             CircularProgressIndicator()
                                         }
                                     } else if (chapterChunks.isNotEmpty()) {
-                                        val initialContentToLoad =
-                                            remember(loadUpToChunkIndex, chapterChunks) {
-                                                val startIdx = maxOf(0, loadUpToChunkIndex - 1)
-                                                val endIdx = minOf(chapterChunks.lastIndex, loadUpToChunkIndex + 1)
+                                        val initialContentToLoad = remember(loadUpToChunkIndex, chapterChunks) {
+                                            val targetIdx = loadUpToChunkIndex
+                                            val startIdx = maxOf(0, targetIdx - 1)
+                                            val endIdx = minOf(chapterChunks.lastIndex, targetIdx + 1)
 
-                                                chapterChunks.indices.joinToString(separator = "\n") { index ->
-                                                    if (index in startIdx..endIdx) {
-                                                        "<div class='chunk-container' data-chunk-index='$index'>${chapterChunks[index]}</div>"
-                                                    } else {
-                                                        "<div class='chunk-container' data-chunk-index='$index'></div>"
-                                                    }
+                                            chapterChunks.indices.joinToString(separator = "\n") { index ->
+                                                if (index in startIdx..endIdx) {
+                                                    "<div class='chunk-container' data-chunk-index='$index'>${chapterChunks[index]}</div>"
+                                                } else {
+                                                    "<div class='chunk-container' data-chunk-index='$index'></div>"
                                                 }
                                             }
+                                        }
                                         val initialHtml = """
                                             <!DOCTYPE html>
                                             <html>
@@ -2364,6 +2383,7 @@ fun EpubReaderHost(
                                                         Timber.d("Screen: Moving to next chapter (${currentChapterIndex + 1}).")
                                                         initialScrollTargetForChapter = ChapterScrollPosition.START
                                                         currentScrollYPosition = 0
+                                                        currentScrollHeightValue = 0
                                                         currentChapterIndex++
                                                         isAutoScrollPlaying = true
                                                     } else {
@@ -2384,6 +2404,8 @@ fun EpubReaderHost(
                                                         scope.launch {
                                                             delay(20)
                                                             initialScrollTargetForChapter = ChapterScrollPosition.END
+                                                            currentScrollYPosition = 0
+                                                            currentScrollHeightValue = 0
                                                             currentChapterIndex--
                                                             if (showBars) showBars = false
                                                             delay(300)
@@ -2405,6 +2427,7 @@ fun EpubReaderHost(
                                                             delay(20)
                                                             initialScrollTargetForChapter = ChapterScrollPosition.START
                                                             currentScrollYPosition = 0
+                                                            currentScrollHeightValue = 0
                                                             currentChapterIndex++
                                                             if (showBars) showBars = false
                                                             delay(300)
@@ -2423,12 +2446,12 @@ fun EpubReaderHost(
                                                     )
                                                     scope.launch {
                                                         delay(50)
-                                                        initialScrollTargetForChapter =
-                                                            ChapterScrollPosition.END
+                                                        initialScrollTargetForChapter = ChapterScrollPosition.END
+                                                        currentScrollYPosition = 0
+                                                        currentScrollHeightValue = 0
                                                         currentChapterIndex--
                                                         if (showBars) showBars = false
-                                                        Timber.d("Changed to previous chapter: $currentChapterIndex, will scroll to END"
-                                                        )
+                                                        Timber.d("Changed to previous chapter: $currentChapterIndex, will scroll to END")
                                                     }
                                                 }
                                                 pullToPrevProgress = 0f
@@ -2443,9 +2466,9 @@ fun EpubReaderHost(
                                                     )
                                                     scope.launch {
                                                         delay(50)
-                                                        initialScrollTargetForChapter =
-                                                            ChapterScrollPosition.START
+                                                        initialScrollTargetForChapter = ChapterScrollPosition.START
                                                         currentScrollYPosition = 0
+                                                        currentScrollHeightValue = 0
                                                         currentChapterIndex++
                                                         if (showBars) showBars = false
                                                     }
@@ -2604,7 +2627,7 @@ fun EpubReaderHost(
                                                 showDictionaryUpsellDialog = true
                                             },
                                             onCfiGenerated = { cfi ->
-                                                Timber.tag("POS_DIAG").d("JS generated CFI: '$cfi'")
+                                                Timber.tag("PosSaveDiag").d("JS generated CFI string: '$cfi'")
 
                                                 if (cfi.isBlank() || !cfi.startsWith('/')) {
                                                     if (isSavingAndExiting) {
@@ -2623,6 +2646,7 @@ fun EpubReaderHost(
                                                         )
 
                                                     if (locator != null) {
+                                                        Timber.tag("PosSaveDiag").d("✅ Converted CFI to Locator successfully: chapter=${locator.chapterIndex}, block=${locator.blockIndex}, charOffset=${locator.charOffset}")
                                                         lastKnownLocator = locator
 
                                                         val progressWithinChapter =
@@ -3131,8 +3155,11 @@ fun EpubReaderHost(
                         val chapterTitle =
                             chapters.getOrNull(currentChapterIndex)?.title?.take(30)?.trim()
                                 ?: "Chapter"
+
+                        val displayPageInfo = if (currentScrollHeightValue <= 0 || isChapterParsing) "" else " ($currentPageInChapter/$totalPagesInCurrentChapter)"
+
                         Text(
-                            text = "$chapterTitle ($currentPageInChapter/$totalPagesInCurrentChapter)",
+                            text = "$chapterTitle$displayPageInfo",
                             style = MaterialTheme.typography.bodySmall,
                             color = effectiveText.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center,
@@ -3143,7 +3170,7 @@ fun EpubReaderHost(
                                 .padding(horizontal = 48.dp)
                         )
 
-                        if (totalBookLengthChars > 0) {
+                        if (totalBookLengthChars > 0 && currentScrollHeightValue > 0 && !isChapterParsing) {
                             Text(
                                 text = "%.1f%%".format(currentBookProgress),
                                 style = MaterialTheme.typography.bodySmall,
@@ -3484,10 +3511,14 @@ fun EpubReaderHost(
                                             val targetChunk = locator.blockIndex / 20
                                             chunkTargetOverride = targetChunk
                                             if (currentChapterIndex != locator.chapterIndex) {
+                                                currentScrollYPosition = 0
+                                                currentScrollHeightValue = 0
                                                 currentChapterIndex = locator.chapterIndex
                                             }
                                             cfiToLoad = cfi
                                         } else {
+                                            currentScrollYPosition = 0
+                                            currentScrollHeightValue = 0
                                             currentChapterIndex = locator.chapterIndex
                                             cfiToLoad = null
                                         }
