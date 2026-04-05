@@ -24,6 +24,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,10 +32,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,23 +48,38 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CopyAll
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
@@ -111,7 +129,8 @@ data class PdfUserHighlight(
     val bounds: List<RectF>,
     val color: PdfHighlightColor,
     val text: String,
-    val range: Pair<Int, Int>
+    val range: Pair<Int, Int>,
+    val note: String? = null
 )
 
 internal data class CustomPdfMenuState(
@@ -122,7 +141,9 @@ internal data class CustomPdfMenuState(
     val highlightId: String? = null,
     val isComment: Boolean = false,
     val author: String? = null,
-    val annotation: EmbeddedAnnotation? = null
+    val annotation: EmbeddedAnnotation? = null,
+    val note: String? = null,
+    val selectedColor: PdfHighlightColor? = null
 )
 
 internal enum class PdfSelectionMethod {
@@ -205,7 +226,8 @@ internal fun PdfSelectionMenuPopup(
     onSelectAll: () -> Unit,
     onColorSelected: (PdfHighlightColor) -> Unit,
     onDelete: () -> Unit,
-    onTts: (() -> Unit)? = null
+    onTts: (() -> Unit)? = null,
+    onNote: (() -> Unit)? = null
 ) {
     Popup(
         popupPositionProvider = popupPositionProvider,
@@ -224,6 +246,48 @@ internal fun PdfSelectionMenuPopup(
             modifier = Modifier.widthIn(max = 300.dp)
         ) {
             Column(modifier = if (menuState.isComment) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max)) {
+                if (!menuState.note.isNullOrBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 140.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Note",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Note",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = menuState.note,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    HorizontalDivider()
+                }
+
                 if (menuState.isComment) {
                     Column(
                         modifier = Modifier
@@ -286,6 +350,11 @@ internal fun PdfSelectionMenuPopup(
                         actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = { onAiDefine(menuState.selectedText) }))
                         actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = { onTranslate(menuState.selectedText) }))
                         actions.add(MenuActionItem(imageVector = Icons.Default.Search, label = "Search", onClick = { onSearch(menuState.selectedText) }))
+                    }
+
+                    if (onNote != null) {
+                        val noteLabel = if (menuState.note.isNullOrBlank()) "Note" else "Edit"
+                        actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = onNote))
                     }
 
                     if (!menuState.isExistingHighlight) {
@@ -535,5 +604,199 @@ internal fun mergePdfRectsIntoLines(rects: List<RectF>): List<RectF> {
 
     return merged.map { m ->
         RectF(m[0], m[3], m[2], m[1])
+    }
+}
+
+@Composable
+fun PdfHighlightColorRow(
+    modifier: Modifier = Modifier,
+    selectedColor: PdfHighlightColor? = null,
+    onColorSelect: (PdfHighlightColor) -> Unit
+) {
+    Row(
+        modifier = modifier
+            .padding(vertical = 12.dp, horizontal = 12.dp)
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        PdfHighlightColor.entries.forEach { colorEnum ->
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(colorEnum.color)
+                    .clickable { onColorSelect(colorEnum) }
+                    .border(
+                        width = if (selectedColor == colorEnum) 3.dp else 1.dp,
+                        color = if (selectedColor == colorEnum) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        shape = CircleShape
+                    )
+            ) {
+                if (selectedColor == colorEnum) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = if (colorEnum == PdfHighlightColor.YELLOW) Color.Black else Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfAnnotationBottomSheet(
+    highlight: PdfUserHighlight,
+    onColorChange: (PdfHighlightColor) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onDelete: () -> Unit,
+    onCopy: () -> Unit,
+    onDictionary: () -> Unit,
+    onTranslate: () -> Unit,
+    onSearch: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var noteText by remember { mutableStateOf(highlight.note ?: "") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            PdfHighlightColorRow(
+                selectedColor = highlight.color,
+                onColorSelect = onColorChange,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Surface(
+                color = highlight.color.color.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, highlight.color.color.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                    Box(
+                        modifier = Modifier
+                            .width(6.dp)
+                            .fillMaxHeight()
+                            .background(highlight.color.color)
+                    )
+                    Text(
+                        text = "\"${highlight.text}\"",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                PdfBottomSheetToolButton(icon = R.drawable.copy, label = "Copy", onClick = onCopy)
+                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = "Dict", onClick = onDictionary)
+                PdfBottomSheetToolButton(icon = R.drawable.translate, label = "Translate", onClick = onTranslate)
+                PdfBottomSheetToolButton(icon = R.drawable.search, label = "Search", onClick = onSearch)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                placeholder = { Text("Add a note...", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 100.dp),
+                maxLines = 5,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Delete")
+                }
+                Button(
+                    onClick = { onSave(noteText) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Text("Save Note")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfBottomSheetToolButton(
+    icon: Int,
+    label: String,
+    onClick: () -> Unit
+) {
+    val effectiveText = MaterialTheme.colorScheme.onSurface
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            painter = painterResource(id = icon),
+            contentDescription = label,
+            tint = effectiveText.copy(alpha = 0.8f),
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = effectiveText.copy(alpha = 0.8f)
+        )
     }
 }

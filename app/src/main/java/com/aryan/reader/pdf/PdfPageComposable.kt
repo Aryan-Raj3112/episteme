@@ -437,6 +437,7 @@ internal fun PdfPageComposable(
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
+    onNoteRequested: (String?) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
     activeToolThickness: Float = 0f
 ) {
@@ -2560,7 +2561,9 @@ internal fun PdfPageComposable(
                                 anchorRect = combinedRect,
                                 charRange = hitHighlight.range,
                                 isExistingHighlight = true,
-                                highlightId = hitHighlight.id
+                                highlightId = hitHighlight.id,
+                                note = hitHighlight.note,
+                                selectedColor = hitHighlight.color
                             )
                             return@launch
                         }
@@ -3622,6 +3625,7 @@ internal fun PdfPageComposable(
                         onHighlightUpdate = onHighlightUpdate,
                         onHighlightDelete = onHighlightDelete,
                         onTts = onTts,
+                        onNote = onNoteRequested,
                         teardropHeightPx = teardropHeightPxState.value,
                         activeDraggingHandle = activeDraggingHandle,
                         showMagnifier = showMagnifier,
@@ -4565,8 +4569,8 @@ private fun PdfPageRenderer(
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit,
     onHighlightDelete: (String) -> Unit,
     onTts: (Int, Int) -> Unit,
-    activeToolThickness: Float
-
+    activeToolThickness: Float,
+    onNote: (String?) -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -4949,6 +4953,18 @@ private fun PdfPageRenderer(
                     },
                     onTts = {
                         onTts(selectionData.pageIndex, menuState.charRange.first)
+                        onMenuDismiss()
+                    },
+                    onNote = {
+                        if (menuState.isExistingHighlight && menuState.highlightId != null) {
+                            onNote(menuState.highlightId)
+                        } else {
+                            onNote(null)
+                            onHighlightAdd(
+                                selectionData.pageIndex, menuState.charRange, menuState.selectedText,
+                                PdfHighlightColor.YELLOW
+                            )
+                        }
                         onMenuDismiss()
                     }
                 )
