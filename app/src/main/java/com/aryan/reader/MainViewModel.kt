@@ -2720,6 +2720,67 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return fileName ?: uri.lastPathSegment
     }
 
+    fun onFilesSelected(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+
+        if (uris.size == 1) {
+            onFileSelected(uris.first(), isFromRecent = false)
+            return
+        }
+
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(
+                    bannerMessage = BannerMessage(
+                        message = appContext.getString(R.string.banner_importing_multiple, uris.size),
+                        isPersistent = true
+                    ),
+                    contextualActionItems = emptySet()
+                )
+            }
+
+            var importedCount = 0
+
+            withContext(Dispatchers.IO) {
+                for (externalUri in uris) {
+                    val importResult = prepareBookForImport(externalUri)
+                    if (importResult != null) {
+                        val (internalUri, bookId, type) = importResult
+                        val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
+
+                        addFileToRecent(
+                            uri = internalUri,
+                            type = type,
+                            bookId = bookId,
+                            customDisplayName = displayName,
+                            isRecent = false,
+                            sourceFolderUri = null
+                        )
+                        importedCount++
+                    } else {
+                        val hash = FileHasher.calculateSha256 {
+                            appContext.contentResolver.openInputStream(externalUri)
+                        }
+                        if (hash != null && recentFilesRepository.getFileByBookId(hash) != null) {
+                            importedCount++
+                        }
+                    }
+                }
+            }
+
+            _internalState.update {
+                it.copy(
+                    bannerMessage = BannerMessage(
+                        message = "Imported $importedCount books. You can find them in the Library tab.",
+                        isPersistent = false
+                    )
+                )
+            }
+
+            Timber.tag("BulkImport").i("Bulk import complete. $importedCount files processed.")
+        }
+    }
+
     fun onFileSelected(uri: Uri, isFromRecent: Boolean = false) {
         if (isFromRecent) {
             Timber.i("Opening recent file: $uri")

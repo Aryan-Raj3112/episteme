@@ -221,9 +221,7 @@ fun HomeScreen(
             if (isContextualModeActive) {
                 viewModel.clearContextualAction()
             }
-            uris.forEach { uri ->
-                viewModel.onFileSelected(uri, isFromRecent = false)
-            }
+            viewModel.onFilesSelected(uris)
         }
 
         val fallbackFilePickerLauncher = rememberLauncherForActivityResult(
@@ -232,9 +230,7 @@ fun HomeScreen(
             if (isContextualModeActive) {
                 viewModel.clearContextualAction()
             }
-            uris.forEach { uri ->
-                viewModel.onFileSelected(uri, isFromRecent = false)
-            }
+            viewModel.onFilesSelected(uris)
         }
 
         val onSelectFileClick = {

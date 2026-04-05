@@ -639,4 +639,5 @@
     <string name="about_terms">Terms of Service</string>
     <string name="about_terms_desc">Usage terms and conditions.</string>
     <string name="about_licenses_desc">Open source libraries used.</string>
+    <string name="banner_importing_multiple">Importing %1$d books… They will appear in your Library shortly.</string>
 </resources>
