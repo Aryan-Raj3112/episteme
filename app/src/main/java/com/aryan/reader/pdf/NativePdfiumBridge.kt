@@ -25,6 +25,7 @@ object NativePdfiumBridge {
     @JvmStatic external fun extractImagePixels(pagePtr: Long, index: Int, dimens: IntArray): IntArray?
 
     @JvmStatic external fun performClick(pagePtr: Long, x: Double, y: Double): Boolean
+    @JvmStatic external fun getLinkInfoAtPoint(docPtr: Long, pagePtr: Long, x: Double, y: Double): String?
 
     @JvmStatic external fun getAnnotSubtypeAtPoint(pagePtr: Long, x: Double, y: Double): Int
     @JvmStatic external fun getAnnotRectAtPoint(pagePtr: Long, x: Double, y: Double): FloatArray?

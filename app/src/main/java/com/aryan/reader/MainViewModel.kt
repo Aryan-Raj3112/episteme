@@ -477,8 +477,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
+        val currentTabs = _internalState.value.openTabIds.toMutableList()
+        if (!currentTabs.contains(bookId)) {
+            if (currentTabs.size >= 20) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
+                }
+                return
+            }
+            currentTabs.add(bookId)
+        }
+
         prefs.edit {
             putString(KEY_ACTIVE_TAB, bookId)
+            putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
         }
 
         val uri = item.getUri()
@@ -488,6 +500,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
             _internalState.update { state ->
                 state.copy(
+                    openTabIds = currentTabs,
                     activeTabBookId = bookId,
                     selectedPdfUri = it,
                     selectedBookId = bookId,
@@ -510,7 +523,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
         } ?: run {
-            _internalState.update { it.copy(activeTabBookId = bookId) }
+            _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
         }
     }
 
