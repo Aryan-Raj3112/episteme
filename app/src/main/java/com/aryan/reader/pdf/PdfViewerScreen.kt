@@ -27,6 +27,7 @@ package com.aryan.reader.pdf
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -43,6 +44,7 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.provider.OpenableColumns
 import android.util.Base64
+import android.util.LruCache
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -143,6 +145,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -152,6 +155,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
@@ -166,6 +170,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1109,7 +1114,7 @@ private data class DocumentCacheItem(
 )
 
 private class DocumentCache(val maxSize: Int = 3) {
-    val cache = object : android.util.LruCache<String, DocumentCacheItem>(maxSize) {
+    val cache = object : LruCache<String, DocumentCacheItem>(maxSize) {
         override fun entryRemoved(
             evicted: Boolean,
             key: String,
@@ -1207,7 +1212,7 @@ fun PdfViewerScreen(
     val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
 
     var showNewTabSheet by remember { mutableStateOf(false) }
-    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
 
     val isTabsEnabled = uiState.isTabsEnabled
     val openTabs = uiState.openTabs
@@ -1424,6 +1429,7 @@ fun PdfViewerScreen(
 
     var customHighlightColors by remember { mutableStateOf(loadCustomHighlightColors(context)) }
     var showHighlightColorPicker by remember { mutableStateOf(false) }
+    var highlightColorPickerInitialSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
 
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
@@ -4137,12 +4143,12 @@ fun PdfViewerScreen(
                                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            androidx.compose.material3.FilterChip(
+                                            FilterChip(
                                                 selected = !filterWithNotesOnly,
                                                 onClick = { filterWithNotesOnly = false },
                                                 label = { Text("All") }
                                             )
-                                            androidx.compose.material3.FilterChip(
+                                            FilterChip(
                                                 selected = filterWithNotesOnly,
                                                 onClick = { filterWithNotesOnly = true },
                                                 label = { Text("With Notes") }
@@ -4536,7 +4542,10 @@ fun PdfViewerScreen(
                                                 activeTheme = activeTheme,
                                                 isScrollLocked = isScrollLocked,
                                                 customHighlightColors = customHighlightColors,
-                                                onPaletteClick = { showHighlightColorPicker = true },
+                                                onPaletteClick = {
+                                                    highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
+                                                    showHighlightColorPicker = true
+                                                },
                                                 onScaleChanged = { newScale ->
                                                     if (pagerState.currentPage == pageIndex) {
                                                         currentPageScale = newScale
@@ -7104,7 +7113,7 @@ fun PdfViewerScreen(
                 }
 
                 if (showNewTabSheet) {
-                    androidx.compose.material3.ModalBottomSheet(
+                    ModalBottomSheet(
                         onDismissRequest = { showNewTabSheet = false },
                         sheetState = sheetState,
                         containerColor = MaterialTheme.colorScheme.surface
@@ -7354,16 +7363,31 @@ fun PdfViewerScreen(
                 if (highlightToNoteId != null) {
                     val targetHighlight = userHighlights.find { it.id == highlightToNoteId }
                     if (targetHighlight != null) {
+                        val effectiveBg = if (activeTheme.backgroundColor == Color.Unspecified) MaterialTheme.colorScheme.surface else activeTheme.backgroundColor
+                        val effectiveText = if (activeTheme.textColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else activeTheme.textColor
+
                         PdfAnnotationBottomSheet(
                             highlight = targetHighlight,
+                            effectiveBg = effectiveBg,
+                            effectiveText = effectiveText,
                             customHighlightColors = customHighlightColors,
-                            onPaletteClick = { showHighlightColorPicker = true },
-                            onColorChange = { newColor -> onHighlightUpdate(targetHighlight.id, newColor) },
+                            onPaletteClick = {
+                                highlightColorPickerInitialSlot = targetHighlight.color
+                                showHighlightColorPicker = true
+                            },
+                            onColorChange = { newColor ->
+                                onHighlightUpdate(
+                                    targetHighlight.id,
+                                    newColor
+                                )
+                            },
                             onDismiss = { highlightToNoteId = null },
                             onSave = { noteText ->
-                                val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
+                                val index =
+                                    userHighlights.indexOfFirst { it.id == targetHighlight.id }
                                 if (index != -1) {
-                                    userHighlights[index] = targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                                    userHighlights[index] =
+                                        targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
                                 }
                                 highlightToNoteId = null
                             },
@@ -7372,8 +7396,15 @@ fun PdfViewerScreen(
                                 highlightToNoteId = null
                             },
                             onCopy = {
-                                val clip = android.content.ClipData.newPlainText("Copied Text", targetHighlight.text)
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(targetHighlight.text))
+                                val clip = ClipData.newPlainText(
+                                    "Copied Text",
+                                    targetHighlight.text
+                                )
+                                clipboardManager.setText(
+                                    androidx.compose.ui.text.AnnotatedString(
+                                        targetHighlight.text
+                                    )
+                                )
                                 highlightToNoteId = null
                             },
                             onDictionary = {
@@ -7397,6 +7428,7 @@ fun PdfViewerScreen(
                 if (showHighlightColorPicker) {
                     HighlightColorPickerDialog(
                         initialColors = customHighlightColors,
+                        initialSelection = highlightColorPickerInitialSlot,
                         onDismiss = { showHighlightColorPicker = false },
                         onSave = { newColors ->
                             customHighlightColors = newColors

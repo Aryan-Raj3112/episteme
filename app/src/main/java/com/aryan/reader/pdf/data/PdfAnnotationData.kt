@@ -224,6 +224,10 @@ object HighlightSerializer {
             obj.put("rangeStart", h.range.first)
             obj.put("rangeEnd", h.range.second)
 
+            if (!h.note.isNullOrBlank()) {
+                obj.put("note", h.note)
+            }
+
             val boundsArray = JSONArray()
             h.bounds.forEach { r ->
                 val rObj = JSONObject()
@@ -264,7 +268,8 @@ object HighlightSerializer {
                         bounds = bounds,
                         color = try { PdfHighlightColor.valueOf(obj.getString("color")) } catch(_: Exception) { PdfHighlightColor.YELLOW },
                         text = obj.optString("text", ""),
-                        range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0))
+                        range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0)),
+                        note = obj.optString("note", null).takeIf { !it.isNullOrBlank() }
                     )
                 )
             }

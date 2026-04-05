@@ -688,6 +688,8 @@ fun PdfHighlightColorRow(
 @Composable
 fun PdfAnnotationBottomSheet(
     highlight: PdfUserHighlight,
+    effectiveBg: Color,
+    effectiveText: Color,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: (() -> Unit)? = null,
     onColorChange: (PdfHighlightColor) -> Unit,
@@ -705,8 +707,8 @@ fun PdfAnnotationBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        containerColor = effectiveBg,
+        contentColor = effectiveText,
         contentWindowInsets = { WindowInsets.navigationBars }
     ) {
         Column(
@@ -732,18 +734,13 @@ fun PdfAnnotationBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    Box(
-                        modifier = Modifier
-                            .width(6.dp)
-                            .fillMaxHeight()
-                            .background(displayColor)
-                    )
+                    Box(modifier = Modifier.width(6.dp).fillMaxHeight().background(displayColor))
                     Text(
                         text = "\"${highlight.text}\"",
                         style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                        color = effectiveText.copy(alpha = 0.9f),
                         modifier = Modifier.padding(16.dp)
                     )
                 }
@@ -755,10 +752,10 @@ fun PdfAnnotationBottomSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                PdfBottomSheetToolButton(icon = R.drawable.copy, label = "Copy", onClick = onCopy)
-                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = "Dict", onClick = onDictionary)
-                PdfBottomSheetToolButton(icon = R.drawable.translate, label = "Translate", onClick = onTranslate)
-                PdfBottomSheetToolButton(icon = R.drawable.search, label = "Search", onClick = onSearch)
+                PdfBottomSheetToolButton(icon = R.drawable.copy, label = "Copy", effectiveText = effectiveText, onClick = onCopy)
+                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = "Dict", effectiveText = effectiveText, onClick = onDictionary)
+                PdfBottomSheetToolButton(icon = R.drawable.translate, label = "Translate", effectiveText = effectiveText, onClick = onTranslate)
+                PdfBottomSheetToolButton(icon = R.drawable.search, label = "Search", effectiveText = effectiveText, onClick = onSearch)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -766,18 +763,16 @@ fun PdfAnnotationBottomSheet(
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
-                placeholder = { Text("Add a note...", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 100.dp),
+                placeholder = { Text("Add a note...", color = effectiveText.copy(alpha = 0.5f)) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                 maxLines = 5,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                    unfocusedBorderColor = effectiveText.copy(alpha = 0.3f),
+                    focusedTextColor = effectiveText,
+                    unfocusedTextColor = effectiveText
                 ),
                 shape = RoundedCornerShape(12.dp)
             )
@@ -818,14 +813,11 @@ fun PdfAnnotationBottomSheet(
 private fun PdfBottomSheetToolButton(
     icon: Int,
     label: String,
+    effectiveText: Color,
     onClick: () -> Unit
 ) {
-    val effectiveText = MaterialTheme.colorScheme.onSurface
     Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(12.dp),
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(

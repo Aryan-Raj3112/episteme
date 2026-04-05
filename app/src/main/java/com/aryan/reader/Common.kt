@@ -2622,11 +2622,12 @@ fun ColorSlider(color: Color, onColorChanged: (Color) -> Unit) {
 @Composable
 fun HighlightColorPickerDialog(
     initialColors: Map<PdfHighlightColor, Color>,
+    initialSelection: PdfHighlightColor = PdfHighlightColor.YELLOW,
     onDismiss: () -> Unit,
     onSave: (Map<PdfHighlightColor, Color>) -> Unit
 ) {
     var currentColors by remember { mutableStateOf(initialColors) }
-    var selectedSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
+    var selectedSlot by remember { mutableStateOf(initialSelection) }
 
     val initialActiveColor = currentColors[selectedSlot] ?: selectedSlot.color
     val initialHsv = remember(initialActiveColor) {

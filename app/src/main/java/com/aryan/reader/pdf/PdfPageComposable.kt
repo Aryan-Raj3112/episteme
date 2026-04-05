@@ -4501,7 +4501,8 @@ private fun PdfPageSelectionsLayer(
         scrimColorForTextHighlight = scrimColorForTextHighlight,
         allTextPageHighlightColor = allTextPageHighlightColor,
         ttsHighlightColor = ttsHighlightColor,
-        selectionHighlightColor = selectionHighlightColor
+        selectionHighlightColor = selectionHighlightColor,
+        customHighlightColors = customHighlightColors
     )
 
     val highlightTime = (System.nanoTime() - highlightStart) / 1_000_000f
