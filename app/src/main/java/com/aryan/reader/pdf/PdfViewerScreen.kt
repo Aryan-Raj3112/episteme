@@ -1082,6 +1082,35 @@ private fun getFastFileId(context: Context, uri: Uri): String {
     return result
 }
 
+private data class DocumentCacheItem(
+    val doc: ReaderDocument,
+    val pfd: ParcelFileDescriptor,
+    val totalPages: Int,
+    val pageAspectRatios: List<Float>,
+    val flatTableOfContents: List<TocEntry>
+)
+
+private class DocumentCache(val maxSize: Int = 3) {
+    val cache = object : android.util.LruCache<String, DocumentCacheItem>(maxSize) {
+        override fun entryRemoved(
+            evicted: Boolean,
+            key: String,
+            oldValue: DocumentCacheItem,
+            newValue: DocumentCacheItem?
+        ) {
+            if (evicted) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try { oldValue.doc.close() } catch (e: Exception) { Timber.e(e) }
+                    try { oldValue.pfd.close() } catch (e: Exception) { Timber.e(e) }
+                }
+            }
+        }
+    }
+    fun put(key: String, item: DocumentCacheItem) { cache.put(key, item) }
+    fun get(key: String): DocumentCacheItem? = cache.get(key)
+    fun evictAll() { cache.evictAll() }
+}
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt")
 @ExperimentalMaterial3Api
@@ -1114,6 +1143,8 @@ fun PdfViewerScreen(
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+    val documentCache = remember { DocumentCache(3) }
+    val tabStateMap = remember { mutableStateMapOf<String, Int>() }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         PdfBuiltInThemes.find { it.id == currentThemeId }
@@ -1528,6 +1559,7 @@ fun PdfViewerScreen(
             if (initialScrollDone) {
                 Timber.tag("PdfPositionDebug").v("UI: Tracking | currentPage: $currentPage | pendingRestorePage updated")
                 pendingRestorePage = currentPage
+                currentBookId?.let { tabStateMap[it] = currentPage }
             }
         }
     }
@@ -2210,13 +2242,15 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(isDocumentReady, totalDisplayPages, displayMode) {
+    LaunchedEffect(isDocumentReady, totalDisplayPages, displayMode, currentBookId) {
         if (isDocumentReady && !initialScrollDone) {
             val pageCount = totalDisplayPages
             if (pageCount <= 0) return@LaunchedEffect
 
             val targetPage = pendingRestorePage?.coerceIn(0, pageCount - 1) ?: 0
-            Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount")
+            Timber.tag("PdfPositionDebug").i("UI: Restoration Start | Target: $targetPage | Mode: $displayMode | Total: $pageCount | BookId: $currentBookId")
+
+            delay(100)
 
             try {
                 when (displayMode) {
@@ -2224,21 +2258,35 @@ fun PdfViewerScreen(
                         if (pagerState.currentPage != targetPage) {
                             pagerState.scrollToPage(targetPage)
                         }
-                        initialScrollDone = true
                     }
                     DisplayMode.VERTICAL_SCROLL -> {
-                        while (verticalReaderState.snapToPageHandler == null) {
+                        var attempts = 0
+                        while (verticalReaderState.snapToPageHandler == null && attempts < 100) {
                             delay(16)
+                            attempts++
                         }
-                        Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
-                        verticalReaderState.snapToPage(targetPage)
-                        initialScrollDone = true
+                        if (verticalReaderState.snapToPageHandler != null) {
+                            Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
+                            verticalReaderState.snapToPage(targetPage)
+
+                            var waitAttempts = 0
+                            while (verticalReaderState.currentPage != targetPage && waitAttempts < 20) {
+                                delay(16)
+                                waitAttempts++
+                            }
+                        } else {
+                            Timber.tag("PdfPositionDebug").w("UI: snapToPageHandler is null after timeout")
+                        }
                     }
                 }
-                Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage")
+
+                delay(50)
+                initialScrollDone = true
+                Timber.tag("PdfPositionDebug").i("UI: Restoration Complete | Now at Page: $currentPage | initialScrollDone: $initialScrollDone")
             } catch (e: Exception) {
-                if (e is CancellationException) {
+                if (e is CancellationException || e.javaClass.name.contains("CancellationException")) {
                     Timber.tag("PdfPositionDebug").w("UI: Restoration cancelled (likely new recomposition)")
+                    throw e
                 } else {
                     Timber.tag("PdfPositionDebug").e(e, "UI: Restoration error.")
                     initialScrollDone = true
@@ -3093,8 +3141,6 @@ fun PdfViewerScreen(
         Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: ${uiState.activeTabBookId}, isLoading: $isLoadingDocument")
 
         bookmarks = loadPdfBookmarksFromJson(uiState.initialBookmarksJson ?: initialBookmarksJson)
-        pendingRestorePage = uiState.initialPageInBook ?: initialPage
-        initialScrollDone = false
 
         isLoadingDocument = true
         isDocumentReady = false
@@ -3117,31 +3163,35 @@ fun PdfViewerScreen(
             currentBookId = fastId
         }
 
-        val oldDoc = pdfDocument
-        val oldPfd = pfdState
+        val cachedItem = documentCache.get(currentBookId!!)
+        if (cachedItem != null) {
+            Timber.tag("PdfTabSync").i("UI: Restoring from cache for $currentBookId")
+            pdfDocument = cachedItem.doc
+            pfdState = cachedItem.pfd
+            totalPages = cachedItem.totalPages
+            pageAspectRatios = cachedItem.pageAspectRatios
+            flatTableOfContents = cachedItem.flatTableOfContents
+
+            val mapPage = tabStateMap[currentBookId!!]
+            val uiPage = uiState.initialPageInBook
+            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$initialPage")
+
+            pendingRestorePage = mapPage ?: uiPage ?: initialPage
+            initialScrollDone = false
+            isDocumentReady = true
+            isLoadingDocument = false
+            return@LaunchedEffect
+        }
+
+        val mapPageInit = tabStateMap[currentBookId!!]
+        val uiPageInit = uiState.initialPageInBook
+        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$initialPage")
+        pendingRestorePage = mapPageInit ?: uiPageInit ?: initialPage
+        initialScrollDone = false
 
         pdfDocument = null
         pfdState = null
         totalPages = 0
-
-        if (oldDoc != null || oldPfd != null) {
-            withContext(Dispatchers.IO) {
-                oldDoc?.let {
-                    try {
-                        it.close()
-                    } catch (e: Exception) {
-                        Timber.e(e)
-                    }
-                }
-                oldPfd?.let {
-                    try {
-                        it.close()
-                    } catch (e: Exception) {
-                        Timber.e(e)
-                    }
-                }
-            }
-        }
 
         var currentPfdOpened: ParcelFileDescriptor? = null
         try {
@@ -3234,6 +3284,17 @@ fun PdfViewerScreen(
                     isDocumentReady = true
                     isLoadingDocument = false
 
+                    documentCache.put(
+                        currentBookId!!,
+                        DocumentCacheItem(
+                            doc = doc,
+                            pfd = currentPfdOpened!!,
+                            totalPages = pagesCount,
+                            pageAspectRatios = ratios,
+                            flatTableOfContents = flatTableOfContents
+                        )
+                    )
+
                     withContext(Dispatchers.Main) {
                         showPasswordDialog = false
                         isPasswordError = false
@@ -3277,6 +3338,7 @@ fun PdfViewerScreen(
                 Timber.tag("PdfTabSync").v("UI: Pdfium Document created. Page count: $pagesCount")
             }
         } catch (e: Throwable) {
+            if (e is CancellationException || e.javaClass.name.contains("CancellationException")) throw e
             Timber.tag("PdfTabSync").e(e, "UI: Error in load effect for $effectivePdfUri")
             val errorString = e.toString()
             val causeString = e.cause?.toString() ?: ""
@@ -3352,28 +3414,22 @@ fun PdfViewerScreen(
             ttsController.stop()
             PdfBitmapPool.clear()
             PdfThumbnailCache.clear()
+            documentCache.evictAll()
+
             val docToClose = pdfDocument
             val pfdToClose = pfdState
             pdfDocument = null
             pfdState = null
 
             if (docToClose != null || pfdToClose != null) {
-                coroutineScope.launch(Dispatchers.IO) {
+                CoroutineScope(Dispatchers.IO).launch {
                     docToClose?.let {
                         Timber.d("Closing PDF document in onDispose.")
-                        try {
-                            it.close()
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error closing document in onDispose")
-                        }
+                        try { it.close() } catch (e: Exception) { Timber.e(e, "Error closing document") }
                     }
                     pfdToClose?.let {
                         Timber.d("Closing ParcelFileDescriptor in onDispose: $it")
-                        try {
-                            it.close()
-                        } catch (e: Exception) {
-                            Timber.e(e, "Error closing ParcelFileDescriptor in onDispose")
-                        }
+                        try { it.close() } catch (e: Exception) { Timber.e(e, "Error closing ParcelFileDescriptor") }
                     }
                 }
             }
@@ -5726,6 +5782,7 @@ fun PdfViewerScreen(
                                                     if (tab.bookId != activeTabBookId) {
                                                         coroutineScope.launch {
                                                             Timber.tag("PdfTabSync").d("UI: Dispatching switchTab for ${tab.bookId}")
+                                                            currentBookId?.let { tabStateMap[it] = currentPage }
                                                             saveAllData(true).join()
                                                             viewModel.switchTab(tab.bookId)
                                                         }
@@ -5736,6 +5793,7 @@ fun PdfViewerScreen(
                                                 .padding(horizontal = 16.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
+                                            // Tab Title
                                             Text(
                                                 text = tab.customName ?: tab.title ?: tab.displayName,
                                                 maxLines = 1,

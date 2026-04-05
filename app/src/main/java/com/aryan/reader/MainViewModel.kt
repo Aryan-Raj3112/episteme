@@ -406,8 +406,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (internalState.recentFilesLimit > 0) combined.take(internalState.recentFilesLimit) else combined
         }
 
+        val allBaseFiles = recentFilesFromDb.filterNot { it.bookId.endsWith("_reflow") }
         val openTabsList = internalState.openTabIds.mapNotNull { tabId ->
-            baseVisibleFiles.find { it.bookId == tabId }
+            allBaseFiles.find { it.bookId == tabId }
         }
 
         val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
@@ -480,17 +481,41 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putString(KEY_ACTIVE_TAB, bookId)
         }
 
-        _internalState.update { it.copy(activeTabBookId = bookId) }
-
         val uri = item.getUri()
         Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId. URI found: ${uri != null}")
 
         uri?.let {
-            openBook(it, item.bookId, item.type, item.displayName, suppressNavigation = true)
+            Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
+            _internalState.update { state ->
+                state.copy(
+                    activeTabBookId = bookId,
+                    selectedPdfUri = it,
+                    selectedBookId = bookId,
+                    selectedFileType = item.type,
+                    initialPageInBook = item.lastPage,
+                    initialBookmarksJson = item.bookmarksJson,
+                    isLoading = false,
+                    errorMessage = null
+                )
+            }
+
+            viewModelScope.launch {
+                addFileToRecent(
+                    it,
+                    item.type,
+                    bookId,
+                    customDisplayName = item.displayName,
+                    isRecent = true,
+                    sourceFolderUri = item.sourceFolderUri
+                )
+            }
+        } ?: run {
+            _internalState.update { it.copy(activeTabBookId = bookId) }
         }
     }
 
     fun closeTab(bookId: String) {
+        Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
         val currentTabs = _internalState.value.openTabIds.toMutableList()
         currentTabs.remove(bookId)
 
@@ -3051,9 +3076,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         if (_internalState.value.isTabsEnabled && type == FileType.PDF) {
             val currentTabs = _internalState.value.openTabIds.toMutableList()
             if (!currentTabs.contains(bookId)) {
-                if (currentTabs.size >= 5) {
+                if (currentTabs.size >= 20) {
                     viewModelScope.launch(Dispatchers.Main) {
-                        showBanner("Maximum of 5 tabs allowed. Please close a tab first.", isError = true)
+                        showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
                     }
                     return
                 }
