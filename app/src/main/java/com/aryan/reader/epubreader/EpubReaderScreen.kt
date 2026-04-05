@@ -2244,22 +2244,15 @@ fun EpubReaderHost(
                                                 Timber.d("Vertical Mode (Source): Creating Highlight. CFI: $cfi")
                                                 Timber.d("Vertical Mode (Source): Text Snippet: '${text.take(50)}...'")
                                                 val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
-                                                val existingIndex = userHighlights.indexOfFirst { it.cfi == cfi }
 
-                                                if (existingIndex != -1) {
-                                                    val existing = userHighlights[existingIndex]
-                                                    userHighlights[existingIndex] = existing.copy(color = color, text = text)
-                                                    Timber.d("Kotlin: Updated existing highlight at index $existingIndex")
-                                                } else {
-                                                    val highlight = UserHighlight(
-                                                        cfi = cfi,
-                                                        text = text,
-                                                        color = color,
-                                                        chapterIndex = currentChapterIndex
-                                                    )
-                                                    userHighlights.add(highlight)
-                                                    Timber.d("Kotlin: Added new highlight")
-                                                }
+                                                processAndAddHighlight(
+                                                    newCfi = cfi,
+                                                    newText = text,
+                                                    newColor = color,
+                                                    chapterIndex = currentChapterIndex,
+                                                    currentList = userHighlights
+                                                )
+
                                                 if (pendingNoteForNewHighlight) {
                                                     pendingNoteForNewHighlight = false
                                                     highlightToNoteCfi = cfi

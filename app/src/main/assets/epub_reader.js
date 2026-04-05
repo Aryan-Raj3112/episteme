@@ -423,8 +423,8 @@
 
             var cfiToReport = rawCfi;
 
-            if (rawCfi && rawCfi.includes("|")) {
-                var cfiParts = rawCfi.split("|");
+            if (rawCfi && rawCfi.includes(";;")) {
+                var cfiParts = rawCfi.split(";;");
                 cfiToReport = cfiParts[cfiParts.length - 1];
                 console.log("HandleInteraction: Multi-CFI detected on single span. Reporting top layer: " + cfiToReport);
             }
@@ -2051,31 +2051,30 @@
                         let idx = parseInt(div.dataset.chunkIndex, 10);
 
                         if (entry.isIntersecting) {
-                            // Check if we have data for this chunk at specific index
                             if (!this.chunksData[idx]) {
                                 if (window.ContentBridge && window.ContentBridge.requestChunk) {
                                     window.ContentBridge.requestChunk(idx);
                                 }
                             } else if (div.innerHTML === "") {
-                                // Restore content from cache
                                 let oldHeight = div.getBoundingClientRect().height;
-                                div.innerHTML = this.chunksData[idx]; // FIX: Access by index
-                                div.style.height = ""; // Allow auto height
+                                div.innerHTML = this.chunksData[idx];
+                                div.style.height = "";
 
                                 let newHeight = div.getBoundingClientRect().height;
-                                this.chunkHeights[idx] = newHeight; // Update cached height
+                                this.chunkHeights[idx] = newHeight;
 
-                                // Adjust scroll if this expansion happened above our viewport
                                 if (div.getBoundingClientRect().top < 0) {
                                     scrollAdjust += (newHeight - oldHeight);
                                 }
+                                if (window.CURRENT_HIGHLIGHTS) {
+                                    window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                                }
                             }
                         } else {
-                            // Unload content to save memory/DOM weight
                             if (div.innerHTML !== "") {
                                 let oldHeight = div.getBoundingClientRect().height;
                                 this.chunkHeights[idx] = oldHeight;
-                                div.style.height = oldHeight + "px"; // Fix height to placeholder
+                                div.style.height = oldHeight + "px";
                                 div.innerHTML = "";
                             }
                         }
@@ -2115,6 +2114,9 @@
                 if (div.getBoundingClientRect().bottom < 0) {
                     window.scrollBy(0, newHeight - oldHeight);
                 }
+                if (window.CURRENT_HIGHLIGHTS) {
+                    window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                }
             }
 
             if (window.checkImagesForDiagnosis) {
@@ -2133,7 +2135,7 @@
 
             allSpans.forEach((span) => {
                 var currentCfiAttr = span.getAttribute("data-cfi") || "";
-                var cfis = currentCfiAttr.split("|");
+                var cfis = currentCfiAttr.split(";;");
 
                 if (cfis.includes(cfi)) {
                     var classesToRemove = [];
@@ -2288,10 +2290,10 @@
 
                 if (parent && parent.tagName === "SPAN" && parent.classList.contains(className)) {
                     var currentCfi = parent.getAttribute("data-cfi") || "";
-                    var cfiList = currentCfi.split("|");
+                    var cfiList = currentCfi.split(";;");
 
                     if (!cfiList.includes(newCfi)) {
-                        parent.setAttribute("data-cfi", currentCfi + "|" + newCfi);
+                        parent.setAttribute("data-cfi", currentCfi ? (currentCfi + ";;" + newCfi) : newCfi);
                     }
                 } else {
                     if (node.nodeValue.trim().length === 0) return;
@@ -2366,7 +2368,7 @@
 
             allSpans.forEach((span) => {
                 var currentCfiAttr = span.getAttribute("data-cfi") || "";
-                var cfiList = currentCfiAttr.split("|");
+                var cfiList = currentCfiAttr.split(";;");
 
                 // Detailed check for match
                 if (cfiList.includes(cfiToRemove)) {
@@ -2397,15 +2399,14 @@
                         parent.normalize();
                         removedCount++;
                     } else {
-                        // CASE 2: Overlapping highlight -> Update data-cfi
                         console.log(`$ {
                                 HL_LOG_TAG
                             }
 
                             : -> Updating span (remaining CFIs: $ {
-                                    newCfiList.join('|')
+                                    newCfiList.join(';;')
                                 }).`);
-                        span.setAttribute("data-cfi", newCfiList.join("|"));
+                        span.setAttribute("data-cfi", newCfiList.join(";;"));
 
                         if (optionalCssClass) {
                             console.log(`$ {
@@ -2497,9 +2498,16 @@
         },
 
         applyHighlight: function (cfi, text, cssClass) {
-            // "Healed" Apply Logic: Checks text equality before applying
             try {
-                if (document.querySelector(`span[data-cfi='${cfi}']`)) return;
+                var alreadyApplied = false;
+                var spans = document.querySelectorAll(`span[data-cfi]`);
+                for (var i = 0; i < spans.length; i++) {
+                    if ((spans[i].getAttribute("data-cfi") || "").split(";;").includes(cfi)) {
+                        alreadyApplied = true;
+                        break;
+                    }
+                }
+                if (alreadyApplied) return;
 
                 const location = window.getNodeAndOffsetFromCfi(cfi);
                 if (!location || !location.node) return;

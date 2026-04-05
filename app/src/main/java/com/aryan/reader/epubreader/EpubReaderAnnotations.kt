@@ -298,7 +298,7 @@ fun processAndAddHighlight(
 
     while (iterator.hasNext()) {
         val existing = iterator.next()
-        if (existing.chapterIndex != chapterIndex || existing.color != newColor) continue
+        if (existing.chapterIndex != chapterIndex) continue
 
         val exParts = existing.cfi.split('|')
         val exStartFull = exParts.first()

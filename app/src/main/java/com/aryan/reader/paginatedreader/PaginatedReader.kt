@@ -3049,7 +3049,6 @@ internal fun PaginatedReaderContent(
                         },
                         onHighlight = { color ->
                             Timber.d("Menu: Updating highlight color to ${color.id}")
-                            onHighlightDeleted(highlight.cfi)
                             onHighlightCreated(highlight.cfi, highlight.text, color.id)
                             activeHighlightForMenu = null
                         },

@@ -847,7 +847,13 @@ fun ChapterWebView(
                     "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}');",
                     null
                 )
-            }, modifier = Modifier.fillMaxSize()
+
+                val escapedHighlights = escapeJsString(highlightsJson)
+                webView.evaluateJavascript(
+                    "javascript:window.CURRENT_HIGHLIGHTS = '${escapedHighlights}'; window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);",
+                    null
+                )
+                }, modifier = Modifier.fillMaxSize()
             )
         }
 
