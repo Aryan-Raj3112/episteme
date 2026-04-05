@@ -625,4 +625,18 @@
     <string name="error_opening_dictionary">Error opening dictionary</string>
     <string name="error_opening_translate">Error opening translate app</string>
     <string name="error_opening_search">Error opening search app</string>
+
+    <!-- About Section -->
+    <string name="about_app_name">Episteme</string>
+    <string name="about_oss_version">Open Source Version</string>
+    <string name="about_play_version">Playstore Version</string>
+    <string name="about_version_name">Version %1$s</string>
+    <string name="about_build_code">Build %1$s</string>
+    <string name="about_github">GitHub</string>
+    <string name="about_github_desc">Browse source code, star, fork, and report issues.</string>
+    <string name="about_privacy">Privacy Policy</string>
+    <string name="about_privacy_desc">How we handle your data.</string>
+    <string name="about_terms">Terms of Service</string>
+    <string name="about_terms_desc">Usage terms and conditions.</string>
+    <string name="about_licenses_desc">Open source libraries used.</string>
 </resources>
