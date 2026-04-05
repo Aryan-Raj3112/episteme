@@ -494,7 +494,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 recentFilesRepository.deleteFilePermanently(ids)
                 withContext(Dispatchers.Main) {
-                    showBanner("Removed ${filesToDelete.size} streaming books.")
+                    showBanner(appContext.getString(R.string.banner_removed_streaming_books, filesToDelete.size))
                 }
             }
         }
@@ -806,7 +806,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     uploadNewFont(font)
                 }
             }.onFailure {
-                showBanner("Failed to import font: ${it.message}", isError = true)
+                showBanner(appContext.getString(R.string.error_import_font, it.message), isError = true)
             }
             _internalState.update { it.copy(isLoading = false) }
         }
@@ -848,7 +848,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             withContext(Dispatchers.Main) {
                 onDeleted()
-                showBanner("Text view deleted.")
+                showBanner(appContext.getString(R.string.banner_text_view_deleted))
             }
         }
     }
@@ -878,7 +878,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(isRequestingDrivePermission = false, isSyncEnabled = false)
         }
         prefs.edit { putBoolean(KEY_SYNC_ENABLED, false) }
-        showBanner("Sync requires Google Drive permission.", isError = true)
+        showBanner(appContext.getString(R.string.error_sync_drive_permission), isError = true)
     }
 
     private fun verifyPurchaseWithBackend(
@@ -890,9 +890,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!isSilentMigrationCheck) {
                     _internalState.update {
                         it.copy(
-                            bannerMessage = BannerMessage(
-                                "An error occurred with the purchase.", isError = true
-                            )
+                            bannerMessage = BannerMessage(appContext.getString(R.string.error_purchase_general), isError = true)
                         )
                     }
                 }
@@ -905,7 +903,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (result.isSuccess) {
                 Timber.i("Backend verification successful. Firestore will update the app.")
                 _internalState.update {
-                    it.copy(bannerMessage = BannerMessage("Upgrade successful! Welcome to Pro."))
+                    it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.banner_upgrade_success)))
                 }
                 verifyDeviceForProUser()
             } else {
@@ -915,8 +913,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "Migration check: Purchase token is already claimed by another account. Silently ignoring."
                     )
                 } else {
-                    val errorMessage =
-                        "Purchase verification failed. Please contact support if you were charged."
+                    val errorMessage = appContext.getString(R.string.error_purchase_verification)
                     Timber.e(exception, "Backend verification failed")
                     if (!isSilentMigrationCheck) {
                         _internalState.update {
@@ -950,7 +947,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.w("Device has been revoked. Signing out.")
                     firestoreRepository.deleteDevice(currentUser.uid, deviceId) // Clean up
                     signOut()
-                    showBanner("This device was removed from your account.")
+                    showBanner(appContext.getString(R.string.banner_device_removed))
                 }
 
                 is com.aryan.reader.data.DeviceStatus.NotFound -> {
@@ -962,7 +959,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.e(deviceStatus.exception, "Error checking device status.")
                     _internalState.update {
                         it.copy(
-                            errorMessage = "Could not verify this device. Please check your connection."
+                            errorMessage = appContext.getString(R.string.error_verify_device)
                         )
                     }
                 }
@@ -998,7 +995,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.e("Failed to replace device.")
                 _internalState.update {
                     it.copy(
-                        errorMessage = "Failed to update devices. Please try again.",
+                        errorMessage = appContext.getString(R.string.error_update_devices),
                         isReplacingDevice = false
                     )
                 }
@@ -1044,7 +1041,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         viewModelScope.launch {
             _internalState.update {
-                it.copy(isLoading = true, bannerMessage = BannerMessage("Saving PDF..."))
+                it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_saving_pdf)))
             }
             try {
                 val virtualPages = pageLayoutRepository.getLayoutOrNull(bookId)
@@ -1060,13 +1057,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         textBoxes = textBoxes,
                         highlights = highlights
                     )
-                    showBanner("PDF saved successfully.")
+                    showBanner(appContext.getString(R.string.banner_pdf_saved))
                 } else {
-                    showBanner("Failed to open file for saving.", isError = true)
+                    showBanner(appContext.getString(R.string.error_open_file_saving), isError = true)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save annotated PDF")
-                showBanner("Error saving PDF: ${e.localizedMessage}", isError = true)
+                showBanner(appContext.getString(R.string.error_saving_pdf, e.localizedMessage), isError = true)
             } finally {
                 _internalState.update { it.copy(isLoading = false) }
             }
@@ -1076,7 +1073,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun saveOriginalPdf(sourceUri: Uri, destUri: Uri) {
         viewModelScope.launch {
             _internalState.update {
-                it.copy(isLoading = true, bannerMessage = BannerMessage("Saving original PDF..."))
+                it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_saving_original_pdf)))
             }
             try {
                 val contentResolver = appContext.contentResolver
@@ -1085,10 +1082,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         input.copyTo(output)
                     }
                 }
-                showBanner("Original PDF saved successfully.")
+                showBanner(appContext.getString(R.string.banner_original_pdf_saved))
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save original PDF")
-                showBanner("Error saving PDF: ${e.localizedMessage}", isError = true)
+                showBanner(appContext.getString(R.string.error_saving_pdf, e.localizedMessage), isError = true)
             } finally {
                 _internalState.update { it.copy(isLoading = false) }
             }
@@ -1190,14 +1187,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     putExtra(Intent.EXTRA_STREAM, contentUri)
 
                     putExtra(Intent.EXTRA_TITLE, filename)
-                    putExtra(Intent.EXTRA_SUBJECT, "Sharing: $filename")
+                    putExtra(Intent.EXTRA_SUBJECT, appContext.getString(R.string.share_subject, filename))
 
                     clipData = ClipData.newRawUri(filename, contentUri)
 
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
 
-                val chooser = Intent.createChooser(shareIntent, "Share PDF")
+                val chooser = Intent.createChooser(shareIntent, appContext.getString(R.string.share_chooser_title))
 
                 if (activityContext !is android.app.Activity) {
                     chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1206,7 +1203,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.Main) { activityContext.startActivity(chooser) }
             } catch (e: Exception) {
                 Timber.e(e, "Share failed")
-                showBanner("Share failed: ${e.localizedMessage}", isError = true)
+                showBanner(appContext.getString(R.string.error_share_failed, e.localizedMessage), isError = true)
             }
         }
     }
@@ -1507,12 +1504,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val currentFolders = _internalState.value.syncedFolders
 
         if (currentFolders.size >= MAX_FOLDER_LIMIT) {
-            showBanner("Limit reached: Maximum $MAX_FOLDER_LIMIT folders allowed.", isError = true)
+            showBanner(appContext.getString(R.string.error_folder_limit_reached, MAX_FOLDER_LIMIT), isError = true)
             return
         }
 
         if (currentFolders.any { it.uriString == folderUri.toString() }) {
-            showBanner("This folder is already synced.", isError = true)
+            showBanner(appContext.getString(R.string.error_folder_already_synced), isError = true)
             return
         }
 
@@ -1547,11 +1544,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, syncRequest
                 )
 
-                showBanner("Folder added: $name")
+                showBanner(appContext.getString(R.string.banner_folder_added, name))
 
             } catch (e: SecurityException) {
                 Timber.e(e, "Failed to take permissions for $folderUri")
-                showBanner("Failed to access folder permissions.", isError = true)
+                showBanner(appContext.getString(R.string.error_access_folder_permissions), isError = true)
             }
         }
     }
@@ -1581,7 +1578,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
             }
 
-            showBanner("Folder removed.")
+            showBanner(appContext.getString(R.string.banner_folder_removed))
         }
     }
 
@@ -1616,8 +1613,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     when (workInfo.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
                             if (showFeedback) {
-                                val msg =
-                                    if (metadataOnly) "Folder Sync: Updating metadata..." else "Scanning folder for new books..."
+                                val msg = if (metadataOnly) appContext.getString(R.string.banner_folder_sync_updating) else appContext.getString(R.string.banner_folder_sync_scanning)
                                 _internalState.update {
                                     it.copy(
                                         isLoading = false,
@@ -1633,7 +1629,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 it.copy(
                                     isLoading = false,
                                     isRefreshing = false,
-                                    bannerMessage = if (showFeedback) BannerMessage("Folder Sync: Scan complete.") else it.bannerMessage,
+                                    bannerMessage = if (showFeedback) BannerMessage(appContext.getString(R.string.banner_folder_sync_complete)) else it.bannerMessage,
                                     lastFolderScanTime = System.currentTimeMillis(),
                                     syncedFolders = loadSyncedFoldersFromPrefs()
                                 )
@@ -1645,7 +1641,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 it.copy(
                                     isLoading = false,
                                     isRefreshing = false,
-                                    errorMessage = if (showFeedback) "Sync failed." else it.errorMessage,
+                                    errorMessage = if (showFeedback) appContext.getString(R.string.error_sync_failed) else it.errorMessage,
                                     bannerMessage = null
                                 )
                             }
@@ -1748,7 +1744,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun downloadBook(item: RecentFileItem, openWhenComplete: Boolean = false): Job {
         if (!uiState.value.isSyncEnabled) {
-            _internalState.update { it.copy(errorMessage = "Enable sync to download files.") }
+            _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_enable_sync_download)) }
             return viewModelScope.launch {}
         }
         if (uiState.value.downloadingBookIds.contains(item.bookId)) {
@@ -1800,7 +1796,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Failed to download book ${item.bookId}")
                 _internalState.update {
-                    it.copy(errorMessage = "Failed to download ${item.displayName}.")
+                    it.copy(errorMessage = appContext.getString(R.string.error_download_failed, item.displayName))
                 }
             } finally {
                 _internalState.update { state ->
@@ -1812,13 +1808,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteAllCloudAndLocalData() {
         if (!uiState.value.isSyncEnabled) {
-            _internalState.update { it.copy(errorMessage = "Enable sync to clear cloud data.") }
+            _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_enable_sync_clear_cloud)) }
             return
         }
 
         if (!googleDriveRepository.isUserSignedInToDrive(appContext)) {
             _internalState.update {
-                it.copy(errorMessage = "Not signed in, cannot clear cloud data.")
+                it.copy(errorMessage = appContext.getString(R.string.error_not_signed_in_clear_cloud))
             }
             return
         }
@@ -1826,7 +1822,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update {
             it.copy(
                 isLoading = true,
-                bannerMessage = BannerMessage("Clearing all cloud and local data...")
+                bannerMessage = BannerMessage(appContext.getString(R.string.banner_clearing_cloud_local_data))
             )
         }
 
@@ -1855,9 +1851,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (success) {
                     _internalState.update {
                         it.copy(
-                            isLoading = false, bannerMessage = BannerMessage(
-                                "All cloud and local data cleared successfully."
-                            )
+                            isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_local_data_cleared))
                         )
                     }
                 } else {
@@ -1866,7 +1860,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete all cloud and local user data.")
                 _internalState.update {
-                    it.copy(isLoading = false, errorMessage = "Error: Failed to clear all data.")
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_clear_all_data))
                 }
             }
         }
@@ -1913,13 +1907,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 _internalState.update {
                     it.copy(
-                        isLoading = false, bannerMessage = BannerMessage("All local data cleared.")
+                        isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_local_data_cleared))
                     )
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete all user data.")
                 _internalState.update {
-                    it.copy(isLoading = false, errorMessage = "Error: Failed to clear all data.")
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_clear_all_data))
                 }
             }
         }
@@ -1933,9 +1927,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (user == null) {
                     _internalState.update {
                         it.copy(
-                            bannerMessage = BannerMessage(
-                                "Sign in failed. Please try again.", isError = true
-                            ), isLoading = false
+                            bannerMessage = BannerMessage(appContext.getString(R.string.error_sign_in_failed), isError = true), isLoading = false
                         )
                     }
                 } else {
@@ -1950,9 +1942,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "An unexpected error occurred during sign-in.")
                 val errorMessage = if (e is NoCredentialException) {
-                    "Could not find a Google account. This can happen on a fresh install, please try again in a moment."
+                    appContext.getString(R.string.error_no_google_account)
                 } else {
-                    "An error occurred during sign in. Please check your internet connection."
+                    appContext.getString(R.string.error_sign_in_internet)
                 }
                 _internalState.update {
                     it.copy(
@@ -2003,7 +1995,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             } ?: run {
-                showBanner("Please sign in to test device management.", isError = true)
+                showBanner(appContext.getString(R.string.error_sign_in_device_management), isError = true)
             }
         }
     }
@@ -2020,7 +2012,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun setSyncEnabled(enabled: Boolean) {
         if (!uiState.value.isProUser) {
             Timber.d("Sync toggle blocked for free user.")
-            _internalState.update { it.copy(errorMessage = "Sync is an Episteme Pro feature.") }
+            _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_sync_pro_feature)) }
             return
         }
 
@@ -2054,14 +2046,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (!hasPermissions || currentUser == null) {
             if (showBanner) _internalState.update {
-                it.copy(errorMessage = "Not signed in, cannot sync.")
+                it.copy(errorMessage = appContext.getString(R.string.error_not_signed_in_sync))
             }
             return@launch
         }
 
         if (showBanner) {
             _internalState.update {
-                it.copy(bannerMessage = BannerMessage("Cloud Sync: Checking for updates..."))
+                it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_sync_checking)))
             }
         }
 
@@ -2281,7 +2273,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (showBanner) {
                 _internalState.update {
                     it.copy(
-                        isLoading = false, bannerMessage = BannerMessage("Cloud Sync: Complete.")
+                        isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_sync_complete))
                     )
                 }
             }
@@ -2289,7 +2281,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("AnnotationSync").e(e, "Error during cloud sync")
             if (showBanner) {
                 _internalState.update {
-                    it.copy(isLoading = false, errorMessage = "Failed to sync library.")
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_sync_library_failed))
                 }
             }
         }
@@ -2654,14 +2646,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun onFileSelected(uri: Uri, isFromRecent: Boolean = false) {
         if (isFromRecent) {
             Timber.i("Opening recent file: $uri")
-            // This path is now handled by onRecentFileClicked to preserve the bookId
-            // We find the book by URI to open it.
             viewModelScope.launch {
                 val item = recentFilesRepository.getFileByUri(uri.toString())
                 if (item != null) {
                     openBook(uri, item.bookId, item.type, item.displayName)
                 } else {
-                    _internalState.update { it.copy(errorMessage = "Could not find recent item.") }
+                    _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_recent_item_not_found)) }
                 }
             }
         } else {
@@ -2698,7 +2688,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
                 _internalState.update {
-                    it.copy(isLoading = false, errorMessage = "Failed to import file.")
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
                 }
             }
         }
@@ -2736,7 +2726,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val uri = item.getUri() ?: run {
                 _internalState.update {
                     it.copy(
-                        isLoading = false, errorMessage = "Could not find file location."
+                        isLoading = false, errorMessage = appContext.getString(R.string.error_file_location_not_found)
                     )
                 }
                 stateUpdateDeferred.complete(false)
@@ -2822,7 +2812,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _internalState.update {
                         it.copy(
                             isLoading = false,
-                            errorMessage = "Failed to load generated text view.",
+                            errorMessage = appContext.getString(R.string.error_load_generated_text_view),
                             selectedFileType = null
                         )
                     }
@@ -2884,10 +2874,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             if (newItem != null) {
                                 switchToFileSeamlessly(newItem, autoOpenPage)
                             } else {
-                                showBanner("Failed to load generated text view.", true)
+                                showBanner(appContext.getString(R.string.error_load_generated_text_view), true)
                             }
                         } else {
-                            showBanner("Text view generation failed.", true)
+                            showBanner(appContext.getString(R.string.error_text_view_generation_failed), true)
                         }
                     }
                 }
@@ -3076,7 +3066,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing FB2 for URI: $uri")
                 _internalState.update {
-                    it.copy(errorMessage = "Failed to load FB2: ${e.message}", isLoading = false)
+                    it.copy(errorMessage = appContext.getString(R.string.error_load_fb2, e.message), isLoading = false)
                 }
             }
         }
@@ -3131,7 +3121,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing file ($type) for URI: $uri")
                 _internalState.update {
-                    it.copy(errorMessage = "Failed to load file: ${e.message}", isLoading = false)
+                    it.copy(errorMessage = appContext.getString(R.string.error_load_file, e.message), isLoading = false)
                 }
             }
         }
@@ -3271,7 +3261,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing MOBI for URI: $uri")
                 _internalState.update {
-                    it.copy(errorMessage = "Failed to load MOBI: ${e.message}", isLoading = false)
+                    it.copy(errorMessage = appContext.getString(R.string.error_load_mobi, e.message), isLoading = false)
                 }
             }
         }
@@ -3318,7 +3308,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Timber.e(e, "Error parsing EPUB for URI: $uri")
                 _internalState.update {
-                    it.copy(errorMessage = "Failed to load EPUB: ${e.message}", isLoading = false)
+                    it.copy(errorMessage = appContext.getString(R.string.error_load_epub, e.message), isLoading = false)
                 }
             }
         }
@@ -3454,7 +3444,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         Timber.tag("FolderSync")
                             .i("LazyCleanup: File ${item.displayName} missing. Removing.")
                         recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
-                        showBanner("File deleted from folder. Removed from library.")
+                        showBanner(appContext.getString(R.string.banner_file_deleted_from_folder))
                         return@launch
                     }
 
@@ -3463,7 +3453,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         item.getUri()?.let { uri ->
                             openBook(uri, item.bookId, item.type, item.displayName)
                         } ?: run {
-                            _internalState.update { it.copy(errorMessage = "Could not find file location.") }
+                            _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found)) }
                         }
                     } else {
                         downloadBook(item, openWhenComplete = true)
@@ -3477,7 +3467,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 item.getUri()?.let { uri ->
                     openBook(uri, item.bookId, item.type, item.displayName)
                 } ?: run {
-                    _internalState.update { it.copy(errorMessage = "Could not find file location.") }
+                    _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found)) }
                     return
                 }
             } else {
@@ -3618,7 +3608,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         if (newName in currentShelves) {
             Timber.w("Cannot rename shelf. A shelf with the name '$newName' already exists.")
             _internalState.update {
-                it.copy(errorMessage = "A shelf with that name already exists.")
+                it.copy(errorMessage = appContext.getString(R.string.error_shelf_exists))
             }
             dismissRenameShelfDialog()
             return
@@ -3938,7 +3928,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update {
                                 it.copy(
                                     isLoading = true,
-                                    bannerMessage = BannerMessage("Deleting from all devices...")
+                                    bannerMessage = BannerMessage(appContext.getString(R.string.banner_deleting_all_devices))
                                 )
                             }
                             try {
@@ -3974,7 +3964,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 _internalState.update {
                                     it.copy(
                                         isLoading = false,
-                                        bannerMessage = BannerMessage("Deletion complete.")
+                                        bannerMessage = BannerMessage(appContext.getString(R.string.banner_deletion_complete))
                                     )
                                 }
                             } catch (e: Exception) {
@@ -3986,7 +3976,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 _internalState.update {
                                     it.copy(
                                         isLoading = false,
-                                        errorMessage = "Cloud sync failed, deleted locally."
+                                        errorMessage = appContext.getString(R.string.error_cloud_sync_failed_deleted_locally)
                                     )
                                 }
                             }
@@ -4003,7 +3993,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _internalState.update {
                     it.copy(
                         isLoading = false,
-                        bannerMessage = BannerMessage("$totalRemoved book(s) removed from library.")
+                        bannerMessage = BannerMessage(appContext.getString(R.string.banner_books_removed_library, totalRemoved))
                     )
                 }
             }
@@ -4118,7 +4108,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             withContext(Dispatchers.Main) {
-                showBanner("Reflow cache & generated text views cleared.")
+                showBanner(appContext.getString(R.string.banner_reflow_cache_cleared))
             }
         }
     }
