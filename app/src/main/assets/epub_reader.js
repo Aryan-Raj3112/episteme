@@ -1649,6 +1649,8 @@
             cleanCfi = cfi.substring(cfi.indexOf('@') + 1);
         }
 
+        console.log("PosSaveDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
+
         if (!cleanCfi || !cleanCfi.startsWith('/')) {
             if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                  window.CfiBridge.onScrollFinished(false);
@@ -1676,16 +1678,38 @@
                     let targetScrollY = 0;
                     if (location.node.nodeType === Node.TEXT_NODE && location.offset > 0) {
                         try {
+                            console.log("PosSaveDiag: Initial text node length=" + location.node.nodeValue.length + ", location.offset=" + location.offset);
+                            let currentNode = location.node;
+                            let remainingOffset = location.offset;
+
+                            // Traverse sibling text nodes to find the exact offset
+                            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                            walker.currentNode = currentNode;
+
+                            while (currentNode && remainingOffset > currentNode.nodeValue.length) {
+                                remainingOffset -= currentNode.nodeValue.length;
+                                const next = walker.nextNode();
+                                if (!next) {
+                                    console.log("PosSaveDiag: Reached end of text nodes while traversing.");
+                                    break;
+                                }
+                                currentNode = next;
+                            }
+
+                            console.log("PosSaveDiag: Traversed to node with text: '" + currentNode.nodeValue.substring(0, 20) + "', remainingOffset=" + remainingOffset + ", actual length=" + currentNode.nodeValue.length);
+
                             const range = document.createRange();
-                            const validOffset = Math.min(location.offset, location.node.nodeValue.length);
-                            range.setStart(location.node, validOffset);
+                            const validOffset = Math.min(remainingOffset, currentNode.nodeValue.length);
+                            range.setStart(currentNode, validOffset);
                             range.collapse(true);
                             const rect = range.getBoundingClientRect();
 
                             if (rect.top !== 0 || rect.bottom !== 0) {
                                 targetScrollY = window.scrollY + rect.top - (window.VIEWPORT_PADDING_TOP + 5);
                             }
-                        } catch (e) { }
+                        } catch (e) {
+                            console.log("PosSaveDiag: Error calculating range bounding rect: " + e.message);
+                        }
                     }
 
                     if (targetScrollY === 0) {
@@ -1771,6 +1795,15 @@
                 const treeWalker = document.createTreeWalker(location.node, NodeFilter.SHOW_TEXT, null, false);
                 textNode = treeWalker.nextNode();
                 offset = 0;
+            } else if (offset > 0) {
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                walker.currentNode = textNode;
+                while (textNode && offset > textNode.nodeValue.length) {
+                    offset -= textNode.nodeValue.length;
+                    const next = walker.nextNode();
+                    if (!next) break;
+                    textNode = next;
+                }
             }
 
             if (textNode) {

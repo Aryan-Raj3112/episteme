@@ -560,6 +560,11 @@ fun ChapterWebView(
                                         )
                                     }
 
+                                    message.startsWith("PosSaveDiag:") -> {
+                                        Timber.tag("PosSaveDiag")
+                                            .d("JS -> ${message.substringAfter("PosSaveDiag: ")}")
+                                    }
+
                                     message.startsWith("HIGHLIGHT_DEBUG:") -> {
                                         Timber.d(
                                             "JS -> ${message.substringAfter("HIGHLIGHT_DEBUG: ")}"
