@@ -1743,6 +1743,7 @@ private fun FolderCard(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun EditFolderFiltersDialog(
     folder: SyncedFolder,
@@ -1753,44 +1754,74 @@ private fun EditFolderFiltersDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.filter_file_types)) },
-        text = {
+        title = {
             Column {
                 Text(
-                    stringResource(R.string.filter_file_types_desc),
-                    style = MaterialTheme.typography.bodyMedium
+                    text = stringResource(R.string.filter_file_types),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                FileType.entries.forEach { type ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedTypes = if (type in selectedTypes) selectedTypes - type else selectedTypes + type
-                            }
-                            .padding(vertical = 4.dp)
-                    ) {
-                        androidx.compose.material3.Checkbox(
-                            checked = type in selectedTypes,
-                            onCheckedChange = { checked ->
-                                selectedTypes = if (checked) selectedTypes + type else selectedTypes - type
-                            }
+                Text(
+                    text = stringResource(R.string.filter_file_types_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp))
+
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FileType.entries.forEach { type ->
+                        val isSelected = type in selectedTypes
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedTypes = if (isSelected) {
+                                    selectedTypes - type
+                                } else {
+                                    selectedTypes + type
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = type.name,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            },
+                            leadingIcon = if (isSelected) {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else null,
+                            shape = MaterialTheme.shapes.medium
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(type.name)
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(
+            androidx.compose.material3.Button(
                 onClick = { onConfirm(selectedTypes) },
-                enabled = selectedTypes.isNotEmpty()
-            ) { Text(stringResource(R.string.action_save)) }
+                enabled = selectedTypes.isNotEmpty(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Text(stringResource(R.string.action_save))
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
         }
     )
 }

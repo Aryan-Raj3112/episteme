@@ -205,6 +205,9 @@ class FolderSyncWorker(
 
                     val file = fileQueue.removeAt(0)
                     if (file.isDirectory) {
+                        if (file.name?.startsWith(".") == true) {
+                            continue
+                        }
                         file.listFiles().let { fileQueue.addAll(it) }
                     } else if (file.isFile) {
                         val name = file.name ?: ""

@@ -765,7 +765,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         remoteConfigRepository.init()
 
         if (_internalState.value.syncedFolders.isNotEmpty()) {
-            syncFolderMetadata()
+            triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
         }
 
         sweepOrphanedCache()
