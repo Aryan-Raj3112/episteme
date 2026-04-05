@@ -82,11 +82,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastSumBy
+import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
@@ -224,17 +226,17 @@ fun EpubReaderDrawerSheet(
                 Tab(
                     selected = drawerPagerState.currentPage == 0,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(0) } },
-                    text = { Text("Chapters") }
+                    text = { Text(stringResource(R.string.tab_chapters)) }
                 )
                 Tab(
                     selected = drawerPagerState.currentPage == 1,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(1) } },
-                    text = { Text("Bookmarks") }
+                    text = { Text(stringResource(R.string.tab_bookmarks)) }
                 )
                 Tab(
                     selected = drawerPagerState.currentPage == 2,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(2) } },
-                    text = { Text("Highlights") }
+                    text = { Text(stringResource(R.string.tab_highlights)) }
                 )
             }
 
@@ -442,7 +444,7 @@ private fun TocTreeItem(
             if (hasChildren) {
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    contentDescription = if (isExpanded) stringResource(R.string.content_desc_collapse) else stringResource(R.string.content_desc_expand),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -477,7 +479,7 @@ private fun BookmarksList(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                "You haven't added any bookmarks yet.",
+                stringResource(R.string.no_bookmarks_yet),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
@@ -531,7 +533,7 @@ private fun BookmarksList(
                                 IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "More options for bookmark"
+                                        contentDescription = stringResource(R.string.content_desc_more_options_bookmark)
                                     )
                                 }
                                 DropdownMenu(
@@ -539,14 +541,14 @@ private fun BookmarksList(
                                     onDismissRequest = { bookmarkMenuExpandedFor = null }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Rename") },
+                                        text = { Text(stringResource(R.string.menu_rename)) },
                                         onClick = {
                                             showRenameBookmarkDialog = bookmark
                                             bookmarkMenuExpandedFor = null
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Delete") },
+                                        text = { Text(stringResource(R.string.action_delete)) },
                                         onClick = {
                                             showDeleteConfirmDialogFor = bookmark
                                             bookmarkMenuExpandedFor = null
@@ -573,12 +575,12 @@ private fun BookmarksList(
 
             AlertDialog(
                 onDismissRequest = { showRenameBookmarkDialog = null },
-                title = { Text("Rename Bookmark") },
+                title = { Text(stringResource(R.string.dialog_rename_bookmark)) },
                 text = {
                     androidx.compose.material3.OutlinedTextField(
                         value = newTitle,
                         onValueChange = { newTitle = it },
-                        label = { Text("New Name") },
+                        label = { Text(stringResource(R.string.label_new_name)) },
                         placeholder = {
                             Text(
                                 text = currentName,
@@ -601,12 +603,12 @@ private fun BookmarksList(
                             showRenameBookmarkDialog = null
                         }
                     ) {
-                        Text("Save")
+                        Text(stringResource(R.string.action_save))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameBookmarkDialog = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -615,8 +617,8 @@ private fun BookmarksList(
         showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
             AlertDialog(
                 onDismissRequest = { showDeleteConfirmDialogFor = null },
-                title = { Text("Delete Bookmark?") },
-                text = { Text("Are you sure you want to permanently delete this bookmark?") },
+                title = { Text(stringResource(R.string.dialog_delete_bookmark)) },
+                text = { Text(stringResource(R.string.dialog_delete_bookmark_desc)) },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -624,12 +626,12 @@ private fun BookmarksList(
                             showDeleteConfirmDialogFor = null
                         }
                     ) {
-                        Text("Delete")
+                        Text(stringResource(R.string.action_delete))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showDeleteConfirmDialogFor = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )
@@ -646,7 +648,7 @@ private fun HighlightsList(
 ) {
     if (userHighlights.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-            Text("No highlights yet.", style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.no_highlights_yet), style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
         }
     } else {
         var highlightMenuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
@@ -663,7 +665,7 @@ private fun HighlightsList(
                     items = userHighlights.sortedBy { it.chapterIndex },
                     key = { it.id }
                 ) { highlight ->
-                    val chapterTitle = chapters.getOrNull(highlight.chapterIndex)?.title ?: "Unknown Chapter"
+                    val chapterTitle = chapters.getOrNull(highlight.chapterIndex)?.title ?: stringResource(R.string.unknown_chapter)
 
                     ListItem(
                         headlineContent = {
@@ -694,7 +696,7 @@ private fun HighlightsList(
                                 IconButton(onClick = { highlightMenuExpandedFor = highlight }) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "Options"
+                                        contentDescription = stringResource(R.string.content_desc_options)
                                     )
                                 }
                                 DropdownMenu(
@@ -702,7 +704,7 @@ private fun HighlightsList(
                                     onDismissRequest = { highlightMenuExpandedFor = null }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Delete") },
+                                        text = { Text(stringResource(R.string.action_delete)) },
                                         onClick = {
                                             showHighlightDeleteDialogFor = highlight
                                             highlightMenuExpandedFor = null
@@ -726,8 +728,8 @@ private fun HighlightsList(
         showHighlightDeleteDialogFor?.let { highlightToDelete ->
             AlertDialog(
                 onDismissRequest = { showHighlightDeleteDialogFor = null },
-                title = { Text("Delete Highlight?") },
-                text = { Text("Are you sure you want to permanently delete this highlight?") },
+                title = { Text(stringResource(R.string.dialog_delete_highlight)) },
+                text = { Text(stringResource(R.string.dialog_delete_highlight_desc)) },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -735,12 +737,12 @@ private fun HighlightsList(
                             showHighlightDeleteDialogFor = null
                         }
                     ) {
-                        Text("Delete")
+                        Text(stringResource(R.string.action_delete))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showHighlightDeleteDialogFor = null }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                 }
             )

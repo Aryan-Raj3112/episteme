@@ -52,6 +52,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.aryan.reader.R
@@ -365,7 +366,7 @@ fun BookmarkButton(
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.bookmark),
-                contentDescription = "Bookmark",
+                contentDescription = stringResource(R.string.content_desc_bookmark_icon),
                 modifier = Modifier.size(24.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -406,14 +407,14 @@ fun PaletteManagerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Customize Palette", style = MaterialTheme.typography.titleMedium) },
+        title = { Text(stringResource(R.string.dialog_customize_palette), style = MaterialTheme.typography.titleMedium) },
         text = {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Tap a slot to edit:", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.palette_tap_slot_to_edit), style = MaterialTheme.typography.bodySmall)
                 Row(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
@@ -427,7 +428,7 @@ fun PaletteManagerDialog(
                                 .background(colorEnum.color, CircleShape)
                                 .border(
                                     width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, // Thin ring if selected
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                                     shape = CircleShape
                                 )
                                 .clip(CircleShape)
@@ -436,7 +437,7 @@ fun PaletteManagerDialog(
                             if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected Slot",
+                                    contentDescription = stringResource(R.string.content_desc_selected_slot),
                                     tint = if (colorEnum == HighlightColor.WHITE) Color.Black else Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
@@ -448,7 +449,7 @@ fun PaletteManagerDialog(
                 HorizontalDivider()
 
                 // 2. Bottom Grid: Available Colors
-                Text("Select a color for the slot:", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.palette_select_color_for_slot), style = MaterialTheme.typography.bodySmall)
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 40.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),

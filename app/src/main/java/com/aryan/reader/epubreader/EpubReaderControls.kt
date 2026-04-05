@@ -211,15 +211,15 @@ fun EpubReaderTopBar(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.dictionary),
-                            contentDescription = "Dictionary Settings"
+                            contentDescription = stringResource(R.string.content_desc_dictionary_settings)
                         )
                     }
                     TooltipIconButton(
-                        text = "Theme",
-                        description = "Theme Settings",
+                        text = stringResource(R.string.tooltip_theme),
+                        description = stringResource(R.string.tooltip_theme_desc),
                         onClick = onOpenThemeSettings
                     ) {
-                        Icon(painter = painterResource(id = R.drawable.palette), contentDescription = "Theme Settings")
+                        Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
                     }
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }
@@ -228,7 +228,7 @@ fun EpubReaderTopBar(
                             description = stringResource(R.string.tooltip_more_options_desc),
                             onClick = { showMoreMenu = true }
                         ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More Options")
+                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
                         }
 
                         DropdownMenu(
@@ -237,7 +237,7 @@ fun EpubReaderTopBar(
                         ) {
                             if (onToggleReflow != null) {
                                 DropdownMenuItem(
-                                    text = { Text("View Original PDF") },
+                                    text = { Text(stringResource(R.string.menu_view_original_pdf)) },
                                     onClick = {
                                         showMoreMenu = false
                                         onToggleReflow()
@@ -256,7 +256,7 @@ fun EpubReaderTopBar(
                             onDeleteReflow?.let {
                                 HorizontalDivider()
                                 DropdownMenuItem(
-                                    text = { Text("Delete Text View") },
+                                    text = { Text(stringResource(R.string.menu_delete_text_view)) },
                                     onClick = {
                                         showMoreMenu = false
                                         it()
@@ -275,26 +275,26 @@ fun EpubReaderTopBar(
                             }
 
                             DropdownMenuItem(
-                                text = { Text("Reading Mode: Vertical") },
+                                text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
                                 enabled = !isTtsActive,
                                 onClick = {
                                     showMoreMenu = false
                                     onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
                                 },
-                                trailingIcon = { if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(Icons.Default.Check, contentDescription = "Selected") }
+                                trailingIcon = { if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
                             )
                             DropdownMenuItem(
-                                text = { Text("Reading Mode: Paginated") },
+                                text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
                                 enabled = !isTtsActive,
                                 onClick = {
                                     showMoreMenu = false
                                     onChangeRenderMode(RenderMode.PAGINATED)
                                 },
-                                trailingIcon = { if (currentRenderMode == RenderMode.PAGINATED) Icon(Icons.Default.Check, contentDescription = "Selected") }
+                                trailingIcon = { if (currentRenderMode == RenderMode.PAGINATED) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text(if (isBookmarked) "Remove bookmark" else "Bookmark this page") },
+                                text = { Text(if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_this_page)) },
                                 onClick = {
                                     showMoreMenu = false
                                     onToggleBookmark()
@@ -302,20 +302,20 @@ fun EpubReaderTopBar(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("Tap to Turn Pages") },
+                                text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
                                 enabled = currentRenderMode == RenderMode.PAGINATED,
                                 onClick = {
                                     onToggleTapToNavigate(!tapToNavigateEnabled)
                                     showMoreMenu = false
                                 },
-                                trailingIcon = { if (tapToNavigateEnabled) Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                                trailingIcon = { if (tapToNavigateEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) "Volume Button Scrolling"
-                                        else "Volume Button Page Turn"
+                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(R.string.menu_volume_button_scrolling)
+                                        else stringResource(R.string.menu_volume_button_page_turn)
                                     )
                                 },
                                 enabled = true,
@@ -323,33 +323,33 @@ fun EpubReaderTopBar(
                                     onToggleVolumeScroll(!volumeScrollEnabled)
                                     showMoreMenu = false
                                 },
-                                trailingIcon = { if (volumeScrollEnabled) Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                                trailingIcon = { if (volumeScrollEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
                             )
                             HorizontalDivider()
 
                             DropdownMenuItem(
-                                text = { Text("Realistic Page Turns") },
+                                text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
                                 enabled = currentRenderMode == RenderMode.PAGINATED,
                                 onClick = {
                                     onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
                                     showMoreMenu = false
                                 },
-                                trailingIcon = { if (isPageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                                trailingIcon = { if (isPageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
                             )
                             HorizontalDivider()
 
                             DropdownMenuItem(
-                                text = { Text("Keep Screen On") },
+                                text = { Text(stringResource(R.string.menu_keep_screen_on)) },
                                 onClick = {
                                     onToggleKeepScreenOn(!isKeepScreenOn)
                                     showMoreMenu = false
                                 },
-                                trailingIcon = { if (isKeepScreenOn) Icon(Icons.Default.Check, contentDescription = "Enabled") }
+                                trailingIcon = { if (isKeepScreenOn) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
                             )
                             HorizontalDivider()
 
                             DropdownMenuItem(
-                                text = { Text("Visual Options") },
+                                text = { Text(stringResource(R.string.menu_visual_options)) },
                                 onClick = {
                                     showMoreMenu = false
                                     onOpenVisualOptions()
@@ -361,7 +361,7 @@ fun EpubReaderTopBar(
                             HorizontalDivider()
 
                             DropdownMenuItem(
-                                text = { Text("Auto Scroll") },
+                                text = { Text(stringResource(R.string.menu_auto_scroll)) },
                                 enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
                                 onClick = {
                                     showMoreMenu = false
@@ -372,7 +372,7 @@ fun EpubReaderTopBar(
                             HorizontalDivider()
 
                             DropdownMenuItem(
-                                text = { Text("TTS Voice Settings") },
+                                text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
                                 onClick = {
                                     showMoreMenu = false
                                     onOpenDeviceVoiceSettings()
@@ -384,7 +384,7 @@ fun EpubReaderTopBar(
 
                             if (BuildConfig.DEBUG) {
                                 DropdownMenuItem(
-                                    text = { Text("TTS Settings (Debug)") },
+                                    text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
                                     onClick = {
                                         showMoreMenu = false
                                         onOpenTtsSettings()
@@ -445,28 +445,28 @@ fun EpubReaderBottomBar(
                     onClick = onOpenSlider,
                     enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
                 ) {
-                    Icon(painter = painterResource(id = R.drawable.slider), contentDescription = "Navigate with slider")
+                    Icon(painter = painterResource(id = R.drawable.slider), contentDescription = stringResource(R.string.content_desc_navigate_slider))
                 }
                 TooltipIconButton(
                     text = stringResource(R.string.tooltip_toc),
                     description = stringResource(R.string.tooltip_toc_desc),
                     onClick = onOpenDrawer
                 ) {
-                    Icon(imageVector = Icons.Default.Menu, contentDescription = "Chapters Menu")
+                    Icon(imageVector = Icons.Default.Menu, contentDescription = stringResource(R.string.content_desc_chapters_menu))
                 }
                 TooltipIconButton(
                     text = stringResource(R.string.tooltip_format),
                     description = stringResource(R.string.tooltip_format_desc),
                     onClick = onToggleFormat
                 ) {
-                    Icon(painter = painterResource(id = R.drawable.format_size), contentDescription = "Text Formatting")
+                    Icon(painter = painterResource(id = R.drawable.format_size), contentDescription = stringResource(R.string.content_desc_text_formatting))
                 }
                 TooltipIconButton(
                     text = stringResource(R.string.tooltip_search),
                     description = stringResource(R.string.tooltip_search_desc),
                     onClick = onToggleSearch
                 ) {
-                    Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
+                    Icon(imageVector = Icons.Default.Search, contentDescription = stringResource(R.string.tooltip_search))
                 }
 
                 @Suppress("KotlinConstantConditions", "SimplifyBooleanWithConstants")
@@ -485,7 +485,7 @@ fun EpubReaderBottomBar(
                             onDismissRequest = { showAiFeaturesMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Chapter Summarization") },
+                                text = { Text(stringResource(R.string.menu_chapter_summarization)) },
                                 onClick = {
                                     showAiFeaturesMenu = false
                                     onSummarize()
@@ -494,7 +494,7 @@ fun EpubReaderBottomBar(
                             if (BuildConfig.DEBUG && isProUser) {
                                 HorizontalDivider()
                                 DropdownMenuItem(
-                                    text = { Text("Recap (Beta)") },
+                                    text = { Text(stringResource(R.string.menu_recap_beta)) },
                                     onClick = {
                                         showAiFeaturesMenu = false
                                         onRecap()
@@ -519,7 +519,7 @@ fun EpubReaderBottomBar(
                         ) {
                             Icon(
                                 painter = if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech),
-                                contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
+                                contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts)
                             )
                         }
                         if (isTtsSessionActive) {
@@ -537,7 +537,7 @@ fun EpubReaderBottomBar(
                             ) {
                                 Icon(
                                     painter = painterResource(id = if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                    contentDescription = if (ttsState.isPlaying) "Pause TTS" else "Resume TTS"
+                                    contentDescription = if (ttsState.isPlaying) stringResource(R.string.content_desc_pause_tts) else stringResource(R.string.content_desc_resume_tts)
                                 )
                             }
                         }
@@ -589,7 +589,7 @@ fun EpubReaderPageSlider(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Exit slider navigation"
+                    contentDescription = stringResource(R.string.content_desc_exit_slider)
                 )
             }
 
@@ -681,7 +681,7 @@ fun EpubReaderPageSlider(
                                 ) {
                                     Image(
                                         bitmap = thumbnail.asImageBitmap(),
-                                        contentDescription = "Start page thumbnail",
+                                        contentDescription = stringResource(R.string.content_desc_start_page_thumbnail),
                                         contentScale = ContentScale.FillBounds,
                                         modifier = Modifier.fillMaxSize()
                                     )
@@ -918,7 +918,7 @@ fun AutoScrollControls(
                     ) {
                         Icon(
                             imageVector = Icons.Default.ChevronLeft,
-                            contentDescription = "Expand",
+                            contentDescription = stringResource(R.string.content_desc_expand),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -934,7 +934,7 @@ fun AutoScrollControls(
                         ) {
                             Icon(
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                contentDescription = if (isPlaying) stringResource(R.string.content_desc_pause_playback) else stringResource(R.string.content_desc_start_playback),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -967,13 +967,13 @@ fun AutoScrollControls(
                                     .padding(4.dp)
                             ) {
                                 Text(
-                                    text = if (isLocalMode) "Local Speed" else "Global Speed",
+                                    text = if (isLocalMode) stringResource(R.string.auto_scroll_local_speed) else stringResource(R.string.auto_scroll_global_speed),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Icon(
                                     imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = "Select Mode",
+                                    contentDescription = stringResource(R.string.content_desc_select_mode),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -986,8 +986,8 @@ fun AutoScrollControls(
                                 DropdownMenuItem(
                                     text = {
                                         Column {
-                                            Text("Global Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text("Applies to all files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(stringResource(R.string.auto_scroll_global_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text(stringResource(R.string.auto_scroll_applies_all_files), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
                                     onClick = {
@@ -1002,8 +1002,8 @@ fun AutoScrollControls(
                                 DropdownMenuItem(
                                     text = {
                                         Column {
-                                            Text("Local Speed", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text("Saved for this file only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(stringResource(R.string.auto_scroll_local_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text(stringResource(R.string.auto_scroll_saved_for_file), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
                                     onClick = {
@@ -1024,7 +1024,7 @@ fun AutoScrollControls(
                             ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.music_note),
-                                    contentDescription = if (isMusicianMode) "Disable Musician Mode" else "Enable Musician Mode",
+                                    contentDescription = if (isMusicianMode) stringResource(R.string.content_desc_disable_musician_mode) else stringResource(R.string.content_desc_enable_musician_mode),
                                     modifier = Modifier.size(18.dp),
                                     tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1035,7 +1035,7 @@ fun AutoScrollControls(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.SwapHoriz,
-                                    contentDescription = "Swap Controls",
+                                    contentDescription = stringResource(R.string.content_desc_swap_controls),
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1046,7 +1046,7 @@ fun AutoScrollControls(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = "Collapse",
+                                    contentDescription = stringResource(R.string.content_desc_collapse),
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1057,7 +1057,7 @@ fun AutoScrollControls(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
+                                    contentDescription = stringResource(R.string.action_close),
                                     tint = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -1085,7 +1085,7 @@ fun AutoScrollControls(
                             ) {
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
@@ -1110,13 +1110,13 @@ fun AutoScrollControls(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     SpeedDropdown(
-                                        label = "Min",
+                                        label = stringResource(R.string.label_min),
                                         currentValue = minSpeed,
                                         options = speedOptions,
                                         onValueChange = onMinSpeedChange
                                     )
                                     SpeedDropdown(
-                                        label = "Max",
+                                        label = stringResource(R.string.label_max),
                                         currentValue = maxSpeed,
                                         options = speedOptions,
                                         onValueChange = onMaxSpeedChange
@@ -1193,7 +1193,7 @@ fun AutoScrollControls(
                                                 onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(minSpeed)) },
                                                 modifier = Modifier.size(48.dp)
                                             ) {
-                                                Icon(Icons.Default.Remove, "Slower")
+                                                Icon(Icons.Default.Remove, stringResource(R.string.content_desc_slower))
                                             }
                                             Text(
                                                 text = "%.1fx".format(speed),
@@ -1204,7 +1204,7 @@ fun AutoScrollControls(
                                                 onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(safeMax)) },
                                                 modifier = Modifier.size(48.dp)
                                             ) {
-                                                Icon(Icons.Default.Add, "Faster")
+                                                Icon(Icons.Default.Add, stringResource(R.string.content_desc_faster))
                                             }
                                         }
                                     }

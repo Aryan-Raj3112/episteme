@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
@@ -256,7 +257,7 @@ fun EpubReaderAiOverlays(
 ) {
     if (showSummarizationPopup) {
         SummarizationPopup(
-            title = "Chapter Summary",
+            title = stringResource(R.string.ai_chapter_summary),
             result = summarizationResult,
             isLoading = isSummarizationLoading,
             onDismiss = onDismissSummarization,
@@ -266,7 +267,7 @@ fun EpubReaderAiOverlays(
 
     if (showRecapPopup) {
         SummarizationPopup(
-            title = "Story Recap (Beta)",
+            title = stringResource(R.string.ai_story_recap_beta),
             result = recapResult,
             isLoading = isRecapLoading,
             onDismiss = onDismissRecap,
@@ -280,24 +281,24 @@ fun EpubReaderAiOverlays(
             icon = { Icon(painter = painterResource(id = R.drawable.summarize), contentDescription = null) },
             title = {
                 Text(
-                    text = "Unlock Chapter Summarization",
+                    text = stringResource(R.string.ai_unlock_summarization),
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center
                 )
             },
             text = {
                 Text(
-                    text = "Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.",
+                    text = stringResource(R.string.ai_unlock_summarization_desc),
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     onDismissSummarizationUpsell()
                     onNavigateToPro()
-                }) { Text("Learn More") }
+                }) { Text(stringResource(R.string.action_learn_more)) }
             },
             dismissButton = {
-                TextButton(onClick = onDismissSummarizationUpsell) { Text("Not Now") }
+                TextButton(onClick = onDismissSummarizationUpsell) { Text(stringResource(R.string.action_not_now)) }
             }
         )
     }
@@ -309,7 +310,6 @@ fun EpubReaderAiOverlays(
             isLoading = isAiDefinitionLoading,
             onDismiss = onDismissAiDefinition,
             isMainTtsActive = isTtsSessionActive,
-            // Pass it down
             onOpenExternalDictionary = {
                 selectedTextForAi?.let { text -> onOpenExternalDictionary(text) }
             }
@@ -320,16 +320,16 @@ fun EpubReaderAiOverlays(
         AlertDialog(
             onDismissRequest = onDismissDictionaryUpsell,
             icon = { Icon(painter = painterResource(id = R.drawable.ai), contentDescription = null) },
-            title = { Text("Unlock Smart Dictionary") },
-            text = { Text("Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.") },
+            title = { Text(stringResource(R.string.ai_unlock_smart_dict)) },
+            text = { Text(stringResource(R.string.ai_unlock_smart_dict_desc)) },
             confirmButton = {
                 TextButton(onClick = {
                     onDismissDictionaryUpsell()
                     onNavigateToPro()
-                }) { Text("Learn More") }
+                }) { Text(stringResource(R.string.action_learn_more)) }
             },
             dismissButton = {
-                TextButton(onClick = onDismissDictionaryUpsell) { Text("Not Now") }
+                TextButton(onClick = onDismissDictionaryUpsell) { Text(stringResource(R.string.action_not_now)) }
             }
         )
     }

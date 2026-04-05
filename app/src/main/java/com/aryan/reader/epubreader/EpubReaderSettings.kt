@@ -97,6 +97,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.ui.res.stringResource
 
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
 private const val TEXT_ALIGN_KEY = "reader_text_align"
@@ -389,13 +390,13 @@ fun ReaderTextFormatPanel(
                                 .padding(4.dp)
                         ) {
                             Text(
-                                text = if (isLocalMode) "Local Format" else "Global Format",
+                                text = if (isLocalMode) stringResource(R.string.format_local) else stringResource(R.string.format_global),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Select Mode",
+                                contentDescription = stringResource(R.string.content_desc_select_mode),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -405,8 +406,8 @@ fun ReaderTextFormatPanel(
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text("Global Format", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text("Applies to all files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.format_global), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        Text(stringResource(R.string.auto_scroll_applies_all_files), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 },
                                 onClick = { onLocalModeToggle(false); showModeMenu = false },
@@ -416,8 +417,8 @@ fun ReaderTextFormatPanel(
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text("Local Format", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text("Saved for this file only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.format_local), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        Text(stringResource(R.string.auto_scroll_saved_for_file), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 },
                                 onClick = { onLocalModeToggle(true); showModeMenu = false },
@@ -428,10 +429,10 @@ fun ReaderTextFormatPanel(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = onReset, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text("Reset")
+                            Text(stringResource(R.string.action_reset))
                         }
                         IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, "Close", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Close, stringResource(R.string.action_close), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -560,15 +561,15 @@ fun FontSelectionSheetContent(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Select Font", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.select_font), style = MaterialTheme.typography.titleMedium)
             IconButton(onClick = onDismiss) {
-                Icon(Icons.Default.Close, contentDescription = "Close")
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
             }
         }
 
         TabRow(selectedTabIndex = selectedTabIndex) {
-            Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("Presets") })
-            Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("Imported") })
+            Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text(stringResource(R.string.tab_presets)) })
+            Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text(stringResource(R.string.tab_imported)) })
         }
 
         Box(modifier = Modifier.heightIn(min = 200.dp, max = 400.dp)) {
@@ -582,7 +583,7 @@ fun FontSelectionSheetContent(
                                     Text(font.displayName, fontFamily = getComposeFontFamily(font, null))
                                 },
                                 trailingContent = {
-                                    if (isSelected) Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                    if (isSelected) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected), tint = MaterialTheme.colorScheme.primary)
                                 },
                                 modifier = Modifier.clickable { onFontSelected(font, null) },
                                 colors = if (isSelected) ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)) else ListItemDefaults.colors()
@@ -599,14 +600,14 @@ fun FontSelectionSheetContent(
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text("Import from Files")
+                                Text(stringResource(R.string.button_import_from_files))
                             }
                         }
 
                         if (customFonts.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text(
-                                    "No imported fonts yet.",
+                                    stringResource(R.string.no_imported_fonts_yet),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(bottom = 32.dp)
                                 )
@@ -627,7 +628,7 @@ fun FontSelectionSheetContent(
                                             if (isSelected) {
                                                 Icon(
                                                     imageVector = Icons.Default.Check,
-                                                    contentDescription = "Selected",
+                                                    contentDescription = stringResource(R.string.content_desc_selected),
                                                     tint = MaterialTheme.colorScheme.primary
                                                 )
                                             }
@@ -674,16 +675,16 @@ fun VisualOptionsSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.menu_visual_options), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
 
             // System UI
-            Text("System UI (Status & Navigation Bars)", style = MaterialTheme.typography.titleMedium)
-            Text("Control the visibility of the device's system bars.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.visual_options_system_ui), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.visual_options_system_ui_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.height(12.dp))
             OptionSegmentedControl(
                 options = SystemUiMode.entries,
@@ -695,8 +696,8 @@ fun VisualOptionsSheet(
             Spacer(modifier = Modifier.height(24.dp))
 
             // Progress Bar
-            Text("Progress Bar", style = MaterialTheme.typography.titleMedium)
-            Text("The reading progress and chapter indicator at the bottom of the screen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.visual_options_progress_bar), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.visual_options_progress_bar_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.height(12.dp))
             OptionSegmentedControl(
                 options = PageInfoMode.entries,
@@ -721,8 +722,8 @@ fun VisualOptionsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Seamless Chapter Transition", style = MaterialTheme.typography.titleMedium)
-                        Text("Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.visual_options_seamless_chapter), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.visual_options_seamless_chapter_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })

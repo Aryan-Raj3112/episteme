@@ -36,11 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.graphics.drawable.toBitmap
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.R
 
 @Suppress("KotlinConstantConditions")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,7 +85,7 @@ fun DictionarySettingsDialog(
                     .padding(24.dp)
             ) {
                 Text(
-                    text = "Lookup Settings",
+                    text = stringResource(R.string.dict_lookup_settings),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 20.dp)
@@ -98,7 +100,7 @@ fun DictionarySettingsDialog(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "Dictionary Engine",
+                                text = stringResource(R.string.dict_dictionary_engine),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(bottom = 8.dp)
@@ -114,29 +116,29 @@ fun DictionarySettingsDialog(
                                     onClick = { onToggleOnlineDictionary(true) },
                                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                                 ) {
-                                    Text("Smart (AI)")
+                                    Text(stringResource(R.string.dict_smart_ai))
                                 }
                                 SegmentedButton(
                                     selected = !useOnlineDictionary,
                                     onClick = { onToggleOnlineDictionary(false) },
                                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                                 ) {
-                                    Text("External App")
+                                    Text(stringResource(R.string.dict_external_app))
                                 }
                             }
 
                             Text(
                                 text = if (useOnlineDictionary)
-                                    "Uses AI for definitions. Will fallback to the external app below if offline or if the selected phrase is too long."
+                                    stringResource(R.string.dict_ai_description)
                                 else
-                                    "Uses the selected app for dictionary lookups.",
+                                    stringResource(R.string.dict_external_description),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(bottom = 16.dp)
                             )
 
                             Text(
-                                text = if (useOnlineDictionary) "Fallback App" else "Dictionary App",
+                                text = if (useOnlineDictionary) stringResource(R.string.dict_fallback_app) else stringResource(R.string.dict_dictionary_app),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(bottom = 8.dp)
@@ -146,13 +148,13 @@ fun DictionarySettingsDialog(
                                 apps = dictionaryApps,
                                 selectedPackageName = selectedDictionaryPackageName,
                                 onSelect = onSelectDictionaryPackage,
-                                placeholder = "Select an app"
+                                placeholder = stringResource(R.string.dict_select_app)
                             )
                         }
                     }
                 } else {
                     Text(
-                        text = "Dictionary",
+                        text = stringResource(R.string.tooltip_dictionary),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -161,7 +163,7 @@ fun DictionarySettingsDialog(
                         apps = dictionaryApps,
                         selectedPackageName = selectedDictionaryPackageName,
                         onSelect = onSelectDictionaryPackage,
-                        placeholder = "Select an app"
+                        placeholder = stringResource(R.string.dict_select_app)
                     )
                 }
 
@@ -169,13 +171,13 @@ fun DictionarySettingsDialog(
 
                 // ── Translate ──
                 Text(
-                    text = "Translate",
+                    text = stringResource(R.string.dict_translate),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    text = "App used for translating selected text.",
+                    text = stringResource(R.string.dict_translate_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 12.dp)
@@ -185,20 +187,20 @@ fun DictionarySettingsDialog(
                     apps = dictionaryApps,
                     selectedPackageName = selectedTranslatePackageName,
                     onSelect = onSelectTranslatePackage,
-                    placeholder = "Select an app"
+                    placeholder = stringResource(R.string.dict_select_app)
                 )
 
                 SectionDivider()
 
                 // ── Search ──
                 Text(
-                    text = "Search",
+                    text = stringResource(R.string.tooltip_search),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    text = "App used for web searches.",
+                    text = stringResource(R.string.dict_search_app_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 12.dp)
@@ -208,7 +210,7 @@ fun DictionarySettingsDialog(
                     apps = searchApps,
                     selectedPackageName = selectedSearchPackageName,
                     onSelect = onSelectSearchPackage,
-                    placeholder = "Select an app"
+                    placeholder = stringResource(R.string.dict_select_app)
                 )
             }
         }
@@ -272,7 +274,7 @@ private fun AppSelectionDropdown(
             DropdownMenuItem(
                 text = {
                     Text(
-                        "None",
+                        stringResource(R.string.dict_none),
                         color = if (!hasSelection) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurface
                     )
@@ -281,7 +283,7 @@ private fun AppSelectionDropdown(
                     {
                         Icon(
                             imageVector = Icons.Default.Check,
-                            contentDescription = "Selected",
+                            contentDescription = stringResource(R.string.content_desc_selected),
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -327,7 +329,7 @@ private fun AppSelectionDropdown(
                         {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.content_desc_selected),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }

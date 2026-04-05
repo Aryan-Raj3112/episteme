@@ -128,6 +128,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -148,6 +149,7 @@ import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
+import com.aryan.reader.R
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
@@ -2098,7 +2100,7 @@ fun EpubReaderHost(
                                     modifier = Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text("No chapters available for this book.")
+                                    Text(stringResource(R.string.no_chapters_available))
                                 }
                             } else {
                                 AnimatedContent(
@@ -3859,7 +3861,7 @@ fun EpubReaderHost(
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Navigating to position...",
+                                text = stringResource(R.string.navigating_to_position),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
@@ -3870,8 +3872,8 @@ fun EpubReaderHost(
                 if (showPermissionRationaleDialog) {
                     AlertDialog(
                         onDismissRequest = { showPermissionRationaleDialog = false },
-                        title = { Text("Permission Required") },
-                        text = { Text("To show playback controls while the app is in the background, please grant the notification permission.") },
+                        title = { Text(stringResource(R.string.dialog_permission_required)) },
+                        text = { Text(stringResource(R.string.dialog_permission_notification_desc)) },
                         confirmButton = {
                             TextButton(
                                 onClick = {
@@ -3879,7 +3881,7 @@ fun EpubReaderHost(
                                     permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 }
                             ) {
-                                Text("Continue")
+                                Text(stringResource(R.string.action_continue))
                             }
                         },
                         dismissButton = {
@@ -3889,7 +3891,7 @@ fun EpubReaderHost(
                                     startTts()
                                 }
                             ) {
-                                Text("Not now")
+                                Text(stringResource(R.string.action_not_now))
                             }
                         }
                     )
@@ -3899,11 +3901,11 @@ fun EpubReaderHost(
                     AlertDialog(
                         onDismissRequest = { showJustifyWarningDialog = false },
                         icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                        title = { Text("Justified Text Limitation") },
-                        text = { Text("Using Justified alignment in Paginated Mode may cause text selection and highlights to be inaccurate due to layout limitations.") },
+                        title = { Text(stringResource(R.string.dialog_justified_text_limitation)) },
+                        text = { Text(stringResource(R.string.dialog_justified_text_limitation_desc)) },
                         confirmButton = {
                             TextButton(onClick = { showJustifyWarningDialog = false }) {
-                                Text("I Understand")
+                                Text(stringResource(R.string.action_i_understand))
                             }
                         }
                     )
@@ -3924,7 +3926,7 @@ fun EpubReaderHost(
                             CircularProgressIndicator()
                             Spacer(Modifier.height(16.dp))
                             Text(
-                                "Navigating to chapter...",
+                                stringResource(R.string.navigating_to_chapter),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )

@@ -460,4 +460,169 @@
     <string name="error_not_enough_context">Not enough context for a recap.</string>
     <string name="error_parse_recap">Failed to parse recap.</string>
     <string name="error_network_recap">Network error during recap generation.</string>
+
+    <!-- DictionarySettingsDialog.kt -->
+    <string name="dict_lookup_settings">Lookup Settings</string>
+    <string name="dict_dictionary_engine">Dictionary Engine</string>
+    <string name="dict_smart_ai">Smart (AI)</string>
+    <string name="dict_external_app">External App</string>
+    <string name="dict_ai_description">Uses AI for definitions. Will fall back to the external app below if offline or if the selected phrase is too long.</string>
+    <string name="dict_external_description">Uses the selected app for dictionary lookups.</string>
+    <string name="dict_fallback_app">Fallback App</string>
+    <string name="dict_dictionary_app">Dictionary App</string>
+    <string name="dict_select_app">Select an app</string>
+    <string name="dict_translate">Translate</string>
+    <string name="dict_translate_description">App used for translating selected text.</string>
+    <string name="dict_search_app">Search App</string>
+    <string name="dict_search_app_description">App used for web searches.</string>
+    <string name="dict_none">None</string>
+
+    <!-- EpubReaderAi.kt -->
+    <string name="ai_error_book_content_empty">The book content is empty.</string>
+    <string name="ai_error_parse_summary">Failed to parse summary from server response.</string>
+    <string name="ai_error_fetch_summary">Could not fetch summary.</string>
+    <string name="ai_error_with_code">Error: %1$d. %2$s</string>
+    <string name="ai_error_network_server">Network error. Please check connection and server status.</string>
+    <string name="ai_analyzing_chapter">Analyzing Chapter %1$d…</string>
+    <string name="ai_reading_position">Reading current position…</string>
+    <string name="ai_generating_recap">Generating Recap…</string>
+    <string name="ai_chapter_summary">Chapter Summary</string>
+    <string name="ai_story_recap_beta">Story Recap (Beta)</string>
+    <string name="ai_unlock_summarization">Unlock Chapter Summarization</string>
+    <string name="ai_unlock_summarization_desc">Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.</string>
+    <string name="action_learn_more">Learn More</string>
+    <string name="ai_unlock_smart_dict">Unlock Smart Dictionary</string>
+    <string name="ai_unlock_smart_dict_desc">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
+
+    <!-- EpubReaderAnnotations.kt -->
+    <string name="content_desc_bookmark_icon">Bookmark</string>
+    <string name="content_desc_selected_slot">Selected Slot</string>
+    <string name="dialog_customize_palette">Customize Palette</string>
+    <string name="palette_tap_slot_to_edit">Tap a slot to edit:</string>
+    <string name="palette_select_color_for_slot">Select a color for the slot:</string>
+
+    <!-- EpubReaderContent.kt -->
+    <string name="chapter_empty">This chapter is empty.</string>
+    <string name="chapter_not_found">Chapter not found</string>
+    <string name="error_loading_chapter">Error loading chapter</string>
+
+    <!-- EpubReaderControls.kt -->
+    <string name="content_desc_dictionary_settings">Dictionary Settings</string>
+    <string name="tooltip_theme">Theme</string>
+    <string name="tooltip_theme_desc">Theme Settings</string>
+    <string name="content_desc_more_options">More Options</string>
+    <string name="menu_view_original_pdf">View Original PDF</string>
+    <string name="menu_delete_text_view">Delete Text View</string>
+    <string name="menu_reading_mode_vertical">Reading Mode: Vertical</string>
+    <string name="menu_reading_mode_paginated">Reading Mode: Paginated</string>
+    <string name="content_desc_enabled">Enabled</string>
+    <string name="menu_remove_bookmark">Remove bookmark</string>
+    <string name="menu_bookmark_this_page">Bookmark this page</string>
+    <string name="menu_tap_to_turn_pages">Tap to Turn Pages</string>
+    <string name="menu_volume_button_scrolling">Volume Button Scrolling</string>
+    <string name="menu_volume_button_page_turn">Volume Button Page Turn</string>
+    <string name="menu_realistic_page_turns">Realistic Page Turns</string>
+    <string name="menu_keep_screen_on">Keep Screen On</string>
+    <string name="menu_visual_options">Visual Options</string>
+    <string name="menu_auto_scroll">Auto Scroll</string>
+    <string name="menu_tts_voice_settings">TTS Voice Settings</string>
+    <string name="menu_tts_settings_debug">TTS Settings (Debug)</string>
+    <string name="content_desc_navigate_slider">Navigate with slider</string>
+    <string name="content_desc_chapters_menu">Chapters Menu</string>
+    <string name="content_desc_text_formatting">Text Formatting</string>
+    <string name="menu_chapter_summarization">Chapter Summarization</string>
+    <string name="menu_recap_beta">Recap (Beta)</string>
+    <string name="content_desc_stop_tts">Stop TTS</string>
+    <string name="content_desc_start_tts">Start TTS</string>
+    <string name="content_desc_pause_tts">Pause TTS</string>
+    <string name="content_desc_resume_tts">Resume TTS</string>
+    <string name="content_desc_exit_slider">Exit slider navigation</string>
+    <string name="content_desc_start_page_thumbnail">Start page thumbnail</string>
+    <string name="content_desc_expand">Expand</string>
+    <string name="content_desc_collapse">Collapse</string>
+    <string name="content_desc_pause_playback">Pause</string>
+    <string name="content_desc_start_playback">Play</string>
+    <string name="auto_scroll_local_speed">Local Speed</string>
+    <string name="auto_scroll_global_speed">Global Speed</string>
+    <string name="content_desc_select_mode">Select Mode</string>
+    <string name="auto_scroll_applies_all_files">Applies to all files</string>
+    <string name="auto_scroll_saved_for_file">Saved for this file only</string>
+    <string name="content_desc_disable_musician_mode">Disable Musician Mode</string>
+    <string name="content_desc_enable_musician_mode">Enable Musician Mode</string>
+    <string name="content_desc_swap_controls">Swap Controls</string>
+    <string name="label_min">Min</string>
+    <string name="label_max">Max</string>
+    <string name="content_desc_slower">Slower</string>
+    <string name="content_desc_faster">Faster</string>
+    <string name="page_of_pages">Page %1$d of %2$d</string>
+
+    <!-- EpubReaderDrawer.kt -->
+    <string name="tab_chapters">Chapters</string>
+    <string name="tab_bookmarks">Bookmarks</string>
+    <string name="tab_highlights">Highlights</string>
+    <string name="no_bookmarks_yet">You haven\'t added any bookmarks yet.</string>
+    <string name="bookmark_page_of">Page %1$d of %2$d</string>
+    <string name="content_desc_more_options_bookmark">More options for bookmark</string>
+    <string name="menu_rename">Rename</string>
+    <string name="dialog_rename_bookmark">Rename Bookmark</string>
+    <string name="label_new_name">New Name</string>
+    <string name="dialog_delete_bookmark">Delete Bookmark?</string>
+    <string name="dialog_delete_bookmark_desc">Are you sure you want to permanently delete this bookmark?</string>
+    <string name="no_highlights_yet">No highlights yet.</string>
+    <string name="unknown_chapter">Unknown Chapter</string>
+    <string name="content_desc_options">Options</string>
+    <string name="dialog_delete_highlight">Delete Highlight?</string>
+    <string name="dialog_delete_highlight_desc">Are you sure you want to permanently delete this highlight?</string>
+
+    <!-- EpubReaderScreen.kt -->
+    <string name="banner_original_pdf_not_found">Original PDF not found.</string>
+    <string name="error_book_content_not_found">Error: Book content not found. Path: %1$s</string>
+    <string name="toast_select_dictionary_first">Please select a dictionary app first.</string>
+    <string name="toast_select_translate_first">Please select a translate app first.</string>
+    <string name="toast_select_search_first">Please select a search app first.</string>
+    <string name="no_chapters_available">No chapters available for this book.</string>
+    <string name="navigating_to_position">Navigating to position…</string>
+    <string name="dialog_permission_required">Permission Required</string>
+    <string name="dialog_permission_notification_desc">To show playback controls while the app is in the background, please grant the notification permission.</string>
+    <string name="action_continue">Continue</string>
+    <string name="dialog_justified_text_limitation">Justified Text Limitation</string>
+    <string name="dialog_justified_text_limitation_desc">Using Justified alignment in Paginated Mode may cause text selection and highlights to be inaccurate due to layout limitations.</string>
+    <string name="action_i_understand">I Understand</string>
+    <string name="navigating_to_chapter">Navigating to chapter…</string>
+    <string name="toast_select_offline_dict_first">Select an offline dictionary first.</string>
+    <string name="banner_book_not_paginated">Book is not paginated yet.</string>
+    <string name="banner_wait_for_load">Wait for book to load fully.</string>
+    <string name="release_for_previous_chapter">Release for Previous Chapter</string>
+    <string name="release_for_next_chapter">Release for Next Chapter</string>
+    <string name="pull_further_percent">Pull further… (%1$d%%)</string>
+    <string name="chapter">Chapter</string>
+    <string name="error_could_not_get_chapter_content">Could not get chapter content.</string>
+    <string name="error_could_not_determine_chapter">Could not determine current chapter.</string>
+    <string name="error_webview_not_available">WebView not available.</string>
+    <string name="page_number_of_total">Page %1$d/%2$d</string>
+
+    <!-- EpubReaderSettings.kt -->
+    <string name="format_local">Local Format</string>
+    <string name="format_global">Global Format</string>
+    <string name="action_reset">Reset</string>
+    <string name="label_size">Size</string>
+    <string name="label_spacing">Spacing</string>
+    <string name="select_font">Select Font</string>
+    <string name="tab_presets">Presets</string>
+    <string name="tab_imported">Imported</string>
+    <string name="button_import_from_files">Import from Files</string>
+    <string name="no_imported_fonts_yet">No imported fonts yet.</string>
+    <string name="visual_options_title">Visual Options</string>
+    <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
+    <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>
+    <string name="visual_options_progress_bar">Progress Bar</string>
+    <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator at the bottom of the screen.</string>
+    <string name="visual_options_seamless_chapter">Seamless Chapter Transition</string>
+    <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
+
+    <!-- ExternalDictionaryHelper.kt -->
+    <string name="dict_app_label_search">Search</string>
+    <string name="error_opening_dictionary">Error opening dictionary</string>
+    <string name="error_opening_translate">Error opening translate app</string>
+    <string name="error_opening_search">Error opening search app</string>
 </resources>
