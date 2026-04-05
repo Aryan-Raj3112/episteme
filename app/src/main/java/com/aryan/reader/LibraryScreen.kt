@@ -1404,13 +1404,25 @@ private fun LibraryListItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                item.progressPercentage?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "${it.toInt()}% complete",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FileTypeBadge(type = item.type, overlay = false)
+
+                    item.progressPercentage?.let {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "•",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${it.toInt()}% complete",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }

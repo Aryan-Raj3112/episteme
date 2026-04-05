@@ -630,21 +630,15 @@ fun RecentFileCard(
                         .fallback(placeholder).crossfade(true).build(),
                     contentDescription = item.displayName,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .height(160.dp)
-                        .fillMaxWidth(),
+                    modifier = Modifier.height(160.dp).fillMaxWidth(),
                 )
 
                 if (item.sourceFolderUri != null) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .background(
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(
                                 color = MaterialTheme.colorScheme.secondaryContainer,
                                 shape = CircleShape
-                            )
-                            .padding(4.dp)
+                            ).padding(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Folder,
@@ -658,14 +652,10 @@ fun RecentFileCard(
                 val isOpdsStream = item.uriString?.startsWith("opds-pse://") == true
                 if (isOpdsStream) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .background(
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(
                                 color = MaterialTheme.colorScheme.tertiaryContainer,
                                 shape = CircleShape
-                            )
-                            .padding(4.dp)
+                            ).padding(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Cloud,
@@ -678,14 +668,10 @@ fun RecentFileCard(
 
                 if (isPinned) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(8.dp)
-                            .background(
+                        modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(
                                 color = MaterialTheme.colorScheme.primaryContainer,
                                 shape = CircleShape
-                            )
-                            .padding(4.dp)
+                            ).padding(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.PushPin,
@@ -714,6 +700,11 @@ fun RecentFileCard(
                             )
                         }
                     }
+                }
+                Box(
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                ) {
+                    FileTypeBadge(type = item.type, overlay = true)
                 }
             }
 
