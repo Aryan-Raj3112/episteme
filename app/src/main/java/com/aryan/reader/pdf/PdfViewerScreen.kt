@@ -119,7 +119,6 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -262,6 +261,7 @@ import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.FileType
+import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.ReaderTheme
@@ -359,6 +359,24 @@ private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 private const val PDF_THEME_KEY = "pdf_reader_theme"
 private const val PDF_KEEP_SCREEN_ON_KEY = "pdf_keep_screen_on_enabled"
+
+private fun loadCustomHighlightColors(context: Context): Map<PdfHighlightColor, Color> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return PdfHighlightColor.entries.associateWith {
+        val defaultArgb = it.color.toArgb()
+        val savedArgb = prefs.getInt("custom_highlight_${it.name}", defaultArgb)
+        Color(savedArgb)
+    }
+}
+
+private fun saveCustomHighlightColors(context: Context, colors: Map<PdfHighlightColor, Color>) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        colors.forEach { (colorEnum, color) ->
+            putInt("custom_highlight_${colorEnum.name}", color.toArgb())
+        }
+    }
+}
 
 private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -1403,6 +1421,9 @@ fun PdfViewerScreen(
     }
 
     val (initialDockLocation, initialDockOffset) = remember(context) { loadDockState(context) }
+
+    var customHighlightColors by remember { mutableStateOf(loadCustomHighlightColors(context)) }
+    var showHighlightColorPicker by remember { mutableStateOf(false) }
 
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
@@ -4155,10 +4176,12 @@ fun PdfViewerScreen(
                                                     supportingContent = {
                                                         Column {
                                                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                val displayColor = customHighlightColors[highlight.color] ?: highlight.color.color
+
                                                                 Box(
                                                                     modifier = Modifier
                                                                         .size(12.dp)
-                                                                        .background(highlight.color.color, CircleShape)
+                                                                        .background(displayColor, CircleShape)
                                                                 )
                                                                 Spacer(Modifier.width(8.dp))
                                                                 Text(
@@ -4176,7 +4199,7 @@ fun PdfViewerScreen(
                                                                 ) {
                                                                     Text(
                                                                         text = highlight.note,
-                                                                        style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                                                        style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
                                                                         modifier = Modifier.padding(12.dp),
                                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                                     )
@@ -4512,6 +4535,8 @@ fun PdfViewerScreen(
                                                 totalPages = totalDisplayPages,
                                                 activeTheme = activeTheme,
                                                 isScrollLocked = isScrollLocked,
+                                                customHighlightColors = customHighlightColors,
+                                                onPaletteClick = { showHighlightColorPicker = true },
                                                 onScaleChanged = { newScale ->
                                                     if (pagerState.currentPage == pageIndex) {
                                                         currentPageScale = newScale
@@ -4894,6 +4919,8 @@ fun PdfViewerScreen(
                                             pdfDocument = docHolder,
                                             activeTheme = activeTheme,
                                             isScrollLocked = isScrollLocked,
+                                            customHighlightColors = customHighlightColors,
+                                            onPaletteClick = { showHighlightColorPicker = true },
                                             totalPages = totalDisplayPages,
                                             pageAspectRatios = ratiosHolder,
                                             virtualPages = virtualPages,
@@ -7329,6 +7356,8 @@ fun PdfViewerScreen(
                     if (targetHighlight != null) {
                         PdfAnnotationBottomSheet(
                             highlight = targetHighlight,
+                            customHighlightColors = customHighlightColors,
+                            onPaletteClick = { showHighlightColorPicker = true },
                             onColorChange = { newColor -> onHighlightUpdate(targetHighlight.id, newColor) },
                             onDismiss = { highlightToNoteId = null },
                             onSave = { noteText ->
@@ -7363,6 +7392,18 @@ fun PdfViewerScreen(
                     } else {
                         highlightToNoteId = null
                     }
+                }
+
+                if (showHighlightColorPicker) {
+                    HighlightColorPickerDialog(
+                        initialColors = customHighlightColors,
+                        onDismiss = { showHighlightColorPicker = false },
+                        onSave = { newColors ->
+                            customHighlightColors = newColors
+                            saveCustomHighlightColors(context, newColors)
+                            showHighlightColorPicker = false
+                        }
+                    )
                 }
 
                 if (showThemePanel) {

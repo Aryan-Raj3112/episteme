@@ -148,6 +148,7 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.epubreader.PREF_CUSTOM_THEMES
 import com.aryan.reader.epubreader.PREF_READER_THEME
 import com.aryan.reader.paginatedreader.TtsChunk
+import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.tts.GOOGLE_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -2615,5 +2616,207 @@ fun ColorSlider(color: Color, onColorChanged: (Color) -> Unit) {
         Slider(value = color.red, onValueChange = { onColorChanged(color.copy(red = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red), modifier = Modifier.weight(1f))
         Slider(value = color.green, onValueChange = { onColorChanged(color.copy(green = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green), modifier = Modifier.weight(1f))
         Slider(value = color.blue, onValueChange = { onColorChanged(color.copy(blue = it)) }, colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue), modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+fun HighlightColorPickerDialog(
+    initialColors: Map<PdfHighlightColor, Color>,
+    onDismiss: () -> Unit,
+    onSave: (Map<PdfHighlightColor, Color>) -> Unit
+) {
+    var currentColors by remember { mutableStateOf(initialColors) }
+    var selectedSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
+
+    val initialActiveColor = currentColors[selectedSlot] ?: selectedSlot.color
+    val initialHsv = remember(initialActiveColor) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(initialActiveColor.toArgb(), hsv)
+        hsv
+    }
+
+    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
+    var value by remember { mutableFloatStateOf(initialHsv[2]) }
+
+    LaunchedEffect(selectedSlot) {
+        val color = currentColors[selectedSlot] ?: selectedSlot.color
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        hue = hsv[0]
+        saturation = hsv[1]
+        value = hsv[2]
+    }
+
+    val currentColor by remember {
+        derivedStateOf {
+            val hsv = floatArrayOf(hue, saturation, value)
+            Color(android.graphics.Color.HSVToColor(255, hsv))
+        }
+    }
+
+    LaunchedEffect(currentColor) {
+        currentColors = currentColors + (selectedSlot to currentColor)
+    }
+
+    fun updateFromColor(color: Color) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        hue = hsv[0]
+        saturation = hsv[1]
+        value = hsv[2]
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF2C2C2C),
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Customize Highlights",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    PdfHighlightColor.entries.forEach { slot ->
+                        val slotColor = currentColors[slot] ?: slot.color
+                        val isSelected = selectedSlot == slot
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(slotColor)
+                                .clickable { selectedSlot = slot }
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) Color.White else Color.Gray,
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                SpectrumBox(
+                    hue = hue,
+                    saturation = saturation,
+                    currentColor = currentColor,
+                    onHueSatChanged = { h, s -> hue = h; saturation = s },
+                    modifier = Modifier.fillMaxWidth().height(220.dp)
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                BrightnessSlider(
+                    hue = hue,
+                    saturation = saturation,
+                    value = value,
+                    onValueChanged = { value = it },
+                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ColorComparePill(
+                        oldColor = selectedSlot.color,
+                        newColor = currentColor,
+                        modifier = Modifier.width(64.dp).height(36.dp)
+                    )
+
+                    Column(
+                        modifier = Modifier.weight(1.6f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("HEX", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Spacer(Modifier.height(4.dp))
+                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(2.4f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RgbInputColumn(label = "R", value = currentColor.red,
+                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(label = "G", value = currentColor.green,
+                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(label = "B", value = currentColor.blue,
+                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { updateFromColor(selectedSlot.color) }) {
+                        Text("Reset", color = Color(0xFFFF5252))
+                    }
+                    Row {
+                        TextButton(onClick = onDismiss) {
+                            Text("Cancel", color = Color.Gray)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = { onSave(currentColors) },
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = Color.White
+                            )
+                        ) {
+                            Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

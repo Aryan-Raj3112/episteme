@@ -74,7 +74,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
@@ -90,7 +92,6 @@ import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrLine
 import com.aryan.reader.pdf.ocr.OcrResult
 import com.aryan.reader.pdf.ocr.OcrSymbol
-import io.legere.pdfiumandroid.suspend.PdfTextPageKt
 import timber.log.Timber
 import java.util.UUID
 
@@ -218,6 +219,8 @@ private fun CommentThread(replies: List<EmbeddedAnnotation>, depth: Int) {
 internal fun PdfSelectionMenuPopup(
     menuState: CustomPdfMenuState,
     popupPositionProvider: PopupPositionProvider,
+    customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
+    onPaletteClick: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onCopy: (String) -> Unit,
     onAiDefine: (String) -> Unit,
@@ -279,7 +282,7 @@ internal fun PdfSelectionMenuPopup(
                             Text(
                                 text = menuState.note,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                    fontStyle = FontStyle.Italic
                                 ),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -328,14 +331,29 @@ internal fun PdfSelectionMenuPopup(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         PdfHighlightColor.entries.forEach { colorEnum ->
+                            val displayColor = customHighlightColors[colorEnum] ?: colorEnum.color
                             Box(
                                 modifier = Modifier.padding(horizontal = 6.dp).size(32.dp)
-                                    .background(colorEnum.color, CircleShape).clip(CircleShape)
+                                    .background(displayColor, CircleShape).clip(CircleShape)
                                     .clickable {
                                         Timber.tag("PdfHighlightDebug")
                                             .d("Color box clicked: $colorEnum")
                                         onColorSelected(colorEnum)
                                     })
+                        }
+                        if (onPaletteClick != null) {
+                            val rainbowColors = listOf(
+                                Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 6.dp)
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Brush.sweepGradient(rainbowColors))
+                                    .clickable { onPaletteClick() },
+                                contentAlignment = Alignment.Center
+                            ) {}
                         }
                     }
 
@@ -611,7 +629,9 @@ internal fun mergePdfRectsIntoLines(rects: List<RectF>): List<RectF> {
 fun PdfHighlightColorRow(
     modifier: Modifier = Modifier,
     selectedColor: PdfHighlightColor? = null,
-    onColorSelect: (PdfHighlightColor) -> Unit
+    customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
+    onColorSelect: (PdfHighlightColor) -> Unit,
+    onPaletteClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier
@@ -621,13 +641,14 @@ fun PdfHighlightColorRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         PdfHighlightColor.entries.forEach { colorEnum ->
+            val displayColor = customHighlightColors[colorEnum] ?: colorEnum.color
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .padding(horizontal = 6.dp)
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(colorEnum.color)
+                    .background(displayColor)
                     .clickable { onColorSelect(colorEnum) }
                     .border(
                         width = if (selectedColor == colorEnum) 3.dp else 1.dp,
@@ -639,11 +660,26 @@ fun PdfHighlightColorRow(
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Selected",
-                        tint = if (colorEnum == PdfHighlightColor.YELLOW) Color.Black else Color.White,
+                        tint = if (displayColor.luminance() > 0.5f) Color.Black else Color.White,
                         modifier = Modifier.size(18.dp)
                     )
                 }
             }
+        }
+
+        if (onPaletteClick != null) {
+            val rainbowColors = listOf(
+                Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red
+            )
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(Brush.sweepGradient(rainbowColors))
+                    .clickable { onPaletteClick() },
+                contentAlignment = Alignment.Center
+            ) {}
         }
     }
 }
@@ -652,6 +688,8 @@ fun PdfHighlightColorRow(
 @Composable
 fun PdfAnnotationBottomSheet(
     highlight: PdfUserHighlight,
+    customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
+    onPaletteClick: (() -> Unit)? = null,
     onColorChange: (PdfHighlightColor) -> Unit,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
@@ -677,16 +715,20 @@ fun PdfAnnotationBottomSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         ) {
+            val displayColor = customHighlightColors[highlight.color] ?: highlight.color.color
+
             PdfHighlightColorRow(
                 selectedColor = highlight.color,
+                customHighlightColors = customHighlightColors,
                 onColorSelect = onColorChange,
+                onPaletteClick = onPaletteClick,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
             Surface(
-                color = highlight.color.color.copy(alpha = 0.1f),
+                color = displayColor.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, highlight.color.color.copy(alpha = 0.3f)),
+                border = BorderStroke(1.dp, displayColor.copy(alpha = 0.3f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(modifier = Modifier.height(IntrinsicSize.Min)) {
@@ -694,7 +736,7 @@ fun PdfAnnotationBottomSheet(
                         modifier = Modifier
                             .width(6.dp)
                             .fillMaxHeight()
-                            .background(highlight.color.color)
+                            .background(displayColor)
                     )
                     Text(
                         text = "\"${highlight.text}\"",
