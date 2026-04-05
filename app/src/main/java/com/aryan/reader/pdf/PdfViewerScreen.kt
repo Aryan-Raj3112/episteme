@@ -1869,7 +1869,7 @@ fun PdfViewerScreen(
 
     val onInsertPage: () -> Unit = {
         coroutineScope.launch {
-            val targetIndex = currentPage + 1
+            val targetIndex = (currentPage + 1).coerceIn(0, virtualPages.size)
             Timber.tag("RichTextMigration").i("INSERT: User requested blank page at index $targetIndex")
 
             val (refWidth, refHeight) = withContext(Dispatchers.IO) {
@@ -6364,8 +6364,6 @@ fun PdfViewerScreen(
                     val popupPlacementConfig =
                         remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx) {
                             val margin = 16.dp
-                            with(density) { boxMaxHeightFloat.toDp() }
-
                             val dockTopY = when (dockLocation) {
                                 DockLocation.TOP -> 0f
                                 DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
@@ -6379,10 +6377,10 @@ fun PdfViewerScreen(
                             if (isDockInBottomHalf) {
                                 val distFromBottom = boxMaxHeightFloat - dockTopY
                                 val paddingBottom = with(density) { distFromBottom.toDp() } + margin
-                                Triple(Alignment.BottomCenter, 0.dp, paddingBottom)
+                                Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
                             } else {
                                 val paddingTop = with(density) { dockBottomY.toDp() } + margin
-                                Triple(Alignment.TopCenter, paddingTop, 0.dp)
+                                Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
                             }
                         }
 
