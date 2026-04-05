@@ -315,14 +315,19 @@ class FolderSyncWorker(
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {
+        val lowerName = name.lowercase()
         return when {
-            mimeType == "application/pdf" || name.endsWith(".pdf", true) -> FileType.PDF
-            mimeType == "application/epub+zip" || name.endsWith(".epub", true) -> FileType.EPUB
-            mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.endsWith(".docx", true) -> FileType.DOCX
-            name.endsWith(".mobi", true) || name.endsWith(".azw3", true) -> FileType.MOBI
-            name.endsWith(".md", true) -> FileType.MD
-            name.endsWith(".txt", true) -> FileType.TXT
-            name.endsWith(".html", true) || name.endsWith(".xhtml", true) || name.endsWith(".htm", true) -> FileType.HTML
+            mimeType == "application/pdf" || lowerName.endsWith(".pdf") -> FileType.PDF
+            mimeType == "application/epub+zip" || lowerName.endsWith(".epub") -> FileType.EPUB
+            mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || lowerName.endsWith(".docx") -> FileType.DOCX
+            lowerName.endsWith(".mobi") || lowerName.endsWith(".azw3") || lowerName.endsWith(".prc") -> FileType.MOBI
+            lowerName.endsWith(".fb2") || lowerName.endsWith(".fb2.zip") -> FileType.FB2
+            lowerName.endsWith(".cbz") -> FileType.CBZ
+            lowerName.endsWith(".cbr") -> FileType.CBR
+            lowerName.endsWith(".cb7") -> FileType.CB7
+            lowerName.endsWith(".md") || lowerName.endsWith(".markdown") -> FileType.MD
+            lowerName.endsWith(".txt") -> FileType.TXT
+            mimeType == "text/html" || lowerName.endsWith(".html") || lowerName.endsWith(".xhtml") || lowerName.endsWith(".htm") -> FileType.HTML
             else -> null
         }
     }
