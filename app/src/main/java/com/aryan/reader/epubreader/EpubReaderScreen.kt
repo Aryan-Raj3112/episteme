@@ -1025,6 +1025,7 @@ fun EpubReaderHost(
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
     var showThemePanel by remember { mutableStateOf(false) }
+    var showPaletteManager by remember { mutableStateOf(false) }
 
     var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
@@ -1065,6 +1066,21 @@ fun EpubReaderHost(
                 (paginator as? BookPaginator)?.findChapterIndexForPage(paginatedPagerState.currentPage)
             } else {
                 null
+            }
+        }
+    }
+
+    val onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit = { targetHighlight, newColor ->
+        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        if (index != -1) {
+            userHighlights[index] = targetHighlight.copy(color = newColor)
+            if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
+                val cssClass = newColor.cssClass
+                val cfiParts = targetHighlight.cfi.split("|")
+                cfiParts.forEach { partCfi ->
+                    val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(partCfi)}', '$cssClass', '${newColor.id}');"
+                    webViewRefForTts?.evaluateJavascript(jsCommand, null)
+                }
             }
         }
     }
@@ -1640,13 +1656,16 @@ fun EpubReaderHost(
         drawerContent = {
             EpubReaderDrawerSheet(
                 chapters = chapters,
-                tableOfContents = epubBook.tableOfContents, // Pass TOC
+                tableOfContents = epubBook.tableOfContents,
                 activeFragmentId = activeFragmentId,
                 bookmarks = bookmarks,
                 userHighlights = userHighlights,
                 currentChapterIndex = currentChapterIndex,
                 currentChapterInPaginatedMode = currentChapterInPaginatedMode,
                 renderMode = currentRenderMode,
+                activeHighlightPalette = currentHighlightPalette,
+                onOpenPaletteManager = { showPaletteManager = true },
+                onHighlightColorChange = onHighlightColorChange,
                 onNavigateToTocEntry = { entry ->
                     scope.launch {
                         drawerState.close()
@@ -3962,6 +3981,11 @@ fun EpubReaderHost(
                     if (targetHighlight != null) {
                         AnnotationBottomSheet(
                             highlight = targetHighlight,
+                            effectiveBg = effectiveBg,
+                            effectiveText = effectiveText,
+                            activeHighlightPalette = currentHighlightPalette,
+                            onColorChange = { newColor -> onHighlightColorChange(targetHighlight, newColor) },
+                            onOpenPaletteManager = { showPaletteManager = true },
                             onDismiss = { highlightToNoteCfi = null },
                             onSave = { noteText ->
                                 val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
@@ -3982,6 +4006,24 @@ fun EpubReaderHost(
                                         webViewRefForTts?.evaluateJavascript(jsCommand, null)
                                     }
                                 }
+                                highlightToNoteCfi = null
+                            },
+                            onCopy = {
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("Copied Text", targetHighlight.text)
+                                clipboardManager.setPrimaryClip(clip)
+                                highlightToNoteCfi = null
+                            },
+                            onDictionary = {
+                                onDictionaryLookup(targetHighlight.text)
+                                highlightToNoteCfi = null
+                            },
+                            onTranslate = {
+                                onTranslateLookup(targetHighlight.text)
+                                highlightToNoteCfi = null
+                            },
+                            onSearch = {
+                                onSearchLookup(targetHighlight.text)
                                 highlightToNoteCfi = null
                             }
                         )
@@ -4150,6 +4192,19 @@ fun EpubReaderHost(
                 onDismiss = { showThemePanel = false },
                 customThemes = customThemes,
                 onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) }
+            )
+        }
+
+        if (showPaletteManager) {
+            PaletteManagerDialog(
+                currentPalette = currentHighlightPalette,
+                onDismiss = { showPaletteManager = false },
+                onSave = { newPalette ->
+                    newPalette.forEachIndexed { index, color ->
+                        onUpdateHighlightPalette(index, color)
+                    }
+                    showPaletteManager = false
+                }
             )
         }
     }

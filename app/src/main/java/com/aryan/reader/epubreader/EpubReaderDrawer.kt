@@ -216,7 +216,10 @@ fun EpubReaderDrawerSheet(
     onDeleteBookmark: (Bookmark) -> Unit,
     onRenameBookmark: (Bookmark, String) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
-    onEditNote: (UserHighlight) -> Unit
+    onEditNote: (UserHighlight) -> Unit,
+    activeHighlightPalette: List<HighlightColor>,
+    onOpenPaletteManager: () -> Unit,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit
 ) {
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
@@ -271,7 +274,10 @@ fun EpubReaderDrawerSheet(
                         chapters = chapters,
                         onNavigateToHighlight = onNavigateToHighlight,
                         onDeleteHighlight = onDeleteHighlight,
-                        onEditNote = onEditNote
+                        onEditNote = onEditNote,
+                        activeHighlightPalette = activeHighlightPalette,
+                        onOpenPaletteManager = onOpenPaletteManager,
+                        onHighlightColorChange = onHighlightColorChange
                     )
                 }
             }
@@ -650,7 +656,10 @@ private fun HighlightsList(
     chapters: List<EpubChapter>,
     onNavigateToHighlight: (UserHighlight) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
-    onEditNote: (UserHighlight) -> Unit // ADDED
+    onEditNote: (UserHighlight) -> Unit,
+    activeHighlightPalette: List<HighlightColor>,
+    onOpenPaletteManager: () -> Unit,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit
 ) {
     if (userHighlights.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -750,6 +759,19 @@ private fun HighlightsList(
                                         expanded = highlightMenuExpandedFor == highlight,
                                         onDismissRequest = { highlightMenuExpandedFor = null }
                                     ) {
+                                        HighlightColorRow(
+                                            activeHighlightPalette = activeHighlightPalette,
+                                            selectedColor = highlight.color,
+                                            onColorSelect = { color ->
+                                                onHighlightColorChange(highlight, color)
+                                                highlightMenuExpandedFor = null
+                                            },
+                                            onOpenPaletteManager = {
+                                                onOpenPaletteManager()
+                                                highlightMenuExpandedFor = null
+                                            }
+                                        )
+                                        HorizontalDivider()
                                         DropdownMenuItem(
                                             text = { Text(if (highlight.note.isNullOrBlank()) "Add Note" else "Edit Note") },
                                             onClick = {

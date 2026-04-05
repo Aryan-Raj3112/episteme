@@ -10,7 +10,6 @@ import android.content.Intent
 import android.os.Build
 import android.widget.Toast
 import androidx.annotation.RequiresApi
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -40,18 +39,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -104,7 +95,6 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.res.imageResource
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
@@ -139,14 +129,13 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest.Builder
-import com.aryan.reader.R
 import com.aryan.reader.ReaderTexture
 import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epubreader.HighlightColor
+import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
 import com.aryan.reader.epubreader.ReaderTextAlign
-import com.aryan.reader.epubreader.SpectrumButton
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
@@ -1425,7 +1414,6 @@ internal fun PaginatedReaderContent(
     val imageLoader = context.imageLoader
     val textMeasurer = rememberTextMeasurer()
     var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
-    var activeHighlightForMenu by remember { mutableStateOf<Pair<UserHighlight, Rect>?>(null) }
     val blockLayoutMap = remember {
         androidx.compose.runtime.mutableStateMapOf<String, Triple<TextLayoutResult, LayoutCoordinates, Int>>()
     }
@@ -1475,13 +1463,17 @@ internal fun PaginatedReaderContent(
     }
 
     val textToolbar = remember {
-        CustomPaginatedTextToolbar(onShow = { rect, onCopy, onSelectAll ->
-            if (activeHighlightForMenu == null) {
+        CustomPaginatedTextToolbar(
+            onShow = { rect, onCopy, onSelectAll ->
                 menuState = PaginatedMenuState(
-                    rect, onCopy, onHide = { menuState = null }, onSelectAll
+                    rect = rect,
+                    onCopy = onCopy,
+                    onHide = { menuState = null },
+                    onSelectAll = onSelectAll
                 )
-            }
-        }, onHide = { menuState = null })
+            },
+            onHide = { menuState = null }
+        )
     }
 
     var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
@@ -1761,9 +1753,8 @@ internal fun PaginatedReaderContent(
                                                             onSelectionChange = { sel ->
                                                                 activeSelection = sel
                                                             },
-                                                            onHighlightClick = { highlight, rect ->
-                                                                activeHighlightForMenu =
-                                                                    highlight to rect
+                                                            onHighlightClick = { highlight, _ ->
+                                                                onNoteRequested(highlight.cfi)
                                                                 activeSelection = null
                                                                 menuState = null
                                                             },
@@ -1839,9 +1830,8 @@ internal fun PaginatedReaderContent(
                                                             onSelectionChange = { sel ->
                                                                 activeSelection = sel
                                                             },
-                                                            onHighlightClick = { highlight, rect ->
-                                                                activeHighlightForMenu =
-                                                                    highlight to rect
+                                                            onHighlightClick = { highlight, _ ->
+                                                                onNoteRequested(highlight.cfi)
                                                                 activeSelection = null
                                                                 menuState = null
                                                             },
@@ -1918,9 +1908,8 @@ internal fun PaginatedReaderContent(
                                                             onSelectionChange = { sel ->
                                                                 activeSelection = sel
                                                             },
-                                                            onHighlightClick = { highlight, rect ->
-                                                                activeHighlightForMenu =
-                                                                    highlight to rect
+                                                            onHighlightClick = { highlight, _ ->
+                                                                onNoteRequested(highlight.cfi)
                                                                 activeSelection = null
                                                                 menuState = null
                                                             },
@@ -2033,9 +2022,8 @@ internal fun PaginatedReaderContent(
                                                                 onSelectionChange = { sel ->
                                                                     activeSelection = sel
                                                                 },
-                                                                onHighlightClick = { highlight, rect ->
-                                                                    activeHighlightForMenu =
-                                                                        highlight to rect
+                                                                onHighlightClick = { highlight, _ ->
+                                                                    onNoteRequested(highlight.cfi)
                                                                     activeSelection = null
                                                                     menuState = null
                                                                 },
@@ -2105,9 +2093,8 @@ internal fun PaginatedReaderContent(
                                                                         onSelectionChange = { sel ->
                                                                             activeSelection = sel
                                                                         },
-                                                                        onHighlightClick = { highlight, rect ->
-                                                                            activeHighlightForMenu =
-                                                                                highlight to rect
+                                                                        onHighlightClick = { highlight, _ ->
+                                                                            onNoteRequested(highlight.cfi)
                                                                             activeSelection = null
                                                                             menuState = null
                                                                         },
@@ -2154,9 +2141,8 @@ internal fun PaginatedReaderContent(
                                                                         onSelectionChange = { sel ->
                                                                             activeSelection = sel
                                                                         },
-                                                                        onHighlightClick = { highlight, rect ->
-                                                                            activeHighlightForMenu =
-                                                                                highlight to rect
+                                                                        onHighlightClick = { highlight, _ ->
+                                                                            onNoteRequested(highlight.cfi)
                                                                             activeSelection = null
                                                                             menuState = null
                                                                         },
@@ -3009,65 +2995,6 @@ internal fun PaginatedReaderContent(
                 )
             }
 
-            // Edit Menu (Delete)
-            if (activeHighlightForMenu != null) {
-                val (highlight, rect) = activeHighlightForMenu!!
-                Popup(popupPositionProvider = remember(rect, density) {
-                    SmartPopupPositionProvider(rect, density)
-                }, onDismissRequest = { activeHighlightForMenu = null }) {
-                    PaginatedTextSelectionMenu(
-                        onCopy = {
-                            val clipboardManager =
-                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Copied Text", highlight.text)
-                            clipboardManager.setPrimaryClip(clip)
-                            activeHighlightForMenu = null
-                        },
-                        onSelectAll = null,
-                        onDictionary = {
-                            if (isProUser || countWords(highlight.text) <= 1) {
-                                onWordSelectedForAiDefinition(highlight.text)
-                            } else {
-                                onShowDictionaryUpsellDialog()
-                            }
-                            activeHighlightForMenu = null
-                        },
-                        onTranslate = {
-                            onTranslate(highlight.text)
-                            activeHighlightForMenu = null
-                        },
-                        onSearch = {
-                            onSearch(highlight.text)
-                            activeHighlightForMenu = null
-                        },
-                        onTts = {
-                            val firstPart = highlight.cfi.split("|").first()
-                            val baseCfi = firstPart.substringBefore(":")
-                            val offset = firstPart.substringAfter(":", "0").toIntOrNull() ?: 0
-                            onStartTtsFromSelection(baseCfi, offset)
-                            activeHighlightForMenu = null
-                        },
-                        onHighlight = { color ->
-                            Timber.d("Menu: Updating highlight color to ${color.id}")
-                            onHighlightCreated(highlight.cfi, highlight.text, color.id)
-                            activeHighlightForMenu = null
-                        },
-                        onNote = {
-                            onNoteRequested(highlight.cfi)
-                            activeHighlightForMenu = null
-                        },
-                        onDelete = {
-                            onHighlightDeleted(highlight.cfi)
-                            activeHighlightForMenu = null
-                        },
-                        isProUser = isProUser,
-                        isOss = isOss,
-                        activeHighlightPalette = activeHighlightPalette,
-                        onOpenPaletteManager = { showPaletteManager = true }
-                    )
-                }
-            }
-
             if (showPaletteManager) {
                 PaletteManagerDialog(
                     currentPalette = activeHighlightPalette,
@@ -3118,124 +3045,6 @@ private fun ChapterLoadingPlaceholder(title: String?) {
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
             )
-        }
-    }
-}
-
-private class MenuActionItem(
-    val iconRes: Int? = null,
-    val imageVector: androidx.compose.ui.graphics.vector.ImageVector? = null,
-    val label: String,
-    val onClick: () -> Unit,
-    val isError: Boolean = false
-)
-
-@Composable
-fun PaginatedTextSelectionMenu(
-    onCopy: () -> Unit,
-    onSelectAll: (() -> Unit)?,
-    onDictionary: () -> Unit,
-    onTranslate: () -> Unit,
-    onSearch: () -> Unit,
-    onHighlight: ((HighlightColor) -> Unit)?,
-    onNote: (() -> Unit)? = null,
-    onDelete: (() -> Unit)?,
-    onTts: (() -> Unit)?,
-    @Suppress("unused") isProUser: Boolean,
-    @Suppress("unused") isOss: Boolean,
-    activeHighlightPalette: List<HighlightColor> = emptyList(),
-    onOpenPaletteManager: (() -> Unit)? = null
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        shadowElevation = 6.dp,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
-            // 1. Colors Row
-            if (onHighlight != null) {
-                Row(
-                    modifier = Modifier
-                        .padding(vertical = 12.dp, horizontal = 12.dp)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    activeHighlightPalette.forEach { colorEnum ->
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 6.dp)
-                                .size(32.dp)
-                                .background(colorEnum.color, CircleShape)
-                                .clickable { onHighlight(colorEnum) }
-                        )
-                    }
-
-                    if (onOpenPaletteManager != null) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        SpectrumButton(
-                            onClick = onOpenPaletteManager,
-                            size = 32.dp
-                        )
-                    }
-                }
-                HorizontalDivider()
-            }
-
-            val actions = mutableListOf<MenuActionItem>()
-            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = onCopy))
-            if (onTts != null) {
-                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
-            }
-            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = onDictionary))
-            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = onTranslate))
-            actions.add(MenuActionItem(iconRes = R.drawable.search, label = "Search", onClick = onSearch))
-
-            if (onNote != null) {
-                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = "Note", onClick = onNote))
-            }
-
-            if (onSelectAll != null) {
-                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = onSelectAll))
-            }
-            if (onDelete != null) {
-                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = onDelete, isError = true))
-            }
-
-            Column(modifier = Modifier.padding(bottom = 4.dp)) {
-                actions.chunked(3).forEach { rowActions ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        rowActions.forEach { action ->
-                            val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                            Column(
-                                modifier = Modifier
-                                    .width(64.dp)
-                                    .clickable { action.onClick() }
-                                    .padding(vertical = 8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                if (action.imageVector != null) {
-                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
-                                } else if (action.iconRes != null) {
-                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
-                            }
-                        }
-                        repeat(3 - rowActions.size) {
-                            Spacer(modifier = Modifier.width(64.dp))
-                        }
-                    }
-                }
-            }
         }
     }
 }

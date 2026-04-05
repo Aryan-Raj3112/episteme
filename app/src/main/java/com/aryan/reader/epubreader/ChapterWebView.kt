@@ -82,7 +82,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
 import com.aryan.reader.ReaderTexture
-import com.aryan.reader.paginatedreader.PaginatedTextSelectionMenu
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -280,7 +279,9 @@ private data class CustomMenuState(
     val selectionBounds: Rect,
     val finishActionModeCallback: () -> Unit,
     val cfi: String? = null,
-    val isExistingHighlight: Boolean = false
+    val isExistingHighlight: Boolean = false,
+    val note: String? = null,
+    val selectedColor: HighlightColor? = null
 )
 
 @Suppress("unused")
@@ -369,6 +370,7 @@ fun ChapterWebView(
     val jsToInject = remember(context) { getJsToInject(context) }
 
     var showPaletteManager by remember { mutableStateOf(false) }
+    val latestUserHighlights by rememberUpdatedState(userHighlights)
 
     val textureBase64 by remember(activeTextureId) {
         mutableStateOf(
@@ -462,7 +464,7 @@ fun ChapterWebView(
                 Timber.d(
                     "InteractiveWebView factory for $chapterTitle (Key: $key), isDarkTheme: $isDarkTheme, initialScroll: $initialScrollTarget"
                 )
-                val webView = InteractiveWebView(
+                @Suppress("unused") val webView = InteractiveWebView(
                     context = ctx,
                     onSingleTap = onTap,
                     onPotentialScroll = onPotentialScroll,
@@ -512,32 +514,11 @@ fun ChapterWebView(
                             onClickCallback = { cfi, text, left, top, right, bottom ->
                                 this.post {
                                     onHighlightClicked()
-
-                                    val densityValue = density.density
-                                    val locationOnScreen = IntArray(2)
-                                    this.getLocationOnScreen(locationOnScreen)
-                                    val xOffset = locationOnScreen[0]
-                                    val yOffset = locationOnScreen[1]
-
-                                    val rect = Rect(
-                                        (left * densityValue).toInt() + xOffset,
-                                        (top * densityValue).toInt() + yOffset,
-                                        (right * densityValue).toInt() + xOffset,
-                                        (bottom * densityValue).toInt() + yOffset
+                                    localWebViewRef?.evaluateJavascript(
+                                        "javascript:if(window.getSelection) window.getSelection().removeAllRanges();",
+                                        null
                                     )
-
-                                    customMenuState = CustomMenuState(
-                                        selectedText = text,
-                                        selectionBounds = rect,
-                                        finishActionModeCallback = {
-                                            localWebViewRef?.evaluateJavascript(
-                                                "javascript:if(window.getSelection) window.getSelection().removeAllRanges();",
-                                                null
-                                            )
-                                        },
-                                        cfi = cfi,
-                                        isExistingHighlight = true
-                                    )
+                                    onNoteRequested(cfi)
                                 }
                             }
                         ), "HighlightBridge"
@@ -1047,7 +1028,10 @@ fun ChapterWebView(
                                     }
                                 } else null,
                                 isProUser = isProUser,
-                                isOss = isOss)
+                                isOss = isOss,
+                                existingNote = state.note,
+                                selectedColor = state.selectedColor
+                            )
                         }
                     }
                 }
