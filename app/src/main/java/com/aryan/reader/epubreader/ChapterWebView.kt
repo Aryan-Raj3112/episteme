@@ -1006,21 +1006,13 @@ fun ChapterWebView(
                                 onDelete = if (state.isExistingHighlight && state.cfi != null) {
                                     {
                                         val highlightToDelete = userHighlights.find { h ->
-                                            h.cfi == state.cfi || h.cfi.split("|")
-                                                .contains(state.cfi)
+                                            h.cfi == state.cfi || h.cfi.split("|").contains(state.cfi)
                                         }
                                         if (highlightToDelete != null) {
                                             val cssClassToDelete = highlightToDelete.color.cssClass
-                                            val allCfiParts = highlightToDelete.cfi.split("|")
-                                            allCfiParts.forEach { partCfi ->
-                                                localWebViewRef?.evaluateJavascript(
-                                                    "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${
-                                                        escapeJsString(
-                                                            partCfi
-                                                        )
-                                                    }', '$cssClassToDelete');", null
-                                                )
-                                            }
+                                            localWebViewRef?.evaluateJavascript(
+                                                "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(highlightToDelete.cfi)}', '$cssClassToDelete');", null
+                                            )
                                             onHighlightDeleted(highlightToDelete.cfi)
                                         }
                                         state.finishActionModeCallback()

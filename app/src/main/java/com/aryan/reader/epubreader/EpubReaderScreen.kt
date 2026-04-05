@@ -1076,11 +1076,8 @@ fun EpubReaderHost(
             userHighlights[index] = targetHighlight.copy(color = newColor)
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val cssClass = newColor.cssClass
-                val cfiParts = targetHighlight.cfi.split("|")
-                cfiParts.forEach { partCfi ->
-                    val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(partCfi)}', '$cssClass', '${newColor.id}');"
-                    webViewRefForTts?.evaluateJavascript(jsCommand, null)
-                }
+                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '${newColor.id}');"
+                webViewRefForTts?.evaluateJavascript(jsCommand, null)
             }
         }
     }
@@ -1970,13 +1967,9 @@ fun EpubReaderHost(
                         highlightToDelete.chapterIndex == currentChapterIndex) {
 
                         val cssClass = highlightToDelete.color.cssClass
-                        val cfiParts = highlightToDelete.cfi.split("|")
-
-                        cfiParts.forEach { partCfi ->
-                            val jsCommand = "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClass');"
-                            Timber.d("Executing JS removal for part: $partCfi")
-                            webViewRefForTts?.evaluateJavascript(jsCommand, null)
-                        }
+                        val jsCommand = "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(highlightToDelete.cfi)}', '$cssClass');"
+                        Timber.d("Executing JS removal for highlight: ${highlightToDelete.cfi}")
+                        webViewRefForTts?.evaluateJavascript(jsCommand, null)
                     }
                 },
                 onEditNote = { highlight ->
@@ -2264,7 +2257,7 @@ fun EpubReaderHost(
                                                 Timber.d("Vertical Mode (Source): Text Snippet: '${text.take(50)}...'")
                                                 val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
 
-                                                processAndAddHighlight(
+                                                val finalCfi = processAndAddHighlight(
                                                     newCfi = cfi,
                                                     newText = text,
                                                     newColor = color,
@@ -2274,7 +2267,7 @@ fun EpubReaderHost(
 
                                                 if (pendingNoteForNewHighlight) {
                                                     pendingNoteForNewHighlight = false
-                                                    highlightToNoteCfi = cfi
+                                                    highlightToNoteCfi = finalCfi
                                                 }
                                             },
                                             onNoteRequested = { cfi ->
@@ -2925,7 +2918,7 @@ fun EpubReaderHost(
                                 onHighlightCreated = { cfi, text, colorId ->
                                     Timber.d("EpubReaderScreen: onHighlightCreated. CFI: $cfi")
                                     val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
-                                    processAndAddHighlight(
+                                    val finalCfi = processAndAddHighlight(
                                         newCfi = cfi,
                                         newText = text,
                                         newColor = color,
@@ -2934,7 +2927,7 @@ fun EpubReaderHost(
                                     )
                                     if (pendingNoteForNewHighlight) {
                                         pendingNoteForNewHighlight = false
-                                        highlightToNoteCfi = cfi
+                                        highlightToNoteCfi = finalCfi
                                     }
                                 },
                                 onNoteRequested = { cfi ->
@@ -3995,16 +3988,13 @@ fun EpubReaderHost(
                                 highlightToNoteCfi = null
                             },
                             onDelete = {
-                                val highlightToDelete = targetHighlight
-                                userHighlights.remove(highlightToDelete)
+                                userHighlights.remove(targetHighlight)
 
-                                if (currentRenderMode == RenderMode.VERTICAL_SCROLL && highlightToDelete.chapterIndex == currentChapterIndex) {
-                                    val cssClass = highlightToDelete.color.cssClass
-                                    val cfiParts = highlightToDelete.cfi.split("|")
-                                    cfiParts.forEach { partCfi ->
-                                        val jsCommand = "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(partCfi)}', '$cssClass');"
-                                        webViewRefForTts?.evaluateJavascript(jsCommand, null)
-                                    }
+                                if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
+                                    val cssClass = targetHighlight.color.cssClass
+                                    val jsCommand = "javascript:window.HighlightBridgeHelper.removeHighlightByCfi('${escapeJsString(
+                                        targetHighlight.cfi)}', '$cssClass');"
+                                    webViewRefForTts?.evaluateJavascript(jsCommand, null)
                                 }
                                 highlightToNoteCfi = null
                             },

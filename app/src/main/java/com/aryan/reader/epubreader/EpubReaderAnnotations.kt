@@ -286,7 +286,7 @@ fun processAndAddHighlight(
     newColor: HighlightColor,
     chapterIndex: Int,
     currentList: MutableList<UserHighlight>
-) {
+): String {
     val newParts = newCfi.split('|')
     val newStartFull = newParts.first()
     val newEndFull = newParts.last()
@@ -348,13 +348,15 @@ fun processAndAddHighlight(
         }
     }
 
+    val finalCfi = "$finalStartPath:$finalStartOffset|$finalEndPath:$finalEndOffset"
     currentList.add(UserHighlight(
-        cfi = "$finalStartPath:$finalStartOffset|$finalEndPath:$finalEndOffset",
+        cfi = finalCfi,
         text = finalText,
         color = newColor,
         chapterIndex = chapterIndex,
         note = finalNote
     ))
+    return finalCfi
 }
 
 // --- UI Components ---
@@ -610,9 +612,12 @@ fun AnnotationBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(
+                Button(
                     onClick = onDelete,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
