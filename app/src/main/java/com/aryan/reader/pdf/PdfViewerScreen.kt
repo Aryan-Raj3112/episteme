@@ -583,6 +583,25 @@ private fun getSuggestedFilename(originalName: String?, isAnnotated: Boolean): S
     return "${safeBase}${suffix}_${shortId}.pdf"
 }
 
+private fun savePdfLockedState(context: Context, bookId: String, scale: Float, offsetX: Float, offsetY: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putFloat("pdf_locked_scale_$bookId", scale)
+        putFloat("pdf_locked_offset_x_$bookId", offsetX)
+        putFloat("pdf_locked_offset_y_$bookId", offsetY)
+    }
+}
+
+private fun loadPdfLockedState(context: Context, bookId: String): Triple<Float, Float, Float>? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    if (!prefs.contains("pdf_locked_scale_$bookId")) return null
+    return Triple(
+        prefs.getFloat("pdf_locked_scale_$bookId", 1f),
+        prefs.getFloat("pdf_locked_offset_x_$bookId", 0f),
+        prefs.getFloat("pdf_locked_offset_y_$bookId", 0f)
+    )
+}
+
 private enum class SaveMode {
     ORIGINAL, ANNOTATED
 }
@@ -1181,6 +1200,9 @@ fun PdfViewerScreen(
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
     var isScrollLocked by remember { mutableStateOf(false) }
+    var lockedState by remember { mutableStateOf<Triple<Float, Float, Float>?>(null) }
+    var currentActiveScale by remember { mutableFloatStateOf(1f) }
+    var currentActiveOffset by remember { mutableStateOf(Offset.Zero) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
@@ -1239,6 +1261,7 @@ fun PdfViewerScreen(
     LaunchedEffect(bookId) {
         isScrollLocked = loadPdfScrollLocked(context, bookId)
         isFullScreen = loadPdfFullScreen(context, bookId)
+        lockedState = loadPdfLockedState(context, bookId)
     }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
@@ -1503,6 +1526,14 @@ fun PdfViewerScreen(
     LaunchedEffect(ocrLanguage) { OcrHelper.init(ocrLanguage) }
 
     LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
+
+    LaunchedEffect(currentActiveScale, currentActiveOffset, isScrollLocked) {
+        if (isScrollLocked) {
+            delay(500)
+            lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+            savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+        }
+    }
 
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
     val toolSettings by annotationSettingsRepo.settings.collectAsState()
@@ -4367,7 +4398,7 @@ fun PdfViewerScreen(
                                             key = { it },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
                                             userScrollEnabled = run {
-                                                val enabled = currentPageScale == 1f && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
+                                                val enabled = (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
                                                 SideEffect {
                                                     Timber.tag("PdfZoomDebug").v("Pager Scroll Enabled: $enabled (Scale: $currentPageScale, Playing: ${ttsState.isPlaying}, Slider: $isPageSliderVisible, DraggingBox: $paginationDraggingBoxId)")
                                                 }
@@ -4619,6 +4650,13 @@ fun PdfViewerScreen(
                                                 onNoteRequested = onNoteRequested,
                                                 onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                                 activeToolThickness = currentStrokeWidthState,
+                                                lockedState = lockedState,
+                                                onZoomAndPanChanged = { newScale, newOffset ->
+                                                    if (pagerState.currentPage == pageIndex) {
+                                                        currentActiveScale = newScale
+                                                        currentActiveOffset = newOffset
+                                                    }
+                                                },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
                                                         val targetPage =
@@ -4774,6 +4812,8 @@ fun PdfViewerScreen(
                                                 },
                                                 onDragPageTurn = { /* Handled in onTextBoxDrag */ },
                                                 isVisible = isVisiblePage,
+                                                isActivePage = pagerState.currentPage == pageIndex,
+                                                isScrolling = pagerState.isScrollInProgress
                                             )
                                         }
 
@@ -5025,7 +5065,12 @@ fun PdfViewerScreen(
                                             isAutoScrollPlaying = isAutoScrollPlaying,
                                             isAutoScrollTempPaused = isAutoScrollTempPaused,
                                             autoScrollSpeed = autoScrollSpeed * 0.5f,
-                                            onInteractionListener = onAutoScrollInteraction
+                                            onInteractionListener = onAutoScrollInteraction,
+                                            lockedState = lockedState,
+                                            onZoomAndPanChanged = { newScale, newOffset ->
+                                                currentActiveScale = newScale
+                                                currentActiveOffset = newOffset
+                                            }
                                         )
                                     }
                                 }
@@ -5529,6 +5574,10 @@ fun PdfViewerScreen(
                                         onClick = {
                                             isScrollLocked = !isScrollLocked
                                             savePdfScrollLocked(context, bookId, isScrollLocked)
+                                            if (isScrollLocked) {
+                                                savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                                                lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                                            }
                                         }) {
                                         Icon(
                                             imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,

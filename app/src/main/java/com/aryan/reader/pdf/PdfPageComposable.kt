@@ -432,6 +432,7 @@ internal fun PdfPageComposable(
     draggingBoxId: String? = null,
     isScrollLocked: Boolean = false,
     isVisible: Boolean = true,
+    isActivePage: Boolean = true,
     isStylusOnlyMode: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
@@ -442,7 +443,9 @@ internal fun PdfPageComposable(
     onTts: (Int, Int) -> Unit = { _, _ -> },
     activeToolThickness: Float = 0f,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
-    onPaletteClick: (() -> Unit)? = null
+    onPaletteClick: (() -> Unit)? = null,
+    lockedState: Triple<Float, Float, Float>? = null,
+    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null
 ) {
     val pdfDocumentItem = pdfDocument.item
     var bitmapState by remember { mutableStateOf(PdfThumbnailCache.get(pageIndex)) }
@@ -473,6 +476,10 @@ internal fun PdfPageComposable(
     var isTransforming by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    LaunchedEffect(scale, offset) {
+        onZoomAndPanChanged?.invoke(scale, offset)
+    }
 
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
@@ -718,12 +725,6 @@ internal fun PdfPageComposable(
                 Timber.e(e, "Failed to map user highlights to screen rects")
             }
         }
-    }
-
-    LaunchedEffect(pageIndex) {
-        scale = 1f
-        offset = Offset.Zero
-        onScaleChanged(1f)
     }
 
     LaunchedEffect(isPerformingOcrForSelection) { onOcrStateChange(isPerformingOcrForSelection) }
@@ -1067,9 +1068,10 @@ internal fun PdfPageComposable(
         canvasHeightPx.floatValue,
         isVerticalScroll,
         isScrolling,
-        virtualPage
+        virtualPage,
+        isActivePage
     ) {
-        val needsTiling = effectiveScale > 1f || actualBitmapWidthPx > 3000 || actualBitmapHeightPx > 3000
+        val needsTiling = (effectiveScale > 1f || actualBitmapWidthPx > 3000 || actualBitmapHeightPx > 3000) && (isVerticalScroll || isActivePage)
         if (!needsTiling) {
             if (tiles.isNotEmpty()) {
                 val oldTiles = tiles
@@ -2594,7 +2596,7 @@ internal fun PdfPageComposable(
                         }
                     }
                 }, onDoubleTap = { tapOffset ->
-                    if (isZoomEnabled && !isVerticalScroll) {
+                    if (isZoomEnabled && !isVerticalScroll && !isScrollLocked) {
                         if (actualBitmapWidthPx == 0) return@detectTapGestures
                         coroutineScope.launch {
                             val startScale = scale
@@ -2689,7 +2691,11 @@ internal fun PdfPageComposable(
 
                         if (!canceled) {
                             val rawPanChange = event.calculatePan()
-                            val panChange = if (isScrollLocked) Offset(0f, rawPanChange.y) else rawPanChange
+                            val panChange = if (isScrollLocked && pointerCount == 1) {
+                                if (isVerticalScroll) Offset(0f, rawPanChange.y) else Offset.Zero
+                            } else {
+                                rawPanChange
+                            }
                             val zoomChange = event.calculateZoom()
 
                             if (scale > 1f) {
@@ -3112,14 +3118,21 @@ internal fun PdfPageComposable(
         }
 
         LaunchedEffect(
-            this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight
+            pageIndex, this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight,
+            isScrollLocked, lockedState
         ) {
-            scale = 1f
-            offset = Offset.Zero
-            onScaleChanged(1f)
+            if (isScrollLocked && !isVerticalScroll && lockedState != null) {
+                scale = lockedState.first
+                offset = Offset(lockedState.second, lockedState.third)
+                onScaleChanged(scale)
+            } else if (!isScrollLocked && !isVerticalScroll) {
+                scale = 1f
+                offset = Offset.Zero
+                onScaleChanged(1f)
+            }
 
             Timber.d(
-                "PdfPageComposable Page $pageIndex | Constraints: maxWidth=${this@BoxWithConstraints.maxWidth}, maxHeight=${this@BoxWithConstraints.maxHeight}"
+                "PdfPageComposable Page $pageIndex initialized/resized/locked. scale=$scale, offset=$offset"
             )
         }
 

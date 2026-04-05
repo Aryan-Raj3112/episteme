@@ -234,7 +234,9 @@ internal fun PdfVerticalReader(
     onTts: (Int, Int) -> Unit = { _, _ -> },
     activeToolThickness: Float = 0f,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
-    onPaletteClick: () -> Unit = {}
+    onPaletteClick: () -> Unit = {},
+    lockedState: Triple<Float, Float, Float>? = null,
+    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     DisposableEffect(state) {
@@ -336,6 +338,10 @@ internal fun PdfVerticalReader(
         val panXAnimatable = remember { Animatable(if ((screenWidth * fitZoom) < screenWidth) (screenWidth - (screenWidth * fitZoom)) / 2f else 0f) }
         val panYAnimatable = remember { Animatable(0f) }
 
+        LaunchedEffect(zoomAnimatable.value, panXAnimatable.value, panYAnimatable.value) {
+            onZoomAndPanChanged?.invoke(zoomAnimatable.value, Offset(panXAnimatable.value, panYAnimatable.value))
+        }
+
         var isResizing by remember { mutableStateOf(false) }
         var previousScreenWidth by remember { mutableFloatStateOf(0f) }
         var previousScreenHeight by remember { mutableFloatStateOf(0f) }
@@ -401,6 +407,12 @@ internal fun PdfVerticalReader(
                 delay(50)
                 isResizing = false
                 targetPageDuringResize.intValue = -1
+            } else if (isScrollLocked && lockedState != null) {
+                val (savedScale, savedPanX, _) = lockedState
+                coroutineScope {
+                    launch { zoomAnimatable.snapTo(savedScale) }
+                    launch { panXAnimatable.snapTo(savedPanX) }
+                }
             }
             isInitialLayout = false
         }
@@ -768,63 +780,65 @@ internal fun PdfVerticalReader(
         }
 
         val onDoubleTapToZoom: (Offset) -> Unit = { tapScreenOffset ->
-            val currentZoom = zoomAnimatable.value
+            if (!isScrollLocked) {
+                val currentZoom = zoomAnimatable.value
 
-            val targetZoom = when {
-                currentZoom < 0.95f -> 1f
-                currentZoom < 2.45f -> 2.5f
-                else -> fitZoom
-            }
-
-            val startPanX = panXAnimatable.value
-            val startPanY = panYAnimatable.value
-
-            scope.launch {
-                zoomAnimatable.stop()
-                panXAnimatable.stop()
-                panYAnimatable.stop()
-
-                val pivotContentX = (tapScreenOffset.x - startPanX) / currentZoom
-                val pivotContentY = (tapScreenOffset.y - startPanY) / currentZoom
-
-                val rawNextPanX = tapScreenOffset.x - (pivotContentX * targetZoom)
-                val rawNextPanY = tapScreenOffset.y - (pivotContentY * targetZoom)
-
-                val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
-
-                panXAnimatable.updateBounds(
-                    lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
-                    upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
-                )
-                panYAnimatable.updateBounds(
-                    lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
-                    upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
-                )
-
-                coroutineScope {
-                    launch { zoomAnimatable.animateTo(finalZoom, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
-                    launch { panXAnimatable.animateTo(finalX, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
-                    launch { panYAnimatable.animateTo(finalY, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                val targetZoom = when {
+                    currentZoom < 0.95f -> 1f
+                    currentZoom < 2.45f -> 2.5f
+                    else -> fitZoom
                 }
 
-                onZoomChange(zoomAnimatable.value)
+                val startPanX = panXAnimatable.value
+                val startPanY = panYAnimatable.value
 
-                val zoomedDocWidth = screenWidth * finalZoom
-                val finalMinX: Float
-                val finalMaxX: Float
-                if (zoomedDocWidth < screenWidth) {
-                    val centeredX = (screenWidth - zoomedDocWidth) / 2f
-                    finalMinX = centeredX
-                    finalMaxX = centeredX
-                } else {
-                    finalMinX = -(zoomedDocWidth - screenWidth)
-                    finalMaxX = 0f
+                scope.launch {
+                    zoomAnimatable.stop()
+                    panXAnimatable.stop()
+                    panYAnimatable.stop()
+
+                    val pivotContentX = (tapScreenOffset.x - startPanX) / currentZoom
+                    val pivotContentY = (tapScreenOffset.y - startPanY) / currentZoom
+
+                    val rawNextPanX = tapScreenOffset.x - (pivotContentX * targetZoom)
+                    val rawNextPanY = tapScreenOffset.y - (pivotContentY * targetZoom)
+
+                    val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
+
+                    panXAnimatable.updateBounds(
+                        lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
+                        upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
+                    )
+                    panYAnimatable.updateBounds(
+                        lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
+                        upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
+                    )
+
+                    coroutineScope {
+                        launch { zoomAnimatable.animateTo(finalZoom, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                        launch { panXAnimatable.animateTo(finalX, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                        launch { panYAnimatable.animateTo(finalY, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                    }
+
+                    onZoomChange(zoomAnimatable.value)
+
+                    val zoomedDocWidth = screenWidth * finalZoom
+                    val finalMinX: Float
+                    val finalMaxX: Float
+                    if (zoomedDocWidth < screenWidth) {
+                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                        finalMinX = centeredX
+                        finalMaxX = centeredX
+                    } else {
+                        finalMinX = -(zoomedDocWidth - screenWidth)
+                        finalMaxX = 0f
+                    }
+                    panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
+
+                    val zDocH = totalDocHeight * finalZoom
+                    val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
+                    panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
                 }
-                panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
-
-                val zDocH = totalDocHeight * finalZoom
-                val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
-                panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
             }
         }
 
@@ -1042,7 +1056,7 @@ internal fun PdfVerticalReader(
 
                                 val zoomChange = event.calculateZoom()
                                 val rawPanChange = event.calculatePan()
-                                val panChange = if (isScrollLocked) Offset(0f, rawPanChange.y) else rawPanChange
+                                val panChange = if (isScrollLocked && !isMultiTouch) Offset(0f, rawPanChange.y) else rawPanChange
 
                                 val centroid = event.calculateCentroid(useCurrent = false)
                                 val panMagnitude = panChange.getDistance()
