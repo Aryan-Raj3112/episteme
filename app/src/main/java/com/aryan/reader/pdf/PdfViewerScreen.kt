@@ -1471,6 +1471,8 @@ fun PdfViewerScreen(
         mutableStateMapOf<Int, MutableList<PdfAnnotation>>()
     }
 
+    var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
+
     var areAnnotationsLoaded by remember { mutableStateOf(false) }
 
     val richTextRepository = remember(context) { PdfRichTextRepository(context) }
@@ -2773,6 +2775,7 @@ fun PdfViewerScreen(
     fun isAnnotationHit(
         annotation: PdfAnnotation,
         hitPoint: PdfPoint,
+        lastHitPoint: PdfPoint?,
         pageAspectRatio: Float,
         threshold: Float
     ): Boolean {
@@ -2781,11 +2784,37 @@ fun PdfViewerScreen(
         val effectiveThreshold = threshold + (annotation.strokeWidth / 2f)
         val thresholdSq = effectiveThreshold * effectiveThreshold
 
+        fun distSqToEraser(px: Float, pyScaled: Float): Float {
+            val e1x = hitPoint.x
+            val e1yScaled = hitPoint.y / pageAspectRatio
+            if (lastHitPoint == null) {
+                val dx = px - e1x
+                val dy = pyScaled - e1yScaled
+                return dx * dx + dy * dy
+            }
+            val e0x = lastHitPoint.x
+            val e0yScaled = lastHitPoint.y / pageAspectRatio
+
+            val ex = e1x - e0x
+            val ey = e1yScaled - e0yScaled
+            val segLenSq = (ex * ex + ey * ey)
+            if (segLenSq < 1e-8f) {
+                val dx = px - e1x
+                val dy = pyScaled - e1yScaled
+                return dx * dx + dy * dy
+            }
+            val t = ((px - e0x) * ex + (pyScaled - e0yScaled) * ey) / segLenSq
+            val tClamped = t.coerceIn(0f, 1f)
+            val closestX = e0x + ex * tClamped
+            val closestY = e0yScaled + ey * tClamped
+            val dx = px - closestX
+            val dy = pyScaled - closestY
+            return dx * dx + dy * dy
+        }
+
         if (annotation.points.size == 1) {
             val p = annotation.points[0]
-            val dx = (p.x - hitPoint.x)
-            val dy = (p.y - hitPoint.y) / pageAspectRatio
-            return (dx * dx + dy * dy) < thresholdSq
+            return distSqToEraser(p.x, p.y / pageAspectRatio) < thresholdSq
         }
 
         for (i in 0 until annotation.points.size - 1) {
@@ -2807,6 +2836,11 @@ fun PdfViewerScreen(
             val distSq = (pax - closestX) * (pax - closestX) + (pay - closestY) * (pay - closestY)
 
             if (distSq < thresholdSq) return true
+
+            if (lastHitPoint != null) {
+                if (distSqToEraser(a.x, a.y / pageAspectRatio) < thresholdSq) return true
+                if (distSqToEraser(b.x, b.y / pageAspectRatio) < thresholdSq) return true
+            }
         }
 
         return false
@@ -4223,6 +4257,13 @@ fun PdfViewerScreen(
 
                                             val currentSelectedTool by rememberUpdatedState(selectedTool)
 
+                                            val currentStrokeColorState by rememberUpdatedState(
+                                                currentStrokeColor
+                                            )
+                                            val currentStrokeWidthState by rememberUpdatedState(
+                                                currentStrokeWidth
+                                            )
+
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
                                                 remember(pageIndex) {
                                                     { point: PdfPoint ->
@@ -4231,8 +4272,9 @@ fun PdfViewerScreen(
                                                             val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                             val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                             }
+                                                            lastEraserPoint = point
                                                             if (toRemove.isNotEmpty()) {
                                                                 val batch =
                                                                     erasedAnnotationsFromStroke.getOrPut(
@@ -4259,13 +4301,6 @@ fun PdfViewerScreen(
                                                     }
                                                 }
 
-                                            val currentStrokeColorState by rememberUpdatedState(
-                                                currentStrokeColor
-                                            )
-                                            val currentStrokeWidthState by rememberUpdatedState(
-                                                currentStrokeWidth
-                                            )
-
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawStartPagination =
                                                 remember(pageIndex) {
                                                     { point: PdfPoint ->
@@ -4274,11 +4309,12 @@ fun PdfViewerScreen(
                                                         } else {
                                                             if (currentSelectedTool == InkType.TEXT) {
                                                             } else if (currentSelectedTool == InkType.ERASER) {
+                                                                lastEraserPoint = point
                                                                 erasedAnnotationsFromStroke.clear()
                                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                                 val toRemove = existing.filter {
-                                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                                 }
                                                                 if (toRemove.isNotEmpty()) {
                                                                     val batch =
@@ -4617,12 +4653,13 @@ fun PdfViewerScreen(
                                                 } else {
                                                     if (currentSelectedTool == InkType.TEXT) {
                                                     } else if (currentSelectedTool == InkType.ERASER) {
+                                                        lastEraserPoint = point
                                                         erasedAnnotationsFromStroke.clear()
 
                                                         val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                         val existing = allAnnotations[pageIndex] ?: emptyList()
                                                         val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                         }
                                                         if (toRemove.isNotEmpty()) {
                                                             val batch =
@@ -4660,8 +4697,9 @@ fun PdfViewerScreen(
                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point, aspectRatio, activeToolThickness)
+                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
                                                 }
+                                                lastEraserPoint = point
                                                 if (toRemove.isNotEmpty()) {
                                                     val batch =
                                                         erasedAnnotationsFromStroke.getOrPut(
