@@ -7,7 +7,7 @@
 
   <p>A modern, offline‑first, privacy‑focused document & e‑book reader for Android, built with Kotlin and Jetpack Compose.</p>
 
-  <a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="obtainium://add?url=https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="44" align="absmiddle"/></a>
+  <a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="44" align="absmiddle"/></a>
 
 </div>
 
