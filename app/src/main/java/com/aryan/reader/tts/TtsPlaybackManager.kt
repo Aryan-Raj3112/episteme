@@ -55,6 +55,7 @@ val CHANGE_SPEAKER_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_SPEAKER
 val FLUSH_PREFETCH_COMMAND = SessionCommand("com.aryan.reader.tts.FLUSH_PREFETCH", Bundle.EMPTY)
 private val STATE_UPDATE_COMMAND = SessionCommand("com.aryan.reader.tts.STATE_UPDATE", Bundle.EMPTY)
 val CHANGE_TTS_MODE_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_MODE", Bundle.EMPTY)
+val SLICE_CURRENT_AND_RELOAD_COMMAND = SessionCommand("com.aryan.reader.tts.SLICE_AND_RELOAD", Bundle.EMPTY)
 
 const val KEY_TEXT_CHUNKS = "KEY_TEXT_CHUNKS"
 const val KEY_SOURCE_CFIS = "KEY_SOURCE_CFIS"
@@ -139,6 +140,7 @@ class TtsPlaybackManager(
             .add(CHANGE_SPEAKER_COMMAND)
             .add(CHANGE_TTS_MODE_COMMAND)
             .add(FLUSH_PREFETCH_COMMAND)
+            .add(SLICE_CURRENT_AND_RELOAD_COMMAND)
             .build()
         val availablePlayerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
             .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
@@ -221,8 +223,53 @@ class TtsPlaybackManager(
                     }
                 }
             }
+            SLICE_CURRENT_AND_RELOAD_COMMAND -> {
+                handleSliceAndReload()
+            }
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+    }
+
+    private fun handleSliceAndReload() {
+        val currentIdx = player.currentMediaItemIndex
+        if (currentIdx == C.INDEX_UNSET) return
+
+        val offset = _ttsState.value.currentWordStartOffset
+        val currentChunk = textChunks.getOrNull(currentIdx) ?: return
+
+        preparationJob?.cancel()
+        wordTrackingJob?.cancel()
+        player.stop()
+        player.clearMediaItems()
+        prefetchingJobs.values.forEach { it.cancel() }
+        prefetchingJobs.clear()
+
+        preparationJob = scope.launch {
+            clearAudioFiles()
+
+            if (offset == -1) {
+                prepareAndPlayFirstChunk(startAtIndex = currentIdx, playWhenReady = false)
+                return@launch
+            }
+
+            val relativeOffset = (offset - currentChunk.startOffsetInSource).coerceIn(0, currentChunk.text.length)
+
+            if (relativeOffset >= currentChunk.text.length) {
+                if (currentIdx + 1 < textChunks.size) {
+                    prepareAndPlayFirstChunk(startAtIndex = currentIdx + 1, playWhenReady = false)
+                }
+                return@launch
+            }
+
+            val slicedText = currentChunk.text.substring(relativeOffset)
+            val newChunk = currentChunk.copy(text = slicedText, startOffsetInSource = offset)
+
+            val mutableChunks = textChunks.toMutableList()
+            mutableChunks[currentIdx] = newChunk
+            textChunks = mutableChunks.toList()
+
+            prepareAndPlayFirstChunk(startAtIndex = currentIdx, playWhenReady = false)
+        }
     }
 
     private fun handleChangeTtsMode(newMode: TtsMode) {

@@ -235,6 +235,11 @@ class TtsController(context: Context) : Player.Listener {
         mediaController?.sendCustomCommand(FLUSH_PREFETCH_COMMAND, Bundle.EMPTY)
     }
 
+    fun sliceAndRetainPosition() {
+        Timber.d("UI sending SLICE_CURRENT_AND_RELOAD command.")
+        mediaController?.sendCustomCommand(SLICE_CURRENT_AND_RELOAD_COMMAND, Bundle.EMPTY)
+    }
+
     override fun onEvents(player: Player, events: Player.Events) {
         updateStateFromController()
     }
