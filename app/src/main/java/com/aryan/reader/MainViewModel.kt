@@ -4468,6 +4468,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun closeAllTabs() {
+        Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called")
+        prefs.edit {
+            remove(KEY_OPEN_TAB_IDS)
+            remove(KEY_ACTIVE_TAB)
+        }
+        _internalState.update { it.copy(openTabIds = emptyList(), activeTabBookId = null) }
+        clearSelectedFile()
+    }
+
     companion object {
         private const val KEY_SORT_ORDER = "sort_order"
         internal const val KEY_SHELVES = "shelf_names"

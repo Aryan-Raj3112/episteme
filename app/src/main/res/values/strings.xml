@@ -16,6 +16,11 @@
     <string name="action_apply">Apply</string>
     <string name="tab_free">Free</string>
     <string name="action_save_catalog">Save</string>
+    <string name="active_tabs">Active Tabs</string>
+    <string name="close_tab">Close Tab</string>
+    <string name="close_all_tabs">Close All Tabs</string>
+    <string name="dialog_close_all_tabs">Close All Tabs?</string>
+    <string name="dialog_close_all_tabs_desc">Are you sure you want to close all active tabs?</string>
 
     <!-- Shared Composables & Dialogs -->
     <string name="legal_agreement_full">%1$s you agree to our %2$s and acknowledge you have read our %3$s.</string>
