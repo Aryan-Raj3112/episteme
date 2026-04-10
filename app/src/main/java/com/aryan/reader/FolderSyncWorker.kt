@@ -396,6 +396,8 @@ class FolderSyncWorker(
         return when {
             mimeType == "application/pdf" || lowerName.endsWith(".pdf") -> FileType.PDF
             mimeType == "application/epub+zip" || lowerName.endsWith(".epub") -> FileType.EPUB
+            mimeType == "application/vnd.oasis.opendocument.text" || lowerName.endsWith(".odt") -> FileType.ODT
+            mimeType == "application/x-vnd.oasis.opendocument.text-flat-xml" || lowerName.endsWith(".fodt") -> FileType.FODT
             mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || lowerName.endsWith(".docx") -> FileType.DOCX
             lowerName.endsWith(".mobi") || lowerName.endsWith(".azw3") || lowerName.endsWith(".prc") -> FileType.MOBI
             lowerName.endsWith(".fb2") || lowerName.endsWith(".fb2.zip") -> FileType.FB2

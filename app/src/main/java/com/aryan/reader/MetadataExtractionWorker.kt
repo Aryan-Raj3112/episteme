@@ -23,6 +23,7 @@ class MetadataExtractionWorker(
     private val epubParser = EpubParser(appContext)
     private val mobiParser = MobiParser(appContext)
     private val pdfCoverGenerator = PdfCoverGenerator(appContext)
+    private val odtParser = com.aryan.reader.epub.OdtParser(appContext)
 
     companion object {
         const val WORK_NAME = "MetadataExtractionWorker"
@@ -108,6 +109,18 @@ class MetadataExtractionWorker(
                                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                                 }
                                 title = item.displayName
+                            }
+                            FileType.ODT, FileType.FODT -> {
+                                val book = odtParser.createOdtBook(
+                                    inputStream = inputStream,
+                                    bookId = item.bookId,
+                                    originalBookNameHint = item.displayName,
+                                    isFlat = type == FileType.FODT,
+                                    parseContent = false
+                                )
+                                title = book.title.takeIf { it.isNotBlank() && it != "content" }
+                                author = book.author.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+                                book.coverImage?.let { coverPath = recentFilesRepository.saveCoverToCache(it, uri) }
                             }
                             else -> {
                                 title = item.displayName

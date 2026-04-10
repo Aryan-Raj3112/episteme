@@ -24,17 +24,12 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
-import timber.log.Timber
+import android.speech.tts.TextToSpeech
 import android.webkit.WebView
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Switch
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -68,6 +63,8 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -85,10 +82,14 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -99,11 +100,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -130,11 +137,13 @@ import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.epub.EpubChapter
+import com.aryan.reader.loadNativeVoice
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import kotlin.math.roundToInt
 
 enum class ReaderTool(val title: String, val category: String) {
@@ -504,6 +513,8 @@ fun EpubReaderBottomBar(
     isTtsSessionActive: Boolean,
     ttsState: TtsState,
     isProUser: Boolean,
+    currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
+    onOpenTtsControls: () -> Unit,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -657,6 +668,19 @@ fun EpubReaderBottomBar(
                                             R.string.content_desc_pause_tts
                                         ) else stringResource(R.string.content_desc_resume_tts)
                                     )
+                                }
+
+                                if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.BASE) {
+                                    TooltipIconButton(
+                                        text = "Voice Adjustments",
+                                        description = "Adjust voice speed and pitch",
+                                        onClick = onOpenTtsControls
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tune,
+                                            contentDescription = "Voice Adjustments"
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1418,6 +1442,200 @@ fun CustomizeToolsSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TtsControlsSheet(
+    onDismiss: () -> Unit,
+    onOpenDeviceVoiceSettings: () -> Unit,
+    ttsController: com.aryan.reader.tts.TtsController
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val ttsState by ttsController.ttsState.collectAsState()
+
+    // Local TTS for Sample Playback
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var isTtsReady by remember { mutableStateOf(false) }
+
+    var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
+    var pitch by remember { mutableFloatStateOf(loadTtsPitch(context)) }
+
+    var isDraggingRate by remember { mutableStateOf(false) }
+    var isDraggingPitch by remember { mutableStateOf(false) }
+
+    // Initialize Local TTS for samples
+    DisposableEffect(Unit) {
+        val instance = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                isTtsReady = true
+                try {
+                    val preferredVoiceName = loadNativeVoice(context)
+                    if (preferredVoiceName != null) {
+                        tts?.voices?.find { it.name == preferredVoiceName }?.let { targetVoice ->
+                            tts?.voice = targetVoice
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to apply preferred voice in sample")
+                }
+            }
+        }
+        tts = instance
+        onDispose { instance.shutdown() }
+    }
+
+    val saveAndSlice = {
+        saveTtsSpeechRate(context, rate)
+        saveTtsPitch(context, pitch)
+        ttsController.sliceAndRetainPosition()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text("Voice Adjustments", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+
+            // Rate Slider
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Speed (${"%.1f".format(rate)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                IconButton(onClick = {
+                    rate = 1.0f
+                    ttsController.pause()
+                    saveAndSlice()
+                }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reset Speed")
+                }
+            }
+            Slider(
+                value = rate,
+                onValueChange = {
+                    rate = it
+                    // Pause playback immediately when user starts dragging
+                    if (!isDraggingRate) {
+                        isDraggingRate = true
+                        ttsController.pause()
+                    }
+                },
+                onValueChangeFinished = {
+                    isDraggingRate = false
+                    saveAndSlice()
+                },
+                valueRange = 0.5f..3.0f,
+                steps = 24 // Creates 0.1 increments
+            )
+
+            // Pitch Slider
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Pitch (${"%.1f".format(pitch)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                IconButton(onClick = {
+                    pitch = 1.0f
+                    ttsController.pause()
+                    saveAndSlice()
+                }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reset Pitch")
+                }
+            }
+            Slider(
+                value = pitch,
+                onValueChange = {
+                    pitch = it
+                    if (!isDraggingPitch) {
+                        isDraggingPitch = true
+                        ttsController.pause()
+                    }
+                },
+                onValueChangeFinished = {
+                    isDraggingPitch = false
+                    saveAndSlice()
+                },
+                valueRange = 0.5f..2.0f,
+                steps = 14 // Creates 0.1 increments
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Play Sample Button
+            Button(
+                onClick = {
+                    if (ttsState.isPlaying) ttsController.pause()
+                    tts?.setSpeechRate(rate)
+                    tts?.setPitch(pitch)
+                    tts?.speak("This is how your current voice settings sound.", TextToSpeech.QUEUE_FLUSH, null, null)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = isTtsReady,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            ) {
+                Icon(Icons.Default.GraphicEq, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Play Sample")
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Central Play/Pause Control for the Book
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    FilledIconButton(
+                        onClick = {
+                            tts?.stop()
+                            if (ttsState.isPlaying) ttsController.pause() else ttsController.resume()
+                        },
+                        modifier = Modifier.size(64.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        if (ttsState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                strokeWidth = 3.dp
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
+                                contentDescription = if (ttsState.isPlaying) "Pause Book" else "Play Book",
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = if (ttsState.isPlaying) "Pause Book" else "Resume Book",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+            OutlinedButton(
+                onClick = {
+                    onDismiss()
+                    onOpenDeviceVoiceSettings()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("System Voice / Engine Settings")
             }
         }
     }

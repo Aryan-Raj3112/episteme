@@ -481,83 +481,60 @@
         var newGap = parseFloat(paragraphGap);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
-        if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.6;
+        if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
         if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
 
         var fontCss = "";
-        var selector = "body";
-
         if (fontFamily && fontFamily !== "Original" && fontFamily !== "") {
             var fallback = "sans-serif";
-
             if (fontFamily === "Merriweather" || fontFamily === "Lora") {
                 fallback = "serif";
             } else if (fontFamily === "Roboto Mono") {
                 fallback = "monospace";
             }
-
-            selector = "body, p, span, div, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th";
-            fontCss = "font-family: '" + fontFamily + "', " + fallback + " !important;";
+            fontCss = `
+            body, p, span, div, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th {
+                font-family: '${fontFamily}', ${fallback} !important;
+            }
+            `;
         }
 
-        // --- ALIGNMENT LOGIC ---
         var alignCss = "";
         var alignSelector = "body, p, li, div, h1, h2, h3, h4, h5, h6";
-
         if (textAlign === "left") {
-            alignCss =
-                ` ` +
-                alignSelector +
-                ` {
-                    text-align: left !important;
-                }
-
-                `;
+            alignCss = alignSelector + " { text-align: left !important; }";
         } else if (textAlign === "justify") {
-            alignCss =
-                ` ` +
-                alignSelector +
-                ` {
-                    text-align: justify !important;
-                    -webkit-hyphens: auto !important;
-                    hyphens: auto !important;
-                }
-
-                `;
+            alignCss = alignSelector + " { text-align: justify !important; -webkit-hyphens: auto !important; hyphens: auto !important; }";
         }
 
-        // --- GAP LOGIC ---
-        var gapCss = `
+        var gapCss = "";
+        if (newGap !== 1.0) {
+            gapCss = `
             body p, body ul, body ol, body blockquote {
-                margin-top: ` + (0.5 * newGap) + `em !important;
-                margin-bottom: ` + (0.5 * newGap) + `em !important;
+                margin-top: ${newGap}em !important;
+                margin-bottom: ${newGap}em !important;
             }
             body li {
-                margin-bottom: ` + (0.25 * newGap) + `em !important;
+                margin-bottom: ${0.5 * newGap}em !important;
             }
-        `;
+            `;
+        }
 
-        dynamicStyleElement.innerHTML =
-            ` body {
-                font-size: ` +
-            newFontSize +
-            `em !important;
-                line-height: ` +
-            newLineHeight +
-            ` !important;
+        var sizeCss = "";
+        if (newFontSize !== 1.0) {
+            sizeCss = `body { font-size: ${newFontSize}em !important; }`;
+        }
+
+        var lineHeightCss = "";
+        if (newLineHeight !== 1.0) {
+            lineHeightCss = `
+            body, p, div, span, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th {
+                line-height: ${newLineHeight} !important;
             }
+            `;
+        }
 
-            ` +
-            selector +
-            ` {
-                ` +
-            fontCss +
-            `
-            }
-
-            ` +
-            alignCss +
-            gapCss;
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss].join("\n");
 
         setTimeout(
             function () {
@@ -565,29 +542,20 @@
                 console.log(logTag + ": [BODY] Computed font-family: " + computedBody);
 
                 var firstPara = document.querySelector("p");
-
                 if (firstPara) {
                     var computedPara = window.getComputedStyle(firstPara).fontFamily;
-                    var computedAlign = window.getComputedStyle(firstPara).textAlign;
-                    console.log(logTag + ": [PARAGRAPH] Computed font-family: " + computedPara);
-                    console.log(logTag + ": [PARAGRAPH] Inner Text Sample: " + firstPara.innerText.substring(0, 20));
-                } else {
-                    console.log(logTag + ": [PARAGRAPH] No <p> tag found to check.");
+                    console.log(logTag + ":[PARAGRAPH] Computed font-family: " + computedPara);
                 }
 
                 if (fontFamily && fontFamily !== "") {
                     var isCheckAvailable = document.fonts && document.fonts.check;
-
                     if (isCheckAvailable) {
                         var loaded = document.fonts.check("12px '" + fontFamily + "'");
                         console.log(logTag + ": Font Loading Status -> document.fonts.check('" + fontFamily + "') = " + loaded);
-                    } else {
-                        console.log(logTag + ": document.fonts API not available.");
                     }
                 }
             },
-
-            300,
+            300
         );
 
         if (window.triggerInitialScrollStateReport) {

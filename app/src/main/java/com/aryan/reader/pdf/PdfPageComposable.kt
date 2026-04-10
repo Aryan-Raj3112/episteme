@@ -120,9 +120,12 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -169,7 +172,7 @@ data class EmbeddedAnnotation(
 
 data class PdfPoint(val x: Float, val y: Float, val timestamp: Long = 0L)
 
-data class PdfTile(val bitmap: Bitmap, val renderRect: Rect, val tileId: Int)
+data class PdfTile(val bitmap: Bitmap, val renderRect: Rect, val tileId: Int, val renderScale: Float = 1f)
 
 enum class LinkSource {
     ANNOTATION, TEXT_CONTENT
@@ -371,6 +374,7 @@ data class PageSelectionData(
     val customHighlightColors: StableHolder<Map<PdfHighlightColor, Color>>
 )
 
+@OptIn(FlowPreview::class)
 @Suppress("unused")
 @Composable
 internal fun PdfPageComposable(
@@ -1104,12 +1108,15 @@ internal fun PdfPageComposable(
         try {
             page = withContext(Dispatchers.IO) { pdfDocumentItem.openPage(pdfPageIndex) }
 
-            snapshotFlow { visibleScreenRect() }.conflate().collect { currentVisibleRect ->
+            snapshotFlow { visibleScreenRect() }.conflate().collectLatest { currentVisibleRect ->
+
+                delay(150)
+
                 val tileCalcStart = System.nanoTime()
-                if (!isActive) return@collect
+                if (!isActive) return@collectLatest
 
                 if (isScrolling && effectiveScale > 1f) {
-                    return@collect
+                    return@collectLatest
                 }
 
                 val pxTl: Float
@@ -1131,20 +1138,16 @@ internal fun PdfPageComposable(
                                 oldTiles.forEach { PdfBitmapPool.recycle(it.bitmap) }
                             }
                         }
-                        return@collect
+                        return@collectLatest
                     }
                 } else {
                     val pivotX = screenWidth / 2f
                     val pivotY = screenHeight / 2f
 
-                    pxTl =
-                        (((0 - effectiveOffset.x) - pivotX) / effectiveScale + pivotX) - centeringOffsetX
-                    pyTl =
-                        (((0 - effectiveOffset.y) - pivotY) / effectiveScale + pivotY) - centeringOffsetY
-                    pxBr =
-                        (((screenWidth - effectiveOffset.x) - pivotX) / effectiveScale + pivotX) - centeringOffsetX
-                    pyBr =
-                        (((screenHeight - effectiveOffset.y) - pivotY) / effectiveScale + pivotY) - centeringOffsetY
+                    pxTl = (((0 - effectiveOffset.x) - pivotX) / effectiveScale + pivotX) - centeringOffsetX
+                    pyTl = (((0 - effectiveOffset.y) - pivotY) / effectiveScale + pivotY) - centeringOffsetY
+                    pxBr = (((screenWidth - effectiveOffset.x) - pivotX) / effectiveScale + pivotX) - centeringOffsetX
+                    pyBr = (((screenHeight - effectiveOffset.y) - pivotY) / effectiveScale + pivotY) - centeringOffsetY
                 }
 
                 val visibleBitmapRect = Rect(pxTl.toInt(), pyTl.toInt(), pxBr.toInt(), pyBr.toInt())
@@ -1154,13 +1157,11 @@ internal fun PdfPageComposable(
                 val requiredTileIds = mutableSetOf<Int>()
                 val cols = (actualBitmapWidthPx + tileSizePx - 1) / tileSizePx
                 val startCol = (visibleBitmapRect.left / tileSizePx).coerceAtLeast(0)
-                val endCol =
-                    ((visibleBitmapRect.right + tileSizePx - 1) / tileSizePx).coerceAtMost(cols)
+                val endCol = ((visibleBitmapRect.right + tileSizePx - 1) / tileSizePx).coerceAtMost(cols)
                 val startRow = (visibleBitmapRect.top / tileSizePx).coerceAtLeast(0)
-                val endRow =
-                    ((visibleBitmapRect.bottom + tileSizePx - 1) / tileSizePx).coerceAtMost(
-                        (actualBitmapHeightPx + tileSizePx - 1) / tileSizePx
-                    )
+                val endRow = ((visibleBitmapRect.bottom + tileSizePx - 1) / tileSizePx).coerceAtMost(
+                    (actualBitmapHeightPx + tileSizePx - 1) / tileSizePx
+                )
 
                 for (row in startRow until endRow) {
                     for (col in startCol until endCol) {
@@ -1170,6 +1171,9 @@ internal fun PdfPageComposable(
 
                 val currentTileIds = tiles.map { it.tileId }.toSet()
 
+                val scaleTolerance = 0.05f
+                val validCurrentTileIds = tiles.filter { abs(it.renderScale - effectiveScale) <= scaleTolerance }.map { it.tileId }.toSet()
+
                 val duration = (System.nanoTime() - tileCalcStart) / 1_000_000f
                 if (duration > 2f) {
                     Timber.tag("PdfPerformance").d(
@@ -1177,9 +1181,9 @@ internal fun PdfPageComposable(
                     )
                 }
 
-                if (requiredTileIds != currentTileIds) {
+                if (requiredTileIds != validCurrentTileIds) {
 
-                    val tilesToRenderIds = requiredTileIds - currentTileIds
+                    val tilesToRenderIds = requiredTileIds - validCurrentTileIds
                     val tilesToRecycleIds = currentTileIds - requiredTileIds
 
                     if (tilesToRecycleIds.isNotEmpty()) {
@@ -1205,15 +1209,12 @@ internal fun PdfPageComposable(
                                     (col + 1) * tileSizePx,
                                     (row + 1) * tileSizePx
                                 )
-                                val tileRenderSize =
-                                    (tileSizePx * effectiveScale).toInt().coerceAtLeast(1)
+                                val tileRenderSize = (tileSizePx * effectiveScale).toInt().coerceAtLeast(1)
 
                                 val tileBitmap = PdfBitmapPool.get(tileRenderSize)
 
-                                val fullPageRenderWidth =
-                                    (actualBitmapWidthPx * effectiveScale).toInt()
-                                val fullPageRenderHeight =
-                                    (actualBitmapHeightPx * effectiveScale).toInt()
+                                val fullPageRenderWidth = (actualBitmapWidthPx * effectiveScale).toInt()
+                                val fullPageRenderHeight = (actualBitmapHeightPx * effectiveScale).toInt()
                                 val tileRenderX = (col * tileSizePx * effectiveScale).toInt()
                                 val tileRenderY = (row * tileSizePx * effectiveScale).toInt()
 
@@ -1226,12 +1227,19 @@ internal fun PdfPageComposable(
                                     renderAnnot = true
                                 )
 
-                                val newTile = PdfTile(tileBitmap, tileRect, tileId)
+                                val newTile = PdfTile(tileBitmap, tileRect, tileId, effectiveScale)
                                 var handedOver = false
                                 try {
                                     withContext(Dispatchers.Main) {
-                                        tiles = tiles + newTile
+                                        val oldTile = tiles.find { it.tileId == tileId }
+                                        tiles = tiles.filter { it.tileId != tileId } + newTile
                                         handedOver = true
+
+                                        oldTile?.let {
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                PdfBitmapPool.recycle(it.bitmap)
+                                            }
+                                        }
                                     }
                                 } finally {
                                     if (!handedOver) {
@@ -2746,6 +2754,7 @@ internal fun PdfPageComposable(
                                 } else if (mode == 2 && pointerCount > 1) {
                                     val oldScale = scale
                                     val newScale = (scale * zoomChange).coerceIn(1f, 4f)
+                                    Timber.tag("PdfZoomIssue").v("Gesture Scaling: old=$oldScale, new=$newScale, zoomChange=$zoomChange")
 
                                     val previousCentroid = event.calculateCentroid(useCurrent = false)
                                     if (previousCentroid != Offset.Unspecified) {
@@ -3328,8 +3337,12 @@ internal fun PdfPageComposable(
                     currentPageRotation = 0
 
                     val MAX_BASE_DIMEN = 3000
-                    var baseW = scaledWidth
-                    var baseH = scaledHeight
+
+                    val baseRenderScale = 1.5f
+
+                    var baseW = (scaledWidth * baseRenderScale).toInt()
+                    var baseH = (scaledHeight * baseRenderScale).toInt()
+
                     if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
                         val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
                         baseW = (baseW * downScale).toInt().coerceAtLeast(1)
@@ -3394,8 +3407,12 @@ internal fun PdfPageComposable(
                             }
 
                             val MAX_BASE_DIMEN = 3000
-                            var baseW = scaledWidth
-                            var baseH = scaledHeight
+
+                            val baseRenderScale = 1.5f
+
+                            var baseW = (scaledWidth * baseRenderScale).toInt()
+                            var baseH = (scaledHeight * baseRenderScale).toInt()
+
                             if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
                                 val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
                                 baseW = (baseW * downScale).toInt().coerceAtLeast(1)
