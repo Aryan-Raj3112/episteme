@@ -23,6 +23,8 @@ import android.content.Context
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.aryan.reader.epubreader.loadTtsPitch
+import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.loadNativeVoice
 import timber.log.Timber
 import kotlinx.coroutines.CompletableDeferred
@@ -197,6 +199,9 @@ class BaseTtsSynthesizer(private val context: Context) {
                     }
 
                     applyPreferredVoice()
+
+                    tts?.setSpeechRate(loadTtsSpeechRate(context))
+                    tts?.setPitch(loadTtsPitch(context))
 
                     Timber.d("BaseTts: Requesting synthesis (Attempt $attempt). ID: $utteranceId")
 

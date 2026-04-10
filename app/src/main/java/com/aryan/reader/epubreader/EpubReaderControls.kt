@@ -54,6 +54,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import android.speech.tts.TextToSpeech
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import com.aryan.reader.loadNativeVoice
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -89,6 +96,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -504,6 +512,8 @@ fun EpubReaderBottomBar(
     isTtsSessionActive: Boolean,
     ttsState: TtsState,
     isProUser: Boolean,
+    currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
+    onOpenTtsControls: () -> Unit,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -657,6 +667,19 @@ fun EpubReaderBottomBar(
                                             R.string.content_desc_pause_tts
                                         ) else stringResource(R.string.content_desc_resume_tts)
                                     )
+                                }
+
+                                if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.BASE) {
+                                    TooltipIconButton(
+                                        text = "Voice Adjustments",
+                                        description = "Adjust voice speed and pitch",
+                                        onClick = onOpenTtsControls
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tune,
+                                            contentDescription = "Voice Adjustments"
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1418,6 +1441,116 @@ fun CustomizeToolsSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TtsControlsSheet(
+    onDismiss: () -> Unit,
+    onOpenDeviceVoiceSettings: () -> Unit,
+    ttsController: com.aryan.reader.tts.TtsController
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var isTtsReady by remember { mutableStateOf(false) }
+
+    var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
+    var pitch by remember { mutableFloatStateOf(loadTtsPitch(context)) }
+
+    DisposableEffect(Unit) {
+        val instance = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                isTtsReady = true
+                try {
+                    val preferredVoiceName = loadNativeVoice(context)
+                    if (preferredVoiceName != null) {
+                        tts?.voices?.find { it.name == preferredVoiceName }?.let { targetVoice ->
+                            tts?.voice = targetVoice
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to apply preferred voice in sample")
+                }
+            }
+        }
+        tts = instance
+        onDispose { instance.shutdown() }
+    }
+
+    val saveAndFlush = {
+        saveTtsSpeechRate(context, rate)
+        saveTtsPitch(context, pitch)
+        ttsController.flushPrefetch()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text("Voice Adjustments", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+
+            // Rate Slider
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Speed (${"%.1f".format(rate)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                IconButton(onClick = { rate = 1.0f; saveAndFlush() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reset Speed")
+                }
+            }
+            Slider(
+                value = rate,
+                onValueChange = { rate = it },
+                onValueChangeFinished = saveAndFlush,
+                valueRange = 0.5f..3.0f,
+                steps = 24 // Creates 0.1 increments
+            )
+
+            // Pitch Slider
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Pitch (${"%.1f".format(pitch)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                IconButton(onClick = { pitch = 1.0f; saveAndFlush() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reset Pitch")
+                }
+            }
+            Slider(
+                value = pitch,
+                onValueChange = { pitch = it },
+                onValueChangeFinished = saveAndFlush,
+                valueRange = 0.5f..2.0f,
+                steps = 14 // Creates 0.1 increments
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    tts?.setSpeechRate(rate)
+                    tts?.setPitch(pitch)
+                    tts?.speak("This is how your current voice settings sound.", TextToSpeech.QUEUE_FLUSH, null, null)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = isTtsReady
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Play Sample")
+            }
+
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    onDismiss()
+                    onOpenDeviceVoiceSettings()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("System Voice / Engine Settings")
             }
         }
     }

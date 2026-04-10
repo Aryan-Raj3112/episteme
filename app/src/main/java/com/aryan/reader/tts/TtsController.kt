@@ -230,6 +230,11 @@ class TtsController(context: Context) : Player.Listener {
         mediaController?.sendCustomCommand(CHANGE_TTS_MODE_COMMAND, args)
     }
 
+    fun flushPrefetch() {
+        Timber.d("UI sending FLUSH_PREFETCH command.")
+        mediaController?.sendCustomCommand(FLUSH_PREFETCH_COMMAND, Bundle.EMPTY)
+    }
+
     override fun onEvents(player: Player, events: Player.Events) {
         updateStateFromController()
     }

@@ -116,6 +116,28 @@ private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.6f
 const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
+private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
+private const val TTS_PITCH_KEY = "tts_pitch"
+
+fun saveTtsSpeechRate(context: Context, rate: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(TTS_SPEECH_RATE_KEY, rate) }
+}
+
+fun loadTtsSpeechRate(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(TTS_SPEECH_RATE_KEY, 1.0f)
+}
+
+fun saveTtsPitch(context: Context, pitch: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(TTS_PITCH_KEY, pitch) }
+}
+
+fun loadTtsPitch(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(TTS_PITCH_KEY, 1.0f)
+}
 
 enum class ReaderFont(val id: String, val displayName: String, val fontFamilyName: String) {
     ORIGINAL("original", "Original", "Original"),

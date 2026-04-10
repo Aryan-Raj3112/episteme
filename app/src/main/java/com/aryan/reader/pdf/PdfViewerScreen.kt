@@ -32,6 +32,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -284,6 +285,7 @@ import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
+import com.aryan.reader.epubreader.TtsControlsSheet
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -1322,6 +1324,7 @@ fun PdfViewerScreen(
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showTtsControlsSheet by remember { mutableStateOf(false) }
     var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
 
     DisposableEffect(isKeepScreenOn) {
@@ -6498,58 +6501,73 @@ fun PdfViewerScreen(
 
                             // TTS
                             if (!hiddenTools.contains(PdfReaderTool.TTS_CONTROLS.name)) {
-                                TooltipIconButton(
-                                    text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
-                                    else stringResource(R.string.tooltip_tts_start),
-                                    description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
-                                    else stringResource(R.string.tooltip_tts_start_desc),
-                                    onClick = {
-                                        if (isTtsSessionActive) {
-                                            Timber.d("TTS button clicked: Stopping TTS")
-                                            ttsController.stop()
-                                        } else {
-                                            startTtsWithPermissionCheck(null, null)
+                                Box {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TooltipIconButton(
+                                            text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
+                                            else stringResource(R.string.tooltip_tts_start),
+                                            description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
+                                            else stringResource(R.string.tooltip_tts_start_desc),
+                                            onClick = {
+                                                if (isTtsSessionActive) {
+                                                    Timber.d("TTS button clicked: Stopping TTS")
+                                                    ttsController.stop()
+                                                } else {
+                                                    startTtsWithPermissionCheck(null, null)
+                                                }
+                                            }) {
+                                            Icon(
+                                                painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
+                                                else painterResource(
+                                                    id = R.drawable.text_to_speech
+                                                ),
+                                                contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
+                                            )
                                         }
-                                    }) {
-                                    Icon(
-                                        painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
-                                        else painterResource(
-                                            id = R.drawable.text_to_speech
-                                        ),
-                                        contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
-                                    )
-                                }
-                            }
 
-                            // TTS Pause/Resume Button
-                            if (isTtsSessionActive) {
-                                TooltipIconButton(
-                                    text = if (ttsState.isPlaying)
-                                        stringResource(R.string.tooltip_tts_pause)
-                                    else
-                                        stringResource(R.string.tooltip_tts_resume),
-                                    description = if (ttsState.isPlaying)
-                                        stringResource(R.string.tooltip_tts_pause_desc)
-                                    else
-                                        stringResource(R.string.tooltip_tts_resume_desc),
-                                    onClick = {
-                                        if (ttsState.isPlaying) {
-                                            ttsController.pause()
-                                        } else {
-                                            ttsController.resume()
+                                        if (isTtsSessionActive) {
+                                            TooltipIconButton(
+                                                text = if (ttsState.isPlaying)
+                                                    stringResource(R.string.tooltip_tts_pause)
+                                                else
+                                                    stringResource(R.string.tooltip_tts_resume),
+                                                description = if (ttsState.isPlaying)
+                                                    stringResource(R.string.tooltip_tts_pause_desc)
+                                                else
+                                                    stringResource(R.string.tooltip_tts_resume_desc),
+                                                onClick = {
+                                                    if (ttsState.isPlaying) {
+                                                        ttsController.pause()
+                                                    } else {
+                                                        ttsController.resume()
+                                                    }
+                                                }, enabled = !ttsState.isLoading
+                                            ) {
+                                                Icon(
+                                                    painter = painterResource(
+                                                        id = if (ttsState.isPlaying) R.drawable.pause
+                                                        else R.drawable.play
+                                                    ), contentDescription = if (ttsState.isPlaying) "Pause TTS"
+                                                    else "Resume TTS"
+                                                )
+                                            }
+
+                                            // Tune button for BASE mode
+                                            if (currentTtsMode == TtsPlaybackManager.TtsMode.BASE) {
+                                                TooltipIconButton(
+                                                    text = "Voice Adjustments",
+                                                    description = "Adjust voice speed and pitch",
+                                                    onClick = { showTtsControlsSheet = true }
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Tune,
+                                                        contentDescription = "Voice Adjustments"
+                                                    )
+                                                }
+                                            }
                                         }
-                                    }, enabled = !ttsState.isLoading
-                                ) {
-                                    Icon(
-                                        painter = painterResource(
-                                            id = if (ttsState.isPlaying) R.drawable.pause
-                                            else R.drawable.play
-                                        ), contentDescription = if (ttsState.isPlaying) "Pause TTS"
-                                        else "Resume TTS"
-                                    )
+                                    }
                                 }
-                            } else {
-                                Spacer(Modifier.size(48.dp))
                             }
 
                             // Error Message Area
@@ -7455,6 +7473,14 @@ fun PdfViewerScreen(
                             ttsController.changeSpeaker(newSpeaker)
                         },
                         isTtsActive = isTtsSessionActive
+                    )
+                }
+
+                if (showTtsControlsSheet) {
+                    TtsControlsSheet(
+                        onDismiss = { showTtsControlsSheet = false },
+                        onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                        ttsController = ttsController
                     )
                 }
 

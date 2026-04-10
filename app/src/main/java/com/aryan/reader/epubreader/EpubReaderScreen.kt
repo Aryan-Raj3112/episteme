@@ -1042,6 +1042,7 @@ fun EpubReaderHost(
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
+    var showTtsControlsSheet by remember { mutableStateOf(false) }
     var showThemePanel by remember { mutableStateOf(false) }
     var showPaletteManager by remember { mutableStateOf(false) }
 
@@ -3722,6 +3723,8 @@ fun EpubReaderHost(
                     ttsState = ttsState,
                     isProUser = isProUser,
                     hiddenTools = hiddenTools,
+                    currentTtsMode = currentTtsMode,
+                    onOpenTtsControls = { showTtsControlsSheet = true },
                     onOpenSlider = {
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
@@ -4173,6 +4176,14 @@ fun EpubReaderHost(
                     ttsController.changeSpeaker(newSpeaker)
                 },
                 isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+            )
+        }
+
+        if (showTtsControlsSheet) {
+            TtsControlsSheet(
+                onDismiss = { showTtsControlsSheet = false },
+                onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                ttsController = ttsController
             )
         }
 

@@ -52,6 +52,7 @@ import kotlinx.coroutines.delay
 val START_TTS_COMMAND = SessionCommand("com.aryan.reader.tts.START", Bundle.EMPTY)
 val STOP_TTS_COMMAND = SessionCommand("com.aryan.reader.tts.STOP", Bundle.EMPTY)
 val CHANGE_SPEAKER_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_SPEAKER", Bundle.EMPTY)
+val FLUSH_PREFETCH_COMMAND = SessionCommand("com.aryan.reader.tts.FLUSH_PREFETCH", Bundle.EMPTY)
 private val STATE_UPDATE_COMMAND = SessionCommand("com.aryan.reader.tts.STATE_UPDATE", Bundle.EMPTY)
 val CHANGE_TTS_MODE_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_MODE", Bundle.EMPTY)
 
@@ -137,6 +138,7 @@ class TtsPlaybackManager(
             .add(STOP_TTS_COMMAND)
             .add(CHANGE_SPEAKER_COMMAND)
             .add(CHANGE_TTS_MODE_COMMAND)
+            .add(FLUSH_PREFETCH_COMMAND)
             .build()
         val availablePlayerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
             .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
@@ -202,6 +204,22 @@ class TtsPlaybackManager(
                 val newModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val newMode = try { TtsMode.valueOf(newModeName) } catch (_: Exception) { TtsMode.CLOUD }
                 handleChangeTtsMode(newMode)
+            }
+            FLUSH_PREFETCH_COMMAND -> {
+                Timber.d("Flushing prefetched TTS chunks for new parameters.")
+                prefetchingJobs.values.forEach { it.cancel() }
+                prefetchingJobs.clear()
+                scope.launch(Dispatchers.IO) {
+                    val currentIdx = withContext(Dispatchers.Main) { player.currentMediaItemIndex }
+                    if (currentIdx == C.INDEX_UNSET) return@launch
+                    val keysToRemove = audioFiles.keys.filter { it > currentIdx }
+                    keysToRemove.forEach { key ->
+                        audioFiles.remove(key)?.delete()
+                    }
+                    withContext(Dispatchers.Main) {
+                        prefetchNextChunkAudio(currentIdx)
+                    }
+                }
             }
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
