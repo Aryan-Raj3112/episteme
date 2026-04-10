@@ -76,7 +76,8 @@ class PaginatedReaderViewModel : ViewModel() {
         themeTextColor: androidx.compose.ui.graphics.Color,
         context: Context,
         initialChapterToPaginate: Int?,
-        mathMLRenderer: MathMLRenderer
+        mathMLRenderer: MathMLRenderer,
+        paragraphGapMultiplier: Float
     ) {
         if (paginator != null) return
 
@@ -142,7 +143,8 @@ class PaginatedReaderViewModel : ViewModel() {
                 allFontFaces = allFontFaces,
                 context = context.applicationContext,
                 mathMLRenderer = mathMLRenderer,
-                userTextAlign = null
+                userTextAlign = null,
+                paragraphGapMultiplier = paragraphGapMultiplier
             )
             paginator = newPaginator
 

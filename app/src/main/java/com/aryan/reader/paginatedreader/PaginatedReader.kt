@@ -491,6 +491,7 @@ private fun WrappingContentLayout(
 @OptIn(ExperimentalFoundationApi::class, ExperimentalSerializationApi::class, FlowPreview::class)
 @Composable
 fun PaginatedReaderScreen(
+    modifier: Modifier = Modifier,
     book: EpubBook,
     isDarkTheme: Boolean,
     effectiveBg: Color,
@@ -500,12 +501,12 @@ fun PaginatedReaderScreen(
     searchQuery: String,
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
+    paragraphGapMultiplier: Float,
     fontFamily: FontFamily,
     textAlign: ReaderTextAlign,
     ttsHighlightInfo: TtsHighlightInfo?,
     initialChapterIndexInBook: Int?,
     removeEdgePadding: Boolean = false,
-    modifier: Modifier = Modifier,
     onPaginatorReady: (IPaginator) -> Unit,
     onTap: (Offset?) -> Unit,
     isProUser: Boolean,
@@ -554,6 +555,7 @@ fun PaginatedReaderScreen(
 
         var debouncedFontSizeMult by remember { mutableFloatStateOf(fontSizeMultiplier) }
         var debouncedLineHeightMult by remember { mutableFloatStateOf(lineHeightMultiplier) }
+        var debouncedParagraphGapMult by remember { mutableFloatStateOf(paragraphGapMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
 
@@ -612,8 +614,8 @@ fun PaginatedReaderScreen(
             )
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, fontFamily, textAlign) {
-            if (fontSizeMultiplier != debouncedFontSizeMult || lineHeightMultiplier != debouncedLineHeightMult || fontFamily != debouncedFontFamily || textAlign != debouncedTextAlign) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, fontFamily, textAlign) {
+            if (fontSizeMultiplier != debouncedFontSizeMult || lineHeightMultiplier != debouncedLineHeightMult || paragraphGapMultiplier != debouncedParagraphGapMult || fontFamily != debouncedFontFamily || textAlign != debouncedTextAlign) {
                 Timber.d("Formatting changed. Waiting for debounce.")
                 delay(400L)
 
@@ -628,6 +630,7 @@ fun PaginatedReaderScreen(
 
                 debouncedFontSizeMult = fontSizeMultiplier
                 debouncedLineHeightMult = lineHeightMultiplier
+                debouncedParagraphGapMult = paragraphGapMultiplier
                 debouncedFontFamily = fontFamily
                 debouncedTextAlign = textAlign
                 Timber.d("Debounce complete. Applying new format settings.")
@@ -674,8 +677,8 @@ fun PaginatedReaderScreen(
             remember(initialChapterIndexInBook, anchorLocatorForReconfig) {
                 anchorLocatorForReconfig?.chapterIndex ?: initialChapterIndexInBook ?: 0
             }
-        val paginator = remember(book, textConstraints, isDarkTheme, textStyle, userTextAlign, effectiveBg, effectiveText) {
-            val userAgentStylesheet = UserAgentStylesheet.default
+        val paginator = remember(book, textConstraints, isDarkTheme, textStyle, userTextAlign, effectiveBg, effectiveText, debouncedParagraphGapMult) {
+        val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
 
@@ -740,7 +743,8 @@ fun PaginatedReaderScreen(
                 allFontFaces = allFontFaces,
                 context = context.applicationContext,
                 mathMLRenderer = mathMLRenderer,
-                userTextAlign = userTextAlign
+                userTextAlign = userTextAlign,
+                paragraphGapMultiplier = debouncedParagraphGapMult
             )
         }
 

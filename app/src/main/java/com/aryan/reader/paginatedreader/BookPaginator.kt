@@ -118,7 +118,8 @@ class BookPaginator(
     private val allFontFaces: List<FontFaceInfo>,
     private val context: Context,
     private val mathMLRenderer: MathMLRenderer,
-    private val userTextAlign: TextAlign?
+    private val userTextAlign: TextAlign?,
+    private val paragraphGapMultiplier: Float
 ) : IPaginator {
     override var totalPageCount by mutableIntStateOf(0)
         private set
@@ -271,7 +272,7 @@ class BookPaginator(
     }
 
     private fun generateConfigurationHash(): Int {
-        val configString = "w:${constraints.maxWidth}-h:${constraints.maxHeight}-fs:${textStyle.fontSize.value}-ta:$userTextAlign"
+        val configString = "w:${constraints.maxWidth}-h:${constraints.maxHeight}-fs:${textStyle.fontSize.value}-ta:$userTextAlign-pg:$paragraphGapMultiplier"
         val hash = configString.hashCode()
         return hash
     }
@@ -420,7 +421,8 @@ class BookPaginator(
             themeTextColor = themeTextColor,
             chapterAbsPath = chapter.absPath,
             extractionBasePath = extractionBasePath,
-            userTextAlign = userTextAlign
+            userTextAlign = userTextAlign,
+            paragraphGapMultiplier = paragraphGapMultiplier
         )
 
         bookCacheDao.getProcessedChapter(bookId, chapterIndex)?.let { cachedChapter ->

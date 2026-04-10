@@ -2875,6 +2875,7 @@ fun EpubReaderHost(
                                 searchQuery = searchState.searchQuery,
                                 fontSizeMultiplier = currentFontSizeEm,
                                 lineHeightMultiplier = currentLineHeight,
+                                paragraphGapMultiplier = currentParagraphGap,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
                                 activeHighlightPalette = currentHighlightPalette,

@@ -54,7 +54,8 @@ class ContentStyler(
     private val themeTextColor: Color,
     private val chapterAbsPath: String,
     private val extractionBasePath: String,
-    private val userTextAlign: TextAlign?
+    private val userTextAlign: TextAlign?,
+    private val paragraphGapMultiplier: Float
 ) {
 
     fun style(semanticBlocks: List<SemanticBlock>): List<ContentBlock> {
@@ -102,6 +103,18 @@ class ContentStyler(
 
     private fun styleBlock(block: SemanticBlock): ContentBlock? {
         val themedStyle = applyThemeToStyle(block.style)
+
+        val finalBlockStyle = if (block is SemanticParagraph) {
+            val originalMargin = themedStyle.blockStyle.margin
+            val newMargin = originalMargin.copy(
+                top = originalMargin.top * paragraphGapMultiplier,
+                bottom = originalMargin.bottom * paragraphGapMultiplier
+            )
+            themedStyle.blockStyle.copy(margin = newMargin)
+        } else {
+            themedStyle.blockStyle
+        }
+
         return when (block) {
             is SemanticParagraph -> {
                 val computedTextAlign = userTextAlign ?: themedStyle.paragraphStyle.textAlign
@@ -109,7 +122,7 @@ class ContentStyler(
                 ParagraphBlock(
                     content = buildAnnotatedString(block, themedStyle),
                     textAlign = computedTextAlign,
-                    style = themedStyle.blockStyle,
+                    style = finalBlockStyle,
                     elementId = block.elementId,
                     cfi = block.cfi,
                     startCharOffsetInSource = block.startCharOffsetInSource,
