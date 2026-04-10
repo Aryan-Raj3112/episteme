@@ -33,6 +33,7 @@ import android.content.pm.PackageManager
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.foundation.rememberScrollState
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -79,6 +80,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -6325,12 +6327,15 @@ fun PdfViewerScreen(
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 4.dp
                     ) {
+                        val bottomBarScrollState = rememberScrollState()
+
                         Row(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 8.dp),
+                                .padding(horizontal = 8.dp)
+                                .horizontalScroll(bottomBarScrollState),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceAround
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             // Slider Navigation Trigger
                             if (!hiddenTools.contains(PdfReaderTool.SLIDER.name)) {
