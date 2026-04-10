@@ -1616,15 +1616,30 @@ fun EpubReaderHost(
             onVerticalChapterChange = { chapterIdx, chunkIdx, result ->
                 Timber.tag("NavDiag").d("onVerticalChapterChange chapterIdx=$chapterIdx, chunkIdx=$chunkIdx, query=${result.query}")
                 initialScrollTargetForChapter = null
+                chunkTargetOverride = chunkIdx
                 currentScrollYPosition = 0
                 currentScrollHeightValue = 0
                 currentChapterIndex = chapterIdx
                 searchHighlightTarget = result
-                loadUpToChunkIndex = chunkIdx
-                loadedChunkCount = max(loadedChunkCount, chunkIdx + 1)
             },
             onVerticalScrollToResult = { result ->
-                Timber.tag("NavDiag").d("onVerticalScrollToResult query=${result.query}")
+                Timber.tag("NavDiag").d("onVerticalScrollToResult query=${result.query}, chunk=${result.chunkIndex}")
+                val targetChunk = result.chunkIndex ?: 0
+                if (targetChunk >= loadedChunkCount) {
+                    val chunksToInject = (loadedChunkCount..targetChunk)
+                    chunksToInject.forEach { idx ->
+                        val content = chapterChunks.getOrNull(idx)
+                        if (content != null) {
+                            val escaped = escapeJsString(content)
+                            webViewRefForTts?.evaluateJavascript(
+                                "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                                null
+                            )
+                        }
+                    }
+                    loadUpToChunkIndex = targetChunk
+                    loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
+                }
                 searchHighlightTarget = result
             },
             onPaginatedScrollToPage = { pageIdx ->
@@ -2158,7 +2173,7 @@ fun EpubReaderHost(
                                     } else if (chapterChunks.isNotEmpty()) {
                                         val initialContentToLoad = remember(loadUpToChunkIndex, chapterChunks) {
                                             val targetIdx = loadUpToChunkIndex
-                                            val startIdx = maxOf(0, targetIdx - 1)
+                                            val startIdx = 0
                                             val endIdx = minOf(chapterChunks.lastIndex, targetIdx + 1)
 
                                             chapterChunks.indices.joinToString(separator = "\n") { index ->
@@ -2221,8 +2236,14 @@ fun EpubReaderHost(
                                                 val webView = webViewRefForTts
                                                 if (webView != null) {
                                                     val escapedQuery = escapeJsString(target.query)
-                                                    val js =
-                                                        "javascript:console.log('NavDiag: Executing search highlight JS'); window.highlightAllOccurrences('${escapedQuery}'); window.scrollToOccurrence(${target.occurrenceIndexInLocation});"
+                                                    val targetChunk = target.chunkIndex ?: 0
+
+                                                    val relativeIdx = searchState.searchResults
+                                                        .filter { it.locationInSource == target.locationInSource && it.chunkIndex == targetChunk }
+                                                        .indexOf(target)
+                                                        .coerceAtLeast(0)
+
+                                                    val js = "javascript:console.log('NavDiag: Executing robust search highlight JS'); window.CURRENT_SEARCH_QUERY = '${escapedQuery}'; window.highlightAllOccurrences('${escapedQuery}'); window.scrollToChunkOccurrence($targetChunk, $relativeIdx);"
                                                     Timber.tag("NavDiag").d("Executing search highlight/scroll JS: $js")
                                                     webView.evaluateJavascript(js) { result ->
                                                         Timber.tag("NavDiag").d("JS highlight/scroll result: $result")
@@ -3483,6 +3504,7 @@ fun EpubReaderHost(
                         keyboardController?.hide()
                         focusManager.clearFocus()
                         containerFocusRequester.requestFocus()
+                        webViewRefForTts?.evaluateJavascript("javascript:window.clearSearchHighlights();", null)
                     },
                     onChangeRenderMode = { newMode ->
                         Timber.tag("NavDiag").d("onChangeRenderMode to $newMode")
