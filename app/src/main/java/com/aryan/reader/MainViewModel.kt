@@ -240,6 +240,8 @@ data class ReaderScreenState(
     val openTabIds: List<String> = emptyList(),
     val openTabs: List<RecentFileItem> = emptyList(),
     val activeTabBookId: String? = null,
+    val showExternalFileSavePromptFor: String? = null,
+    val externalFileBehavior: String = "ASK",
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -279,6 +281,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
+    private var externalOpenedBookId: String? = null
 
     data class PageModificationResult(
         val layout: List<VirtualPage>,
@@ -348,6 +351,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 } catch(_: Exception) { emptyList() }
             } ?: emptyList(),
             activeTabBookId = prefs.getString(KEY_ACTIVE_TAB, null),
+            externalFileBehavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK"
         )
     )
 
@@ -370,7 +374,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val filters = internalState.libraryFilters
         val libraryFiltered = baseVisibleFiles.filter { item ->
             val matchType = if (filters.fileTypes.isNotEmpty()) item.type in filters.fileTypes else true
-            val matchFolder = if (filters.sourceFolders.isNotEmpty()) item.sourceFolderUri in filters.sourceFolders else true
+            val matchFolder = if (filters.sourceFolders.isNotEmpty()) {
+                val matchesInApp = filters.sourceFolders.contains("IN_APP_STORAGE") && item.sourceFolderUri == null && item.uriString?.startsWith("opds-pse") != true
+                val matchesSynced = item.sourceFolderUri in filters.sourceFolders
+                matchesInApp || matchesSynced
+            } else true
             val progress = item.progressPercentage ?: 0f
             val matchStatus = when (filters.readStatus) {
                 ReadStatusFilter.ALL -> true
@@ -963,7 +971,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             withContext(Dispatchers.Main) {
                 onDeleted()
-                showBanner(appContext.getString(R.string.banner_text_view_deleted))
             }
         }
     }
@@ -1487,6 +1494,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
+        val closingBookId = _internalState.value.selectedBookId
         val uriString = _internalState.value.selectedPdfUri?.toString()
             ?: _internalState.value.selectedEpubUri?.toString()
 
@@ -1502,6 +1510,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 initialLocator = null,
                 initialPageInBook = null
             )
+        }
+
+        if (closingBookId != null && closingBookId == externalOpenedBookId) {
+            val behavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK"
+            if (behavior == "ASK") {
+                _internalState.update { it.copy(showExternalFileSavePromptFor = closingBookId) }
+            } else if (behavior == "DELETE") {
+                deleteBookPermanently(closingBookId)
+            }
+            externalOpenedBookId = null
         }
 
         if (uriString != null) {
@@ -2819,7 +2837,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun onFileSelected(uri: Uri, isFromRecent: Boolean = false) {
+    fun onFileSelected(uri: Uri, isFromRecent: Boolean = false, isExternalIntent: Boolean = false) {
         if (isFromRecent) {
             Timber.i("Opening recent file: $uri")
             viewModelScope.launch {
@@ -2832,11 +2850,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         } else {
             Timber.i("Importing new file: $uri")
-            importExternalFile(uri)
+            importExternalFile(uri, isExternalIntent)
         }
     }
 
-    private fun importExternalFile(externalUri: Uri) {
+    private fun importExternalFile(externalUri: Uri, isExternalIntent: Boolean = false) {
         _internalState.update {
             it.copy(isLoading = true, errorMessage = null, contextualActionItems = emptySet())
         }
@@ -2846,6 +2864,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             if (importResult != null) {
                 val (internalUri, bookId, type) = importResult
+                if (isExternalIntent) {
+                    externalOpenedBookId = bookId
+                }
                 val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
                 openBook(
                     internalUri, bookId = bookId, type = type, originalDisplayName = displayName
@@ -3734,12 +3755,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectAllRecentFiles() {
-        val recentFilesForHome = uiState.value.recentFiles.filter { it.isRecent }
-        _internalState.update { it.copy(contextualActionItems = recentFilesForHome.toSet()) }
+        val currentVisible = uiState.value.recentFiles.filter { it.isRecent }.toSet()
+        _internalState.update { state ->
+            if (state.contextualActionItems.containsAll(currentVisible) && currentVisible.isNotEmpty()) {
+                state.copy(contextualActionItems = emptySet())
+            } else {
+                state.copy(contextualActionItems = currentVisible)
+            }
+        }
     }
 
     fun selectAllLibraryFiles() {
-        _internalState.update { it.copy(contextualActionItems = uiState.value.recentFiles.toSet()) }
+        val currentVisible = uiState.value.allRecentFiles.toSet()
+        _internalState.update { state ->
+            if (state.contextualActionItems.containsAll(currentVisible) && currentVisible.isNotEmpty()) {
+                state.copy(contextualActionItems = emptySet())
+            } else {
+                state.copy(contextualActionItems = currentVisible)
+            }
+        }
     }
 
     fun clearContextualAction() {
@@ -3751,6 +3785,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun showCreateShelfDialog() {
         _internalState.update { it.copy(showCreateShelfDialog = true) }
+    }
+
+    fun handleExternalFilePrompt(bookId: String, keep: Boolean, dontAskAgain: Boolean) {
+        if (dontAskAgain) {
+            val newBehavior = if (keep) "KEEP" else "DELETE"
+            setExternalFileBehavior(newBehavior)
+        }
+        if (!keep) {
+            deleteBookPermanently(bookId)
+        }
+        _internalState.update { it.copy(showExternalFileSavePromptFor = null) }
+    }
+    fun setExternalFileBehavior(behavior: String) {
+        prefs.edit { putString(KEY_EXTERNAL_FILE_BEHAVIOR, behavior) }
+        _internalState.update { it.copy(externalFileBehavior = behavior) }
     }
 
     fun dismissCreateShelfDialog() {
@@ -4361,5 +4410,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_TABS_ENABLED = "tabs_enabled"
         private const val KEY_OPEN_TAB_IDS = "open_tab_ids"
         private const val KEY_ACTIVE_TAB = "active_tab_book_id"
+        private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
     }
 }

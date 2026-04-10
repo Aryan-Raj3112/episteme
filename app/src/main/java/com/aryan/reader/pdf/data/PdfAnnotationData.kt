@@ -200,8 +200,8 @@ object TextBoxSerializer {
                         isItalic = obj.optBoolean("isItalic", false),
                         isUnderline = obj.optBoolean("isUnderline", false),
                         isStrikeThrough = obj.optBoolean("isStrikeThrough", false),
-                        fontPath = obj.optString("fontPath", null).takeIf { !it.isNullOrBlank() },
-                        fontName = obj.optString("fontName", null).takeIf { !it.isNullOrBlank() }
+                        fontPath = obj.optString("fontPath").takeIf { !it.isNullOrBlank() },
+                        fontName = obj.optString("fontName").takeIf { !it.isNullOrBlank() }
                     )
                 )
             }
@@ -269,7 +269,7 @@ object HighlightSerializer {
                         color = try { PdfHighlightColor.valueOf(obj.getString("color")) } catch(_: Exception) { PdfHighlightColor.YELLOW },
                         text = obj.optString("text", ""),
                         range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0)),
-                        note = obj.optString("note", null).takeIf { !it.isNullOrBlank() }
+                        note = obj.optString("note").takeIf { !it.isNullOrBlank() }
                     )
                 )
             }

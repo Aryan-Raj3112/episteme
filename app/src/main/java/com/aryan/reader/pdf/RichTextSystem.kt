@@ -420,7 +420,7 @@ class PdfRichTextRepository(private val context: Context) {
                             isItalic = sObj.optBoolean("i"),
                             isUnderline = sObj.optBoolean("u"),
                             isStrikethrough = sObj.optBoolean("st"),
-                            fontPath = sObj.optString("fp", null),
+                            fontPath = sObj.optString("fp"),
                         )
                     )
                 }

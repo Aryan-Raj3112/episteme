@@ -20,7 +20,7 @@
 // PdfViewerScreen.kt
 @file:Suppress("COMPOSE_APPLIER_CALL_MISMATCH", "Unused", "UnusedVariable",
     "SimplifyBooleanWithConstants"
-)
+) @file:kotlin.OptIn(ExperimentalMaterial3Api::class)
 
 package com.aryan.reader.pdf
 
@@ -30,6 +30,8 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.compose.material3.Switch
+import androidx.compose.material.icons.filled.Settings
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -91,6 +93,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -364,6 +367,42 @@ private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 private const val PDF_THEME_KEY = "pdf_reader_theme"
 private const val PDF_KEEP_SCREEN_ON_KEY = "pdf_keep_screen_on_enabled"
+private const val PDF_HIDDEN_TOOLS_KEY = "pdf_hidden_tools"
+
+private fun loadPdfHiddenTools(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
+}
+
+private fun savePdfHiddenTools(context: Context, hiddenTools: Set<String>) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(PDF_HIDDEN_TOOLS_KEY, hiddenTools) }
+}
+
+enum class PdfReaderTool(val title: String, val category: String) {
+    DICTIONARY("External Apps", "Top Bar"),
+    THEME("Theme Settings", "Top Bar"),
+    LOCK_PANNING("Lock Panning", "Top Bar"),
+    FULL_SCREEN("Full Screen", "Top Bar"),
+    SLIDER("Navigation Slider", "Bottom Bar"),
+    TOC("Sidebar", "Bottom Bar"),
+    SEARCH("Search", "Bottom Bar"),
+    HIGHLIGHT_ALL("Highlight selectable text", "Bottom Bar"),
+    AI_FEATURES("AI Features", "Bottom Bar"),
+    EDIT_MODE("Edit Mode", "Bottom Bar"),
+    TTS_CONTROLS("TTS Controls", "Bottom Bar"),
+    OCR_LANGUAGE("OCR Language", "Overflow Menu"),
+    READING_MODE("Reading Mode", "Overflow Menu"),
+    KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
+    AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
+    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
+    BOOKMARK("Bookmark", "Overflow Menu"),
+    PAGE_MANAGEMENT("Page Management", "Overflow Menu"),
+    REFLOW("Text View (Reflow)", "Overflow Menu"),
+    SHARE("Share", "Overflow Menu"),
+    SAVE_COPY("Save Copy", "Overflow Menu"),
+    PRINT("Print", "Overflow Menu")
+}
 
 private fun loadCustomHighlightColors(context: Context): Map<PdfHighlightColor, Color> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -1212,6 +1251,14 @@ fun PdfViewerScreen(
     var showOcrLanguageDialog by remember { mutableStateOf(false) }
     var showReindexDialog by remember { mutableStateOf<OcrLanguage?>(null) }
     var pendingActionAfterOcrSelection by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    var showCustomizeToolsSheet by remember { mutableStateOf(false) }
+    var hiddenTools by remember { mutableStateOf(loadPdfHiddenTools(context)) }
+
+    val onUpdateHiddenTools = { newSet: Set<String> ->
+        hiddenTools = newSet
+        savePdfHiddenTools(context, newSet)
+    }
 
     val executeWithOcrCheck = remember(hasSelectedOcrLanguage) {
         { action: () -> Unit ->
@@ -3815,6 +3862,7 @@ fun PdfViewerScreen(
             showSummarizationUpsellDialog -> showSummarizationUpsellDialog = false
             showAiDefinitionPopup -> showAiDefinitionPopup = false
             showDictionaryUpsellDialog -> showDictionaryUpsellDialog = false
+            showCustomizeToolsSheet -> showCustomizeToolsSheet = false
             isPageSliderVisible -> {
                 isPageSliderVisible = false
                 showBars = true
@@ -5143,7 +5191,7 @@ fun PdfViewerScreen(
                                                     triggerAutoScrollTempPause(1000L)
 
                                                     coroutineScope.launch {
-                                                        verticalReaderState.scrollToPage(0)
+                                                        verticalReaderState.scrollToTop()
                                                     }
                                                     break
                                                 }
@@ -5210,7 +5258,7 @@ fun PdfViewerScreen(
                                                     triggerAutoScrollTempPause(1000L)
 
                                                     coroutineScope.launch {
-                                                        verticalReaderState.scrollToPage(totalPages - 1)
+                                                        verticalReaderState.scrollToBottom()
                                                     }
                                                     break
                                                 }
@@ -5555,60 +5603,68 @@ fun PdfViewerScreen(
                                             .testTag("PageNumberIndicator")
                                     )
 
-                                    TooltipIconButton(
-                                        text = "Theme",
-                                        description = "Theme Settings",
-                                        onClick = { showThemePanel = true }) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.palette),
-                                            contentDescription = "Theme Settings",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    if (!hiddenTools.contains(PdfReaderTool.THEME.name)) {
+                                        TooltipIconButton(
+                                            text = "Theme",
+                                            description = "Theme Settings",
+                                            onClick = { showThemePanel = true }) {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.palette),
+                                                contentDescription = "Theme Settings",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
-                                    TooltipIconButton(
-                                        text = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan)
-                                        else stringResource(R.string.tooltip_lock_pan),
-                                        description = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan_desc)
-                                        else stringResource(R.string.tooltip_lock_pan_desc),
-                                        onClick = {
-                                            isScrollLocked = !isScrollLocked
-                                            savePdfScrollLocked(context, bookId, isScrollLocked)
-                                            if (isScrollLocked) {
-                                                savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                                                lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                                            }
-                                        }) {
-                                        Icon(
-                                            imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                            contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    if (!hiddenTools.contains(PdfReaderTool.LOCK_PANNING.name)) {
+                                        TooltipIconButton(
+                                            text = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan)
+                                            else stringResource(R.string.tooltip_lock_pan),
+                                            description = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan_desc)
+                                            else stringResource(R.string.tooltip_lock_pan_desc),
+                                            onClick = {
+                                                isScrollLocked = !isScrollLocked
+                                                savePdfScrollLocked(context, bookId, isScrollLocked)
+                                                if (isScrollLocked) {
+                                                    savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                                                    lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                                                }
+                                            }) {
+                                            Icon(
+                                                imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                                contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
-                                    TooltipIconButton(
-                                        text = stringResource(R.string.tooltip_fullscreen),
-                                        description = stringResource(R.string.tooltip_fullscreen_desc),
-                                        onClick = {
-                                            isFullScreen = true
-                                            savePdfFullScreen(context, bookId, true)
-                                        }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Fullscreen,
-                                            contentDescription = "Enter Full Screen",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    if (!hiddenTools.contains(PdfReaderTool.FULL_SCREEN.name)) {
+                                        TooltipIconButton(
+                                            text = stringResource(R.string.tooltip_fullscreen),
+                                            description = stringResource(R.string.tooltip_fullscreen_desc),
+                                            onClick = {
+                                                isFullScreen = true
+                                                savePdfFullScreen(context, bookId, true)
+                                            }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Fullscreen,
+                                                contentDescription = "Enter Full Screen",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
-                                    TooltipIconButton(
-                                        text = stringResource(R.string.tooltip_dictionary),
-                                        description = stringResource(R.string.tooltip_dictionary_desc),
-                                        onClick = { showDictionarySettingsSheet = true }) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.dictionary),
-                                            contentDescription = "Dictionary Settings",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    if (!hiddenTools.contains(PdfReaderTool.DICTIONARY.name)) {
+                                        TooltipIconButton(
+                                            text = stringResource(R.string.tooltip_dictionary),
+                                            description = stringResource(R.string.tooltip_dictionary_desc),
+                                            onClick = { showDictionarySettingsSheet = true }) {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.dictionary),
+                                                contentDescription = "Dictionary Settings",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
                                     if (BuildConfig.DEBUG) {
@@ -5682,7 +5738,18 @@ fun PdfViewerScreen(
                                         DropdownMenu(
                                             expanded = showMoreMenu,
                                             onDismissRequest = { showMoreMenu = false }) {
-                                            if (BuildConfig.IS_PRO) {
+                                            DropdownMenuItem(
+                                                text = { Text("Customize Toolbar") },
+                                                onClick = {
+                                                    showMoreMenu = false
+                                                    showCustomizeToolsSheet = true
+                                                },
+                                                leadingIcon = {
+                                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
+                                            )
+                                            HorizontalDivider()
+                                            if (BuildConfig.IS_PRO && !hiddenTools.contains(PdfReaderTool.OCR_LANGUAGE.name)) {
                                                 DropdownMenuItem(
                                                     text = { Text("OCR Language") },
                                                     onClick = {
@@ -5693,166 +5760,184 @@ fun PdfViewerScreen(
                                                 HorizontalDivider()
                                             }
 
-                                            DropdownMenuItem(
-                                                text = { Text("Reading Mode: Vertical scroll") },
-                                                enabled = !isTtsSessionActive,
-                                                onClick = {
-                                                    displayMode = DisplayMode.VERTICAL_SCROLL
-                                                    showMoreMenu = false
-                                                },
-                                                trailingIcon = {
-                                                    if (displayMode == DisplayMode.VERTICAL_SCROLL) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Check,
-                                                            contentDescription = "Selected"
-                                                        )
-                                                    }
-                                                })
-                                            HorizontalDivider()
-                                            DropdownMenuItem(
-                                                text = { Text("Reading Mode: Paginated") },
-                                                enabled = !isTtsSessionActive,
-                                                onClick = {
-                                                    displayMode = DisplayMode.PAGINATION
-                                                    showMoreMenu = false
-                                                },
-                                                trailingIcon = {
-                                                    if (displayMode == DisplayMode.PAGINATION) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Check,
-                                                            contentDescription = "Selected"
-                                                        )
-                                                    }
-                                                })
-                                            HorizontalDivider()
-                                            DropdownMenuItem(
-                                                text = { Text("Keep Screen On") },
-                                                onClick = {
-                                                    isKeepScreenOn = !isKeepScreenOn
-                                                    saveKeepScreenOn(context, isKeepScreenOn)
-                                                    showMoreMenu = false
-                                                },
-                                                trailingIcon = {
-                                                    if (isKeepScreenOn) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Check,
-                                                            contentDescription = "Selected"
-                                                        )
-                                                    }
-                                                })
-                                            HorizontalDivider()
-                                            DropdownMenuItem(
-                                                text = { Text("Auto Scroll") },
-                                                enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
-                                                onClick = {
-                                                    showMoreMenu = false
-                                                    isAutoScrollModeActive = true
-                                                    isAutoScrollPlaying = true
-                                                    showBars = !isMusicianMode
-                                                })
-
-                                            HorizontalDivider()
-                                            DropdownMenuItem(
-                                                text = { Text("TTS Voice Settings") },
-                                                onClick = {
-                                                    showMoreMenu = false
-                                                    showDeviceVoiceSettingsSheet = true
-                                                },
-                                                leadingIcon = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.GraphicEq,
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                })
-
-                                            if (BuildConfig.DEBUG) {
+                                            if (!hiddenTools.contains(PdfReaderTool.READING_MODE.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("TTS Settings (Debug)") },
+                                                    text = { Text("Reading Mode: Vertical scroll") },
+                                                    enabled = !isTtsSessionActive,
+                                                    onClick = {
+                                                        displayMode = DisplayMode.VERTICAL_SCROLL
+                                                        showMoreMenu = false
+                                                    },
+                                                    trailingIcon = {
+                                                        if (displayMode == DisplayMode.VERTICAL_SCROLL) {
+                                                            Icon(
+                                                                imageVector = Icons.Filled.Check,
+                                                                contentDescription = "Selected"
+                                                            )
+                                                        }
+                                                    })
+                                                HorizontalDivider()
+                                                DropdownMenuItem(
+                                                    text = { Text("Reading Mode: Paginated") },
+                                                    enabled = !isTtsSessionActive,
+                                                    onClick = {
+                                                        displayMode = DisplayMode.PAGINATION
+                                                        showMoreMenu = false
+                                                    },
+                                                    trailingIcon = {
+                                                        if (displayMode == DisplayMode.PAGINATION) {
+                                                            Icon(
+                                                                imageVector = Icons.Filled.Check,
+                                                                contentDescription = "Selected"
+                                                            )
+                                                        }
+                                                    })
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.KEEP_SCREEN_ON.name)) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Keep Screen On") },
+                                                    onClick = {
+                                                        isKeepScreenOn = !isKeepScreenOn
+                                                        saveKeepScreenOn(context, isKeepScreenOn)
+                                                        showMoreMenu = false
+                                                    },
+                                                    trailingIcon = {
+                                                        if (isKeepScreenOn) {
+                                                            Icon(
+                                                                imageVector = Icons.Filled.Check,
+                                                                contentDescription = "Selected"
+                                                            )
+                                                        }
+                                                    })
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.AUTO_SCROLL.name)) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Auto Scroll") },
+                                                    enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
                                                     onClick = {
                                                         showMoreMenu = false
-                                                        showTtsSettingsSheet = true
+                                                        isAutoScrollModeActive = true
+                                                        isAutoScrollPlaying = true
+                                                        showBars = !isMusicianMode
+                                                    })
+
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)) {
+                                                DropdownMenuItem(
+                                                    text = { Text("TTS Voice Settings") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        showDeviceVoiceSettingsSheet = true
                                                     },
                                                     leadingIcon = {
                                                         Icon(
-                                                            painter = painterResource(id = R.drawable.text_to_speech),
+                                                            imageVector = Icons.Default.GraphicEq,
                                                             contentDescription = null,
                                                             modifier = Modifier.size(20.dp)
                                                         )
-                                                    })
-                                            }
-
-                                            HorizontalDivider()
-                                            DropdownMenuItem(text = {
-                                                Text(
-                                                    if (isBookmarked) "Remove bookmark"
-                                                    else "Bookmark this page"
+                                                    }
                                                 )
-                                            }, onClick = {
-                                                showMoreMenu = false
-                                                onBookmarkClick()
-                                            })
-                                            HorizontalDivider()
 
-                                            DropdownMenuItem(
-                                                text = { Text("Insert Blank Page") },
-                                                onClick = {
+                                                if (BuildConfig.DEBUG) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("TTS Settings (Debug)") },
+                                                        onClick = {
+                                                            showMoreMenu = false
+                                                            showTtsSettingsSheet = true
+                                                        },
+                                                        leadingIcon = {
+                                                            Icon(
+                                                                painter = painterResource(id = R.drawable.text_to_speech),
+                                                                contentDescription = null,
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                    )
+                                                }
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.BOOKMARK.name)) {
+                                                DropdownMenuItem(text = {
+                                                    Text(
+                                                        if (isBookmarked) "Remove bookmark"
+                                                        else "Bookmark this page"
+                                                    )
+                                                }, onClick = {
                                                     showMoreMenu = false
-                                                    onInsertPage()
+                                                    onBookmarkClick()
                                                 })
-
-                                            val canDelete =
-                                                virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage
-                                            if (canDelete) {
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.PAGE_MANAGEMENT.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Delete Page") },
+                                                    text = { Text("Insert Blank Page") },
                                                     onClick = {
                                                         showMoreMenu = false
-                                                        onDeletePage()
-                                                    },
-                                                    colors = MenuDefaults.itemColors(
-                                                        textColor = MaterialTheme.colorScheme.error
+                                                        onInsertPage()
+                                                    })
+
+                                                val canDelete =
+                                                    virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage
+                                                if (canDelete) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("Delete Page") },
+                                                        onClick = {
+                                                            showMoreMenu = false
+                                                            onDeletePage()
+                                                        },
+                                                        colors = MenuDefaults.itemColors(
+                                                            textColor = MaterialTheme.colorScheme.error
+                                                        )
                                                     )
-                                                )
+                                                }
+                                                HorizontalDivider()
                                             }
-
-                                            HorizontalDivider()
-
-                                            DropdownMenuItem(
-                                                text = {
-                                                    Text(
-                                                        when {
-                                                            isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
-                                                            hasReflowFile -> "Open Text View"
-                                                            else -> "Generate Text View"
-                                                        }
-                                                    )
-                                                },
-                                                enabled = pdfDocument != null && !isReflowingThisBook,
-                                                onClick = {
-                                                    showMoreMenu = false
-
-                                                    coroutineScope.launch {
-                                                        if (richTextController != null) {
-                                                            withContext(NonCancellable) { richTextController.saveImmediate() }
-                                                        }
-                                                        saveAllData(true).join()
-
-                                                        val resolvedPage =
-                                                            if (!initialScrollDone && currentPage == 0) {
-                                                                pendingRestorePage ?: 0
-                                                            } else {
-                                                                currentPage
+                                            if (!hiddenTools.contains(PdfReaderTool.REFLOW.name)) {
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            when {
+                                                                isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
+                                                                hasReflowFile -> "Open Text View"
+                                                                else -> "Generate Text View"
                                                             }
+                                                        )
+                                                    },
+                                                    enabled = pdfDocument != null && !isReflowingThisBook,
+                                                    onClick = {
+                                                        showMoreMenu = false
 
-                                                        if (hasReflowFile) {
-                                                            val item =
-                                                                uiState.allRecentFiles.find { it.bookId == reflowBookId }
-                                                            if (item != null) {
-                                                                viewModel.switchToFileSeamlessly(
-                                                                    item,
-                                                                    resolvedPage
-                                                                )
+                                                        coroutineScope.launch {
+                                                            if (richTextController != null) {
+                                                                withContext(NonCancellable) { richTextController.saveImmediate() }
+                                                            }
+                                                            saveAllData(true).join()
+
+                                                            val resolvedPage =
+                                                                if (!initialScrollDone && currentPage == 0) {
+                                                                    pendingRestorePage ?: 0
+                                                                } else {
+                                                                    currentPage
+                                                                }
+
+                                                            if (hasReflowFile) {
+                                                                val item =
+                                                                    uiState.allRecentFiles.find { it.bookId == reflowBookId }
+                                                                if (item != null) {
+                                                                    viewModel.switchToFileSeamlessly(
+                                                                        item, resolvedPage
+                                                                    )
+                                                                } else {
+                                                                    viewModel.generateAndImportReflowFile(
+                                                                        pdfBookId = bookId,
+                                                                        pdfUri = effectivePdfUri,
+                                                                        originalTitle = originalFileName,
+                                                                        autoOpenPage = resolvedPage
+                                                                    )
+                                                                }
                                                             } else {
                                                                 viewModel.generateAndImportReflowFile(
                                                                     pdfBookId = bookId,
@@ -5861,35 +5946,33 @@ fun PdfViewerScreen(
                                                                     autoOpenPage = resolvedPage
                                                                 )
                                                             }
-                                                        } else {
-                                                            viewModel.generateAndImportReflowFile(
-                                                                pdfBookId = bookId,
-                                                                pdfUri = effectivePdfUri,
-                                                                originalTitle = originalFileName,
-                                                                autoOpenPage = resolvedPage
-                                                            )
                                                         }
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            painter = painterResource(id = R.drawable.format_size),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    })
+                                                HorizontalDivider()
+                                            }
+                                            if (!hiddenTools.contains(PdfReaderTool.SHARE.name)) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Share") },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        showShareDialog = true
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            Icons.Default.Share,
+                                                            contentDescription = null
+                                                        )
                                                     }
-                                                },
-                                                leadingIcon = {
-                                                    Icon(
-                                                        painter = painterResource(id = R.drawable.format_size),
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                })
-
-                                            HorizontalDivider()
-
-                                            DropdownMenuItem(text = { Text("Share") }, onClick = {
-                                                showMoreMenu = false
-                                                showShareDialog = true
-                                            }, leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Share, contentDescription = null
                                                 )
-                                            })
-                                            if (uiState.selectedFileType == FileType.PDF) {
+                                            }
+                                            if (uiState.selectedFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)) {
                                                 DropdownMenuItem(
                                                     text = { Text("Save copy to device") },
                                                     onClick = {
@@ -5903,7 +5986,7 @@ fun PdfViewerScreen(
                                                         )
                                                     })
                                             }
-                                            if (uiState.selectedFileType == FileType.PDF) {
+                                            if (uiState.selectedFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name)) {
                                                 DropdownMenuItem(
                                                     text = { Text("Print") },
                                                     onClick = {
@@ -6247,93 +6330,97 @@ fun PdfViewerScreen(
                             horizontalArrangement = Arrangement.SpaceAround
                         ) {
                             // Slider Navigation Trigger
-                            TooltipIconButton(
-                                text = stringResource(R.string.tooltip_slider),
-                                description = stringResource(R.string.tooltip_slider_desc),
-                                onClick = {
-                                    val currentPage = if (displayMode == DisplayMode.PAGINATION) {
-                                        pagerState.currentPage
-                                    } else {
-                                        verticalReaderState.currentPage
-                                    }
-                                    sliderStartPage = currentPage
-                                    sliderCurrentPage = currentPage.toFloat()
-                                    isPageSliderVisible = true
-                                    showBars = false
-                                }, enabled = !(ttsState.isPlaying || ttsState.isLoading)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.slider),
-                                    contentDescription = "Navigate with slider"
-                                )
-                            }
-
-                            TooltipIconButton(
-                                text = stringResource(R.string.tooltip_toc),
-                                description = stringResource(R.string.tooltip_toc_desc),
-                                onClick = { coroutineScope.launch { drawerState.open() } },
-                                enabled = !(ttsState.isPlaying || ttsState.isLoading),
-                                modifier = Modifier.testTag("TocButton")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Menu,
-                                    contentDescription = "Table of Contents"
-                                )
-                            }
-
-                            // Search Button
-                            TooltipIconButton(
-                                text = stringResource(R.string.tooltip_search),
-                                description = stringResource(R.string.tooltip_search_desc),
-                                onClick = {
-                                    executeWithOcrCheck {
-                                        searchState.isSearchActive = true
-                                        showBars = true
-                                    }
-                                },
-                                enabled = !(ttsState.isPlaying || ttsState.isLoading),
-                                modifier = Modifier.testTag("SearchButton")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Search,
-                                    contentDescription = "Search"
-                                )
-                            }
-
-                            TooltipIconButton(
-                                text = if (showAllTextHighlights)
-                                    stringResource(R.string.tooltip_highlights_off)
-                                else
-                                    stringResource(R.string.tooltip_highlights),
-                                description = if (showAllTextHighlights)
-                                    stringResource(R.string.tooltip_highlights_off_desc)
-                                else
-                                    stringResource(R.string.tooltip_highlights_desc),
-                                onClick = {
-                                    val newState = !showAllTextHighlights
-                                    if (newState) {
-                                        if (isHighlightingLoading) return@TooltipIconButton
-                                        showAllTextHighlights = true
-                                        isHighlightingLoading = true
-                                    } else {
-                                        showAllTextHighlights = false
-                                        isHighlightingLoading = false
-                                    }
-                                }) {
-                                if (isHighlightingLoading) {
-                                    CircularProgressIndicator(Modifier.size(24.dp))
-                                } else {
+                            if (!hiddenTools.contains(PdfReaderTool.SLIDER.name)) {
+                                TooltipIconButton(
+                                    text = stringResource(R.string.tooltip_slider),
+                                    description = stringResource(R.string.tooltip_slider_desc),
+                                    onClick = {
+                                        val currentPage =
+                                            if (displayMode == DisplayMode.PAGINATION) {
+                                                pagerState.currentPage
+                                            } else {
+                                                verticalReaderState.currentPage
+                                            }
+                                        sliderStartPage = currentPage
+                                        sliderCurrentPage = currentPage.toFloat()
+                                        isPageSliderVisible = true
+                                        showBars = false
+                                    },
+                                    enabled = !(ttsState.isPlaying || ttsState.isLoading)
+                                ) {
                                     Icon(
-                                        painter = painterResource(id = R.drawable.highlight_text),
-                                        contentDescription = "Highlight all text",
-                                        tint = if (showAllTextHighlights) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                        painter = painterResource(id = R.drawable.slider),
+                                        contentDescription = "Navigate with slider"
+                                    )
+                                }
+                            }
+                            if (!hiddenTools.contains(PdfReaderTool.TOC.name)) {
+                                TooltipIconButton(
+                                    text = stringResource(R.string.tooltip_toc),
+                                    description = stringResource(R.string.tooltip_toc_desc),
+                                    onClick = { coroutineScope.launch { drawerState.open() } },
+                                    enabled = !(ttsState.isPlaying || ttsState.isLoading),
+                                    modifier = Modifier.testTag("TocButton")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Menu,
+                                        contentDescription = "Table of Contents"
                                     )
                                 }
                             }
 
+                            // Search Button
+                            if (!hiddenTools.contains(PdfReaderTool.SEARCH.name)) {
+                                TooltipIconButton(
+                                    text = stringResource(R.string.tooltip_search),
+                                    description = stringResource(R.string.tooltip_search_desc),
+                                    onClick = {
+                                        executeWithOcrCheck {
+                                            searchState.isSearchActive = true
+                                            showBars = true
+                                        }
+                                    },
+                                    enabled = !(ttsState.isPlaying || ttsState.isLoading),
+                                    modifier = Modifier.testTag("SearchButton")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Search"
+                                    )
+                                }
+                            }
+                            if (!hiddenTools.contains(PdfReaderTool.HIGHLIGHT_ALL.name)) {
+                                TooltipIconButton(
+                                    text = if (showAllTextHighlights) stringResource(R.string.tooltip_highlights_off)
+                                    else stringResource(R.string.tooltip_highlights),
+                                    description = if (showAllTextHighlights) stringResource(R.string.tooltip_highlights_off_desc)
+                                    else stringResource(R.string.tooltip_highlights_desc),
+                                    onClick = {
+                                        val newState = !showAllTextHighlights
+                                        if (newState) {
+                                            if (isHighlightingLoading) return@TooltipIconButton
+                                            showAllTextHighlights = true
+                                            isHighlightingLoading = true
+                                        } else {
+                                            showAllTextHighlights = false
+                                            isHighlightingLoading = false
+                                        }
+                                    }) {
+                                    if (isHighlightingLoading) {
+                                        CircularProgressIndicator(Modifier.size(24.dp))
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.highlight_text),
+                                            contentDescription = "Highlight all text",
+                                            tint = if (showAllTextHighlights) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
                             // AI feat
-                            if (BuildConfig.FLAVOR != "oss") {
+                            if (BuildConfig.FLAVOR != "oss" && !hiddenTools.contains(PdfReaderTool.AI_FEATURES.name)) {
                                 Box {
                                     var showAiFeaturesMenu by remember { mutableStateOf(false) }
                                     TooltipIconButton(
@@ -6375,66 +6462,63 @@ fun PdfViewerScreen(
                             }
 
                             // Edit Button
-                            TooltipIconButton(
-                                text = if (isEditMode)
-                                    stringResource(R.string.tooltip_edit_mode_exit)
-                                else
-                                    stringResource(R.string.tooltip_edit_mode),
-                                description = if (isEditMode)
-                                    stringResource(R.string.tooltip_edit_mode_exit_desc)
-                                else
-                                    stringResource(R.string.tooltip_edit_mode_desc),
-                                onClick = {
-                                    val newEditMode = !isEditMode
-                                    val currentActivePage = richTextController?.activePageIndex ?: -1
+                            if (!hiddenTools.contains(PdfReaderTool.EDIT_MODE.name)) {
+                                TooltipIconButton(
+                                    text = if (isEditMode) stringResource(R.string.tooltip_edit_mode_exit)
+                                    else stringResource(R.string.tooltip_edit_mode),
+                                    description = if (isEditMode) stringResource(R.string.tooltip_edit_mode_exit_desc)
+                                    else stringResource(R.string.tooltip_edit_mode_desc),
+                                    onClick = {
+                                        val newEditMode = !isEditMode
+                                        val currentActivePage =
+                                            richTextController?.activePageIndex ?: -1
 
-                                    Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
+                                        Timber.tag("RichTextMigration")
+                                            .i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
 
-                                    if (!newEditMode && richTextController != null) {
-                                        coroutineScope.launch {
-                                            richTextController.saveImmediate()
-                                            withContext(Dispatchers.Main) {
-                                                keyboardController?.hide()
+                                        if (!newEditMode && richTextController != null) {
+                                            coroutineScope.launch {
+                                                richTextController.saveImmediate()
+                                                withContext(Dispatchers.Main) {
+                                                    keyboardController?.hide()
+                                                }
                                             }
                                         }
-                                    }
 
-                                    isEditMode = newEditMode
-                                    if (!newEditMode) showBars = true
+                                        isEditMode = newEditMode
+                                        if (!newEditMode) showBars = true
+                                    }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Toggle Editing Mode",
+                                        tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Toggle Editing Mode",
-                                    tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
 
                             // TTS
-                            TooltipIconButton(
-                                text = if (isTtsSessionActive)
-                                    stringResource(R.string.tooltip_tts_stop)
-                                else
-                                    stringResource(R.string.tooltip_tts_start),
-                                description = if (isTtsSessionActive)
-                                    stringResource(R.string.tooltip_tts_stop_desc)
-                                else
-                                    stringResource(R.string.tooltip_tts_start_desc),
-                                onClick = {
-                                    if (isTtsSessionActive) {
-                                        Timber.d("TTS button clicked: Stopping TTS")
-                                        ttsController.stop()
-                                    } else {
-                                        startTtsWithPermissionCheck(null, null)
-                                    }
-                                }) {
-                                Icon(
-                                    painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
-                                    else painterResource(
-                                        id = R.drawable.text_to_speech
-                                    ),
-                                    contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
-                                )
+                            if (!hiddenTools.contains(PdfReaderTool.TTS_CONTROLS.name)) {
+                                TooltipIconButton(
+                                    text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
+                                    else stringResource(R.string.tooltip_tts_start),
+                                    description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
+                                    else stringResource(R.string.tooltip_tts_start_desc),
+                                    onClick = {
+                                        if (isTtsSessionActive) {
+                                            Timber.d("TTS button clicked: Stopping TTS")
+                                            ttsController.stop()
+                                        } else {
+                                            startTtsWithPermissionCheck(null, null)
+                                        }
+                                    }) {
+                                    Icon(
+                                        painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
+                                        else painterResource(
+                                            id = R.drawable.text_to_speech
+                                        ),
+                                        contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
+                                    )
+                                }
                             }
 
                             // TTS Pause/Resume Button
@@ -7759,7 +7843,22 @@ fun PdfViewerScreen(
                             savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
                         },
                         isLocalMode = isAutoScrollLocal,
-                        onLocalModeToggle = onToggleAutoScrollMode
+                        onLocalModeToggle = onToggleAutoScrollMode,
+                        onScrollToTop = {
+                            if (isAutoScrollPlaying) {
+                                triggerAutoScrollTempPause(1000L)
+                            }
+                            coroutineScope.launch {
+                                verticalReaderState.scrollToTop()
+                            }
+                        }
+                    )
+                }
+                if (showCustomizeToolsSheet) {
+                    PdfCustomizeToolsSheet(
+                        hiddenTools = hiddenTools,
+                        onUpdate = onUpdateHiddenTools,
+                        onDismiss = { showCustomizeToolsSheet = false }
                     )
                 }
             }
@@ -8406,6 +8505,77 @@ fun PdfSearchResultsList(
                                 )
                                 .clickable { onResultClick(result) })
                         HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PdfCustomizeToolsSheet(
+    hiddenTools: Set<String>,
+    onUpdate: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text(
+                text = "Customize Toolbar",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                PdfReaderTool.entries.groupBy { it.category }.forEach { (category, tools) ->
+                    item {
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                        )
+                    }
+                    items(tools) { tool ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    val newSet = hiddenTools.toMutableSet()
+                                    if (newSet.contains(tool.name)) newSet.remove(tool.name)
+                                    else newSet.add(tool.name)
+                                    onUpdate(newSet)
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = tool.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Switch(
+                                checked = !hiddenTools.contains(tool.name),
+                                onCheckedChange = { isVisible ->
+                                    val newSet = hiddenTools.toMutableSet()
+                                    if (isVisible) newSet.remove(tool.name) else newSet.add(tool.name)
+                                    onUpdate(newSet)
+                                }
+                            )
+                        }
                     }
                 }
             }

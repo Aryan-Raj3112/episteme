@@ -123,7 +123,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1104,12 +1104,12 @@ internal fun PdfPageComposable(
         try {
             page = withContext(Dispatchers.IO) { pdfDocumentItem.openPage(pdfPageIndex) }
 
-            snapshotFlow { visibleScreenRect() }.collectLatest { currentVisibleRect ->
+            snapshotFlow { visibleScreenRect() }.conflate().collect { currentVisibleRect ->
                 val tileCalcStart = System.nanoTime()
-                if (!isActive) return@collectLatest
+                if (!isActive) return@collect
 
                 if (isScrolling && effectiveScale > 1f) {
-                    return@collectLatest
+                    return@collect
                 }
 
                 val pxTl: Float
@@ -1131,7 +1131,7 @@ internal fun PdfPageComposable(
                                 oldTiles.forEach { PdfBitmapPool.recycle(it.bitmap) }
                             }
                         }
-                        return@collectLatest
+                        return@collect
                     }
                 } else {
                     val pivotX = screenWidth / 2f

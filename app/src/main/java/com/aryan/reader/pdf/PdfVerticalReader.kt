@@ -139,6 +139,8 @@ class VerticalPdfReaderState {
     internal var scrollToPageHandler: (suspend (Int) -> Unit)? = null
     internal var snapToPageHandler: (suspend (Int) -> Unit)? = null
     internal var scrollByHandler: (suspend (Float) -> Unit)? = null
+    internal var scrollToTopHandler: (suspend () -> Unit)? = null
+    internal var scrollToBottomHandler: (suspend () -> Unit)? = null
 
     suspend fun scrollToPage(pageIndex: Int) {
         scrollToPageHandler?.invoke(pageIndex)
@@ -150,6 +152,14 @@ class VerticalPdfReaderState {
 
     suspend fun scrollBy(delta: Float) {
         scrollByHandler?.invoke(delta)
+    }
+
+    suspend fun scrollToTop() {
+        scrollToTopHandler?.invoke()
+    }
+
+    suspend fun scrollToBottom() {
+        scrollToBottomHandler?.invoke()
     }
 }
 
@@ -244,6 +254,8 @@ internal fun PdfVerticalReader(
             state.scrollToPageHandler = null
             state.snapToPageHandler = null
             state.scrollByHandler = null
+            state.scrollToTopHandler = null
+            state.scrollToBottomHandler = null
         }
     }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
@@ -526,6 +538,23 @@ internal fun PdfVerticalReader(
                         animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
                     )
                 }
+            }
+
+            state.scrollToTopHandler = {
+                panYAnimatable.animateTo(
+                    targetValue = headerHeightPx,
+                    animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
+                )
+            }
+
+            state.scrollToBottomHandler = {
+                val currentZoom = zoomAnimatable.value
+                val zoomedDocHeight = totalDocHeight * currentZoom
+                val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+                panYAnimatable.animateTo(
+                    targetValue = minPanY,
+                    animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
+                )
             }
         }
 

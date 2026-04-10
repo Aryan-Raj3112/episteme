@@ -294,7 +294,7 @@ class OpdsParser {
     private fun parseOpds2Navigation(nav: JSONObject, baseUrl: String): OpdsEntry {
         val title = nav.optString("title", "Unknown")
         val href = nav.optString("href")
-        val summary = nav.optString("description", null)
+        val summary = nav.optString("description")
         val navigationUrl = if (href.isNotEmpty()) resolveUrl(baseUrl, href) else null
 
         return OpdsEntry(

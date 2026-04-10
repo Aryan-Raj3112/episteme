@@ -21,7 +21,15 @@ class OpdsRepository(context: Context) {
         private const val KEY_CATALOGS_JSON = "opds_catalogs_json"
 
         val sharedHttpClient: OkHttpClient by lazy {
-            OkHttpClient.Builder().build()
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val originalRequest = chain.request()
+                    val requestWithUserAgent = originalRequest.newBuilder()
+                        .header("User-Agent", "EpistemeReader/1.0 (Android)")
+                        .build()
+                    chain.proceed(requestWithUserAgent)
+                }
+                .build()
         }
     }
 
@@ -54,6 +62,8 @@ class OpdsRepository(context: Context) {
 
         if (catalogs.isEmpty()) {
             catalogs.add(OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/", isDefault = true))
+            catalogs.add(OpdsCatalog(UUID.randomUUID().toString(), "Standard Ebooks", "https://standardebooks.org/feeds/opds", isDefault = true))
+
             saveCatalogs(catalogs)
         }
 

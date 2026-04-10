@@ -774,15 +774,16 @@
         document.addEventListener("DOMContentLoaded", initializeReaderContent);
     }
 
+    window.CURRENT_SEARCH_QUERY = "";
+
     window.clearSearchHighlights = function () {
+        window.CURRENT_SEARCH_QUERY = "";
         document.querySelectorAll("mark.search-highlight").forEach(function (el) {
             var parent = el.parentNode;
-
             if (parent) {
                 while (el.firstChild) {
                     parent.insertBefore(el.firstChild, el);
                 }
-
                 parent.removeChild(el);
                 parent.normalize();
             }
@@ -792,10 +793,12 @@
 
     window.highlightAllOccurrences = function (query) {
         window.clearSearchHighlights();
+        window.CURRENT_SEARCH_QUERY = query;
+
         if (!query || query.length < 2) return "JS: Query too short for highlighting.";
 
         var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-        var nodesToModify = [];
+        var nodesToModify =[];
 
         while ((node = walker.nextNode())) {
             if (node.nodeValue.toLowerCase().includes(query.toLowerCase())) {
@@ -811,11 +814,9 @@
                 tempDiv.innerHTML = textNode.nodeValue.replace(regex, '<mark class="search-highlight">$1</mark>');
 
                 var parent = textNode.parentNode;
-
                 while (tempDiv.firstChild) {
                     parent.insertBefore(tempDiv.firstChild, textNode);
                 }
-
                 parent.removeChild(textNode);
             }
         });
@@ -823,17 +824,37 @@
         return "JS: Highlighted " + document.querySelectorAll("mark.search-highlight").length + " occurrences.";
     };
 
-    window.scrollToOccurrence = function (index) {
-        var highlights = document.querySelectorAll("mark.search-highlight");
+    window.scrollToChunkOccurrence = function (chunkIndex, relativeIndex) {
+        console.log("NavDiag: scrollToChunkOccurrence chunk=" + chunkIndex + ", relativeIdx=" + relativeIndex);
+        var chunkDiv = document.querySelector(`.chunk-container[data-chunk-index='${chunkIndex}']`);
 
-        if (highlights && index >= 0 && index < highlights.length) {
-            var element = highlights[index];
+        if (chunkDiv) {
+            let wasEmpty = false;
 
-            element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-            return "JS: Scrolled to occurrence " + index;
+            if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                console.log("NavDiag: Chunk was empty, restoring content before scrolling.");
+                chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+                chunkDiv.style.height = "";
+                wasEmpty = true;
+            }
+
+            var highlights = chunkDiv.querySelectorAll("mark.search-highlight");
+
+            if ((wasEmpty || highlights.length === 0) && window.CURRENT_SEARCH_QUERY) {
+                window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY);
+                highlights = chunkDiv.querySelectorAll("mark.search-highlight");
+            }
+
+            if (highlights && highlights.length > 0) {
+                var targetIdx = (relativeIndex >= 0 && relativeIndex < highlights.length) ? relativeIndex : 0;
+                highlights[targetIdx].scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+                return "JS: Scrolled to relative occurrence " + targetIdx + " in chunk " + chunkIndex;
+            } else {
+                chunkDiv.scrollIntoView({ behavior: "auto", block: "center" });
+                return "JS: No highlights in chunk, scrolled to chunk center.";
+            }
         }
-
-        return "JS: Occurrence " + index + " not found.";
+        return "JS: Chunk " + chunkIndex + " not found.";
     };
 
     window.removeHighlight = function () {
@@ -1429,6 +1450,15 @@
 
                 let chunkElement = currentNode.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
                 if (chunkElement) {
+                    if (chunkElement.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                        console.log("CFI_DIAGNOSIS: Chunk " + chunkIndex + " was empty, restoring content for CFI resolution.");
+                        chunkElement.innerHTML = window.virtualization.chunksData[chunkIndex];
+                        chunkElement.style.height = "";
+                        if (window.CURRENT_HIGHLIGHTS) {
+                            window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                        }
+                    }
+
                     let elementsInChunk = Array.from(chunkElement.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE);
                     if (indexInChunk >= 0 && indexInChunk < elementsInChunk.length) {
                         currentNode = elementsInChunk[indexInChunk];
@@ -1649,7 +1679,7 @@
             cleanCfi = cfi.substring(cfi.indexOf('@') + 1);
         }
 
-        console.log("PosSaveDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
+        console.log("NavDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
 
         if (!cleanCfi || !cleanCfi.startsWith('/')) {
             if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
@@ -1719,6 +1749,7 @@
                     }
 
                     if (Math.abs(window.scrollY - targetScrollY) > 1) {
+                        console.log("NavDiag: Scrolling to targetY=" + targetScrollY);
                         window.scrollTo({ top: targetScrollY, behavior: 'auto' });
                     }
 
@@ -1947,6 +1978,9 @@
                                 if (window.CURRENT_HIGHLIGHTS) {
                                     window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
                                 }
+                                if (window.CURRENT_SEARCH_QUERY) {
+                                    window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY);
+                                }
                             }
                         } else {
                             if (div.innerHTML !== "") {
@@ -2004,6 +2038,10 @@
 
                 if (window.CURRENT_HIGHLIGHTS) {
                     window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                }
+
+                if (window.CURRENT_SEARCH_QUERY) {
+                    window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY);
                 }
             }
 
