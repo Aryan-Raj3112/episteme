@@ -178,6 +178,16 @@ abstract class BookCacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertConfigurationCache(cache: ConfigurationCache)
+
+    @Query("""
+        DELETE FROM configuration_cache 
+        WHERE bookId = :bookId AND configHash NOT IN (
+            SELECT configHash FROM configuration_cache 
+            WHERE bookId = :bookId 
+            ORDER BY rowid DESC LIMIT 3
+        )
+    """)
+    abstract suspend fun cleanupOldConfigurations(bookId: String)
 }
 
 @Database(

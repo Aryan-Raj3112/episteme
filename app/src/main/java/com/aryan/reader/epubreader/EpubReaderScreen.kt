@@ -502,6 +502,7 @@ fun EpubReaderHost(
     var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
+    var removeEdgePadding by remember { mutableStateOf(loadRemoveEdgePadding(context)) }
 
     var volumeScrollEnabled by remember {
         mutableStateOf(loadVolumeScrollSetting(context))
@@ -2144,11 +2145,13 @@ fun EpubReaderHost(
                             if (pageInfoMode == PageInfoMode.DEFAULT) PAGE_INFO_BAR_HEIGHT else 0.dp
                         }
 
+                        val horizontalPadding = if (removeEdgePadding) 0.dp else 16.dp
+
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(bottom = contentBottomPadding)
-                                .padding(top = 16.dp, start = 16.dp, end = 16.dp)
+                                .padding(top = 16.dp, start = horizontalPadding, end = horizontalPadding)
                                 .testTag("ReaderContainer")
                         ) {
                             if (chapters.isEmpty()) {
@@ -2881,6 +2884,7 @@ fun EpubReaderHost(
                                     offset = ttsState.startOffsetInSource
                                 ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
                                 activeTextureId = activeTextureId,
+                                removeEdgePadding = removeEdgePadding,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
                                 modifier = Modifier.alpha(if (isPagerInitialized) 1f else 0f),
                                 onPaginatorReady = { newPaginator ->
@@ -4228,6 +4232,11 @@ fun EpubReaderHost(
                 onPullToTurnChange = {
                     pullToTurnEnabled = it
                     savePullToTurn(context, it)
+                },
+                removeEdgePadding = removeEdgePadding,
+                onRemoveEdgePaddingChange = {
+                    removeEdgePadding = it
+                    saveRemoveEdgePadding(context, it)
                 },
                 onDismiss = { showVisualOptionsSheet = false }
             )

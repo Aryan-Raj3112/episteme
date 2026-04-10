@@ -631,6 +631,8 @@
     <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator at the bottom of the screen.</string>
     <string name="visual_options_seamless_chapter">Seamless Chapter Transition</string>
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
+    <string name="visual_options_edge_padding">Remove Edge Padding</string>
+    <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
 
     <!-- ExternalDictionaryHelper.kt -->
     <string name="dict_app_label_search">Search</string>

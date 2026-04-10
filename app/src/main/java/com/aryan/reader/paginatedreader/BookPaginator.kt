@@ -323,6 +323,8 @@ class BookPaginator(
         )
         bookCacheDao.insertConfigurationCache(newCache)
 
+        bookCacheDao.cleanupOldConfigurations(bookId)
+
         if (finalizedChapterCounts.size >= chapters.size) {
             pageCountsAreAccurate = true
         }

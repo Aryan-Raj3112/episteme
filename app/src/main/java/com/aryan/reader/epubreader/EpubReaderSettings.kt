@@ -647,6 +647,18 @@ fun FontSelectionSheetContent(
     }
 }
 
+private const val REMOVE_EDGE_PADDING_KEY = "reader_remove_edge_padding"
+
+fun saveRemoveEdgePadding(context: Context, enabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(REMOVE_EDGE_PADDING_KEY, enabled) }
+}
+
+fun loadRemoveEdgePadding(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(REMOVE_EDGE_PADDING_KEY, false)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VisualOptionsSheet(
@@ -656,6 +668,8 @@ fun VisualOptionsSheet(
     onPageInfoModeChange: (PageInfoMode) -> Unit,
     pullToTurnEnabled: Boolean,
     onPullToTurnChange: (Boolean) -> Unit,
+    removeEdgePadding: Boolean,
+    onRemoveEdgePaddingChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -727,6 +741,29 @@ fun VisualOptionsSheet(
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onRemoveEdgePaddingChange(!removeEdgePadding) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.visual_options_edge_padding), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.visual_options_edge_padding_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Switch(checked = removeEdgePadding, onCheckedChange = { onRemoveEdgePaddingChange(it) })
                 }
             }
 

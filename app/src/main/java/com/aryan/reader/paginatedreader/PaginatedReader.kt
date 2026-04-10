@@ -504,6 +504,7 @@ fun PaginatedReaderScreen(
     textAlign: ReaderTextAlign,
     ttsHighlightInfo: TtsHighlightInfo?,
     initialChapterIndexInBook: Int?,
+    removeEdgePadding: Boolean = false,
     modifier: Modifier = Modifier,
     onPaginatorReady: (IPaginator) -> Unit,
     onTap: (Offset?) -> Unit,
@@ -642,7 +643,7 @@ fun PaginatedReaderScreen(
         }
 
         val density = LocalDensity.current
-        val horizontalPadding = 16.dp
+        val horizontalPadding = if (removeEdgePadding) 0.dp else 16.dp
         val verticalPadding = 16.dp
 
         val textConstraints =
@@ -1171,7 +1172,6 @@ private fun TextWithEmphasis(
                     is HeaderBlock -> block.startCharOffsetInSource
                     is QuoteBlock -> block.startCharOffsetInSource
                     is ListItemBlock -> block.startCharOffsetInSource
-                    else -> 0
                 }
 
                 val isStart = block.blockIndex == activeSelection.startBlockIndex && currentBlockAbs == activeSelection.startBlockCharOffset
@@ -1377,7 +1377,6 @@ private fun TextWithEmphasis(
                                         is HeaderBlock -> block.startCharOffsetInSource
                                         is QuoteBlock -> block.startCharOffsetInSource
                                         is ListItemBlock -> block.startCharOffsetInSource
-                                        else -> 0
                                     }
 
                                     onSelectionChange(
@@ -1713,7 +1712,6 @@ internal fun PaginatedReaderContent(
                                     is HeaderBlock -> firstTextBlock.startCharOffsetInSource
                                     is QuoteBlock -> firstTextBlock.startCharOffsetInSource
                                     is ListItemBlock -> firstTextBlock.startCharOffsetInSource
-                                    else -> 0
                                 }
 
                                 val newTextPerBlock = (previousSel?.textPerBlock ?: emptyMap()).toMutableMap()
@@ -2853,7 +2851,6 @@ internal fun PaginatedReaderContent(
                                     is HeaderBlock -> block.startCharOffsetInSource
                                     is QuoteBlock -> block.startCharOffsetInSource
                                     is ListItemBlock -> block.startCharOffsetInSource
-                                    else -> 0
                                 }
                                 val isStartBlockPart = block.blockIndex == sel.startBlockIndex && currentBlockAbs == sel.startBlockCharOffset
                                 val isEndBlockPart = block.blockIndex == sel.endBlockIndex && currentBlockAbs == sel.endBlockCharOffset
@@ -3008,7 +3005,6 @@ internal fun PaginatedReaderContent(
                                     is HeaderBlock -> block.startCharOffsetInSource
                                     is QuoteBlock -> block.startCharOffsetInSource
                                     is ListItemBlock -> block.startCharOffsetInSource
-                                    else -> 0
                                 }
                                 var newStartBlockAbs = if (isStartHandle) currentBlockAbs else sel.startBlockCharOffset
                                 var newEndBlockAbs = if (!isStartHandle) currentBlockAbs else sel.endBlockCharOffset
@@ -3044,7 +3040,6 @@ internal fun PaginatedReaderContent(
                                                 is HeaderBlock -> (b.third as HeaderBlock).startCharOffsetInSource
                                                 is QuoteBlock -> (b.third as QuoteBlock).startCharOffsetInSource
                                                 is ListItemBlock -> (b.third as ListItemBlock).startCharOffsetInSource
-                                                else -> 0
                                             }
                                         }))
 
@@ -3061,7 +3056,6 @@ internal fun PaginatedReaderContent(
                                             is HeaderBlock -> b.third.startCharOffsetInSource
                                             is QuoteBlock -> b.third.startCharOffsetInSource
                                             is ListItemBlock -> b.third.startCharOffsetInSource
-                                            else -> 0
                                         }
                                         val isStartBlockPart = b.third.blockIndex == newStartIdx && bAbs == newStartBlockAbs
                                         val isEndBlockPart = b.third.blockIndex == newEndIdx && bAbs == newEndBlockAbs
@@ -3092,7 +3086,6 @@ internal fun PaginatedReaderContent(
                                             is HeaderBlock -> it.third.startCharOffsetInSource
                                             is QuoteBlock -> it.third.startCharOffsetInSource
                                             is ListItemBlock -> it.third.startCharOffsetInSource
-                                            else -> 0
                                         }
                                         abs == newStartBlockAbs
                                     }
@@ -3187,7 +3180,6 @@ internal fun PaginatedReaderContent(
                                             is HeaderBlock -> block.startCharOffsetInSource
                                             is QuoteBlock -> block.startCharOffsetInSource
                                             is ListItemBlock -> block.startCharOffsetInSource
-                                            else -> 0
                                         }
                                         blockAbs == targetBlockAbs
                                     }
