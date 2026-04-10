@@ -5191,7 +5191,7 @@ fun PdfViewerScreen(
                                                     triggerAutoScrollTempPause(1000L)
 
                                                     coroutineScope.launch {
-                                                        verticalReaderState.scrollToPage(0)
+                                                        verticalReaderState.scrollToTop()
                                                     }
                                                     break
                                                 }
@@ -5258,7 +5258,7 @@ fun PdfViewerScreen(
                                                     triggerAutoScrollTempPause(1000L)
 
                                                     coroutineScope.launch {
-                                                        verticalReaderState.scrollToPage(totalPages - 1)
+                                                        verticalReaderState.scrollToBottom()
                                                     }
                                                     break
                                                 }
