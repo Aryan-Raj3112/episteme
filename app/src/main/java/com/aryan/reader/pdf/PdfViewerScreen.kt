@@ -7843,7 +7843,15 @@ fun PdfViewerScreen(
                             savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
                         },
                         isLocalMode = isAutoScrollLocal,
-                        onLocalModeToggle = onToggleAutoScrollMode
+                        onLocalModeToggle = onToggleAutoScrollMode,
+                        onScrollToTop = {
+                            if (isAutoScrollPlaying) {
+                                triggerAutoScrollTempPause(1000L)
+                            }
+                            coroutineScope.launch {
+                                verticalReaderState.scrollToTop()
+                            }
+                        }
                     )
                 }
                 if (showCustomizeToolsSheet) {

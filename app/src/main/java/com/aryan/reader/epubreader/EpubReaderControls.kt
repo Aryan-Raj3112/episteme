@@ -74,6 +74,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -1003,6 +1004,7 @@ fun AutoScrollControls(
     onLocalModeToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isTempPaused: Boolean = false,
+    onScrollToTop: (() -> Unit)? = null
 ) {
     val backgroundAlpha = 0.6f
 
@@ -1136,6 +1138,19 @@ fun AutoScrollControls(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (onScrollToTop != null) {
+                                IconButton(
+                                    onClick = onScrollToTop,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowUpward,
+                                        contentDescription = "Scroll to Top",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                             IconButton(
                                 onClick = onMusicianModeToggle,
                                 modifier = Modifier.size(32.dp)

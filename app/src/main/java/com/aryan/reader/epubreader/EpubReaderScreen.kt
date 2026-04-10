@@ -3695,7 +3695,15 @@ fun EpubReaderHost(
                             saveAutoScrollUseSlider(context, autoScrollUseSlider)
                         },
                         isLocalMode = isAutoScrollLocal,
-                        onLocalModeToggle = onToggleAutoScrollMode
+                        onLocalModeToggle = onToggleAutoScrollMode,
+                        onScrollToTop = {
+                            if (isAutoScrollPlaying) {
+                                triggerAutoScrollTempPause(1000L)
+                            }
+                            scope.launch {
+                                webViewRefForTts?.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+                            }
+                        }
                     )
                 }
 
