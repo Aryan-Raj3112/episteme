@@ -114,7 +114,7 @@ private const val PAGE_INFO_MODE_KEY = "reader_page_info_mode"
 private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
-const val DEFAULT_LINE_HEIGHT_VAL = 1.6f
+const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
 const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
 private const val TTS_PITCH_KEY = "tts_pitch"
@@ -581,7 +581,7 @@ fun ReaderTextFormatPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     // Size
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
+                        Text("Font Size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentFontSize,
                             onValueChange = onFontSizeChange,
@@ -589,31 +589,31 @@ fun ReaderTextFormatPanel(
                             steps = 24,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentFontSize in 0.99f..1.01f) "Orig" else "%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                     // Lines
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Lines", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
+                        Text("Line Height", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentLineHeight,
                             onValueChange = onLineHeightChange,
-                            valueRange = 1.0f..2.5f,
-                            steps = 14,
+                            valueRange = 1.0f..3.0f,
+                            steps = 19,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentLineHeight <= 1.01f) "Orig" else "%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                     // Paragraph Gap
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Gap", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
+                        Text("Paragraph Gap", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentParagraphGap,
                             onValueChange = onParagraphGapChange,
                             valueRange = 0.0f..3.0f,
-                            steps = 12,
+                            steps = 29,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("%.1fx".format(currentParagraphGap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentParagraphGap in 0.99f..1.01f) "Orig" else "%.1fx".format(currentParagraphGap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
