@@ -134,6 +134,9 @@ class FolderSyncWorker(
                 return false
             }
 
+            Timber.tag("FolderSync").d("Phase 0: Migrating legacy root sidecars to subfolder...")
+            LocalSyncUtils.migrateLegacySidecarsToSubfolder(appContext, documentTree)
+
             Timber.tag("FolderSync").d("Phase 1: Importing JSON metadata from folder...")
             val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri)
 
@@ -205,7 +208,7 @@ class FolderSyncWorker(
 
                     val file = fileQueue.removeAt(0)
                     if (file.isDirectory) {
-                        if (file.name?.startsWith(".") == true) {
+                        if (file.name?.startsWith(".") == true || file.name == "EpistemeSyncData") {
                             continue
                         }
                         file.listFiles().let { fileQueue.addAll(it) }
@@ -223,10 +226,33 @@ class FolderSyncWorker(
                 for (file in currentDiskFiles) {
                     if (isStopped) break
 
-                    val stableId = "local_${file.name}_${file.length()}"
+                    val stableId = "local_${file.name}"
                     foundBookIds.add(stableId)
 
-                    val existingItem = recentFilesRepository.getFileByBookId(stableId)
+                    var existingItem = recentFilesRepository.getFileByBookId(stableId)
+
+                    if (existingItem == null) {
+                        val potentialOldFiles = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+                            .filter { it.bookId.startsWith("local_${file.name}_") && it.bookId != stableId }
+
+                        if (potentialOldFiles.isNotEmpty()) {
+                            val oldItem = potentialOldFiles.first()
+                            val oldId = oldItem.bookId
+                            Timber.tag("FolderSync").i("Migrating book ID for ${file.name} from $oldId to $stableId")
+
+                            recentFilesRepository.migrateBookIdLocally(oldId, stableId)
+                            existingItem = recentFilesRepository.getFileByBookId(stableId)
+
+                            try {
+                                val syncDir = documentTree.findFile("EpistemeSyncData")
+                                if (syncDir != null) {
+                                    syncDir.findFile(".$oldId.json")?.delete()
+                                    syncDir.findFile("$oldId.json")?.delete()
+                                    syncDir.findFile(".$oldId" + "_annotations.json")?.delete()
+                                }
+                            } catch (_: Exception) { Timber.tag("FolderSync").e("Failed to delete orphaned old sidecars in SAF.") }
+                        }
+                    }
 
                     if (existingItem == null) {
                         val remoteMeta = folderMetadataMap[stableId]
@@ -255,14 +281,32 @@ class FolderSyncWorker(
                             highlightsJson = remoteMeta?.highlightsJson,
                             customName = remoteMeta?.customName,
                             locatorBlockIndex = remoteMeta?.locatorBlockIndex,
-                            locatorCharOffset = remoteMeta?.locatorCharOffset
+                            locatorCharOffset = remoteMeta?.locatorCharOffset,
+                            fileSize = file.length()
                         )
 
                         recentFilesRepository.addRecentFile(newItem)
                     } else {
-                        if (existingItem.isDeleted || !existingItem.isAvailable) {
-                            val revived = existingItem.copy(isDeleted = false, isAvailable = true)
-                            recentFilesRepository.addRecentFile(revived)
+                        val currentSize = file.length()
+                        val currentTimestamp = file.lastModified()
+
+                        var needsUpdate = false
+                        var updatedItem = existingItem
+
+                        if (existingItem.fileSize > 0L && currentSize > 0L && existingItem.fileSize != currentSize) {
+                            Timber.tag("FolderSync").i("File size changed for ${file.name} (${existingItem.fileSize} -> $currentSize). Updating caches.")
+                            recentFilesRepository.clearLocalCachesForBook(stableId)
+                            updatedItem = updatedItem.copy(fileSize = currentSize, lastModifiedTimestamp = currentTimestamp)
+                            needsUpdate = true
+                        }
+
+                        if (updatedItem.isDeleted || !updatedItem.isAvailable) {
+                            updatedItem = updatedItem.copy(isDeleted = false, isAvailable = true)
+                            needsUpdate = true
+                        }
+
+                        if (needsUpdate) {
+                            recentFilesRepository.addRecentFile(updatedItem)
                         }
                     }
 

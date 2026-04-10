@@ -444,4 +444,47 @@ class RecentFilesRepository(private val context: Context) {
         }
         return deleted
     }
+
+    suspend fun migrateBookIdLocally(oldId: String, newId: String) = withContext(Dispatchers.IO) {
+        val oldEntity = recentFileDao.getFileByBookId(oldId) ?: return@withContext
+        val newEntity = oldEntity.copy(bookId = newId)
+        recentFileDao.insertOrUpdateFile(newEntity)
+        recentFileDao.deleteFilePermanently(listOf(oldId))
+
+        fun renameSafely(oldFile: File?, newFile: File?) {
+            if (oldFile != null && oldFile.exists() && newFile != null) {
+                if (newFile.exists()) newFile.delete()
+                oldFile.renameTo(newFile)
+            }
+        }
+
+        renameSafely(
+            pdfAnnotationRepository.getAnnotationFileForSync(oldId) ?: File(context.filesDir, "annotations/annotation_$oldId.json"),
+            pdfAnnotationRepository.getAnnotationFileForSync(newId) ?: File(context.filesDir, "annotations/annotation_$newId.json")
+        )
+        renameSafely(pdfRichTextRepository.getFileForSync(oldId), pdfRichTextRepository.getFileForSync(newId))
+        renameSafely(pageLayoutRepository.getLayoutFile(oldId), pageLayoutRepository.getLayoutFile(newId))
+        renameSafely(pdfTextBoxRepository.getFileForSync(oldId), pdfTextBoxRepository.getFileForSync(newId))
+        renameSafely(pdfHighlightRepository.getFileForSync(oldId), pdfHighlightRepository.getFileForSync(newId))
+
+        val oldCache = File(context.cacheDir, "imported_file_$oldId")
+        val newCache = File(context.cacheDir, "imported_file_$newId")
+        if (oldCache.exists()) {
+            if (newCache.exists()) newCache.deleteRecursively()
+            oldCache.renameTo(newCache)
+        }
+        Timber.tag("SyncMigration").d("Migrated local sidecars from $oldId to $newId")
+    }
+
+    suspend fun clearLocalCachesForBook(bookId: String) = withContext(Dispatchers.IO) {
+        try {
+            pdfRichTextRepository.getFileForSync(bookId).delete()
+            pageLayoutRepository.getLayoutFile(bookId).delete()
+            val cacheDir = File(context.cacheDir, "imported_file_$bookId")
+            if (cacheDir.exists()) cacheDir.deleteRecursively()
+            Timber.d("Cleared layout and text caches for modified book: $bookId")
+        } catch (e: Exception) {
+            Timber.e(e, "Error clearing caches for $bookId")
+        }
+    }
 }

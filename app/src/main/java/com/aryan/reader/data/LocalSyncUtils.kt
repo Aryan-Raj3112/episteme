@@ -14,6 +14,53 @@ import timber.log.Timber
 object LocalSyncUtils {
     private const val TAG = "FolderSync"
     private const val ANNOTATION_SUFFIX = "_annotations"
+    private const val SYNC_SUBFOLDER_NAME = "EpistemeSyncData"
+
+    private fun getOrCreateSyncDir(rootTree: DocumentFile): DocumentFile? {
+        val existing = rootTree.findFile(SYNC_SUBFOLDER_NAME)
+        if (existing != null && existing.isDirectory) return existing
+        if (existing != null && existing.isFile) return null
+        return rootTree.createDirectory(SYNC_SUBFOLDER_NAME)
+    }
+
+    suspend fun migrateLegacySidecarsToSubfolder(context: Context, rootTree: DocumentFile) = withContext(Dispatchers.IO) {
+        try {
+            val allRootFiles = rootTree.listFiles()
+            val legacyFiles = allRootFiles.filter { file ->
+                val name = file.name ?: ""
+                file.isFile && (
+                        (name.startsWith(".local_") && name.endsWith(".json")) ||
+                                (name.startsWith("local_") && name.endsWith(".json")) ||
+                                (name.contains(ANNOTATION_SUFFIX))
+                        )
+            }
+
+            if (legacyFiles.isEmpty()) return@withContext
+
+            Timber.tag(TAG).i("Found ${legacyFiles.size} legacy sidecar files at root. Migrating to $SYNC_SUBFOLDER_NAME...")
+            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
+
+            for (legacyFile in legacyFiles) {
+                val name = legacyFile.name ?: continue
+                try {
+                    val targetFile = syncDir.findFile(name) ?: syncDir.createFile("application/json", name)
+                    if (targetFile != null) {
+                        context.contentResolver.openInputStream(legacyFile.uri)?.use { input ->
+                            context.contentResolver.openOutputStream(targetFile.uri, "w")?.use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        legacyFile.delete() // Cleanup root file after success
+                        Timber.tag(TAG).d("Migrated: $name")
+                    }
+                } catch (e: Exception) {
+                    Timber.tag(TAG).e(e, "Failed to migrate legacy file: $name")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Error migrating legacy sidecars")
+        }
+    }
 
     suspend fun saveMetadataToFolder(
         context: Context,
@@ -22,12 +69,13 @@ object LocalSyncUtils {
     ) = withContext(Dispatchers.IO) {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
+            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
 
             val syncFileName = ".${metadata.bookId}.json"
             val legacyVisibleName = "${metadata.bookId}.json"
 
-            val existingHidden = rootTree.findFile(syncFileName)
-            val existingVisible = rootTree.findFile(legacyVisibleName)
+            val existingHidden = syncDir.findFile(syncFileName)
+            val existingVisible = syncDir.findFile(legacyVisibleName)
             val fileToCheck = existingHidden ?: existingVisible
 
             if (fileToCheck != null && fileToCheck.exists()) {
@@ -50,9 +98,9 @@ object LocalSyncUtils {
             }
 
             val tempFileName = ".${metadata.bookId}.tmp"
-            rootTree.findFile(tempFileName)?.delete()
+            syncDir.findFile(tempFileName)?.delete()
 
-            val tempFile = rootTree.createFile("application/json", tempFileName)
+            val tempFile = syncDir.createFile("application/json", tempFileName)
             if (tempFile == null) {
                 Timber.tag(TAG).e("Could not create temp metadata file for ${metadata.bookId}")
                 return@withContext
@@ -116,12 +164,13 @@ object LocalSyncUtils {
     ) = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("saveAnnotationSidecar called for bookId: $bookId, timestamp: $timestamp")
         try {
-            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: run {
-                Timber.tag("FolderAnnotationSync").w("Could not get DocumentFile from sourceFolderUri")
-                return@withContext
-            }
-
-            val currentBest = resolveAndCleanAnnotationConflicts(context, rootTree, bookId)
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
+            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
+            val currentBest = resolveAndCleanAnnotationConflicts(context, syncDir, bookId)
+            val targetName = ".${bookId}${ANNOTATION_SUFFIX}.json"
+            val tempName = ".${bookId}${ANNOTATION_SUFFIX}.tmp"
+            val tempFile = syncDir.createFile("application/json", tempName)
+            val existingMain = syncDir.findFile(targetName)
 
             if (currentBest != null) {
                 val (remoteTs, _) = currentBest
@@ -137,12 +186,8 @@ object LocalSyncUtils {
             wrapper.put("data", JSONObject(jsonPayload))
             val contentBytes = wrapper.toString().toByteArray()
 
-            val targetName = ".${bookId}${ANNOTATION_SUFFIX}.json"
-            val tempName = ".${bookId}${ANNOTATION_SUFFIX}.tmp"
+            syncDir.findFile(tempName)?.delete()
 
-            rootTree.findFile(tempName)?.delete()
-
-            val tempFile = rootTree.createFile("application/json", tempName)
             if (tempFile == null) {
                 Timber.tag("FolderAnnotationSync").e("Failed to create temp sidecar file.")
                 return@withContext
@@ -191,7 +236,9 @@ object LocalSyncUtils {
         val results = mutableMapOf<String, Pair<Long, String>>()
 
         try {
-            val allFiles = rootTree.listFiles()
+            val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME)
+            if (syncDir == null || !syncDir.isDirectory) return@withContext results
+            val allFiles = syncDir.listFiles()
 
             val annotationFiles = allFiles.filter { file ->
                 val name = file.name ?: ""
@@ -256,8 +303,8 @@ object LocalSyncUtils {
     ): Pair<Long, String>? = withContext(Dispatchers.IO) {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext null
-
-            val bestFile = resolveAndCleanAnnotationConflicts(context, rootTree, bookId)
+            val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME) ?: return@withContext null
+            val bestFile = resolveAndCleanAnnotationConflicts(context, syncDir, bookId)
             return@withContext bestFile
 
         } catch (e: Exception) {
@@ -268,12 +315,12 @@ object LocalSyncUtils {
 
     private fun resolveAndCleanAnnotationConflicts(
         context: Context,
-        rootTree: DocumentFile,
+        syncDir: DocumentFile,
         bookId: String
     ): Pair<Long, String>? {
         val basePattern = ".${bookId}${ANNOTATION_SUFFIX}"
 
-        val allFiles = rootTree.listFiles()
+        val allFiles = syncDir.listFiles()
 
         val candidates = allFiles.filter { file ->
             val name = file.name ?: ""
@@ -332,7 +379,7 @@ object LocalSyncUtils {
             val correctName = "${basePattern}.json"
             if (bestFile.name != correctName) {
                 Timber.tag("FolderAnnotationSync").i("Renaming winner ${bestFile.name} to $correctName")
-                val existingTarget = rootTree.findFile(correctName)
+                val existingTarget = syncDir.findFile(correctName)
                 if (existingTarget != null && existingTarget.uri != bestFile.uri) {
                     existingTarget.delete()
                 }
@@ -431,8 +478,9 @@ object LocalSyncUtils {
 
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext finalResults
-
-            val allFiles = rootTree.listFiles()
+            val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME)
+            if (syncDir == null || !syncDir.isDirectory) return@withContext finalResults
+            val allFiles = syncDir.listFiles()
 
             val groupedFiles = allFiles
                 .filter {
