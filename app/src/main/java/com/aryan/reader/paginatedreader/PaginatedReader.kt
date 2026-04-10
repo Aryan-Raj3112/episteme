@@ -1145,6 +1145,26 @@ private fun getHighlightOffsetsInBlock(
     return null
 }
 
+private fun List<ContentBlock>.extractTextBlocks(): List<TextContentBlock> {
+    val result = mutableListOf<TextContentBlock>()
+    for (block in this) {
+        when (block) {
+            is WrappingContentBlock -> result.addAll(block.paragraphsToWrap)
+            is FlexContainerBlock -> result.addAll(block.children.extractTextBlocks())
+            is TableBlock -> {
+                block.rows.forEach { row ->
+                    row.forEach { cell ->
+                        result.addAll(cell.content.extractTextBlocks())
+                    }
+                }
+            }
+            is TextContentBlock -> result.add(block)
+            else -> {}
+        }
+    }
+    return result
+}
+
 @Composable
 private fun TextWithEmphasis(
     text: AnnotatedString,
@@ -1577,13 +1597,22 @@ internal fun PaginatedReaderContent(
                         }
 
                         val textBlocksOnPage =
-                            pageContent?.content?.filterIsInstance<TextContentBlock>()
+                            pageContent?.content?.extractTextBlocks()
                                 ?.filter { it.cfi != null } ?: emptyList()
                         val lastTextBlock = textBlocksOnPage.lastOrNull()
+                        val lastBlockAbs = lastTextBlock?.let {
+                            when (it) {
+                                is ParagraphBlock -> it.startCharOffsetInSource
+                                is HeaderBlock -> it.startCharOffsetInSource
+                                is QuoteBlock -> it.startCharOffsetInSource
+                                is ListItemBlock -> it.startCharOffsetInSource
+                            }
+                        }
 
-                        // Strict Trigger Check - Custom Selection
                         LaunchedEffect(activeSelection, lastTextBlock, isDraggingHandle) {
-                            if (isDraggingHandle && activeSelection != null && lastTextBlock != null && activeSelection!!.endBlockIndex == lastTextBlock.blockIndex) {
+                            if (isDraggingHandle && activeSelection != null && lastTextBlock != null &&
+                                activeSelection!!.endBlockIndex == lastTextBlock.blockIndex &&
+                                activeSelection!!.endBlockCharOffset == lastBlockAbs) {
                                 if (activeSelection!!.endOffset >= lastTextBlock.content.text.length - 3) {
                                     if (crossPageTriggerInfo?.first != pageIndex) {
                                         Timber.tag("TextSelectionDiag")
@@ -1607,7 +1636,7 @@ internal fun PaginatedReaderContent(
                             val content = pageContent ?: return@LaunchedEffect
 
                             val firstTextBlock =
-                                content.content.filterIsInstance<TextContentBlock>()
+                                content.content.extractTextBlocks()
                                     .firstOrNull { it.cfi != null } ?: run {
                                     pendingCrossPageSelection = null
                                     return@LaunchedEffect
