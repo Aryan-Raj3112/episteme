@@ -240,6 +240,33 @@
                 <data android:pathPattern=".*\\.markdown" />
             </intent-filter>
 
+            <!-- ODT & FODT -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/x-vnd.oasis.opendocument.text-flat-xml" />
+            </intent-filter>
+
+            <!-- pathPattern fallback for file:// URIs (ODT/FODT) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.odt" />
+                <data android:pathPattern=".*\\..*\\.odt" />
+                <data android:pathPattern=".*\\..*\\..*\\.odt" />
+                <data android:pathPattern=".*\\.fodt" />
+                <data android:pathPattern=".*\\..*\\.fodt" />
+                <data android:pathPattern=".*\\..*\\..*\\.fodt" />
+            </intent-filter>
+
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

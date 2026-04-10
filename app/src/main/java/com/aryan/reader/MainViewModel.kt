@@ -136,7 +136,7 @@ enum class AddBooksSource(val displayName: String) {
 }
 
 enum class FileType {
-    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX
+    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT
 }
 
 enum class RenderMode {
@@ -254,6 +254,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val epubParser = EpubParser(appContext)
     private val mobiParser = MobiParser(appContext)
     private val fb2Parser = com.aryan.reader.epub.Fb2Parser(appContext)
+    private val odtParser = com.aryan.reader.epub.OdtParser(appContext)
     private val singleFileImporter = SingleFileImporter(appContext)
     private val bookImporter = BookImporter(appContext)
     private val prefs: SharedPreferences =
@@ -2536,7 +2537,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         var author: String? = null
         var bookForMetadata = epubBook
 
-        if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX)) {
+        if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT)) {
             Timber.d("Parsing downloaded book for cover/metadata: $displayName")
             Timber.tag("FileOpenPerf")
                 .d("[$bookId] addFileToRecent: Starting metadata parsing (no book provided)")
@@ -2570,6 +2571,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                         parseContent = false
                                     )
                                 }
+                                FileType.ODT, FileType.FODT -> {
+                                    odtParser.createOdtBook(
+                                        inputStream = inputStream,
+                                        bookId = bookId,
+                                        originalBookNameHint = displayName,
+                                        isFlat = type == FileType.FODT,
+                                        parseContent = false
+                                    )
+                                }
                                 else -> {
                                     singleFileImporter.importSingleFile(
                                         inputStream,
@@ -2598,7 +2608,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val finalBookMetadata = bookForMetadata
 
-        if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX) && finalBookMetadata != null) {
+        if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) && finalBookMetadata != null) {
             title =
                 finalBookMetadata.title.takeIf { it.isNotBlank() && it != "content" } ?: displayName
 
@@ -3203,7 +3213,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         Timber.tag("FileSwitch").d("PDF state updated, suppressing navigation event for smooth transition")
                     }
                 }
-            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX) {
+            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
                     if (recentItem?.sourceFolderUri != null) {
@@ -3251,7 +3261,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         FileType.FB2 -> {
                             loadFb2(uri, bookId, customDisplayName = originalDisplayName)
                         }
-
+                        FileType.ODT, FileType.FODT -> {
+                            loadOdt(uri, bookId, type == FileType.FODT, customDisplayName = originalDisplayName)
+                        }
                         else -> {
                             loadSingleFile(
                                 uri, bookId, type, customDisplayName = originalDisplayName
@@ -3294,6 +3306,43 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.e(e, "Error parsing FB2 for URI: $uri")
                 _internalState.update {
                     it.copy(errorMessage = appContext.getString(R.string.error_load_fb2, e.message), isLoading = false)
+                }
+            }
+        }
+    }
+
+    private fun loadOdt(uri: Uri, bookId: String, isFlat: Boolean, customDisplayName: String? = null) {
+        val loadStart = System.currentTimeMillis()
+        Timber.tag("FileOpenPerf").d("[$bookId] loadOdt START | isFlat=$isFlat")
+        viewModelScope.launch {
+            if (!_internalState.value.isLoading) {
+                _internalState.update { it.copy(isLoading = true, errorMessage = null) }
+            }
+            Timber.d("Starting ODT parsing for URI: $uri")
+            try {
+                val odtBook = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri).use { inputStream ->
+                        if (inputStream == null) throw Exception("Could not open input stream")
+                        odtParser.createOdtBook(
+                            inputStream = inputStream,
+                            bookId = bookId,
+                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: if (isFlat) "unknown.fodt" else "unknown.odt",
+                            isFlat = isFlat
+                        )
+                    }
+                }
+                Timber.i("ODT parsing successful. Title: ${odtBook.title}")
+                Timber.tag("FileOpenPerf").d("[$bookId] loadOdt completed | chapters=${odtBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
+
+                addFileToRecent(
+                    uri, if (isFlat) FileType.FODT else FileType.ODT, bookId, odtBook, customDisplayName, isRecent = true, sourceFolderUri = null
+                )
+
+                _internalState.update { it.copy(selectedEpubBook = odtBook, isLoading = false) }
+            } catch (e: Exception) {
+                Timber.e(e, "Error parsing ODT for URI: $uri")
+                _internalState.update {
+                    it.copy(errorMessage = appContext.getString(R.string.error_load_file, e.message), isLoading = false)
                 }
             }
         }
@@ -3366,6 +3415,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.d("Determining type for: $uri | Mime: $mimeType | Name: $fileName")
 
         return when (mimeType) {
+            "application/vnd.oasis.opendocument.text" -> FileType.ODT
+            "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
             "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
                 if (fileName?.endsWith(".cbz", ignoreCase = true) == true) FileType.CBZ else null
@@ -3439,6 +3490,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         ignoreCase = true
                     ) == true -> FileType.HTML
                     fileName?.endsWith(".docx", ignoreCase = true) == true -> FileType.DOCX
+                    fileName?.endsWith(".odt", ignoreCase = true) == true -> FileType.ODT
+                    fileName?.endsWith(".fodt", ignoreCase = true) == true -> FileType.FODT
 
                     else -> null
                 }
