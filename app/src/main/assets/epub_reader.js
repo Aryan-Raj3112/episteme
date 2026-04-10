@@ -791,6 +791,7 @@
     };
 
     window.highlightAllOccurrences = function (query) {
+        console.log("NavDiag: highlightAllOccurrences query=" + query);
         window.clearSearchHighlights();
         if (!query || query.length < 2) return "JS: Query too short for highlighting.";
 
@@ -825,10 +826,11 @@
 
     window.scrollToOccurrence = function (index) {
         var highlights = document.querySelectorAll("mark.search-highlight");
+        console.log("NavDiag: scrollToOccurrence index=" + index + ", found " + (highlights ? highlights.length : 0) + " highlights");
 
         if (highlights && index >= 0 && index < highlights.length) {
             var element = highlights[index];
-
+            console.log("NavDiag: Scrolling to element: '" + element.innerText.substring(0, 30) + "'");
             element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
             return "JS: Scrolled to occurrence " + index;
         }
@@ -1649,7 +1651,7 @@
             cleanCfi = cfi.substring(cfi.indexOf('@') + 1);
         }
 
-        console.log("PosSaveDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
+        console.log("NavDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
 
         if (!cleanCfi || !cleanCfi.startsWith('/')) {
             if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
@@ -1719,6 +1721,7 @@
                     }
 
                     if (Math.abs(window.scrollY - targetScrollY) > 1) {
+                        console.log("NavDiag: Scrolling to targetY=" + targetScrollY);
                         window.scrollTo({ top: targetScrollY, behavior: 'auto' });
                     }
 

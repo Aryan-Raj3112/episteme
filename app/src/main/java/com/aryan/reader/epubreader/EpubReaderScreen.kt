@@ -1603,6 +1603,7 @@ fun EpubReaderHost(
     }
 
     fun navigateToSearchResult(index: Int) {
+        Timber.tag("NavDiag").d("navigateToSearchResult index: $index")
         performSearchResultNavigation(
             index = index,
             searchState = searchState,
@@ -1613,17 +1614,21 @@ fun EpubReaderHost(
             paginator = paginator,
             coroutineScope = scope,
             onVerticalChapterChange = { chapterIdx, chunkIdx, result ->
-                initialScrollTargetForChapter = ChapterScrollPosition.START
+                Timber.tag("NavDiag").d("onVerticalChapterChange chapterIdx=$chapterIdx, chunkIdx=$chunkIdx, query=${result.query}")
+                initialScrollTargetForChapter = null
                 currentScrollYPosition = 0
                 currentScrollHeightValue = 0
                 currentChapterIndex = chapterIdx
                 searchHighlightTarget = result
                 loadUpToChunkIndex = chunkIdx
+                loadedChunkCount = max(loadedChunkCount, chunkIdx + 1)
             },
-            onVerticalScrollToResult = { _ ->
-                searchHighlightTarget = null
+            onVerticalScrollToResult = { result ->
+                Timber.tag("NavDiag").d("onVerticalScrollToResult query=${result.query}")
+                searchHighlightTarget = result
             },
             onPaginatedScrollToPage = { pageIdx ->
+                Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                 paginatedPagerState.scrollToPage(pageIdx)
             }
         )
@@ -1763,23 +1768,8 @@ fun EpubReaderHost(
                                 Timber.tag("BookmarkDiagnosis").d("Navigating to ${bookmark.cfi}")
                                 cfiToLoad = bookmark.cfi
 
-                                val directChunkIndex = try {
-                                    val parts = bookmark.cfi.split('/').mapNotNull { it.toIntOrNull() }
-                                    if (parts.isNotEmpty()) {
-                                        val firstIndex = parts[0]
-                                        (firstIndex - 2) / 2
-                                    } else null
-                                } catch (_: Exception) {
-                                    null
-                                }
-
-                                val locator = if (directChunkIndex == null) {
-                                    locatorConverter.getLocatorFromCfi(epubBook, bookmark.chapterIndex, bookmark.cfi)
-                                } else {
-                                    null
-                                }
-
-                                val targetChunk = directChunkIndex ?: locator?.let { it.blockIndex / 20 }
+                                val locator = locatorConverter.getLocatorFromCfi(epubBook, bookmark.chapterIndex, bookmark.cfi)
+                                val targetChunk = locator?.let { it.blockIndex / 20 }
 
                                 if (bookmark.chapterIndex != currentChapterIndex) {
                                     chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) {
@@ -2221,30 +2211,25 @@ fun EpubReaderHost(
                                             )
                                         }
 
-                                        LaunchedEffect(isWebViewReady) {
+                                        LaunchedEffect(isWebViewReady, searchHighlightTarget) {
                                             val target = searchHighlightTarget
-                                            Timber.d("Effect(isWebViewReady=$isWebViewReady) triggered for chapter $targetChapterIndex. Target is: $target"
-                                            )
+                                            Timber.tag("NavDiag").d("Effect(isWebViewReady=$isWebViewReady, target=$target) triggered for chapter $targetChapterIndex.")
 
                                             if (isWebViewReady && target != null && target.locationInSource == targetChapterIndex) {
-                                                Timber.d("Highlighting condition met. Highlighting now."
-                                                )
+                                                Timber.tag("NavDiag").d("Highlighting condition met. Highlighting now.")
                                                 delay(200)
                                                 val webView = webViewRefForTts
                                                 if (webView != null) {
                                                     val escapedQuery = escapeJsString(target.query)
                                                     val js =
-                                                        "javascript:window.highlightAllOccurrences('${escapedQuery}'); window.scrollToOccurrence(${target.occurrenceIndexInLocation});"
-                                                    Timber.d("Executing search highlight/scroll JS: $js"
-                                                    )
+                                                        "javascript:console.log('NavDiag: Executing search highlight JS'); window.highlightAllOccurrences('${escapedQuery}'); window.scrollToOccurrence(${target.occurrenceIndexInLocation});"
+                                                    Timber.tag("NavDiag").d("Executing search highlight/scroll JS: $js")
                                                     webView.evaluateJavascript(js) { result ->
-                                                        Timber.d("JS highlight/scroll result: $result"
-                                                        )
+                                                        Timber.tag("NavDiag").d("JS highlight/scroll result: $result")
                                                     }
                                                     searchHighlightTarget = null
                                                 } else {
-                                                    Timber.w("Highlight failed: WebView was null even after ready signal."
-                                                    )
+                                                    Timber.tag("NavDiag").w("Highlight failed: WebView was null even after ready signal.")
                                                     searchHighlightTarget = null
                                                 }
                                             }
@@ -2305,6 +2290,7 @@ fun EpubReaderHost(
                                             },
                                             onChapterInitiallyScrolled = {
                                                 val wasCfiScroll = cfiToLoad != null
+                                                Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
                                                 initialScrollTargetForChapter = null
                                                 cfiToLoad = null
                                                 fragmentToLoad = null
@@ -3499,21 +3485,31 @@ fun EpubReaderHost(
                         containerFocusRequester.requestFocus()
                     },
                     onChangeRenderMode = { newMode ->
+                        Timber.tag("NavDiag").d("onChangeRenderMode to $newMode")
                         if (newMode != currentRenderMode) {
                             if (newMode == RenderMode.PAGINATED) {
                                 isSwitchingToPaginated = true
                                 webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                             } else {
                                 scope.launch {
+                                    Timber.tag("NavDiag").d("Mode changing to VERTICAL. lastKnownLocator=$lastKnownLocator")
                                     lastKnownLocator?.let { locator ->
                                         val cfi = locatorConverter.getCfiFromLocator(epubBook, locator)
+                                        Timber.tag("NavDiag").d("Converted locator to CFI: $cfi")
                                         if (cfi != null) {
                                             val targetChunk = locator.blockIndex / 20
                                             chunkTargetOverride = targetChunk
                                             if (currentChapterIndex != locator.chapterIndex) {
+                                                initialScrollTargetForChapter = null
                                                 currentScrollYPosition = 0
                                                 currentScrollHeightValue = 0
                                                 currentChapterIndex = locator.chapterIndex
+                                            } else {
+                                                if (targetChunk > loadUpToChunkIndex) {
+                                                    loadUpToChunkIndex = targetChunk
+                                                    loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
+                                                }
+                                                initialScrollTargetForChapter = null
                                             }
                                             cfiToLoad = cfi
                                         } else {

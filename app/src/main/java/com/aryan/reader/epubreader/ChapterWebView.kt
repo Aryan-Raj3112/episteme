@@ -577,6 +577,11 @@ fun ChapterWebView(
                                         )
                                     }
 
+                                    message.startsWith("NavDiag:") -> {
+                                        Timber.tag("NavDiag")
+                                            .d("JS -> ${message.substringAfter("NavDiag: ")}")
+                                    }
+
                                     message.startsWith("AutoScrollDiagnosis") -> {
                                         Timber.d(
                                             "JS -> ${message.substringAfter("AutoScrollDiagnosis: ")}"
@@ -726,13 +731,13 @@ fun ChapterWebView(
 
                             if (!initialCfi.isNullOrBlank()) {
                                 val cfiJsCommand = "javascript:window.scrollToCfi('$initialCfi');"
-                                Timber.tag("POS_DIAG").d("WebView onPageFinished: Triggering scroll to initialCfi: $initialCfi")
+                                Timber.tag("NavDiag").d("WebView onPageFinished: Triggering scroll to initialCfi: $initialCfi")
                                 view?.evaluateJavascript(cfiJsCommand) {
                                     onChapterInitiallyScrolled()
                                     scrollActionTaken = true
                                 }
                             } else if (!initialFragmentId.isNullOrBlank()) {
-                                Timber.d("WebView onPageFinished: Scrolling to Element ID: $initialFragmentId")
+                                Timber.tag("NavDiag").d("WebView onPageFinished: Scrolling to Element ID: $initialFragmentId")
                                 view?.evaluateJavascript(
                                     "javascript:var el = document.getElementById('$initialFragmentId'); if(el) { el.scrollIntoView(); } else { console.log('Element not found: $initialFragmentId'); }",
                                     null
@@ -744,9 +749,7 @@ fun ChapterWebView(
                                     ChapterScrollPosition.END -> "javascript:window.scrollToChapterEnd();"
                                     else -> "javascript:window.scrollToChapterStart();"
                                 }
-                                Timber.d(
-                                    "WebView onPageFinished: Executing initial scroll to target: $initialScrollTarget"
-                                )
+                                Timber.tag("NavDiag").d("WebView onPageFinished: Executing initial scroll to target: $initialScrollTarget")
                                 view?.evaluateJavascript(scrollJsCommand) {
                                     onChapterInitiallyScrolled()
                                     scrollActionTaken = true
@@ -754,17 +757,13 @@ fun ChapterWebView(
                             } else if (initialPageScrollY != null && initialPageScrollY > 0) {
                                 val scrollJsCommand =
                                     "javascript:window.scrollToSpecificY($initialPageScrollY);"
-                                Timber.d(
-                                    "WebView onPageFinished: Executing initial scroll to Y: $initialPageScrollY"
-                                )
+                                Timber.tag("NavDiag").d("WebView onPageFinished: Executing initial scroll to Y: $initialPageScrollY")
                                 view?.evaluateJavascript(scrollJsCommand) {
                                     onChapterInitiallyScrolled()
                                     scrollActionTaken = true
                                 }
                             } else {
-                                Timber.d(
-                                    "WebView onPageFinished: No specific scroll, defaulting to start."
-                                )
+                                Timber.tag("NavDiag").d("WebView onPageFinished: No specific scroll, defaulting to start.")
                                 view?.evaluateJavascript("javascript:window.scrollToChapterStart();") {
                                     onChapterInitiallyScrolled()
                                     scrollActionTaken = true
