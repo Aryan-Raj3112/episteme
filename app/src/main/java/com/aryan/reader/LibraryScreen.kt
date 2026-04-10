@@ -215,8 +215,9 @@ fun LibraryScreen(
         if (isContextualModeActive) {
             viewModel.clearContextualAction()
         }
+        val mimeTypes = if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")
         try {
-            pickFileLauncher.launch(arrayOf("*/*"))
+            pickFileLauncher.launch(mimeTypes)
         } catch (_: android.content.ActivityNotFoundException) {
             Timber.w("OpenDocument picker failed. Falling back to GetMultipleContents.")
             try {

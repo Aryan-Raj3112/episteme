@@ -172,7 +172,7 @@ fun HomeScreen(
         var showInfoDialog by remember { mutableStateOf(false) }
         var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
         var showBehaviorDialog by remember { mutableStateOf(false) }
-
+        var showStrictFilterDialog by remember { mutableStateOf(false) }
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
         var showClearReflowCacheDialog by remember { mutableStateOf(false) }
 
@@ -246,8 +246,9 @@ fun HomeScreen(
             if (isContextualModeActive) {
                 viewModel.clearContextualAction()
             }
+            val mimeTypes = if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")
             try {
-                pickFileLauncher.launch(arrayOf("*/*"))
+                pickFileLauncher.launch(mimeTypes)
             } catch (_: android.content.ActivityNotFoundException) {
                 Timber.w("OpenDocument picker failed. Falling back to GetMultipleContents.")
                 try {
@@ -318,7 +319,14 @@ fun HomeScreen(
                                 onClearReflowCache = { showClearReflowCacheDialog = true },
                                 onRecentFilesLimitChange = viewModel::setRecentFilesLimit,
                                 onTabsToggle = viewModel::setTabsEnabled,
-                                onExternalFileBehaviorClick = { showBehaviorDialog = true }
+                                onExternalFileBehaviorClick = { showBehaviorDialog = true },
+                                onStrictFilterToggleClick = {
+                                    if (uiState.useStrictFileFilter) {
+                                        viewModel.setStrictFileFilter(false)
+                                    } else {
+                                        showStrictFilterDialog = true
+                                    }
+                                }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -479,6 +487,16 @@ fun HomeScreen(
                             currentBehavior = uiState.externalFileBehavior,
                             onDismiss = { showBehaviorDialog = false },
                             onSelect = { viewModel.setExternalFileBehavior(it) }
+                        )
+                    }
+
+                    if (showStrictFilterDialog) {
+                        StrictFilterConfirmationDialog(
+                            onConfirm = {
+                                viewModel.setStrictFileFilter(true)
+                                showStrictFilterDialog = false
+                            },
+                            onDismiss = { showStrictFilterDialog = false }
                         )
                     }
                 }
@@ -864,7 +882,8 @@ fun DefaultTopAppBar(
     onFolderSyncToggle: (Boolean) -> Unit,
     onRecentFilesLimitChange: (Int) -> Unit,
     onTabsToggle: (Boolean) -> Unit,
-    onExternalFileBehaviorClick: () -> Unit
+    onExternalFileBehaviorClick: () -> Unit,
+    onStrictFilterToggleClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -931,6 +950,15 @@ fun DefaultTopAppBar(
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_external_file_behavior)) }, onClick = {
                     onExternalFileBehaviorClick()
                     showOptionsMenu = false
+                })
+
+                DropdownMenuItem(text = { Text("Use Strict File Filter") }, onClick = {
+                    onStrictFilterToggleClick()
+                    showOptionsMenu = false
+                }, trailingIcon = {
+                    if (uiState.useStrictFileFilter) {
+                        Icon(Icons.Default.Check, contentDescription = "Enabled")
+                    }
                 })
 
                 HorizontalDivider()
@@ -1488,5 +1516,16 @@ fun CloseAllTabsDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
+    )
+}
+
+@Composable
+fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Enable Strict File Filter") },
+        text = { Text("If you enable this, some supported file types like AZW3, CB7, and FB2 might not show up depending on your file manager.\n\nAre you sure you want to enable this filter?") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Enable") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
 }

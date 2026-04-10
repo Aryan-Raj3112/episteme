@@ -1048,8 +1048,8 @@ fun AutoScrollControls(
                             onClick = onPlayPauseToggle,
                             modifier = Modifier.size(36.dp),
                             colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                contentColor = MaterialTheme.colorScheme.primary
                             )
                         ) {
                             Icon(
@@ -1212,8 +1212,8 @@ fun AutoScrollControls(
                                 onClick = onPlayPauseToggle,
                                 modifier = Modifier.size(48.dp),
                                 colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                    contentColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
                                 Icon(
@@ -1225,7 +1225,7 @@ fun AutoScrollControls(
                             if (isTempPaused && isPlaying) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(48.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                                     strokeWidth = 3.dp
                                 )
                             }
