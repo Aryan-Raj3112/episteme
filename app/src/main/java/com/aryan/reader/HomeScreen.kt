@@ -70,6 +70,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -83,6 +84,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -163,6 +165,7 @@ fun HomeScreen(
         var showAboutDialog by remember { mutableStateOf(false) }
         var showInfoDialog by remember { mutableStateOf(false) }
         var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
+        var showBehaviorDialog by remember { mutableStateOf(false) }
 
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
         var showClearReflowCacheDialog by remember { mutableStateOf(false) }
@@ -308,7 +311,8 @@ fun HomeScreen(
                                 onFolderSyncToggle = viewModel::setFolderSyncEnabled,
                                 onClearReflowCache = { showClearReflowCacheDialog = true },
                                 onRecentFilesLimitChange = viewModel::setRecentFilesLimit,
-                                onTabsToggle = viewModel::setTabsEnabled
+                                onTabsToggle = viewModel::setTabsEnabled,
+                                onExternalFileBehaviorClick = { showBehaviorDialog = true }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -441,6 +445,20 @@ fun HomeScreen(
                                 showClearReflowCacheDialog = false
                             },
                             onDismiss = { showClearReflowCacheDialog = false }
+                        )
+                    }
+                    if (uiState.showExternalFileSavePromptFor != null) {
+                        ExternalFileSaveDialog(
+                            onConfirm = { keep, dontAskAgain ->
+                                viewModel.handleExternalFilePrompt(uiState.showExternalFileSavePromptFor!!, keep, dontAskAgain)
+                            }
+                        )
+                    }
+                    if (showBehaviorDialog) {
+                        ExternalFileBehaviorDialog(
+                            currentBehavior = uiState.externalFileBehavior,
+                            onDismiss = { showBehaviorDialog = false },
+                            onSelect = { viewModel.setExternalFileBehavior(it) }
                         )
                     }
                 }
@@ -758,7 +776,8 @@ fun DefaultTopAppBar(
     onShowDeviceManagement: () -> Unit,
     onFolderSyncToggle: (Boolean) -> Unit,
     onRecentFilesLimitChange: (Int) -> Unit,
-    onTabsToggle: (Boolean) -> Unit
+    onTabsToggle: (Boolean) -> Unit,
+    onExternalFileBehaviorClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -820,6 +839,11 @@ fun DefaultTopAppBar(
                     if (uiState.isTabsEnabled) {
                         Icon(Icons.Default.Check, contentDescription = "Enabled")
                     }
+                })
+
+                DropdownMenuItem(text = { Text(stringResource(R.string.options_external_file_behavior)) }, onClick = {
+                    onExternalFileBehaviorClick()
+                    showOptionsMenu = false
                 })
 
                 HorizontalDivider()
@@ -1282,6 +1306,80 @@ fun DangerousFolderActionDialog(
             TextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.action_cancel))
             }
+        }
+    )
+}
+
+@Composable
+fun ExternalFileSaveDialog(
+    onConfirm: (keep: Boolean, dontAskAgain: Boolean) -> Unit
+) {
+    var dontAsk by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { },
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text(stringResource(R.string.external_file_prompt_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.external_file_prompt_desc))
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { dontAsk = !dontAsk }
+                ) {
+                    Checkbox(checked = dontAsk, onCheckedChange = { dontAsk = it })
+                    Text(stringResource(R.string.external_file_dont_ask))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(true, dontAsk) }) {
+                Text(stringResource(R.string.external_file_keep))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { onConfirm(false, dontAsk) },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text(stringResource(R.string.external_file_delete))
+            }
+        }
+    )
+}
+
+@Composable
+fun ExternalFileBehaviorDialog(
+    currentBehavior: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.options_external_file_behavior)) },
+        text = {
+            Column {
+                val options = listOf("ASK" to R.string.external_file_behavior_ask, "KEEP" to R.string.external_file_behavior_keep, "DELETE" to R.string.external_file_behavior_delete)
+                options.forEach { (value, labelRes) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(value); onDismiss() }
+                            .padding(vertical = 12.dp)
+                    ) {
+                        RadioButton(selected = currentBehavior == value, onClick = null)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(stringResource(labelRes))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }

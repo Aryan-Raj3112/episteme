@@ -139,6 +139,18 @@
     <string name="filter_source_folder">Source Folder</string>
     <string name="filter_read_status">Read Status</string>
     <string name="clear_all">Clear All</string>
+    <string name="filter_in_app_storage">In-App Storage</string>
+
+    <!-- External File Behavior -->
+    <string name="external_file_prompt_title">Save File?</string>
+    <string name="external_file_prompt_desc">Do you want to save this external file in the app\'s library? If not, it will be removed.\n\n(You can change this default behavior anytime from the Home Screen > More Options > External File Behavior).</string>
+    <string name="external_file_dont_ask">Don\'t ask again</string>
+    <string name="external_file_keep">Keep in Library</string>
+    <string name="external_file_delete">Remove</string>
+    <string name="external_file_behavior_ask">Ask Every Time</string>
+    <string name="external_file_behavior_keep">Always Keep</string>
+    <string name="external_file_behavior_delete">Always Remove</string>
+    <string name="options_external_file_behavior">External File Behavior</string>
 
     <!-- OPDS -->
     <string name="fab_add_catalog">Add Catalog</string>

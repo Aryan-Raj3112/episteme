@@ -1878,22 +1878,28 @@ fun LibraryFilterSheet(
                 }
             }
 
-            if (syncedFolders.isNotEmpty()) {
-                Text(stringResource(R.string.filter_source_folder), style = MaterialTheme.typography.titleMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    syncedFolders.forEach { folder ->
-                        FilterChip(
-                            selected = folder.uriString in currentFilters.sourceFolders,
-                            onClick = {
-                                val newSet = if (folder.uriString in currentFilters.sourceFolders) currentFilters.sourceFolders - folder.uriString else currentFilters.sourceFolders + folder.uriString
-                                currentFilters = currentFilters.copy(sourceFolders = newSet)
-                            },
-                            label = { Text(folder.name) }
-                        )
-                    }
+            Text(stringResource(R.string.filter_source_folder), style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = "IN_APP_STORAGE" in currentFilters.sourceFolders,
+                    onClick = {
+                        val newSet = if ("IN_APP_STORAGE" in currentFilters.sourceFolders) currentFilters.sourceFolders - "IN_APP_STORAGE" else currentFilters.sourceFolders + "IN_APP_STORAGE"
+                        currentFilters = currentFilters.copy(sourceFolders = newSet)
+                              },
+                    label = { Text(stringResource(R.string.filter_in_app_storage)) }
+                )
+                syncedFolders.forEach { folder ->
+                    FilterChip(
+                        selected = folder.uriString in currentFilters.sourceFolders,
+                        onClick = {
+                            val newSet = if (folder.uriString in currentFilters.sourceFolders) currentFilters.sourceFolders - folder.uriString else currentFilters.sourceFolders + folder.uriString
+                            currentFilters = currentFilters.copy(sourceFolders = newSet)
+                                  },
+                        label = { Text(folder.name) }
+                    )
                 }
             }
 

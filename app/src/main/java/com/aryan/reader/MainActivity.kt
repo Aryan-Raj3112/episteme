@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             Timber.d("Received VIEW intent with URI: ${intent.data}")
             val uri = intent.data!!
-            viewModel.onFileSelected(uri)
+            viewModel.onFileSelected(uri, isFromRecent = false, isExternalIntent = true)
         }
     }
 }
