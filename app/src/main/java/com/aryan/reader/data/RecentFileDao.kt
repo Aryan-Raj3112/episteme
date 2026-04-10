@@ -31,6 +31,9 @@ interface RecentFileDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateFile(file: RecentFileEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
+
     @Query("SELECT * FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileEntity>>
 

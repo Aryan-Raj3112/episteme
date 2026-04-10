@@ -4483,7 +4483,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_SYNCED_FOLDER_URI = "synced_folder_uri"
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
         private const val KEY_SYNCED_FOLDERS_JSON = "synced_folders_list_json"
-        private const val MAX_FOLDER_LIMIT = 3
+        private const val MAX_FOLDER_LIMIT = 10
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
         private const val KEY_RECENT_FILES_LIMIT = "recent_files_limit"

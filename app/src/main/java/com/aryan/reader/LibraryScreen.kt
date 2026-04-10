@@ -1553,7 +1553,7 @@ private fun FolderSyncScreen(
 
     Scaffold(
         floatingActionButton = {
-            if (syncedFolders.size < 3) {
+            if (syncedFolders.size < 10) {
                 ExtendedFloatingActionButton(
                     text = { Text(stringResource(R.string.fab_add_folder)) },
                     icon = { Icon(Icons.Default.Add, "Add") },

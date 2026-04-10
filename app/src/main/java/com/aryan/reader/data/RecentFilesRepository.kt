@@ -487,4 +487,11 @@ class RecentFilesRepository(private val context: Context) {
             Timber.e(e, "Error clearing caches for $bookId")
         }
     }
+
+    suspend fun addRecentFiles(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext
+        val entities = items.map { it.toRecentFileEntity() }
+        recentFileDao.insertOrUpdateFiles(entities)
+        Timber.d("Batch inserted/updated ${items.size} recent files in DB.")
+    }
 }

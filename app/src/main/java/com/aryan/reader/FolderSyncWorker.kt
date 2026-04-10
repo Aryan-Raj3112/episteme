@@ -198,138 +198,168 @@ class FolderSyncWorker(
             }
 
             if (!metadataOnly) {
-                Timber.tag("FolderSync").d("Phase 2: Scanning physical files...")
-                val currentDiskFiles = mutableListOf<DocumentFile>()
-                val fileQueue = ArrayDeque<DocumentFile>()
-                documentTree.listFiles().let { fileQueue.addAll(it) }
+                Timber.tag("FolderSync").d("Phase 2: Scanning physical files using raw ContentResolver...")
+                val contentResolver = appContext.contentResolver
+                val foundBookIds = mutableSetOf<String>()
+                val newOrUpdatedItems = mutableListOf<RecentFileItem>()
+                val existingItemsMap = existingFolderBooks.associateBy { it.bookId }
 
-                while (fileQueue.isNotEmpty()) {
+                val rootDocId = android.provider.DocumentsContract.getTreeDocumentId(folderUri)
+                val dirQueue = ArrayDeque<String>()
+                dirQueue.add(rootDocId)
+
+                val projection = arrayOf(
+                    android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    android.provider.DocumentsContract.Document.COLUMN_SIZE,
+                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                )
+
+                while (dirQueue.isNotEmpty()) {
                     if (isStopped) break
+                    val currentDocId = dirQueue.removeFirst()
+                    val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
 
-                    val file = fileQueue.removeAt(0)
-                    if (file.isDirectory) {
-                        if (file.name?.startsWith(".") == true || file.name == "EpistemeSyncData") {
-                            continue
+                    try {
+                        contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                            val idCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                            val nameCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                            val mimeCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
+                            val sizeCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_SIZE)
+                            val modCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+
+                            while (cursor.moveToNext() && !isStopped) {
+                                val docId = cursor.getString(idCol)
+                                val name = cursor.getString(nameCol) ?: ""
+                                val mimeType = cursor.getString(mimeCol)
+
+                                if (mimeType == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
+                                    if (!name.startsWith(".") && name != "EpistemeSyncData") {
+                                        dirQueue.add(docId)
+                                    }
+                                } else {
+                                    val size = if (!cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else 0L
+                                    val lastModified = if (!cursor.isNull(modCol)) cursor.getLong(modCol) else 0L
+
+                                    val type = getFileType(name, mimeType)
+                                    if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
+                                        val stableId = "local_$name"
+                                        foundBookIds.add(stableId)
+
+                                        val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
+                                        var existingItem = existingItemsMap[stableId]
+
+                                        if (existingItem == null) {
+                                            val oldItem = existingItemsMap.values.find { it.bookId.startsWith("local_${name}_") && it.bookId != stableId }
+                                            if (oldItem != null) {
+                                                val oldId = oldItem.bookId
+                                                Timber.tag("FolderSync").i("Migrating book ID for $name from $oldId to $stableId")
+
+                                                recentFilesRepository.migrateBookIdLocally(oldId, stableId)
+                                                existingItem = recentFilesRepository.getFileByBookId(stableId)
+
+                                                try {
+                                                    val syncDir = documentTree.findFile("EpistemeSyncData")
+                                                    if (syncDir != null) {
+                                                        syncDir.findFile(".$oldId.json")?.delete()
+                                                        syncDir.findFile("$oldId.json")?.delete()
+                                                        syncDir.findFile(".$oldId" + "_annotations.json")?.delete()
+                                                    }
+                                                } catch (_: Exception) { Timber.tag("FolderSync").e("Failed to clean up orphaned SAF sidecars.") }
+                                            }
+                                        }
+
+                                        if (existingItem == null) {
+                                            val remoteMeta = folderMetadataMap[stableId]
+
+                                            val newItem = RecentFileItem(
+                                                bookId = stableId,
+                                                uriString = docUri.toString(),
+                                                type = type,
+                                                displayName = name,
+                                                timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
+                                                lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
+                                                coverImagePath = null,
+                                                title = remoteMeta?.title ?: name,
+                                                author = remoteMeta?.author,
+                                                isAvailable = true,
+                                                isDeleted = false,
+                                                isRecent = remoteMeta?.isRecent ?: false,
+                                                sourceFolderUri = folderUriString,
+                                                lastChapterIndex = remoteMeta?.lastChapterIndex,
+                                                lastPage = remoteMeta?.lastPage,
+                                                lastPositionCfi = remoteMeta?.lastPositionCfi,
+                                                progressPercentage = remoteMeta?.progressPercentage,
+                                                bookmarksJson = remoteMeta?.bookmarksJson,
+                                                highlightsJson = remoteMeta?.highlightsJson,
+                                                customName = remoteMeta?.customName,
+                                                locatorBlockIndex = remoteMeta?.locatorBlockIndex,
+                                                locatorCharOffset = remoteMeta?.locatorCharOffset,
+                                                fileSize = size
+                                            )
+                                            newOrUpdatedItems.add(newItem)
+                                        } else {
+                                            var needsUpdate = false
+                                            var updatedItem = existingItem
+
+                                            if (existingItem.fileSize > 0L && size > 0L && existingItem.fileSize != size) {
+                                                Timber.tag("FolderSync").i("File size changed for $name (${existingItem.fileSize} -> $size).")
+                                                recentFilesRepository.clearLocalCachesForBook(stableId)
+                                                updatedItem = updatedItem.copy(fileSize = size, lastModifiedTimestamp = lastModified)
+                                                needsUpdate = true
+                                            }
+
+                                            if (updatedItem.isDeleted || !updatedItem.isAvailable) {
+                                                updatedItem = updatedItem.copy(isDeleted = false, isAvailable = true)
+                                                needsUpdate = true
+                                            }
+
+                                            if (updatedItem.uriString != docUri.toString()) {
+                                                updatedItem = updatedItem.copy(uriString = docUri.toString())
+                                                needsUpdate = true
+                                            }
+
+                                            if (needsUpdate) {
+                                                newOrUpdatedItems.add(updatedItem)
+                                            }
+                                        }
+
+                                        if (newOrUpdatedItems.size >= 50) {
+                                            recentFilesRepository.addRecentFiles(newOrUpdatedItems)
+                                            newOrUpdatedItems.clear()
+                                        }
+
+                                        if (!processedBookIds.contains(stableId)) {
+                                            val sidecarData = preloadedSidecars[stableId]
+                                            if (sidecarData != null) {
+                                                val (remoteTs, jsonPayload) = sidecarData
+                                                val localFiles = listOf(
+                                                    File(appContext.filesDir, "annotations/annotation_$stableId.json"),
+                                                    File(appContext.filesDir, "pdf_rich_text/text_$stableId.json"),
+                                                    File(appContext.filesDir, "page_layouts/layout_$stableId.json"),
+                                                    File(appContext.filesDir, "pdf_text_boxes/boxes_$stableId.json")
+                                                )
+                                                val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
+
+                                                if (remoteTs > (localTs + 1000)) {
+                                                    Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for new book $stableId. Importing.")
+                                                    recentFilesRepository.importAnnotationBundle(stableId, jsonPayload)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        file.listFiles().let { fileQueue.addAll(it) }
-                    } else if (file.isFile) {
-                        val name = file.name ?: ""
-                        val type = getFileType(name, file.type)
-                        if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
-                            currentDiskFiles.add(file)
-                        }
+                    } catch (e: Exception) {
+                        Timber.tag("FolderSync").e(e, "Failed to query children for docId: $currentDocId")
                     }
                 }
 
-                val foundBookIds = mutableSetOf<String>()
-
-                for (file in currentDiskFiles) {
-                    if (isStopped) break
-
-                    val stableId = "local_${file.name}"
-                    foundBookIds.add(stableId)
-
-                    var existingItem = recentFilesRepository.getFileByBookId(stableId)
-
-                    if (existingItem == null) {
-                        val potentialOldFiles = recentFilesRepository.getFilesBySourceFolder(folderUriString)
-                            .filter { it.bookId.startsWith("local_${file.name}_") && it.bookId != stableId }
-
-                        if (potentialOldFiles.isNotEmpty()) {
-                            val oldItem = potentialOldFiles.first()
-                            val oldId = oldItem.bookId
-                            Timber.tag("FolderSync").i("Migrating book ID for ${file.name} from $oldId to $stableId")
-
-                            recentFilesRepository.migrateBookIdLocally(oldId, stableId)
-                            existingItem = recentFilesRepository.getFileByBookId(stableId)
-
-                            try {
-                                val syncDir = documentTree.findFile("EpistemeSyncData")
-                                if (syncDir != null) {
-                                    syncDir.findFile(".$oldId.json")?.delete()
-                                    syncDir.findFile("$oldId.json")?.delete()
-                                    syncDir.findFile(".$oldId" + "_annotations.json")?.delete()
-                                }
-                            } catch (_: Exception) { Timber.tag("FolderSync").e("Failed to delete orphaned old sidecars in SAF.") }
-                        }
-                    }
-
-                    if (existingItem == null) {
-                        val remoteMeta = folderMetadataMap[stableId]
-                        val type = getFileType(file.name ?: "", file.type) ?: FileType.EPUB
-                        val placeholderTitle = file.name ?: "Unknown"
-
-                        val newItem = RecentFileItem(
-                            bookId = stableId,
-                            uriString = file.uri.toString(),
-                            type = type,
-                            displayName = file.name ?: "Unknown",
-                            timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
-                            lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
-                            coverImagePath = null,
-                            title = remoteMeta?.title ?: placeholderTitle,
-                            author = remoteMeta?.author,
-                            isAvailable = true,
-                            isDeleted = false,
-                            isRecent = remoteMeta?.isRecent ?: false,
-                            sourceFolderUri = folderUriString,
-                            lastChapterIndex = remoteMeta?.lastChapterIndex,
-                            lastPage = remoteMeta?.lastPage,
-                            lastPositionCfi = remoteMeta?.lastPositionCfi,
-                            progressPercentage = remoteMeta?.progressPercentage,
-                            bookmarksJson = remoteMeta?.bookmarksJson,
-                            highlightsJson = remoteMeta?.highlightsJson,
-                            customName = remoteMeta?.customName,
-                            locatorBlockIndex = remoteMeta?.locatorBlockIndex,
-                            locatorCharOffset = remoteMeta?.locatorCharOffset,
-                            fileSize = file.length()
-                        )
-
-                        recentFilesRepository.addRecentFile(newItem)
-                    } else {
-                        val currentSize = file.length()
-                        val currentTimestamp = file.lastModified()
-
-                        var needsUpdate = false
-                        var updatedItem = existingItem
-
-                        if (existingItem.fileSize > 0L && currentSize > 0L && existingItem.fileSize != currentSize) {
-                            Timber.tag("FolderSync").i("File size changed for ${file.name} (${existingItem.fileSize} -> $currentSize). Updating caches.")
-                            recentFilesRepository.clearLocalCachesForBook(stableId)
-                            updatedItem = updatedItem.copy(fileSize = currentSize, lastModifiedTimestamp = currentTimestamp)
-                            needsUpdate = true
-                        }
-
-                        if (updatedItem.isDeleted || !updatedItem.isAvailable) {
-                            updatedItem = updatedItem.copy(isDeleted = false, isAvailable = true)
-                            needsUpdate = true
-                        }
-
-                        if (needsUpdate) {
-                            recentFilesRepository.addRecentFile(updatedItem)
-                        }
-                    }
-
-                    if (!processedBookIds.contains(stableId)) {
-                        val sidecarData = preloadedSidecars[stableId]
-
-                        if (sidecarData != null) {
-                            val (remoteTs, jsonPayload) = sidecarData
-
-                            val localFiles = listOf(
-                                File(appContext.filesDir, "annotations/annotation_$stableId.json"),
-                                File(appContext.filesDir, "pdf_rich_text/text_$stableId.json"),
-                                File(appContext.filesDir, "page_layouts/layout_$stableId.json"),
-                                File(appContext.filesDir, "pdf_text_boxes/boxes_$stableId.json")
-                            )
-                            val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
-
-                            if (remoteTs > (localTs + 1000)) {
-                                Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for new book $stableId. Importing.")
-                                recentFilesRepository.importAnnotationBundle(stableId, jsonPayload)
-                            }
-                        }
-                    }
+                if (newOrUpdatedItems.isNotEmpty()) {
+                    recentFilesRepository.addRecentFiles(newOrUpdatedItems)
+                    newOrUpdatedItems.clear()
                 }
 
                 if (!isStopped) {
