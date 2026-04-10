@@ -463,7 +463,7 @@
         true,
     );
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -475,7 +475,8 @@
                 fontFamily +
                 "', Align: '" +
                 textAlign +
-                "'",
+                "', Gap: " +
+                paragraphGap
         );
 
         var dynamicStyleId = "dynamicReaderStyles";
@@ -489,9 +490,11 @@
 
         var newFontSize = parseFloat(fontSizeEm);
         var newLineHeight = parseFloat(lineHeight);
+        var newGap = parseFloat(paragraphGap);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.6;
+        if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
 
         var fontCss = "";
         var selector = "body";
@@ -535,6 +538,17 @@
                 `;
         }
 
+        // --- GAP LOGIC ---
+        var gapCss = `
+            body p, body ul, body ol, body blockquote {
+                margin-top: ` + (0.5 * newGap) + `em !important;
+                margin-bottom: ` + (0.5 * newGap) + `em !important;
+            }
+            body li {
+                margin-bottom: ` + (0.25 * newGap) + `em !important;
+            }
+        `;
+
         dynamicStyleElement.innerHTML =
             ` body {
                 font-size: ` +
@@ -555,7 +569,7 @@
 
             ` +
             alignCss +
-            ` `;
+            gapCss;
 
         setTimeout(
             function () {

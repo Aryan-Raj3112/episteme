@@ -900,6 +900,7 @@ fun EpubReaderHost(
 
     var currentFontSizeEm by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.fontSize) }
     var currentLineHeight by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.lineHeight) }
+    var currentParagraphGap by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.paragraphGap) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
     var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
@@ -915,14 +916,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         }
     }
@@ -2524,6 +2525,7 @@ fun EpubReaderHost(
                                             modifier = Modifier.fillMaxSize(),
                                             currentFontSize = currentFontSizeEm,
                                             currentLineHeight = currentLineHeight,
+                                            currentParagraphGap = currentParagraphGap,
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
                                             currentTextAlign = currentTextAlign,
@@ -3881,6 +3883,8 @@ fun EpubReaderHost(
                     onFontSizeChange = { currentFontSizeEm = it },
                     currentLineHeight = currentLineHeight,
                     onLineHeightChange = { currentLineHeight = it },
+                    currentParagraphGap = currentParagraphGap,
+                    onParagraphGapChange = { currentParagraphGap = it },
                     currentFont = currentFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
                         customFonts.find { it.path == currentCustomFontPath }?.displayName ?: "Custom Font"
@@ -3896,6 +3900,7 @@ fun EpubReaderHost(
                     onReset = {
                         currentFontSizeEm = DEFAULT_FONT_SIZE_VAL
                         currentLineHeight = DEFAULT_LINE_HEIGHT_VAL
+                        currentParagraphGap = DEFAULT_PARAGRAPH_GAP_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT

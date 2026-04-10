@@ -97,12 +97,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
 private const val TEXT_ALIGN_KEY = "reader_text_align"
 private const val FONT_SIZE_KEY = "reader_font_size"
 private const val LINE_HEIGHT_KEY = "reader_line_height"
+private const val PARAGRAPH_GAP_KEY = "reader_paragraph_gap"
 private const val AUTO_SCROLL_SPEED_KEY = "reader_auto_scroll_speed"
 private const val FONT_FAMILY_KEY = "reader_font_family"
 private const val TAP_TO_NAVIGATE_ENABLED_KEY = "tap_to_navigate_enabled"
@@ -113,6 +115,7 @@ private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.6f
+const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
 
 enum class ReaderFont(val id: String, val displayName: String, val fontFamilyName: String) {
     ORIGINAL("original", "Original", "Original"),
@@ -144,6 +147,7 @@ enum class PageInfoMode(val id: Int, val title: String) {
 data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
+    val paragraphGap: Float,
     val font: ReaderFont,
     val customPath: String?,
     val textAlign: ReaderTextAlign
@@ -152,6 +156,7 @@ data class FormatSettings(
 private const val FORMAT_IS_LOCAL_PREFIX = "format_is_local_"
 private const val LOCAL_FONT_SIZE_PREFIX = "local_font_size_"
 private const val LOCAL_LINE_HEIGHT_PREFIX = "local_line_height_"
+private const val LOCAL_PARAGRAPH_GAP_PREFIX = "local_paragraph_gap_"
 private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
 
@@ -170,6 +175,7 @@ fun saveLocalReaderSettings(
     bookId: String,
     fontSize: Float,
     lineHeight: Float,
+    paragraphGap: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -178,6 +184,7 @@ fun saveLocalReaderSettings(
     prefs.edit {
         putFloat(LOCAL_FONT_SIZE_PREFIX + bookId, fontSize)
         putFloat(LOCAL_LINE_HEIGHT_PREFIX + bookId, lineHeight)
+        putFloat(LOCAL_PARAGRAPH_GAP_PREFIX + bookId, paragraphGap)
         if (customFontPath != null) {
             putString(LOCAL_FONT_FAMILY_PREFIX + bookId, "custom|$customFontPath")
         } else {
@@ -234,6 +241,12 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         prefs.getFloat(LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT_VAL)
     }
 
+    val paragraphGap = if (isLocal && prefs.contains(LOCAL_PARAGRAPH_GAP_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_PARAGRAPH_GAP_PREFIX + bookId, DEFAULT_PARAGRAPH_GAP_VAL)
+    } else {
+        prefs.getFloat(PARAGRAPH_GAP_KEY, DEFAULT_PARAGRAPH_GAP_VAL)
+    }
+
     val savedFontVal = if (isLocal && prefs.contains(LOCAL_FONT_FAMILY_PREFIX + bookId)) {
         prefs.getString(LOCAL_FONT_FAMILY_PREFIX + bookId, ReaderFont.ORIGINAL.id) ?: ReaderFont.ORIGINAL.id
     } else {
@@ -253,7 +266,7 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
     }
     val textAlign = ReaderTextAlign.entries.find { it.id == alignId } ?: ReaderTextAlign.DEFAULT
 
-    return FormatSettings(fontSize, lineHeight, font, customPath, textAlign)
+    return FormatSettings(fontSize, lineHeight, paragraphGap, font, customPath, textAlign)
 }
 
 fun getComposeFontFamily(
@@ -291,6 +304,7 @@ fun saveReaderSettings(
     context: Context,
     fontSize: Float,
     lineHeight: Float,
+    paragraphGap: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -299,6 +313,7 @@ fun saveReaderSettings(
     prefs.edit {
         putFloat(FONT_SIZE_KEY, fontSize)
         putFloat(LINE_HEIGHT_KEY, lineHeight)
+        putFloat(PARAGRAPH_GAP_KEY, paragraphGap)
         if (customFontPath != null) {
             putString(FONT_FAMILY_KEY, "custom|$customFontPath")
         } else {
@@ -345,6 +360,8 @@ fun ReaderTextFormatPanel(
     onFontSizeChange: (Float) -> Unit,
     currentLineHeight: Float,
     onLineHeightChange: (Float) -> Unit,
+    currentParagraphGap: Float, // NEW
+    onParagraphGapChange: (Float) -> Unit, // NEW
     currentFont: ReaderFont,
     currentCustomFontName: String?,
     onFontOptionClick: () -> Unit,
@@ -363,10 +380,10 @@ fun ReaderTextFormatPanel(
         modifier = modifier
     ) {
         Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f),
             tonalElevation = 0.dp,
-            shadowElevation = 0.dp,
+            shadowElevation = 8.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
             modifier = Modifier
                 .fillMaxWidth()
@@ -375,6 +392,7 @@ fun ReaderTextFormatPanel(
             Column(
                 modifier = Modifier.padding(16.dp)
             ) {
+                // Header Row (Local/Global + Close/Reset)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -439,82 +457,109 @@ fun ReaderTextFormatPanel(
 
                 Spacer(Modifier.height(16.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // FONT & ALIGNMENT SECTION
+                Text(
+                    text = "FONT & ALIGNMENT",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                )
+
+                // Font Button (Full width)
+                Surface(
+                    onClick = onFontOptionClick,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
                 ) {
-                    Surface(
-                        onClick = onFontOptionClick,
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier
-                            .weight(0.45f)
-                            .height(48.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.padding(horizontal = 16.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.padding(horizontal = 12.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Aa",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(end = 12.dp)
+                            )
                             Text(
                                 text = currentCustomFontName ?: currentFont.displayName,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(16.dp)
-                            )
                         }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
+                }
 
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .weight(0.55f)
-                            .height(48.dp)
-                    ) {
-                        Row {
-                            ReaderTextAlign.entries.forEach { align ->
-                                val isSelected = currentTextAlign == align
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .weight(1f)
-                                        .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                        .clickable { onTextAlignChange(align) },
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        painter = androidx.compose.ui.res.painterResource(id = align.iconResId),
-                                        contentDescription = align.displayName,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Text(
-                                        text = align.displayName,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 10.sp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                Spacer(Modifier.height(8.dp))
+
+                // Alignment Button (Full width Segmented)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Row {
+                        ReaderTextAlign.entries.forEach { align ->
+                            val isSelected = currentTextAlign == align
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    .clickable { onTextAlignChange(align) },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = align.iconResId),
+                                    contentDescription = align.displayName,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = align.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(24.dp))
+
+                // LAYOUT & SPACING SECTION
+                Text(
+                    text = "LAYOUT & SPACING",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                )
 
                 // Sliders
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Size
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(55.dp))
+                        Text("Size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
                         Slider(
                             value = currentFontSize,
                             onValueChange = onFontSizeChange,
@@ -522,10 +567,11 @@ fun ReaderTextFormatPanel(
                             steps = 24,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(35.dp), textAlign = TextAlign.End)
+                        Text("%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
+                    // Lines
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Spacing", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(55.dp))
+                        Text("Lines", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
                         Slider(
                             value = currentLineHeight,
                             onValueChange = onLineHeightChange,
@@ -533,9 +579,22 @@ fun ReaderTextFormatPanel(
                             steps = 14,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(35.dp), textAlign = TextAlign.End)
+                        Text("%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                    }
+                    // Paragraph Gap
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Gap", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(60.dp))
+                        Slider(
+                            value = currentParagraphGap,
+                            onValueChange = onParagraphGapChange,
+                            valueRange = 0.0f..3.0f,
+                            steps = 12,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text("%.1fx".format(currentParagraphGap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
