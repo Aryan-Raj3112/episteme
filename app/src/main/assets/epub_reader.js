@@ -381,6 +381,10 @@
     };
 
     function handleHighlightInteraction(e) {
+        if (window.getSelection && window.getSelection().toString().trim().length > 0) {
+            return false;
+        }
+
         var target = e.target;
         var highlightSpan = null;
 
@@ -426,7 +430,6 @@
             if (rawCfi && rawCfi.includes(";;")) {
                 var cfiParts = rawCfi.split(";;");
                 cfiToReport = cfiParts[cfiParts.length - 1];
-                console.log("HandleInteraction: Multi-CFI detected on single span. Reporting top layer: " + cfiToReport);
             }
 
             if (window.HighlightBridge) {
@@ -445,22 +448,7 @@
         function (e) {
             handleHighlightInteraction(e);
         },
-
-        true,
-    );
-
-    // 2. Handle Long Press (Context Menu) - "Atomic" Behavior
-    // This prevents the native Android selection handles from appearing inside the highlight
-    document.addEventListener(
-        "contextmenu",
-        function (e) {
-            if (handleHighlightInteraction(e)) {
-                e.preventDefault(); // Ensure menu doesn't show
-                return false;
-            }
-        },
-
-        true,
+        true
     );
 
     window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap) {

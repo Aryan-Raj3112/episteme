@@ -287,76 +287,28 @@ fun processAndAddHighlight(
     chapterIndex: Int,
     currentList: MutableList<UserHighlight>
 ): String {
-    val newParts = newCfi.split('|')
-    val newStartFull = newParts.first()
-    val newEndFull = newParts.last()
-    val newStartPath = newStartFull.split(':').first()
-    val newStartOffset = newStartFull.substringAfter(':', "0").toInt()
-    val newEndPath = newEndFull.split(':').first()
-    val newEndOffset = newEndFull.substringAfter(':', "0").toInt()
-
-    val iterator = currentList.iterator()
-    var finalStartPath = newStartPath
-    var finalStartOffset = newStartOffset
-    var finalEndPath = newEndPath
-    var finalEndOffset = newEndOffset
-    var finalText = newText
-    var finalNote: String? = null
-
-    while (iterator.hasNext()) {
-        val existing = iterator.next()
-        if (existing.chapterIndex != chapterIndex) continue
-
-        val exParts = existing.cfi.split('|')
-        val exStartFull = exParts.first()
-        val exEndFull = exParts.last()
-        val exStartPath = exStartFull.split(':').first()
-        val exStartOffset = exStartFull.substringAfter(':', "0").toInt()
-        val exEndPath = exEndFull.split(':').first()
-        val exEndOffset = exEndFull.substringAfter(':', "0").toInt()
-
-        fun comparePaths(p1: String, p2: String): Int {
-            val parts1 = p1.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
-            val parts2 = p2.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
-            val len = min(parts1.size, parts2.size)
-            for (i in 0 until len) {
-                if (parts1[i] != parts2[i]) return parts1[i] - parts2[i]
-            }
-            return parts1.size - parts2.size
-        }
-
-        val startCmp = comparePaths(exStartPath, newEndPath)
-        val endCmp = comparePaths(exEndPath, newStartPath)
-
-        val isDisjoint = (startCmp > 0) || (startCmp == 0 && exStartOffset > newEndOffset) ||
-                (endCmp < 0) || (endCmp == 0 && exEndOffset < newStartOffset)
-
-        if (!isDisjoint) {
-            iterator.remove()
-            if (existing.note != null && finalNote == null) finalNote = existing.note
-            val unionStartCmp = comparePaths(finalStartPath, exStartPath)
-            if (unionStartCmp > 0 || (unionStartCmp == 0 && finalStartOffset > exStartOffset)) {
-                finalStartPath = exStartPath
-                finalStartOffset = exStartOffset
-            }
-            val unionEndCmp = comparePaths(finalEndPath, exEndPath)
-            if (unionEndCmp < 0 || (unionEndCmp == 0 && finalEndOffset < exEndOffset)) {
-                finalEndPath = exEndPath
-                finalEndOffset = exEndOffset
-            }
-            if (existing.text.length > finalText.length) finalText = existing.text
-        }
+    // Scenario: Exact match -> Update color and text instead of stacking identical spans
+    val exactMatchIndex = currentList.indexOfFirst {
+        it.chapterIndex == chapterIndex && it.cfi == newCfi
     }
 
-    val finalCfi = "$finalStartPath:$finalStartOffset|$finalEndPath:$finalEndOffset"
-    currentList.add(UserHighlight(
-        cfi = finalCfi,
-        text = finalText,
-        color = newColor,
-        chapterIndex = chapterIndex,
-        note = finalNote
-    ))
-    return finalCfi
+    if (exactMatchIndex != -1) {
+        val existing = currentList[exactMatchIndex]
+        currentList[exactMatchIndex] = existing.copy(color = newColor, text = newText)
+        return existing.cfi
+    }
+
+    // Scenarios: Partial overlap or subsumption -> Add independently
+    currentList.add(
+        UserHighlight(
+            cfi = newCfi,
+            text = newText,
+            color = newColor,
+            chapterIndex = chapterIndex,
+            note = null
+        )
+    )
+    return newCfi
 }
 
 // --- UI Components ---

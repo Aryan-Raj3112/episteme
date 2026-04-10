@@ -1280,76 +1280,6 @@ private fun TextWithEmphasis(
         }
         .then(customDrawer)
         .pointerInput(userHighlights, text) {
-            awaitEachGesture {
-                val down = awaitFirstDown(
-                    pass = PointerEventPass.Initial, requireUnconsumed = false
-                )
-                val layout = textLayoutResult
-                if (layout != null) {
-                    val hit = getHighlightAt(down.position, layout)
-                    if (hit != null) {
-                        down.consume()
-                        val startPosition = down.position
-                        var dragDistance = 0f
-                        var isFinished = false
-
-                        val longPressJob = scope.launch {
-                            delay(500)
-                            pressedHighlightCfi = hit.first.cfi
-                        }
-
-                        try {
-                            while (true) {
-                                val event = awaitPointerEvent(
-                                    pass = PointerEventPass.Initial
-                                )
-                                val change = event.changes.firstOrNull {
-                                    it.id == down.id
-                                }
-                                if (change == null) {
-                                    longPressJob.cancel()
-                                    pressedHighlightCfi = null
-                                    break
-                                }
-                                change.consume()
-                                if (change.pressed) {
-                                    dragDistance = (change.position - startPosition).getDistance()
-                                    if (dragDistance >= viewConfiguration.touchSlop) {
-                                        longPressJob.cancel()
-                                        pressedHighlightCfi = null
-                                    }
-                                } else {
-                                    isFinished = true
-                                    longPressJob.cancel()
-                                    pressedHighlightCfi = null
-                                    break
-                                }
-                            }
-                        } catch (_: Exception) {
-                            longPressJob.cancel()
-                            pressedHighlightCfi = null
-                        }
-
-                        if (isFinished && dragDistance < viewConfiguration.touchSlop) {
-                            val (highlight, localRect) = hit
-                            val globalRect = layoutCoordinates?.let { coords ->
-                                if (coords.isAttached) {
-                                    val topLeft = coords.localToWindow(
-                                        localRect.topLeft
-                                    )
-                                    val bottomRight = coords.localToWindow(
-                                        localRect.bottomRight
-                                    )
-                                    Rect(topLeft, bottomRight)
-                                } else null
-                            } ?: localRect
-                            onHighlightClick(highlight, globalRect)
-                        }
-                    }
-                }
-            }
-        }
-        .pointerInput(text) {
             detectTapGestures(
                 onLongPress = { offset ->
                     textLayoutResult?.let { layout ->
@@ -1359,7 +1289,6 @@ private fun TextWithEmphasis(
                         var start = wordBoundary.start
                         var end = wordBoundary.end
 
-                        // Trim trailing/leading punctuations for a cleaner word selection
                         val textStr = text.text
                         while (start < end && start < textStr.length && !textStr[start].isLetterOrDigit()) start++
                         while (end > start && end <= textStr.length && !textStr[end - 1].isLetterOrDigit()) end--
@@ -1405,14 +1334,27 @@ private fun TextWithEmphasis(
                 },
                 onTap = { offset ->
                     textLayoutResult?.let { layout ->
+                        val hit = getHighlightAt(offset, layout)
+                        if (hit != null) {
+                            val (highlight, localRect) = hit
+                            val globalRect = layoutCoordinates?.let { coords ->
+                                if (coords.isAttached) {
+                                    val topLeft = coords.localToWindow(localRect.topLeft)
+                                    val bottomRight = coords.localToWindow(localRect.bottomRight)
+                                    Rect(topLeft, bottomRight)
+                                } else null
+                            } ?: localRect
+                            onHighlightClick(highlight, globalRect)
+                            return@detectTapGestures
+                        }
+
                         val charOffset = layout.getOffsetForPosition(offset)
-                        val urlAnnotation = text.getStringAnnotations(
-                            "URL", charOffset, charOffset
-                        ).firstOrNull()
+                        val urlAnnotation = text.getStringAnnotations("URL", charOffset, charOffset).firstOrNull()
                         if (urlAnnotation != null) onLinkClick(urlAnnotation.item)
                         else onGeneralTap(offset)
                     }
-                })
+                }
+            )
         }, onTextLayout = {
         textLayoutResult = it
         if (layoutCoordinates != null && block.cfi != null) {
