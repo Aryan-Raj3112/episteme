@@ -31,6 +31,7 @@ class OdtParser(private val context: Context) {
         isFlat: Boolean,
         parseContent: Boolean = true
     ): EpubBook = withContext(Dispatchers.IO) {
+        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }

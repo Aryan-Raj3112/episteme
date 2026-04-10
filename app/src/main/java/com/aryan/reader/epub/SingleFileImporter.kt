@@ -40,6 +40,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.UUID
 
 class SingleFileImporter(private val context: Context) {
 
@@ -52,12 +53,94 @@ class SingleFileImporter(private val context: Context) {
         bookId: String,
         parseContent: Boolean = true
     ): EpubBook {
+
+        val lowerHint = originalBookNameHint.lowercase()
+        val isCsv = lowerHint.endsWith(".csv") || lowerHint.endsWith(".tsv")
+        val isCodeOrData = listOf(".json", ".xml", ".log", ".java", ".kt", ".py", ".js", ".cpp", ".c", ".cs", ".rb", ".go").any { lowerHint.endsWith(it) }
+
+        if (type == FileType.HTML && (isCsv || isCodeOrData)) {
+            return parseDynamicContentToHtml(inputStream, originalBookNameHint, bookId, parseContent, isCsv)
+        }
+
         return when (type) {
             FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent)
             else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
+        }
+    }
+
+    private suspend fun parseDynamicContentToHtml(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean,
+        isCsv: Boolean
+    ): EpubBook = withContext(Dispatchers.IO) {
+
+        val tempFile = File(context.cacheDir, "temp_conv_${UUID.randomUUID()}.html")
+
+        try {
+            FileOutputStream(tempFile).bufferedWriter().use { writer ->
+                writer.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>${originalBookNameHint}</title>\n")
+
+                if (isCsv) {
+                    writer.write("<style>\ntable { border-collapse: collapse; width: 100%; font-family: sans-serif; }\nth, td { border: 1px solid currentColor; padding: 8px; }\n</style>\n")
+                    writer.write("</head>\n<body>\n<div style='overflow-x:auto;'>\n<table>\n")
+                } else {
+                    writer.write("<style>\npre { padding: 10px; overflow-x: auto; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; }\n</style>\n")
+                    writer.write("</head>\n<body>\n<pre><code>\n")
+                }
+
+                val delimiter = if (originalBookNameHint.lowercase().endsWith(".tsv")) '\t' else ','
+
+                inputStream.bufferedReader().use { reader ->
+                    var line = reader.readLine()
+                    while (line != null) {
+                        if (isCsv) {
+                            writer.write("<tr>")
+                            val current = StringBuilder()
+                            var inQuotes = false
+
+                            for (char in line) {
+                                if (char == '\"') {
+                                    inQuotes = !inQuotes
+                                } else if (char == delimiter && !inQuotes) {
+                                    val escaped = current.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                                    writer.write("<td>$escaped</td>")
+                                    current.clear()
+                                } else {
+                                    current.append(char)
+                                }
+                            }
+                            val escapedFinal = current.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            writer.write("<td>$escapedFinal</td></tr>\n")
+
+                        } else {
+                            // Plain code/log text escaping
+                            val escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            writer.write("$escaped\n")
+                        }
+                        line = reader.readLine()
+                    }
+                }
+
+                if (isCsv) {
+                    writer.write("</table>\n</div>\n</body>\n</html>")
+                } else {
+                    writer.write("</code></pre>\n</body>\n</html>")
+                }
+            }
+
+            tempFile.inputStream().use { tempStream ->
+                return@withContext parseHtml(tempStream, originalBookNameHint, bookId, parseContent)
+            }
+
+        } finally {
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
         }
     }
 
@@ -82,6 +165,9 @@ class SingleFileImporter(private val context: Context) {
                 css = emptyMap()
             )
         }
+
+        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
+
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
@@ -228,6 +314,9 @@ class SingleFileImporter(private val context: Context) {
                 css = emptyMap()
             )
         }
+
+        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
+
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
@@ -401,6 +490,9 @@ class SingleFileImporter(private val context: Context) {
                 css = emptyMap()
             )
         }
+
+        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
+
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
         }
@@ -572,6 +664,8 @@ class SingleFileImporter(private val context: Context) {
                 css = emptyMap()
             )
         }
+
+        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
 
         val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
             if (!exists()) mkdirs()
