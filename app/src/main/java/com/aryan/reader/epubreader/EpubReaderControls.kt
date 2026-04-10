@@ -30,6 +30,11 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Switch
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -131,6 +136,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
+enum class ReaderTool(val title: String, val category: String) {
+    DICTIONARY("External Apps", "Top Bar"),
+    THEME("Theme Settings", "Top Bar"),
+    SLIDER("Navigation Slider", "Bottom Bar"),
+    TOC("Sidebar", "Bottom Bar"),
+    FORMAT("Text Formatting", "Bottom Bar"),
+    SEARCH("Search", "Bottom Bar"),
+    AI_FEATURES("AI Features", "Bottom Bar"),
+    TTS_CONTROLS("TTS Controls", "Bottom Bar"),
+    READING_MODE("Reading Mode", "Overflow Menu"),
+    BOOKMARK("Bookmark", "Overflow Menu"),
+    TAP_TO_TURN("Tap to Turn Pages", "Overflow Menu"),
+    VOLUME_SCROLL("Volume Button Scrolling", "Overflow Menu"),
+    PAGE_TURN_ANIM("Realistic Page Turns", "Overflow Menu"),
+    KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
+    VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
+    AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
+    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu")
+}
+
 @Composable
 fun EpubReaderTopBar(
     isVisible: Boolean,
@@ -158,6 +183,8 @@ fun EpubReaderTopBar(
     onOpenThemeSettings: () -> Unit,
     onOpenVisualOptions: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
+    hiddenTools: Set<String>,
+    onCustomizeTools: () -> Unit,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
@@ -204,22 +231,26 @@ fun EpubReaderTopBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    TooltipIconButton(
-                        text = stringResource(R.string.tooltip_dictionary),
-                        description = stringResource(R.string.tooltip_dictionary_desc),
-                        onClick = onOpenDictionarySettings
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.dictionary),
-                            contentDescription = stringResource(R.string.content_desc_dictionary_settings)
-                        )
+                    if (!hiddenTools.contains(ReaderTool.DICTIONARY.name)) {
+                        TooltipIconButton(
+                            text = stringResource(R.string.tooltip_dictionary),
+                            description = stringResource(R.string.tooltip_dictionary_desc),
+                            onClick = onOpenDictionarySettings
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.dictionary),
+                                contentDescription = stringResource(R.string.content_desc_dictionary_settings)
+                            )
+                        }
                     }
-                    TooltipIconButton(
-                        text = stringResource(R.string.tooltip_theme),
-                        description = stringResource(R.string.tooltip_theme_desc),
-                        onClick = onOpenThemeSettings
-                    ) {
-                        Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
+                    if (!hiddenTools.contains(ReaderTool.THEME.name)) {
+                        TooltipIconButton(
+                            text = stringResource(R.string.tooltip_theme),
+                            description = stringResource(R.string.tooltip_theme_desc),
+                            onClick = onOpenThemeSettings
+                        ) {
+                            Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
+                        }
                     }
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }
@@ -235,6 +266,18 @@ fun EpubReaderTopBar(
                             expanded = showMoreMenu,
                             onDismissRequest = { showMoreMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Customize Toolbar") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onCustomizeTools()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
+                                }
+                            )
+                            HorizontalDivider()
+
                             if (onToggleReflow != null) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.menu_view_original_pdf)) },
@@ -274,125 +317,175 @@ fun EpubReaderTopBar(
                                 )
                             }
 
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
-                                enabled = !isTtsActive,
-                                onClick = {
-                                    showMoreMenu = false
-                                    onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
-                                },
-                                trailingIcon = { if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
-                                enabled = !isTtsActive,
-                                onClick = {
-                                    showMoreMenu = false
-                                    onChangeRenderMode(RenderMode.PAGINATED)
-                                },
-                                trailingIcon = { if (currentRenderMode == RenderMode.PAGINATED) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text(if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_this_page)) },
-                                onClick = {
+                            if (!hiddenTools.contains(ReaderTool.READING_MODE.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
+                                    enabled = !isTtsActive,
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
+                                    },
+                                    trailingIcon = {
+                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_selected)
+                                        )
+                                    })
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
+                                    enabled = !isTtsActive,
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onChangeRenderMode(RenderMode.PAGINATED)
+                                    },
+                                    trailingIcon = {
+                                        if (currentRenderMode == RenderMode.PAGINATED) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_selected)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.BOOKMARK.name)) {
+                                DropdownMenuItem(text = {
+                                    Text(
+                                        if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(
+                                            R.string.menu_bookmark_this_page
+                                        )
+                                    )
+                                }, onClick = {
                                     showMoreMenu = false
                                     onToggleBookmark()
-                                }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
-                                enabled = currentRenderMode == RenderMode.PAGINATED,
-                                onClick = {
-                                    onToggleTapToNavigate(!tapToNavigateEnabled)
-                                    showMoreMenu = false
-                                },
-                                trailingIcon = { if (tapToNavigateEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = {
+                                })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.TAP_TO_TURN.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
+                                    enabled = currentRenderMode == RenderMode.PAGINATED,
+                                    onClick = {
+                                        onToggleTapToNavigate(!tapToNavigateEnabled)
+                                        showMoreMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (tapToNavigateEnabled) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_enabled)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.VOLUME_SCROLL.name)) {
+                                DropdownMenuItem(
+                                    text = {
                                     Text(
-                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(R.string.menu_volume_button_scrolling)
+                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(
+                                            R.string.menu_volume_button_scrolling
+                                        )
                                         else stringResource(R.string.menu_volume_button_page_turn)
                                     )
                                 },
-                                enabled = true,
-                                onClick = {
-                                    onToggleVolumeScroll(!volumeScrollEnabled)
-                                    showMoreMenu = false
-                                },
-                                trailingIcon = { if (volumeScrollEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
-                            )
-                            HorizontalDivider()
-
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
-                                enabled = currentRenderMode == RenderMode.PAGINATED,
-                                onClick = {
-                                    onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
-                                    showMoreMenu = false
-                                },
-                                trailingIcon = { if (isPageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
-                            )
-                            HorizontalDivider()
-
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_keep_screen_on)) },
-                                onClick = {
-                                    onToggleKeepScreenOn(!isKeepScreenOn)
-                                    showMoreMenu = false
-                                },
-                                trailingIcon = { if (isKeepScreenOn) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled)) }
-                            )
-                            HorizontalDivider()
-
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_visual_options)) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onOpenVisualOptions()
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(20.dp))
-                                }
-                            )
-                            HorizontalDivider()
-
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_auto_scroll)) },
-                                enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
-                                onClick = {
-                                    showMoreMenu = false
-                                    onStartAutoScroll()
-                                }
-                            )
-
-                            HorizontalDivider()
-
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onOpenDeviceVoiceSettings()
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp))
-                                }
-                            )
-
-                            if (BuildConfig.DEBUG) {
+                                    enabled = true,
+                                    onClick = {
+                                        onToggleVolumeScroll(!volumeScrollEnabled)
+                                        showMoreMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (volumeScrollEnabled) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_enabled)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.PAGE_TURN_ANIM.name)) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
+                                    text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
+                                    enabled = currentRenderMode == RenderMode.PAGINATED,
+                                    onClick = {
+                                        onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
+                                        showMoreMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (isPageTurnAnimationEnabled) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_enabled)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.KEEP_SCREEN_ON.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_keep_screen_on)) },
+                                    onClick = {
+                                        onToggleKeepScreenOn(!isKeepScreenOn)
+                                        showMoreMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (isKeepScreenOn) Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = stringResource(R.string.content_desc_enabled)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.VISUAL_OPTIONS.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_visual_options)) },
                                     onClick = {
                                         showMoreMenu = false
-                                        onOpenTtsSettings()
+                                        onOpenVisualOptions()
                                     },
                                     leadingIcon = {
-                                        Icon(painter = painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp))
-                                    }
-                                )
+                                        Icon(
+                                            Icons.Default.Visibility,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.AUTO_SCROLL.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_auto_scroll)) },
+                                    enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onStartAutoScroll()
+                                    })
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onOpenDeviceVoiceSettings()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.GraphicEq,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    })
+
+                                if (BuildConfig.DEBUG) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onOpenTtsSettings()
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.text_to_speech),
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -418,6 +511,7 @@ fun EpubReaderBottomBar(
     onRecap: () -> Unit,
     onToggleTts: () -> Unit,
     onPlayPauseTts: () -> Unit,
+    hiddenTools: Set<String>,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -439,106 +533,130 @@ fun EpubReaderBottomBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
-                TooltipIconButton(
-                    text = stringResource(R.string.tooltip_slider),
-                    description = stringResource(R.string.tooltip_slider_desc),
-                    onClick = onOpenSlider,
-                    enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
-                ) {
-                    Icon(painter = painterResource(id = R.drawable.slider), contentDescription = stringResource(R.string.content_desc_navigate_slider))
+                if (!hiddenTools.contains(ReaderTool.SLIDER.name)) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_slider),
+                        description = stringResource(R.string.tooltip_slider_desc),
+                        onClick = onOpenSlider,
+                        enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.slider),
+                            contentDescription = stringResource(R.string.content_desc_navigate_slider)
+                        )
+                    }
                 }
-                TooltipIconButton(
-                    text = stringResource(R.string.tooltip_toc),
-                    description = stringResource(R.string.tooltip_toc_desc),
-                    onClick = onOpenDrawer
-                ) {
-                    Icon(imageVector = Icons.Default.Menu, contentDescription = stringResource(R.string.content_desc_chapters_menu))
+                if (!hiddenTools.contains(ReaderTool.TOC.name)) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_toc),
+                        description = stringResource(R.string.tooltip_toc_desc),
+                        onClick = onOpenDrawer
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = stringResource(R.string.content_desc_chapters_menu)
+                        )
+                    }
                 }
-                TooltipIconButton(
-                    text = stringResource(R.string.tooltip_format),
-                    description = stringResource(R.string.tooltip_format_desc),
-                    onClick = onToggleFormat
-                ) {
-                    Icon(painter = painterResource(id = R.drawable.format_size), contentDescription = stringResource(R.string.content_desc_text_formatting))
+                if (!hiddenTools.contains(ReaderTool.FORMAT.name)) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_format),
+                        description = stringResource(R.string.tooltip_format_desc),
+                        onClick = onToggleFormat
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.format_size),
+                            contentDescription = stringResource(R.string.content_desc_text_formatting)
+                        )
+                    }
                 }
-                TooltipIconButton(
-                    text = stringResource(R.string.tooltip_search),
-                    description = stringResource(R.string.tooltip_search_desc),
-                    onClick = onToggleSearch
-                ) {
-                    Icon(imageVector = Icons.Default.Search, contentDescription = stringResource(R.string.tooltip_search))
+                if (!hiddenTools.contains(ReaderTool.SEARCH.name)) {
+                    TooltipIconButton(
+                        text = stringResource(R.string.tooltip_search),
+                        description = stringResource(R.string.tooltip_search_desc),
+                        onClick = onToggleSearch
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.tooltip_search)
+                        )
+                    }
                 }
 
-                @Suppress("KotlinConstantConditions", "SimplifyBooleanWithConstants")
-                if (BuildConfig.FLAVOR != "oss") {
-                    Box {
-                        var showAiFeaturesMenu by remember { mutableStateOf(false) }
-                        TooltipIconButton(
-                            text = stringResource(R.string.tooltip_ai),
-                            description = stringResource(R.string.tooltip_ai_desc),
-                            onClick = { showAiFeaturesMenu = true }
-                        ) {
-                            Icon(painter = painterResource(id = R.drawable.ai), contentDescription = "AI Features")
-                        }
-                        DropdownMenu(
-                            expanded = showAiFeaturesMenu,
-                            onDismissRequest = { showAiFeaturesMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_chapter_summarization)) },
-                                onClick = {
-                                    showAiFeaturesMenu = false
-                                    onSummarize()
-                                }
-                            )
-                            if (BuildConfig.DEBUG && isProUser) {
-                                HorizontalDivider()
+                if (!hiddenTools.contains(ReaderTool.AI_FEATURES.name)) {
+                    @Suppress(
+                        "KotlinConstantConditions",
+                        "SimplifyBooleanWithConstants"
+                    ) if (BuildConfig.FLAVOR != "oss") {
+                        Box {
+                            var showAiFeaturesMenu by remember { mutableStateOf(false) }
+                            TooltipIconButton(
+                                text = stringResource(R.string.tooltip_ai),
+                                description = stringResource(R.string.tooltip_ai_desc),
+                                onClick = { showAiFeaturesMenu = true }) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ai),
+                                    contentDescription = "AI Features"
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showAiFeaturesMenu,
+                                onDismissRequest = { showAiFeaturesMenu = false }) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_recap_beta)) },
+                                    text = { Text(stringResource(R.string.menu_chapter_summarization)) },
                                     onClick = {
                                         showAiFeaturesMenu = false
-                                        onRecap()
-                                    }
-                                )
+                                        onSummarize()
+                                    })
+                                if (BuildConfig.DEBUG && isProUser) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_recap_beta)) },
+                                        onClick = {
+                                            showAiFeaturesMenu = false
+                                            onRecap()
+                                        })
+                                }
                             }
                         }
                     }
                 }
-                Box {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TooltipIconButton(
-                            text = if (isTtsSessionActive)
-                                stringResource(R.string.tooltip_tts_stop)
-                            else
-                                stringResource(R.string.tooltip_tts_start),
-                            description = if (isTtsSessionActive)
-                                stringResource(R.string.tooltip_tts_stop_desc)
-                            else
-                                stringResource(R.string.tooltip_tts_start_desc),
-                            onClick = onToggleTts
-                        ) {
-                            Icon(
-                                painter = if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech),
-                                contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts)
-                            )
-                        }
-                        if (isTtsSessionActive) {
+
+                if (!hiddenTools.contains(ReaderTool.TTS_CONTROLS.name)) {
+                    Box {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             TooltipIconButton(
-                                text = if (ttsState.isPlaying)
-                                    stringResource(R.string.tooltip_tts_pause)
-                                else
-                                    stringResource(R.string.tooltip_tts_resume),
-                                description = if (ttsState.isPlaying)
-                                    stringResource(R.string.tooltip_tts_pause_desc)
-                                else
-                                    stringResource(R.string.tooltip_tts_resume_desc),
-                                onClick = onPlayPauseTts,
-                                enabled = !ttsState.isLoading
+                                text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
+                                else stringResource(R.string.tooltip_tts_start),
+                                description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
+                                else stringResource(R.string.tooltip_tts_start_desc),
+                                onClick = onToggleTts
                             ) {
                                 Icon(
-                                    painter = painterResource(id = if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                    contentDescription = if (ttsState.isPlaying) stringResource(R.string.content_desc_pause_tts) else stringResource(R.string.content_desc_resume_tts)
+                                    painter = if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(
+                                        id = R.drawable.text_to_speech
+                                    ),
+                                    contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(
+                                        R.string.content_desc_start_tts
+                                    )
                                 )
+                            }
+                            if (isTtsSessionActive) {
+                                TooltipIconButton(
+                                    text = if (ttsState.isPlaying) stringResource(R.string.tooltip_tts_pause)
+                                    else stringResource(R.string.tooltip_tts_resume),
+                                    description = if (ttsState.isPlaying) stringResource(R.string.tooltip_tts_pause_desc)
+                                    else stringResource(R.string.tooltip_tts_resume_desc),
+                                    onClick = onPlayPauseTts,
+                                    enabled = !ttsState.isLoading
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
+                                        contentDescription = if (ttsState.isPlaying) stringResource(
+                                            R.string.content_desc_pause_tts
+                                        ) else stringResource(R.string.content_desc_resume_tts)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1210,6 +1328,78 @@ fun AutoScrollControls(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CustomizeToolsSheet(
+    hiddenTools: Set<String>,
+    onUpdate: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text(
+                text = "Customize Toolbar",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                ReaderTool.entries.groupBy { it.category }.forEach { (category, tools) ->
+                    item {
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                        )
+                    }
+                    items(tools) { tool ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    val newSet = hiddenTools.toMutableSet()
+                                    if (newSet.contains(tool.name)) newSet.remove(tool.name)
+                                    else newSet.add(tool.name)
+                                    onUpdate(newSet)
+                                }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = tool.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Switch(
+                                checked = !hiddenTools.contains(tool.name),
+                                onCheckedChange = { isVisible ->
+                                    val newSet = hiddenTools.toMutableSet()
+                                    if (isVisible) newSet.remove(tool.name) else newSet.add(tool.name)
+                                    onUpdate(newSet)
+                                }
+                            )
                         }
                     }
                 }

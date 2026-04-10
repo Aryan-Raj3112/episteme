@@ -214,6 +214,17 @@ private const val AUTO_SCROLL_LOCAL_MIN_PREFIX = "auto_scroll_local_min_"
 private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
 private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
 private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
+private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
+
+private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(HIDDEN_TOOLS_KEY, hiddenTools) }
+}
+
+private fun loadHiddenTools(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
+}
 
 private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -654,6 +665,9 @@ fun EpubReaderHost(
     var selectedSearchPackage by remember {
         mutableStateOf(loadExternalSearchPackage(context))
     }
+
+    var hiddenTools by remember { mutableStateOf(loadHiddenTools(context)) }
+    var showCustomizeToolsSheet by remember { mutableStateOf(false) }
 
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
     var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
@@ -1624,7 +1638,7 @@ fun EpubReaderHost(
             },
             onVerticalScrollToResult = { result ->
                 Timber.tag("NavDiag").d("onVerticalScrollToResult query=${result.query}, chunk=${result.chunkIndex}")
-                val targetChunk = result.chunkIndex ?: 0
+                val targetChunk = result.chunkIndex
                 if (targetChunk >= loadedChunkCount) {
                     val chunksToInject = (loadedChunkCount..targetChunk)
                     chunksToInject.forEach { idx ->
@@ -2236,7 +2250,7 @@ fun EpubReaderHost(
                                                 val webView = webViewRefForTts
                                                 if (webView != null) {
                                                     val escapedQuery = escapeJsString(target.query)
-                                                    val targetChunk = target.chunkIndex ?: 0
+                                                    val targetChunk = target.chunkIndex
 
                                                     val relativeIdx = searchState.searchResults
                                                         .filter { it.locationInSource == target.locationInSource && it.chunkIndex == targetChunk }
@@ -3492,6 +3506,8 @@ fun EpubReaderHost(
                     tapToNavigateEnabled = tapToNavigateEnabled,
                     volumeScrollEnabled = volumeScrollEnabled,
                     isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
+                    hiddenTools = hiddenTools,
+                    onCustomizeTools = { showCustomizeToolsSheet = true },
                     onNavigateBack = { triggerSaveAndExit() },
                     isKeepScreenOn = isKeepScreenOn,
                     onToggleKeepScreenOn = { enabled ->
@@ -3690,6 +3706,7 @@ fun EpubReaderHost(
                     isTtsSessionActive = isTtsSessionActive,
                     ttsState = ttsState,
                     isProUser = isProUser,
+                    hiddenTools = hiddenTools,
                     onOpenSlider = {
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
@@ -4138,6 +4155,17 @@ fun EpubReaderHost(
                     ttsController.changeSpeaker(newSpeaker)
                 },
                 isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+            )
+        }
+
+        if (showCustomizeToolsSheet) {
+            CustomizeToolsSheet(
+                hiddenTools = hiddenTools,
+                onUpdate = { newHiddenSet ->
+                    hiddenTools = newHiddenSet
+                    saveHiddenTools(context, newHiddenSet)
+                },
+                onDismiss = { showCustomizeToolsSheet = false }
             )
         }
 
