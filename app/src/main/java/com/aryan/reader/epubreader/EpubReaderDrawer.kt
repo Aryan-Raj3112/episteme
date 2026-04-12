@@ -680,12 +680,12 @@ private fun HighlightsList(
                 androidx.compose.material3.FilterChip(
                     selected = !filterWithNotesOnly,
                     onClick = { filterWithNotesOnly = false },
-                    label = { Text("All") }
+                    label = { Text(stringResource(R.string.filter_all)) }
                 )
                 androidx.compose.material3.FilterChip(
                     selected = filterWithNotesOnly,
                     onClick = { filterWithNotesOnly = true },
-                    label = { Text("With Notes") }
+                    label = { Text(stringResource(R.string.filter_with_notes)) }
                 )
             }
 
@@ -773,7 +773,7 @@ private fun HighlightsList(
                                         )
                                         HorizontalDivider()
                                         DropdownMenuItem(
-                                            text = { Text(if (highlight.note.isNullOrBlank()) "Add Note" else "Edit Note") },
+                                            text = { Text(if (highlight.note.isNullOrBlank()) stringResource(R.string.menu_add_note) else stringResource(R.string.menu_edit_note)) },
                                             onClick = {
                                                 onEditNote(highlight)
                                                 highlightMenuExpandedFor = null

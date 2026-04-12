@@ -40,6 +40,7 @@ android {
             }
         }
         buildConfigField("boolean", "IS_PRO", "false")
+        buildConfigField("boolean", "IS_OFFLINE", "false")
     }
 
     flavorDimensions += "version"
@@ -90,6 +91,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+
+        create("releaseOffline") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            buildConfigField("boolean", "IS_OFFLINE", "true")
         }
     }
 

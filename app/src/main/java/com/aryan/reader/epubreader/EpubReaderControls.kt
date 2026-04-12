@@ -277,7 +277,7 @@ fun EpubReaderTopBar(
                             onDismissRequest = { showMoreMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Customize Toolbar") },
+                                text = { Text(stringResource(R.string.title_customize_toolbar)) },
                                 onClick = {
                                     showMoreMenu = false
                                     onCustomizeTools()
@@ -1395,7 +1395,7 @@ fun CustomizeToolsSheet(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.",
+                text = stringResource(R.string.desc_customize_toolbar),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1495,17 +1495,19 @@ fun TtsControlsSheet(
         ttsController.sliceAndRetainPosition()
     }
 
+    val ttsSample = stringResource(R.string.tts_sample_text)
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         contentWindowInsets = { WindowInsets.navigationBars }
     ) {
         Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-            Text("Voice Adjustments", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.tts_voice_adjustments), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(16.dp))
 
             // Rate Slider
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Speed (${"%.1f".format(rate)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.tts_speed_label, "%.1f".format(rate)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 IconButton(onClick = {
                     rate = 1.0f
                     ttsController.pause()
@@ -1534,7 +1536,7 @@ fun TtsControlsSheet(
 
             // Pitch Slider
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Pitch (${"%.1f".format(pitch)}x)", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.tts_pitch_label, "%.1f".format(pitch)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 IconButton(onClick = {
                     pitch = 1.0f
                     ttsController.pause()
@@ -1568,7 +1570,7 @@ fun TtsControlsSheet(
                     if (ttsState.isPlaying) ttsController.pause()
                     tts?.setSpeechRate(rate)
                     tts?.setPitch(pitch)
-                    tts?.speak("This is how your current voice settings sound.", TextToSpeech.QUEUE_FLUSH, null, null)
+                    tts?.speak(ttsSample, TextToSpeech.QUEUE_FLUSH, null, null)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = isTtsReady,
@@ -1611,14 +1613,14 @@ fun TtsControlsSheet(
                         } else {
                             Icon(
                                 painter = painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                contentDescription = if (ttsState.isPlaying) "Pause Book" else "Play Book",
+                                contentDescription = if (ttsState.isPlaying) stringResource(R.string.tts_pause_book) else stringResource(R.string.tts_resume_book),
                                 modifier = Modifier.size(32.dp)
                             )
                         }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = if (ttsState.isPlaying) "Pause Book" else "Resume Book",
+                        text = if (ttsState.isPlaying) stringResource(R.string.tts_pause_book) else stringResource(R.string.tts_resume_book),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1635,7 +1637,7 @@ fun TtsControlsSheet(
             ) {
                 Icon(Icons.Default.Settings, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("System Voice / Engine Settings")
+                Text(stringResource(R.string.tts_system_settings))
             }
         }
     }

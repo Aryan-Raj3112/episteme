@@ -68,7 +68,6 @@ import com.aryan.reader.epub.EpubChapter
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
-import kotlin.math.min
 
 private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
@@ -445,10 +444,10 @@ fun PaletteManagerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(tempPalette) }) { Text("Save") }
+            TextButton(onClick = { onSave(tempPalette) }) { Text(stringResource(R.string.action_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }
@@ -528,10 +527,10 @@ fun AnnotationBottomSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                BottomSheetToolButton(icon = R.drawable.copy, label = "Copy", onClick = onCopy, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.dictionary, label = "Dict", onClick = onDictionary, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.translate, label = "Translate", onClick = onTranslate, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.search, label = "Search", onClick = onSearch, effectiveText = effectiveText)
+                BottomSheetToolButton(icon = R.drawable.copy, label = stringResource(R.string.action_copy), onClick = onCopy, effectiveText = effectiveText)
+                BottomSheetToolButton(icon = R.drawable.dictionary, label = stringResource(R.string.label_dict), onClick = onDictionary, effectiveText = effectiveText)
+                BottomSheetToolButton(icon = R.drawable.translate, label = stringResource(R.string.dict_translate), onClick = onTranslate, effectiveText = effectiveText)
+                BottomSheetToolButton(icon = R.drawable.search, label = stringResource(R.string.action_search), onClick = onSearch, effectiveText = effectiveText)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -540,7 +539,7 @@ fun AnnotationBottomSheet(
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
-                placeholder = { Text("Add a note...", color = effectiveText.copy(alpha = 0.5f)) },
+                placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 100.dp),
@@ -652,23 +651,23 @@ fun PaginatedTextSelectionMenu(
             }
 
             val actions = mutableListOf<MenuActionItem>()
-            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = onCopy))
+            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = stringResource(R.string.action_copy), onClick = onCopy))
             if (onTts != null) {
-                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
+                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = stringResource(R.string.label_speak), onClick = onTts))
             }
-            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = onDictionary))
-            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = onTranslate))
-            actions.add(MenuActionItem(iconRes = R.drawable.search, label = "Search", onClick = onSearch))
+            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = stringResource(R.string.label_dict), onClick = onDictionary))
+            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = stringResource(R.string.dict_translate), onClick = onTranslate))
+            actions.add(MenuActionItem(iconRes = R.drawable.search, label = stringResource(R.string.action_search), onClick = onSearch))
 
             if (onNote != null) {
-                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = "Note", onClick = onNote))
+                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = stringResource(R.string.label_note), onClick = onNote))
             }
 
             if (onSelectAll != null) {
-                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = onSelectAll))
+                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = stringResource(R.string.select_all), onClick = onSelectAll))
             }
             if (onDelete != null) {
-                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = onDelete, isError = true))
+                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = stringResource(R.string.action_remove), onClick = onDelete, isError = true))
             }
 
             Column(modifier = Modifier.padding(bottom = 4.dp)) {
@@ -753,7 +752,7 @@ fun HighlightColorRow(
                 if (selectedColor == colorEnum) {
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = "Selected",
+                        contentDescription = stringResource(R.string.content_desc_selected),
                         tint = if (colorEnum == HighlightColor.WHITE || colorEnum == HighlightColor.YELLOW) Color.Black else Color.White,
                         modifier = Modifier.size(18.dp)
                     )
@@ -825,13 +824,13 @@ fun PaginatedTextSelectionMenu(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = "Note",
+                                contentDescription = stringResource(R.string.label_note),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                "Note",
+                                stringResource(R.string.label_note),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold
@@ -851,24 +850,24 @@ fun PaginatedTextSelectionMenu(
             }
 
             val actions = mutableListOf<MenuActionItem>()
-            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = onCopy))
+            actions.add(MenuActionItem(iconRes = R.drawable.copy, label = stringResource(R.string.action_copy), onClick = onCopy))
             if (onTts != null) {
-                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
+                actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = stringResource(R.string.label_speak), onClick = onTts))
             }
-            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = onDictionary))
-            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = onTranslate))
-            actions.add(MenuActionItem(iconRes = R.drawable.search, label = "Search", onClick = onSearch))
+            actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = stringResource(R.string.label_dict), onClick = onDictionary))
+            actions.add(MenuActionItem(iconRes = R.drawable.translate, label = stringResource(R.string.dict_translate), onClick = onTranslate))
+            actions.add(MenuActionItem(iconRes = R.drawable.search, label = stringResource(R.string.action_search), onClick = onSearch))
 
             if (onNote != null) {
-                val noteLabel = if (existingNote.isNullOrBlank()) "Note" else "Edit"
+                val noteLabel = if (existingNote.isNullOrBlank()) stringResource(R.string.label_note) else stringResource(R.string.label_edit)
                 actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = onNote))
             }
 
             if (onSelectAll != null) {
-                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = onSelectAll))
+                actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = stringResource(R.string.select_all), onClick = onSelectAll))
             }
             if (onDelete != null) {
-                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = onDelete, isError = true))
+                actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = stringResource(R.string.action_remove), onClick = onDelete, isError = true))
             }
 
             Column(modifier = Modifier.padding(bottom = 4.dp)) {

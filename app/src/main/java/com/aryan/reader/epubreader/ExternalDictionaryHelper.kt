@@ -11,6 +11,7 @@ import android.os.Build
 import android.widget.Toast
 import timber.log.Timber
 import androidx.core.net.toUri
+import com.aryan.reader.R
 
 data class ExternalDictionaryApp(
     val label: String,
@@ -72,7 +73,7 @@ object ExternalDictionaryHelper {
         sortedApps.add(
             0,
             ExternalDictionaryApp(
-                label = "Search",
+                label = context.getString(R.string.dict_app_label_search),
                 packageName = GOOGLE_SEARCH_PKG,
                 icon = null
             )
@@ -127,7 +128,7 @@ object ExternalDictionaryHelper {
 
         } catch (e: Exception) {
             Timber.e(e, "Failed to launch dictionary app: $packageName")
-            Toast.makeText(context, "Error opening dictionary", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_opening_dictionary), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -172,7 +173,7 @@ object ExternalDictionaryHelper {
             launchGenericSend(context, packageName, query)
         } catch (e: Exception) {
             Timber.e(e, "Failed to launch translate app: $packageName")
-            Toast.makeText(context, "Error opening translate app", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_opening_translate), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -210,7 +211,7 @@ object ExternalDictionaryHelper {
             launchGenericSend(context, packageName, query)
         } catch (e: Exception) {
             Timber.e(e, "Failed to launch search app: $packageName")
-            Toast.makeText(context, "Error opening search app", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.error_opening_search), Toast.LENGTH_SHORT).show()
         }
     }
 

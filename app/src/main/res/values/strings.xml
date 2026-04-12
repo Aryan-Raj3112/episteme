@@ -659,4 +659,58 @@
     <string name="about_terms_desc">Usage terms and conditions.</string>
     <string name="about_licenses_desc">Open source libraries used.</string>
     <string name="banner_importing_multiple">Importing %1$d books… They will appear in your Library shortly.</string>
+
+    <!-- General / Dialogs -->
+    <string name="dialog_external_link_title">External Link</string>
+    <string name="dialog_external_link_desc">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
+    <string name="action_open">Open</string>
+    <string name="error_no_browser">No browser found to open the link.</string>
+
+    <!-- Annotations & Notes -->
+    <string name="action_save_note">Save Note</string>
+    <string name="placeholder_add_note">Add a note…</string>
+    <string name="label_dict">Dict</string>
+    <string name="label_speak">Speak</string>
+    <string name="label_note">Note</string>
+    <string name="label_edit">Edit</string>
+
+    <!-- Reader Settings & Formatting -->
+    <string name="section_font_alignment">FONT &amp; ALIGNMENT</string>
+    <string name="section_layout_spacing">LAYOUT &amp; SPACING</string>
+    <string name="label_font_size">Font Size</string>
+    <string name="label_line_height">Line Height</string>
+    <string name="label_paragraph_gap">Paragraph Gap</string>
+    <string name="label_original">Orig</string>
+    <string name="label_aa_preview">Aa</string>
+
+    <!-- TTS & AutoScroll Controls -->
+    <string name="tts_voice_adjustments">Voice Adjustments</string>
+    <string name="tts_speed_label">Speed (%1$sx)</string>
+    <string name="tts_pitch_label">Pitch (%1$sx)</string>
+    <string name="tts_sample_text">This is how your current voice settings sound.</string>
+    <string name="tts_pause_book">Pause Book</string>
+    <string name="tts_resume_book">Resume Book</string>
+    <string name="tts_system_settings">System Voice / Engine Settings</string>
+
+    <!-- Auto Scroll -->
+    <string name="auto_scroll_global_label">Global Speed</string>
+    <string name="auto_scroll_local_label">Local Speed</string>
+    <string name="auto_scroll_desc_global">Applies to all files</string>
+    <string name="auto_scroll_desc_local">Saved for this file only</string>
+    <string name="action_scroll_to_top">Scroll to Top</string>
+
+    <!-- Customize Toolbar -->
+    <string name="title_customize_toolbar">Customize Toolbar</string>
+    <string name="desc_customize_toolbar">Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.</string>
+
+    <!-- Navigation & Drawer -->
+    <string name="tab_annotations">Annotations</string>
+    <string name="filter_all">All</string>
+    <string name="filter_with_notes">With Notes</string>
+    <string name="menu_add_note">Add Note</string>
+    <string name="menu_edit_note">Edit Note</string>
+
+    <!-- Page Info -->
+    <string name="page_format">%1$d / %2$d</string>
+    <string name="page_of_format">Page %1$d of %2$d</string>
 </resources>

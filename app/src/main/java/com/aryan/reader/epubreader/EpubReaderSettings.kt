@@ -481,7 +481,7 @@ fun ReaderTextFormatPanel(
 
                 // FONT & ALIGNMENT SECTION
                 Text(
-                    text = "FONT & ALIGNMENT",
+                    text = stringResource(R.string.section_font_alignment),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -504,7 +504,7 @@ fun ReaderTextFormatPanel(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "Aa",
+                                text = stringResource(R.string.label_aa_preview),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -570,7 +570,7 @@ fun ReaderTextFormatPanel(
 
                 // LAYOUT & SPACING SECTION
                 Text(
-                    text = "LAYOUT & SPACING",
+                    text = stringResource(R.string.section_layout_spacing),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -581,7 +581,7 @@ fun ReaderTextFormatPanel(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     // Size
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Font Size", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
+                        Text(stringResource(R.string.label_font_size), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentFontSize,
                             onValueChange = onFontSizeChange,
@@ -589,11 +589,11 @@ fun ReaderTextFormatPanel(
                             steps = 24,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(if (currentFontSize in 0.99f..1.01f) "Orig" else "%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentFontSize in 0.99f..1.01f) stringResource(R.string.label_original) else "%.1fx".format(currentFontSize), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                     // Lines
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Line Height", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
+                        Text(stringResource(R.string.label_line_height), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentLineHeight,
                             onValueChange = onLineHeightChange,
@@ -601,11 +601,11 @@ fun ReaderTextFormatPanel(
                             steps = 19,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(if (currentLineHeight <= 1.01f) "Orig" else "%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentLineHeight <= 1.01f) stringResource(R.string.label_original) else "%.1fx".format(currentLineHeight), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                     // Paragraph Gap
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Paragraph Gap", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
+                        Text(stringResource(R.string.label_paragraph_gap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp))
                         Slider(
                             value = currentParagraphGap,
                             onValueChange = onParagraphGapChange,
@@ -613,7 +613,7 @@ fun ReaderTextFormatPanel(
                             steps = 29,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(if (currentParagraphGap in 0.99f..1.01f) "Orig" else "%.1fx".format(currentParagraphGap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+                        Text(if (currentParagraphGap in 0.99f..1.01f) stringResource(R.string.label_original) else "%.1fx".format(currentParagraphGap), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
                     }
                 }
                 Spacer(Modifier.height(8.dp))

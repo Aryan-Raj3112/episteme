@@ -702,7 +702,7 @@ fun EpubReaderHost(
             if (!selectedDictPackage.isNullOrEmpty()) {
                 ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, word)
             } else {
-                Toast.makeText(context, "Please select a dictionary app first.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
                 showDictionarySettingsSheet = true
             }
         }
@@ -712,7 +712,7 @@ fun EpubReaderHost(
         if (!selectedTranslatePackage.isNullOrEmpty()) {
             ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
         } else {
-            Toast.makeText(context, "Please select a translate app first.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
             showDictionarySettingsSheet = true
         }
     }
@@ -721,7 +721,7 @@ fun EpubReaderHost(
         if (!selectedSearchPackage.isNullOrEmpty()) {
             ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
         } else {
-            Toast.makeText(context, "Please select a search app first.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
             showDictionarySettingsSheet = true
         }
     }
@@ -1371,6 +1371,7 @@ fun EpubReaderHost(
         activeFragmentId = null
 
         val result = loadChapterContent(
+            context = context,
             epubBook = epubBook,
             chapterIndex = currentChapterIndex,
             chunkTargetOverride = chunkTargetOverride,
@@ -2835,7 +2836,7 @@ fun EpubReaderHost(
 
                                 if (pullToTurnEnabled && currentChapterIndex > 0) {
                                     ChapterChangeIndicator(
-                                        text = "Release for Previous Chapter",
+                                        text = stringResource(R.string.release_for_previous_chapter),
                                         progress = pullToPrevProgress,
                                         isPullingDown = true,
                                         modifier = Modifier
@@ -2846,7 +2847,7 @@ fun EpubReaderHost(
 
                                 if (pullToTurnEnabled && currentChapterIndex < chapters.size - 1) {
                                     ChapterChangeIndicator(
-                                        text = "Release for Next Chapter",
+                                        text = stringResource(R.string.release_for_next_chapter),
                                         progress = pullToNextProgress,
                                         isPullingDown = false,
                                         modifier = Modifier

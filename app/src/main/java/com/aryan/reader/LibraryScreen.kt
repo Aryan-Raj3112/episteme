@@ -18,6 +18,8 @@
  * mail: epistemereader@gmail.com
  */
 // LibraryScreen.kt
+@file:Suppress("KotlinConstantConditions")
+
 package com.aryan.reader
 
 import android.net.Uri
@@ -158,9 +160,19 @@ fun LibraryScreen(
     val sortOrder = uiState.sortOrder
     val shelves = uiState.shelves
     val rawLibraryFiles = uiState.rawLibraryFiles
+    val tabTitles = remember {
+        buildList {
+            add(context.getString(R.string.tab_all_books))
+            add(context.getString(R.string.tab_shelves))
+            add(context.getString(R.string.tab_folders))
+            if (!BuildConfig.IS_OFFLINE) {
+                add(context.getString(R.string.tab_catalogs))
+            }
+        }
+    }
     val pagerState = rememberPagerState(
         initialPage = uiState.libraryScreenStartPage,
-        pageCount = { 4 }
+        pageCount = { tabTitles.size }
     )
 
     val containsFolderItems = remember(selectedItems) {
@@ -254,6 +266,7 @@ fun LibraryScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         LibraryScreenContent(
+            tabTitles = tabTitles,
             recentFiles = uiState.allRecentFiles,
             rawLibraryFiles = rawLibraryFiles,
             shelves = shelves,
@@ -494,6 +507,7 @@ fun ShelfScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreenContent(
+    tabTitles: List<String>,
     recentFiles: List<RecentFileItem>,
     rawLibraryFiles: List<RecentFileItem>,
     shelves: List<Shelf>,
@@ -543,12 +557,6 @@ fun LibraryScreenContent(
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     var showSortMenu by remember { mutableStateOf(false) }
-    val tabTitles = listOf(
-        stringResource(R.string.tab_all_books),
-        stringResource(R.string.tab_shelves),
-        stringResource(R.string.tab_folders),
-        stringResource(R.string.tab_catalogs)
-    )
     val searchFocusRequester = remember { FocusRequester() }
 
     var textFieldValue by remember(isSearchActive) {
@@ -811,13 +819,15 @@ fun LibraryScreenContent(
                     )
                 }
                 3 -> {
-                    OpdsTab(
-                        localLibraryFiles = rawLibraryFiles,
-                        onBookDownloaded = onOpdsBookDownloaded,
-                        onReadBook = onItemClick,
-                        onStreamBook = onStreamOpdsBook,
-                        onDeleteCatalogStreams = onDeleteCatalogStreams
-                    )
+                    if (!BuildConfig.IS_OFFLINE) {
+                        OpdsTab(
+                            localLibraryFiles = rawLibraryFiles,
+                            onBookDownloaded = onOpdsBookDownloaded,
+                            onReadBook = onItemClick,
+                            onStreamBook = onStreamOpdsBook,
+                            onDeleteCatalogStreams = onDeleteCatalogStreams
+                        )
+                    }
                 }
             }
         }

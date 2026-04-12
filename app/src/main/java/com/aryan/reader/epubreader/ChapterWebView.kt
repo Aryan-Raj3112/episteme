@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -81,6 +82,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
+import com.aryan.reader.R
 import com.aryan.reader.ReaderTexture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -415,8 +417,8 @@ fun ChapterWebView(
         val urlToShow = showExternalLinkDialog!!
         AlertDialog(
             onDismissRequest = { showExternalLinkDialog = null },
-            title = { Text("External Link") },
-            text = { Text("You clicked on an external link:\n\n$urlToShow\n\nWhat would you like to do?") },
+            title = { Text(stringResource(R.string.dialog_external_link_title)) },
+            text = { Text(stringResource(R.string.dialog_external_link_desc, urlToShow)) },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = {
@@ -425,23 +427,21 @@ fun ChapterWebView(
                             context.startActivity(intent)
                         } catch (e: ActivityNotFoundException) {
                             Timber.e(e, "No activity found to handle intent for URL: $urlToShow")
-                            Toast.makeText(
-                                context, "No browser found to open the link.", Toast.LENGTH_LONG
-                            ).show()
+                            Toast.makeText(context, context.getString(R.string.error_no_browser), Toast.LENGTH_LONG).show()
                         }
                         showExternalLinkDialog = null
-                    }) { Text("Open") }
+                    }) { Text(stringResource(R.string.action_open)) }
                     TextButton(onClick = {
                         val clipboard =
                             context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val clip = ClipData.newPlainText("Copied Link", urlToShow)
                         clipboard.setPrimaryClip(clip)
                         showExternalLinkDialog = null
-                    }) { Text("Copy") }
+                    }) { Text(stringResource(R.string.action_copy)) }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showExternalLinkDialog = null }) { Text("Cancel") }
+                TextButton(onClick = { showExternalLinkDialog = null }) { Text(stringResource(R.string.action_cancel)) }
             })
     }
 
