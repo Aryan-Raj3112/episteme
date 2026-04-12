@@ -23,4 +23,33 @@
         <item quantity="one">%1$d result found</item>
         <item quantity="other">%1$d results found</item>
     </plurals>
+
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Delete File Permanently</item>
+        <item quantity="other">Delete Files Permanently</item>
+    </plurals>
+
+    <!-- %1$d = number of selected files to permanently delete. -->
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Do you want to permanently delete %1$d selected file from your device? This action cannot be undone.</item>
+        <item quantity="other">Do you want to permanently delete %1$d selected files from your device? This action cannot be undone.</item>
+    </plurals>
+
+    <!-- %1$d = number of selected files to remove from the recents list. -->
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Do you want to remove %1$d selected file from the recent files list? It will reappear if you open it again from the library.</item>
+        <item quantity="other">Do you want to remove %1$d selected files from the recent files list? It will reappear if you open it again from the library.</item>
+    </plurals>
+
+    <!-- Confirmation dialog. %1$d = count of books; %2$s = shelf name. -->
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Are you sure you want to remove %1$d book from the \'%2$s\' shelf? The book will remain in your library and appear under Unshelved.</item>
+        <item quantity="other">Are you sure you want to remove %1$d books from the \'%2$s\' shelf? The books will remain in your library and appear under Unshelved.</item>
+    </plurals>
+
+    <!-- %1$d = number of books removed from the library. -->
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d book removed from library.</item>
+        <item quantity="other">%1$d books removed from library.</item>
+    </plurals>
 </resources>

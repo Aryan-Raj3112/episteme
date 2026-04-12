@@ -1515,11 +1515,10 @@ private fun RemoveFromShelfConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val bookStr = pluralStringResource(id = R.plurals.book_word, count)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.dialog_remove_from_shelf)) },
-        text = { Text(stringResource(R.string.dialog_remove_from_shelf_desc, count, bookStr, shelfName)) },
+        text = { Text(pluralStringResource(R.plurals.dialog_remove_from_shelf_desc, count, count, shelfName)) },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_remove)) }
         },
