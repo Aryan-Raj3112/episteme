@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -112,7 +113,7 @@ fun AnnotationDock(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close Edit Mode",
+                        contentDescription = stringResource(R.string.content_desc_close_edit_mode),
                         tint = Color.White,
                         modifier = Modifier.size(iconSize)
                     )
@@ -130,7 +131,7 @@ fun AnnotationDock(
                 ) {
                     Icon(
                         imageVector = visIcon,
-                        contentDescription = "Toggle Visibility",
+                        contentDescription = stringResource(R.string.content_desc_toggle_visibility),
                         tint = visTint,
                         modifier = Modifier.size(iconSize)
                     )
@@ -166,7 +167,7 @@ fun AnnotationDock(
                         ) {
                             Icon(
                                 imageVector = iconVector,
-                                contentDescription = "Stylus Only Mode",
+                                contentDescription = stringResource(R.string.content_desc_stylus_only_mode),
                                 tint = iconTint,
                                 modifier = Modifier.size(iconSize)
                             )
@@ -182,7 +183,7 @@ fun AnnotationDock(
                         iconRes = R.drawable.pen,
                         isActive = isPenActive,
                         tintColor = if(isMinimized) Color.Gray else activePenColor,
-                        description = "Pen",
+                        description = stringResource(R.string.content_desc_pen),
                         size = buttonSize,
                         iconSize = iconSize,
                         onClick = {
@@ -202,7 +203,7 @@ fun AnnotationDock(
                         iconRes = R.drawable.marker,
                         isActive = isHighlighterActive,
                         tintColor = if(isMinimized) Color.Gray else activeHighlighterColor.copy(alpha = 1f),
-                        description = "Highlighter",
+                        description = stringResource(R.string.content_desc_highlighter),
                         size = buttonSize,
                         iconSize = iconSize,
                         onClick = {
@@ -221,7 +222,7 @@ fun AnnotationDock(
                         iconRes = R.drawable.keyboard,
                         isActive = !isMinimized && selectedTool == InkType.TEXT,
                         tintColor = if(isMinimized) Color.Gray else Color.White,
-                        description = "Text",
+                        description = stringResource(R.string.content_desc_text),
                         size = buttonSize,
                         iconSize = iconSize,
                         onClick = { if(!isMinimized) onToolClick(InkType.TEXT) }
@@ -232,7 +233,7 @@ fun AnnotationDock(
                         iconRes = R.drawable.eraser,
                         isActive = !isMinimized && selectedTool == InkType.ERASER,
                         tintColor = if(isMinimized) Color.Gray else Color.White,
-                        description = "Eraser",
+                        description = stringResource(R.string.content_desc_eraser),
                         size = buttonSize,
                         iconSize = iconSize,
                         onClick = { if(!isMinimized) onToolClick(InkType.ERASER) }
@@ -249,7 +250,7 @@ fun AnnotationDock(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
+                        contentDescription = stringResource(R.string.content_desc_undo),
                         tint = if (canUndo && !isMinimized) Color.White else Color.White.copy(alpha = 0.3f),
                         modifier = Modifier.size(iconSize)
                     )
@@ -265,7 +266,7 @@ fun AnnotationDock(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
+                        contentDescription = stringResource(R.string.content_desc_redo),
                         tint = if (canRedo && !isMinimized) Color.White else Color.White.copy(alpha = 0.3f),
                         modifier = Modifier.size(iconSize)
                     )
@@ -286,7 +287,7 @@ fun AnnotationDock(
             ) {
                 Icon(
                     imageVector = Icons.Default.VisibilityOff,
-                    contentDescription = "Show Dock",
+                    contentDescription = stringResource(R.string.content_desc_show_dock),
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )

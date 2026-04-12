@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -80,6 +81,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.aryan.reader.BrightnessSlider
 import com.aryan.reader.ColorComparePill
 import com.aryan.reader.HexInput
+import com.aryan.reader.R
 import com.aryan.reader.RgbInputColumn
 import com.aryan.reader.SpectrumBox
 import kotlin.math.roundToInt
@@ -262,7 +264,7 @@ fun ToolSettingsPopup(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Straight Line",
+                        text = stringResource(R.string.label_straight_line),
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -465,7 +467,7 @@ private fun ColorPickerDialog(
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = "Spectrum",
+                        text = stringResource(R.string.label_spectrum),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
@@ -520,7 +522,7 @@ private fun ColorPickerDialog(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            "Hex",
+                            stringResource(R.string.theme_color_hex),
                             color = Color.Gray,
                             fontSize = 12.sp,
                             maxLines = 1
@@ -537,19 +539,19 @@ private fun ColorPickerDialog(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         RgbInputColumn(
-                            label = "Red",
+                            label = stringResource(R.string.color_red),
                             value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
                         RgbInputColumn(
-                            label = "Green",
+                            label = stringResource(R.string.color_green),
                             value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
                         RgbInputColumn(
-                            label = "Blue",
+                            label = stringResource(R.string.color_blue),
                             value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
@@ -565,7 +567,7 @@ private fun ColorPickerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = Color.Gray)
+                        Text(stringResource(R.string.action_cancel), color = Color.Gray)
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -575,7 +577,7 @@ private fun ColorPickerDialog(
                             contentColor = Color.Black
                         )
                     ) {
-                        Text("Done")
+                        Text(stringResource(R.string.action_done))
                     }
                 }
             }

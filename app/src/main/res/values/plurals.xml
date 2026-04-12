@@ -16,4 +16,14 @@
         <item quantity="one">%1$d result found</item>
         <item quantity="other">%1$d results found</item>
     </plurals>
+
+    <plurals name="search_matches_found_count">
+        <item quantity="one">%1$d match found</item>
+        <item quantity="other">%1$d matches found</item>
+    </plurals>
+
+    <plurals name="search_results_simple_count">
+        <item quantity="one">%1$d Result</item>
+        <item quantity="other">%1$d Results</item>
+    </plurals>
 </resources>

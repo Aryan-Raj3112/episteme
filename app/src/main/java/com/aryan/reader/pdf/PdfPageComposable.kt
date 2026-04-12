@@ -93,6 +93,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1589,6 +1590,10 @@ internal fun PdfPageComposable(
         }
     }
 
+    val errorSelection = stringResource(R.string.error_selection)
+    val errorOcrSelection = stringResource(R.string.error_ocr_selection)
+    val errorProcessingPage = stringResource(R.string.error_processing_page)
+
     BoxWithConstraints(
         modifier = modifier
             .onGloballyPositioned { layoutCoordinates = it }
@@ -2359,8 +2364,7 @@ internal fun PdfPageComposable(
                                             Timber.e(
                                                 e, "Long press: Error during OCR text selection"
                                             )
-                                            pageErrorMessage =
-                                                "OCR selection error: ${e.localizedMessage}"
+                                            pageErrorMessage = errorOcrSelection
                                         } finally {
                                             isPerformingOcrForSelection = false
                                             ocrRipplePosition = null
@@ -2381,7 +2385,7 @@ internal fun PdfPageComposable(
                                         e,
                                         "Error during long press text selection on page $pageIndex"
                                     )
-                                    pageErrorMessage = "Selection error: ${e.localizedMessage}"
+                                    pageErrorMessage = errorSelection
                                     customMenuState = null
                                     selectionCharRange.value = null
                                     selectedWordScreenRects = emptyList()
@@ -3467,7 +3471,7 @@ internal fun PdfPageComposable(
                         }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        pageErrorMessage = "Error processing page: ${e.localizedMessage}"
+                        pageErrorMessage = errorProcessingPage
                     } finally {
                         isLoadingPage = false
                         localBitmap?.recycle()
@@ -3869,7 +3873,7 @@ internal fun PdfPageComposable(
 
                 else -> {
                     Text(
-                        text = "Unable to display page ${pageIndex + 1}.",
+                        text = stringResource(R.string.error_unable_to_display_page),
                         modifier = Modifier
                             .padding(16.dp)
                             .align(Alignment.Center)

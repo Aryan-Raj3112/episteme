@@ -713,4 +713,98 @@
     <!-- Page Info -->
     <string name="page_format">%1$d / %2$d</string>
     <string name="page_of_format">Page %1$d of %2$d</string>
+
+    <!-- AnnotationDock -->
+    <string name="content_desc_close_edit_mode">Close Edit Mode</string>
+    <string name="content_desc_toggle_visibility">Toggle Visibility</string>
+    <string name="content_desc_stylus_only_mode">Stylus Only Mode</string>
+    <string name="content_desc_pen">Pen</string>
+    <string name="content_desc_highlighter">Highlighter</string>
+    <string name="content_desc_text">Text</string>
+    <string name="content_desc_eraser">Eraser</string>
+    <string name="content_desc_undo">Undo</string>
+    <string name="content_desc_redo">Redo</string>
+    <string name="content_desc_show_dock">Show Dock</string>
+
+    <!-- PdfPageComposable -->
+    <string name="error_ocr_selection">OCR selection error: %1$s</string>
+    <string name="error_selection">Selection error: %1$s</string>
+    <string name="error_processing_page">Error processing page: %1$s</string>
+    <string name="error_unable_to_display_page">Unable to display page %1$d.</string>
+
+    <!-- PdfViewerScreen & General Reader -->
+    <string name="error_open_print_settings">Could not open print settings</string>
+    <string name="loading_pdf">Loading PDF…</string>
+    <string name="error_loading_pdf">Error loading PDF</string>
+    <string name="loading_page">Loading page…</string>
+    <string name="pdf_viewer">PDF Viewer</string>
+    <string name="content_desc_back">Back</string>
+    <string name="pen_playground">Pen Playground</string>
+    <string name="import_svg">Import SVG</string>
+    <string name="msg_imported_svg_strokes">Imported %1$d SVG strokes!</string>
+    <string name="error_import_svg_failed">Failed to import SVG or empty.</string>
+    <string name="menu_ocr_language">OCR Language</string>
+    <string name="menu_insert_blank_page">Insert Blank Page</string>
+    <string name="menu_delete_page">Delete Page</string>
+    <string name="generating_reflow_progress">Generating… %1$d%%</string>
+    <string name="action_open_text_view">Open Text View</string>
+    <string name="action_generate_text_view">Generate Text View</string>
+    <string name="action_share">Share</string>
+    <string name="action_save_copy_to_device">Save copy to device</string>
+    <string name="action_print">Print</string>
+    <string name="generating_text_view">Generating Text View…</string>
+    <string name="msg_indexing_pages_progress">Indexing pages… %1$d%% done. Search results will update automatically.</string>
+    <string name="msg_results_found_pages">Results found on %1$d+ pages</string>
+    <string name="msg_search_result_index">Result %1$d / %2$d</string>
+    <string name="msg_search_pages_count">%1$d+ Pages</string>
+    <string name="page_format_simple">Page %1$d</string>
+    <string name="action_summarize_page">Summarize Page (Page %1$d)</string>
+    <string name="msg_downloading_language_pack">Downloading %1$s language pack…</string>
+    <string name="title_select_ocr_language">Select OCR Language</string>
+    <string name="desc_select_ocr_language">Choose the primary language/script of this document for better text recognition results.</string>
+    <string name="desc_ocr_language_change_later">You can change this later in More Options > OCR Language.</string>
+    <string name="title_reindex_document">Re-index Document?</string>
+    <string name="desc_reindex_document_warning">You are changing the OCR script to %1$s.\n\nTo ensure search accuracy, we need to clear the existing index and re-scan pages that require OCR using this new language.\n\nThis will happen in the background.</string>
+    <string name="action_reindex">Re-index</string>
+    <string name="title_password_protected">Password Protected</string>
+    <string name="desc_password_protected">This document is encrypted. Please enter the password to view it.</string>
+    <string name="label_password">Password</string>
+    <string name="error_incorrect_password">Incorrect password</string>
+    <string name="action_open_password">Open</string>
+    <string name="content_desc_hide_password">Hide password</string>
+    <string name="content_desc_show_password">Show password</string>
+    <string name="desc_external_link_warning">You are about to navigate to:\n%1$s</string>
+    <string name="action_visit">Visit</string>
+    <string name="title_save_to_device">Save to Device</string>
+    <string name="desc_choose_format_save">Choose format to save:</string>
+    <string name="action_with_annotations">With Annotations</string>
+    <string name="action_original">Original</string>
+    <string name="desc_choose_format_share">Choose format to share:</string>
+    <string name="msg_preparing_pdf">Preparing PDF…</string>
+    <string name="title_add_pdf_to_tab">Add PDF to Tab</string>
+    <string name="msg_no_other_pdfs_found">No other PDFs found in your library.</string>
+    <string name="msg_pdf_empty_or_error">PDF is empty or could not be displayed.</string>
+    <string name="msg_page_added_at">Page added at %1$d</string>
+    <string name="msg_page_deleted">Page deleted</string>
+    <string name="msg_extra_page_removed">Extra page removed</string>
+    <string name="msg_chapters_not_available">Chapters are not available for this book.</string>
+    <string name="msg_highlighted_section_default">Highlighted section</string>
+
+    <!-- ToolSettingsPopup -->
+    <string name="label_straight_line">Straight Line</string>
+    <string name="label_spectrum">Spectrum</string>
+    <string name="action_done">Done</string>
+    <string name="color_red">Red</string>
+    <string name="color_green">Green</string>
+    <string name="color_blue">Blue</string>
+
+    <!-- TextAnnotationDock -->
+    <string name="font_default_system">Default System Font</string>
+    <string name="action_import">Import</string>
+    <string name="msg_no_fonts_imported">No fonts imported</string>
+    <string name="label_font_color">Font color</string>
+    <string name="label_highlight_color">Highlight</string>
+
+    <!-- UniversalDocument -->
+    <string name="msg_page_unavailable">Page Unavailable</string>
 </resources>

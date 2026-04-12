@@ -97,6 +97,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -211,7 +212,6 @@ fun TextAnnotationDock(
             ) {
                 when (activePopup) {
                     ActivePopup.FONT_FAMILY -> {
-                        // Re-using the logic from your EPUB FontSelectionSheetContent but adapted for a Popup
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = Color(0xFF1E1E1E),
@@ -229,12 +229,12 @@ fun TextAnnotationDock(
                                     Tab(
                                         selected = selectedTabIndex == 0,
                                         onClick = { selectedTabIndex = 0 },
-                                        text = { Text("Presets", fontSize = 12.sp) }
+                                        text = { Text(stringResource(R.string.tab_presets), fontSize = 12.sp) }
                                     )
                                     Tab(
                                         selected = selectedTabIndex == 1,
                                         onClick = { selectedTabIndex = 1 },
-                                        text = { Text("Imported", fontSize = 12.sp) }
+                                        text = { Text(stringResource(R.string.tab_imported), fontSize = 12.sp) }
                                     )
                                 }
 
@@ -244,7 +244,7 @@ fun TextAnnotationDock(
                                             item {
                                                 val isSelected = currentFontName == "Default" || currentFontName == null
                                                 FontItem(
-                                                    name = "Default System Font",
+                                                    name = stringResource(R.string.font_default_system),
                                                     isSelected = isSelected,
                                                     fontFamily = FontFamily.Default,
                                                     onClick = {
@@ -281,12 +281,12 @@ fun TextAnnotationDock(
                                             ) {
                                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(Modifier.width(8.dp))
-                                                Text("Import", fontSize = 12.sp)
+                                                Text(stringResource(R.string.action_import), fontSize = 12.sp)
                                             }
 
                                             if (customFonts.isEmpty()) {
                                                 Text(
-                                                    "No fonts imported",
+                                                    stringResource(R.string.msg_no_fonts_imported),
                                                     color = Color.Gray,
                                                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                                                     textAlign = TextAlign.Center,
@@ -320,7 +320,7 @@ fun TextAnnotationDock(
                     ActivePopup.COLOR -> {
                         if (activeMenuMode == ColorMenuMode.PALETTE) {
                             ColorPickerBubble(
-                                title = "Font color",
+                                title = stringResource(R.string.label_font_color),
                                 currentColor = currentStyle.color.takeIf { it != Color.Unspecified }
                                     ?: Color.Black,
                                 palette = textColorPalette,
@@ -359,7 +359,7 @@ fun TextAnnotationDock(
                     ActivePopup.BACKGROUND -> {
                         if (activeMenuMode == ColorMenuMode.PALETTE) {
                             ColorPickerBubble(
-                                title = "Highlight",
+                                title = stringResource(R.string.label_highlight_color),
                                 currentColor = when (currentStyle.background) {
                                     Color.Unspecified, Color.Transparent -> Color.Transparent
                                     else -> currentStyle.background

@@ -1412,7 +1412,7 @@ fun PdfViewerScreen(
         } catch (e: Exception) {
             Timber.tag("PdfPrint").e(e, "Failed to initialize print job")
             coroutineScope.launch {
-                snackbarHostState.showSnackbar("Could not open print settings")
+                snackbarHostState.showSnackbar(context.getString(R.string.error_open_print_settings))
             }
         }
     }
@@ -5593,10 +5593,10 @@ fun PdfViewerScreen(
                                             verticalReaderState.currentPage
                                         }
                                     val titleText = when {
-                                        isLoadingDocument -> "Loading PDF..."
-                                        errorMessage != null -> "Error loading PDF"
+                                        isLoadingDocument -> stringResource(R.string.loading_pdf)
+                                        errorMessage != null -> stringResource(R.string.error_loading_pdf)
                                         totalPages > 0 && pagerState.pageCount > 0 -> "Page ${currentPageForDisplay + 1} of $totalPages"
-                                        totalPages > 0 && pagerState.pageCount == 0 -> "Loading page..."
+                                        totalPages > 0 && pagerState.pageCount == 0 -> stringResource(R.string.loading_page)
                                         else -> "PDF Viewer"
                                     }
                                     Text(
@@ -5610,12 +5610,12 @@ fun PdfViewerScreen(
 
                                     if (!hiddenTools.contains(PdfReaderTool.THEME.name)) {
                                         TooltipIconButton(
-                                            text = "Theme",
-                                            description = "Theme Settings",
+                                            text = stringResource(R.string.tooltip_theme),
+                                            description = stringResource(R.string.tooltip_theme_desc),
                                             onClick = { showThemePanel = true }) {
                                             Icon(
                                                 painter = painterResource(id = R.drawable.palette),
-                                                contentDescription = "Theme Settings",
+                                                contentDescription = stringResource(R.string.tooltip_theme_desc),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -5637,7 +5637,7 @@ fun PdfViewerScreen(
                                             }) {
                                             Icon(
                                                 imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                                contentDescription = if (isScrollLocked) "Unlock Panning" else "Lock Panning",
+                                                contentDescription = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan) else stringResource(R.string.tooltip_lock_pan),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -5674,7 +5674,7 @@ fun PdfViewerScreen(
 
                                     if (BuildConfig.DEBUG) {
                                         TooltipIconButton(
-                                            text = "Pen Playground",
+                                            text = stringResource(R.string.pen_playground),
                                             onClick = { showPenPlayground = true }) {
                                             Icon(
                                                 imageVector = Icons.Default.Star,
@@ -5683,7 +5683,7 @@ fun PdfViewerScreen(
                                             )
                                         }
 
-                                        TooltipIconButton(text = "Import SVG", onClick = {
+                                        TooltipIconButton(text = stringResource(R.string.import_svg), onClick = {
                                             val page =
                                                 if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
@@ -5712,16 +5712,16 @@ fun PdfViewerScreen(
                                                         }
                                                         redoStack.clear()
 
-                                                        snackbarHostState.showSnackbar("Imported ${svgAnnotations.size} SVG strokes!")
+                                                        snackbarHostState.showSnackbar(context.getString(R.string.msg_imported_svg_strokes))
                                                     } else {
-                                                        snackbarHostState.showSnackbar("Failed to import SVG or empty.")
+                                                        snackbarHostState.showSnackbar(context.getString(R.string.error_import_svg_failed))
                                                     }
                                                 }
                                             }
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Brush,
-                                                contentDescription = "Import SVG",
+                                                contentDescription = stringResource(R.string.import_svg),
                                                 tint = Color(0xFFE91E63)
                                             )
                                         }
@@ -5735,7 +5735,7 @@ fun PdfViewerScreen(
                                             onClick = { showMoreMenu = true }) {
                                             Icon(
                                                 imageVector = Icons.Default.MoreVert,
-                                                contentDescription = "More Options"
+                                                contentDescription = stringResource(R.string.tooltip_more_options)
                                             )
                                         }
 
@@ -5744,19 +5744,19 @@ fun PdfViewerScreen(
                                             expanded = showMoreMenu,
                                             onDismissRequest = { showMoreMenu = false }) {
                                             DropdownMenuItem(
-                                                text = { Text("Customize Toolbar") },
+                                                text = { Text(stringResource(R.string.title_customize_toolbar)) },
                                                 onClick = {
                                                     showMoreMenu = false
                                                     showCustomizeToolsSheet = true
                                                 },
                                                 leadingIcon = {
-                                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                    Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.title_customize_toolbar), modifier = Modifier.size(20.dp))
                                                 }
                                             )
                                             HorizontalDivider()
                                             if (BuildConfig.IS_PRO && !hiddenTools.contains(PdfReaderTool.OCR_LANGUAGE.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("OCR Language") },
+                                                    text = { Text(stringResource(R.string.menu_ocr_language)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         hasSelectedOcrLanguage = true
@@ -5767,7 +5767,7 @@ fun PdfViewerScreen(
 
                                             if (!hiddenTools.contains(PdfReaderTool.READING_MODE.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Reading Mode: Vertical scroll") },
+                                                    text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
                                                     enabled = !isTtsSessionActive,
                                                     onClick = {
                                                         displayMode = DisplayMode.VERTICAL_SCROLL
@@ -5777,13 +5777,13 @@ fun PdfViewerScreen(
                                                         if (displayMode == DisplayMode.VERTICAL_SCROLL) {
                                                             Icon(
                                                                 imageVector = Icons.Filled.Check,
-                                                                contentDescription = "Selected"
+                                                                contentDescription = stringResource(R.string.content_desc_selected)
                                                             )
                                                         }
                                                     })
                                                 HorizontalDivider()
                                                 DropdownMenuItem(
-                                                    text = { Text("Reading Mode: Paginated") },
+                                                    text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
                                                     enabled = !isTtsSessionActive,
                                                     onClick = {
                                                         displayMode = DisplayMode.PAGINATION
@@ -5793,7 +5793,7 @@ fun PdfViewerScreen(
                                                         if (displayMode == DisplayMode.PAGINATION) {
                                                             Icon(
                                                                 imageVector = Icons.Filled.Check,
-                                                                contentDescription = "Selected"
+                                                                contentDescription = stringResource(R.string.content_desc_selected)
                                                             )
                                                         }
                                                     })
@@ -5801,7 +5801,7 @@ fun PdfViewerScreen(
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.KEEP_SCREEN_ON.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Keep Screen On") },
+                                                    text = { Text(stringResource(R.string.menu_keep_screen_on)) },
                                                     onClick = {
                                                         isKeepScreenOn = !isKeepScreenOn
                                                         saveKeepScreenOn(context, isKeepScreenOn)
@@ -5811,7 +5811,7 @@ fun PdfViewerScreen(
                                                         if (isKeepScreenOn) {
                                                             Icon(
                                                                 imageVector = Icons.Filled.Check,
-                                                                contentDescription = "Selected"
+                                                                contentDescription = stringResource(R.string.content_desc_selected)
                                                             )
                                                         }
                                                     })
@@ -5819,7 +5819,7 @@ fun PdfViewerScreen(
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.AUTO_SCROLL.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Auto Scroll") },
+                                                    text = { Text(stringResource(R.string.menu_auto_scroll)) },
                                                     enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
                                                     onClick = {
                                                         showMoreMenu = false
@@ -5832,7 +5832,7 @@ fun PdfViewerScreen(
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("TTS Voice Settings") },
+                                                    text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         showDeviceVoiceSettingsSheet = true
@@ -5848,7 +5848,7 @@ fun PdfViewerScreen(
 
                                                 if (BuildConfig.DEBUG) {
                                                     DropdownMenuItem(
-                                                        text = { Text("TTS Settings (Debug)") },
+                                                        text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
                                                         onClick = {
                                                             showMoreMenu = false
                                                             showTtsSettingsSheet = true
@@ -5867,8 +5867,8 @@ fun PdfViewerScreen(
                                             if (!hiddenTools.contains(PdfReaderTool.BOOKMARK.name)) {
                                                 DropdownMenuItem(text = {
                                                     Text(
-                                                        if (isBookmarked) "Remove bookmark"
-                                                        else "Bookmark this page"
+                                                        if (isBookmarked) stringResource(R.string.menu_remove_bookmark)
+                                                        else stringResource(R.string.menu_bookmark_this_page)
                                                     )
                                                 }, onClick = {
                                                     showMoreMenu = false
@@ -5878,7 +5878,7 @@ fun PdfViewerScreen(
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.PAGE_MANAGEMENT.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Insert Blank Page") },
+                                                    text = { Text(stringResource(R.string.menu_insert_blank_page)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         onInsertPage()
@@ -5888,7 +5888,7 @@ fun PdfViewerScreen(
                                                     virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage
                                                 if (canDelete) {
                                                     DropdownMenuItem(
-                                                        text = { Text("Delete Page") },
+                                                        text = { Text(stringResource(R.string.menu_delete_page)) },
                                                         onClick = {
                                                             showMoreMenu = false
                                                             onDeletePage()
@@ -5905,9 +5905,9 @@ fun PdfViewerScreen(
                                                     text = {
                                                         Text(
                                                             when {
-                                                                isReflowingThisBook -> "Generating... ${(reflowProgressValue * 100).toInt()}%"
-                                                                hasReflowFile -> "Open Text View"
-                                                                else -> "Generate Text View"
+                                                                isReflowingThisBook -> stringResource(R.string.generating_reflow_progress)
+                                                                hasReflowFile -> stringResource(R.string.action_open_text_view)
+                                                                else -> stringResource(R.string.action_generate_text_view)
                                                             }
                                                         )
                                                     },
@@ -5964,7 +5964,7 @@ fun PdfViewerScreen(
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.SHARE.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Share") },
+                                                    text = { Text(stringResource(R.string.action_share)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         showShareDialog = true
@@ -5979,7 +5979,7 @@ fun PdfViewerScreen(
                                             }
                                             if (uiState.selectedFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Save copy to device") },
+                                                    text = { Text(stringResource(R.string.action_save_copy_to_device)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         showSaveDialog = true
@@ -5993,7 +5993,7 @@ fun PdfViewerScreen(
                                             }
                                             if (uiState.selectedFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name)) {
                                                 DropdownMenuItem(
-                                                    text = { Text("Print") },
+                                                    text = { Text(stringResource(R.string.action_print)) },
                                                     onClick = {
                                                         showMoreMenu = false
                                                         onPrintDocument()
@@ -6066,7 +6066,7 @@ fun PdfViewerScreen(
                                                 },
                                                 modifier = Modifier.size(20.dp)
                                             ) {
-                                                Icon(Icons.Default.Close, contentDescription = "Close Tab", modifier = Modifier.size(16.dp), tint = contentColor)
+                                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close_tab), modifier = Modifier.size(16.dp), tint = contentColor)
                                             }
                                         }
                                     }
@@ -6113,7 +6113,7 @@ fun PdfViewerScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = "Generating Text View...",
+                                    text = stringResource(R.string.generating_text_view),
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
@@ -6162,7 +6162,7 @@ fun PdfViewerScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Indexing pages... ${(backgroundIndexingProgress * 100).toInt()}% done. Search results will update automatically.",
+                                        text = stringResource(R.string.msg_indexing_pages_progress),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
@@ -6358,7 +6358,7 @@ fun PdfViewerScreen(
                                 ) {
                                     Icon(
                                         painter = painterResource(id = R.drawable.slider),
-                                        contentDescription = "Navigate with slider"
+                                        contentDescription = stringResource(R.string.content_desc_navigate_slider)
                                     )
                                 }
                             }
@@ -6393,7 +6393,7 @@ fun PdfViewerScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Search,
-                                        contentDescription = "Search"
+                                        contentDescription = stringResource(R.string.action_search)
                                     )
                                 }
                             }
@@ -6438,7 +6438,7 @@ fun PdfViewerScreen(
                                     ) {
                                         Icon(
                                             painter = painterResource(id = R.drawable.ai),
-                                            contentDescription = "AI Features"
+                                            contentDescription = stringResource(R.string.tooltip_ai)
                                         )
                                     }
                                     DropdownMenu(
@@ -6446,7 +6446,7 @@ fun PdfViewerScreen(
                                         onDismissRequest = { showAiFeaturesMenu = false }) {
                                         DropdownMenuItem(
                                             text = {
-                                                Text("Summarize Page (Page ${currentPage + 1})")
+                                                Text(stringResource(R.string.action_summarize_page))
                                             }, onClick = {
                                                 showAiFeaturesMenu = false
                                                 if (isProUser) {
@@ -6526,7 +6526,7 @@ fun PdfViewerScreen(
                                                 else painterResource(
                                                     id = R.drawable.text_to_speech
                                                 ),
-                                                contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS"
+                                                contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts)
                                             )
                                         }
 
@@ -6552,21 +6552,21 @@ fun PdfViewerScreen(
                                                     painter = painterResource(
                                                         id = if (ttsState.isPlaying) R.drawable.pause
                                                         else R.drawable.play
-                                                    ), contentDescription = if (ttsState.isPlaying) "Pause TTS"
-                                                    else "Resume TTS"
+                                                    ), contentDescription = if (ttsState.isPlaying) stringResource(R.string.content_desc_pause_tts)
+                                                    else stringResource(R.string.content_desc_resume_tts)
                                                 )
                                             }
 
                                             // Tune button for BASE mode
                                             if (currentTtsMode == TtsPlaybackManager.TtsMode.BASE) {
                                                 TooltipIconButton(
-                                                    text = "Voice Adjustments",
+                                                    text = stringResource(R.string.tts_voice_adjustments),
                                                     description = "Adjust voice speed and pitch",
                                                     onClick = { showTtsControlsSheet = true }
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Tune,
-                                                        contentDescription = "Voice Adjustments"
+                                                        contentDescription = stringResource(R.string.tts_voice_adjustments)
                                                     )
                                                 }
                                             }
@@ -6721,19 +6721,13 @@ fun PdfViewerScreen(
                                 .fillMaxSize()
                                 .then(
                                     when {
-                                        isDockDragging -> Modifier // Positioned manually
-                                        // via offset during
-                                        // drag
-                                        dockLocation == DockLocation.TOP -> Modifier // Aligned via Box
-                                        // Scope
-                                        dockLocation == DockLocation.BOTTOM -> Modifier // Aligned via Box
-                                        // Scope
-                                        else -> Modifier // Positioned manually
-                                        // via offset
+                                        isDockDragging -> Modifier
+                                        dockLocation == DockLocation.TOP -> Modifier
+                                        dockLocation == DockLocation.BOTTOM -> Modifier
+                                        else -> Modifier
                                     }
                                 )
                         ) {
-                            // Calculate drag offset to apply if floating/dragging
                             val dragModifier =
                                 if (isDockDragging || dockLocation == DockLocation.FLOATING) {
                                     Modifier.offset {
@@ -6742,10 +6736,9 @@ fun PdfViewerScreen(
                                         )
                                     }
                                 } else {
-                                    Modifier // Sticky positions use alignment below
+                                    Modifier
                                 }
 
-                            // Calculate Alignment for Sticky states
                             val alignModifier = when {
                                 isDockDragging || dockLocation == DockLocation.FLOATING -> Modifier
                                 dockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
@@ -6759,7 +6752,7 @@ fun PdfViewerScreen(
                                 } else {
                                     Modifier.padding(
                                         horizontal = 16.dp
-                                    ) // Original padding for floating capsule
+                                    )
                                 }
 
                             val paddingModifier =
@@ -7209,10 +7202,10 @@ fun PdfViewerScreen(
                 if (showPermissionRationaleDialog) {
                     AlertDialog(
                         onDismissRequest = { showPermissionRationaleDialog = false },
-                        title = { Text("Permission Required") },
+                        title = { Text(stringResource(R.string.dialog_permission_required)) },
                         text = {
                             Text(
-                                "To show playback controls while the app is in the background, please grant the notification permission."
+                                stringResource(R.string.dialog_permission_notification_desc)
                             )
                         },
                         confirmButton = {
@@ -7222,14 +7215,14 @@ fun PdfViewerScreen(
                                     permissionLauncher.launch(
                                         Manifest.permission.POST_NOTIFICATIONS
                                     )
-                                }) { Text("Continue") }
+                                }) { Text(stringResource(R.string.action_continue)) }
                         },
                         dismissButton = {
                             TextButton(
                                 onClick = {
                                     showPermissionRationaleDialog = false
                                     startTts()
-                                }) { Text("Not now") }
+                                }) { Text(stringResource(R.string.action_not_now)) }
                         })
                 }
                 if (showSummarizationUpsellDialog) {
@@ -7252,11 +7245,11 @@ fun PdfViewerScreen(
                                 onClick = {
                                     showSummarizationUpsellDialog = false
                                     onNavigateToPro()
-                                }) { Text("Learn More") }
+                                }) { Text(stringResource(R.string.action_learn_more)) }
                         },
                         dismissButton = {
                             TextButton(onClick = { showSummarizationUpsellDialog = false }) {
-                                Text("Not Now")
+                                Text(stringResource(R.string.action_not_now))
                             }
                         })
                 }
@@ -7287,13 +7280,13 @@ fun PdfViewerScreen(
                                 .padding(bottom = 16.dp)
                         ) {
                             Text(
-                                text = "Add PDF to Tab",
+                                text = stringResource(R.string.title_add_pdf_to_tab),
                                 style = MaterialTheme.typography.titleLarge,
                                 modifier = Modifier.padding(16.dp)
                             )
                             if (pdfFiles.isEmpty()) {
                                 Text(
-                                    "No other PDFs found in your library.",
+                                    stringResource(R.string.msg_no_other_pdfs_found),
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -7345,7 +7338,7 @@ fun PdfViewerScreen(
                                 if (!selectedDictPackage.isNullOrEmpty()) {
                                     ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
                                 } else {
-                                    Toast.makeText(context, "Select an offline dictionary first.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, context.getString(R.string.toast_select_offline_dict_first), Toast.LENGTH_SHORT).show()
                                     showDictionarySettingsSheet = true
                                 }
                             }
@@ -7358,19 +7351,19 @@ fun PdfViewerScreen(
                             painter = painterResource(id = R.drawable.ai),
                             contentDescription = null
                         )
-                    }, title = { Text("Unlock Smart Dictionary") }, text = {
+                    }, title = { Text(stringResource(R.string.ai_unlock_smart_dict)) }, text = {
                         Text(
-                            "Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text."
+                            stringResource(R.string.ai_unlock_smart_dict_desc)
                         )
                     }, confirmButton = {
                         TextButton(
                             onClick = {
                                 showDictionaryUpsellDialog = false
                                 onNavigateToPro()
-                            }) { Text("Learn More") }
+                            }) { Text(stringResource(R.string.action_learn_more)) }
                     }, dismissButton = {
                         TextButton(onClick = { showDictionaryUpsellDialog = false }) {
-                            Text("Not Now")
+                            Text(stringResource(R.string.action_not_now))
                         }
                     })
                 }
@@ -7380,12 +7373,10 @@ fun PdfViewerScreen(
                         AlertDialog(
                             onDismissRequest = { showReindexDialog = null },
                             icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                            title = { Text("Re-index Document?") },
+                            title = { Text(stringResource(R.string.title_reindex_document)) },
                             text = {
                                 Text(
-                                    "You are changing the OCR script to ${newLanguage.displayName}.\n\n" +
-                                            "To ensure search accuracy, we need to clear the existing index and re-scan pages that require OCR using this new language.\n\n" +
-                                            "This will happen in the background."
+                                    stringResource(R.string.desc_reindex_document_warning)
                                 )
                             },
                             confirmButton = {
@@ -7412,11 +7403,11 @@ fun PdfViewerScreen(
                                             showOcrLanguageDialog = false
                                         }
                                     }
-                                ) { Text("Re-index") }
+                                ) { Text(stringResource(R.string.action_reindex)) }
                             },
                             dismissButton = {
                                 TextButton(onClick = { showReindexDialog = null }) {
-                                    Text("Cancel")
+                                    Text(stringResource(R.string.action_cancel))
                                 }
                             }
                         )
@@ -7625,8 +7616,8 @@ fun PdfViewerScreen(
                     val url = clickedLinkUrl!!
                     AlertDialog(
                         onDismissRequest = { clickedLinkUrl = null },
-                        title = { Text("External Link") },
-                        text = { Text("You are about to navigate to:\n$url") },
+                        title = { Text(stringResource(R.string.dialog_external_link_title)) },
+                        text = { Text(stringResource(R.string.desc_external_link_warning)) },
                         confirmButton = {
                             TextButton(
                                 onClick = {
@@ -7636,7 +7627,7 @@ fun PdfViewerScreen(
                                         Timber.e(e, "Failed to open URI")
                                     }
                                     clickedLinkUrl = null
-                                }) { Text("Visit") }
+                                }) { Text(stringResource(R.string.action_visit)) }
                         },
                         dismissButton = {
                             Row {
@@ -7644,9 +7635,9 @@ fun PdfViewerScreen(
                                     onClick = {
                                         clipboardManager.setText(AnnotatedString(url))
                                         clickedLinkUrl = null
-                                    }) { Text("Copy") }
+                                    }) { Text(stringResource(R.string.action_copy)) }
                                 TextButton(onClick = { clickedLinkUrl = null }) {
-                                    Text("Cancel")
+                                    Text(stringResource(R.string.action_cancel))
                                 }
                             }
                         })
@@ -7655,8 +7646,8 @@ fun PdfViewerScreen(
                 if (showSaveDialog) {
                     AlertDialog(
                         onDismissRequest = { showSaveDialog = false },
-                        title = { Text("Save to Device") },
-                        text = { Text("Choose format to save:") },
+                        title = { Text(stringResource(R.string.title_save_to_device)) },
+                        text = { Text(stringResource(R.string.desc_choose_format_save)) },
                         confirmButton = {
                             TextButton(
                                 onClick = {
@@ -7666,7 +7657,7 @@ fun PdfViewerScreen(
                                         originalFileName, isAnnotated = true
                                     )
                                     saveLauncher.launch(suggestedName)
-                                }) { Text("With Annotations") }
+                                }) { Text(stringResource(R.string.action_with_annotations)) }
                         },
                         dismissButton = {
                             Row {
@@ -7678,7 +7669,7 @@ fun PdfViewerScreen(
                                             originalFileName, isAnnotated = false
                                         )
                                         saveLauncher.launch(suggestedName)
-                                    }) { Text("Original") }
+                                    }) { Text(stringResource(R.string.action_original)) }
 
                                 Spacer(Modifier.width(8.dp))
 
@@ -7686,7 +7677,7 @@ fun PdfViewerScreen(
                                     onClick = {
                                         showSaveDialog = false
                                         pendingSaveMode = null
-                                    }) { Text("Cancel") }
+                                    }) { Text(stringResource(R.string.action_cancel)) }
                             }
                         })
                 }
@@ -7694,8 +7685,8 @@ fun PdfViewerScreen(
                 if (showShareDialog) {
                     AlertDialog(
                         onDismissRequest = { showShareDialog = false },
-                        title = { Text("Share PDF") },
-                        text = { Text("Choose format to share:") },
+                        title = { Text(stringResource(R.string.share_chooser_title)) },
+                        text = { Text(stringResource(R.string.desc_choose_format_share)) },
                         confirmButton = {
                             TextButton(
                                 onClick = {
@@ -7721,7 +7712,7 @@ fun PdfViewerScreen(
                                         )
                                         isShareLoading = false
                                     }
-                                }) { Text("With Annotations") }
+                                }) { Text(stringResource(R.string.action_with_annotations)) }
                         },
                         dismissButton = {
                             Row {
@@ -7742,10 +7733,10 @@ fun PdfViewerScreen(
                                             )
                                             isShareLoading = false
                                         }
-                                    }) { Text("Original") }
+                                    }) { Text(stringResource(R.string.action_original)) }
                                 Spacer(Modifier.width(8.dp))
                                 TextButton(onClick = { showShareDialog = false }) {
-                                    Text("Cancel")
+                                    Text(stringResource(R.string.action_cancel))
                                 }
                             }
                         })
@@ -7773,7 +7764,7 @@ fun PdfViewerScreen(
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = "Preparing PDF...",
+                                    text = stringResource(R.string.msg_preparing_pdf),
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                             }
@@ -8087,27 +8078,27 @@ private fun PasswordDialog(isError: Boolean, onDismiss: () -> Unit, onConfirm: (
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Password Protected") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.title_password_protected)) }, text = {
         Column {
-            Text("This document is encrypted. Please enter the password to view it.")
+            Text(stringResource(R.string.desc_password_protected))
             Spacer(modifier = Modifier.height(16.dp))
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = { Text("Password") },
+                label = { Text(stringResource(R.string.password)) },
                 singleLine = true,
                 visualTransformation = if (passwordVisible) VisualTransformation.None
                 else PasswordVisualTransformation(),
                 keyboardActions = KeyboardActions(onDone = { onConfirm(password) }),
                 isError = isError,
                 supportingText = if (isError) {
-                    { Text("Incorrect password") }
+                    { Text(stringResource(R.string.error_incorrect_password)) }
                 } else null,
                 trailingIcon = {
                     val image = if (passwordVisible) Icons.Filled.Visibility
                     else Icons.Filled.VisibilityOff
 
-                    val description = if (passwordVisible) "Hide password" else "Show password"
+                    val description = if (passwordVisible) stringResource(R.string.content_desc_hide_password) else stringResource(R.string.content_desc_show_password)
 
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
                         Icon(imageVector = image, description)
@@ -8118,9 +8109,9 @@ private fun PasswordDialog(isError: Boolean, onDismiss: () -> Unit, onConfirm: (
         }
     }, confirmButton = {
         Button(onClick = { onConfirm(password) }, enabled = password.isNotBlank()) {
-            Text("Open")
+            Text(stringResource(R.string.action_open))
         }
-    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -8137,13 +8128,12 @@ fun PenPlayground(onClose: () -> Unit) {
         Color.Black // Black
     )
 
-    // Dark Card Background
     Surface(
         modifier = Modifier
             .fillMaxWidth(0.95f)
             .padding(16.dp),
         shape = RoundedCornerShape(28.dp),
-        color = Color(0xFF1E1E1E), // Deep Matte Dark Grey
+        color = Color(0xFF1E1E1E),
         shadowElevation = 16.dp,
         tonalElevation = 0.dp
     ) {
@@ -8151,13 +8141,11 @@ fun PenPlayground(onClose: () -> Unit) {
             modifier = Modifier.padding(vertical = 24.dp, horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header with Close Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Placeholder icon (Star) on left
                 Icon(
                     imageVector = Icons.Default.Star,
                     contentDescription = null,
@@ -8169,7 +8157,7 @@ fun PenPlayground(onClose: () -> Unit) {
                     Icon(
                         painter = painterResource(
                             id = R.drawable.close
-                        ), // Ensure you have a close icon or use Icons.Default.Close
+                        ),
                         contentDescription = "Close", tint = Color.Gray
                     )
                 }
@@ -8181,19 +8169,17 @@ fun PenPlayground(onClose: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp), // Height for pens + ink stroke space
+                    .height(140.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.Bottom
             ) {
                 PenType.entries.forEach { type ->
                     val isSelected = selectedPen == type
 
-                    // Selected pens float up slightly
                     val offsetY by animateDpAsState(
                         targetValue = if (isSelected) (-20).dp else 0.dp, label = "offset"
                     )
 
-                    // Selected pens scale up
                     val scale by animateFloatAsState(
                         targetValue = if (isSelected) 1.2f else 1.0f, label = "scale"
                     )
@@ -8205,13 +8191,13 @@ fun PenPlayground(onClose: () -> Unit) {
                             .scale(scale)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null // Remove ripple for cleaner look
+                                indication = null
                             ) { selectedPen = type }) {
                         // Drawing Area
                         Box(
                             modifier = Modifier
                                 .width(40.dp)
-                                .height(120.dp), // Tall enough for stroke + pen
+                                .height(120.dp),
                             contentAlignment = Alignment.BottomCenter
                         ) {
                             PenIcon(
@@ -8229,7 +8215,6 @@ fun PenPlayground(onClose: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
 
-            // Subtle Divider
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 12.dp),
                 color = Color.White.copy(alpha = 0.1f),
@@ -8292,10 +8277,10 @@ private fun OcrLanguageSelectionDialog(
     onDismiss: () -> Unit,
     onLanguageSelected: (OcrLanguage) -> Unit
 ) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Select OCR Language") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.title_select_ocr_language)) }, text = {
         Column(Modifier.selectableGroup()) {
             Text(
-                "Choose the primary language/script of this document for better text recognition results.",
+                stringResource(R.string.desc_select_ocr_language),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
@@ -8317,7 +8302,7 @@ private fun OcrLanguageSelectionDialog(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "You can change this later in More Options > OCR Language.",
+                            stringResource(R.string.desc_ocr_language_change_later),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
@@ -8349,7 +8334,7 @@ private fun OcrLanguageSelectionDialog(
                 }
             }
         }
-    }, confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+    }, confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } })
 }
 
 @Composable
@@ -8454,7 +8439,7 @@ fun PdfSearchResultsPanel(
         } else {
             Column {
                 Text(
-                    text = "Results found on ${totalPageCount}+ pages",
+                    text = stringResource(R.string.msg_results_found_pages),
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )
@@ -8506,7 +8491,7 @@ fun PdfSearchResultsList(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         if (results.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No results found.", style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
             }
         } else {
             Column {
@@ -8555,14 +8540,14 @@ fun PdfCustomizeToolsSheet(
     ) {
         Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
             Text(
-                text = "Customize Toolbar",
+                text = stringResource(R.string.title_customize_toolbar),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.",
+                text = stringResource(R.string.desc_customize_toolbar),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
