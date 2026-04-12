@@ -90,6 +90,14 @@ Powered by the Android OSS ecosystem:
 
 - [CCerrer](https://github.com/CCerrer) — Testing & QA
 
+## Translations
+
+Help translate Episteme Reader into your native language! We use Weblate to manage localization.
+
+<a href="https://hosted.weblate.org/engage/episteme/">
+<img src="https://hosted.weblate.org/widgets/episteme/-/svg-badge.svg" alt="Translation status" />
+</a>
+
 ## License
 
 Licensed under the GNU Affero General Public License v3.0 (AGPL‑3.0). See the [LICENSE](LICENSE) file.
