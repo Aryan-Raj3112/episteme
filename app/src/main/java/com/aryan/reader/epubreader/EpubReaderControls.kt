@@ -1078,7 +1078,7 @@ fun AutoScrollControls(
                         ) {
                             Icon(
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) stringResource(R.string.content_desc_pause_playback) else stringResource(R.string.content_desc_start_playback),
+                                contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
                                 modifier = Modifier.size(20.dp)
                             )
                         }

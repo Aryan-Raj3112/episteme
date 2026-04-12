@@ -390,7 +390,7 @@ fun SearchTopBar(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.content_desc_close_search)
+                    contentDescription = stringResource(R.string.tooltip_close_search)
                 )
             }
 
@@ -426,7 +426,7 @@ fun SearchTopBar(
                 ) {
                     Icon(
                         Icons.Default.Close,
-                        contentDescription = stringResource(R.string.content_desc_clear_search)
+                        contentDescription = stringResource(R.string.tooltip_clear_search)
                     )
                 }
             }
@@ -448,8 +448,8 @@ fun SearchTopBar(
                 Icon(
                     imageVector = if (searchState.showSearchResultsPanel) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
                     contentDescription = stringResource(
-                        if (searchState.showSearchResultsPanel) R.string.content_desc_hide_results
-                        else R.string.content_desc_show_results
+                        if (searchState.showSearchResultsPanel) R.string.tooltip_hide_results
+                        else R.string.tooltip_show_results
                     )
                 )
             }
@@ -478,7 +478,7 @@ fun SearchNavigationControls(
                 onClick = { onNavigate(searchState.currentSearchResultIndex - 1) },
                 enabled = searchState.currentSearchResultIndex > 0
             ) {
-                Icon(Icons.Default.ArrowDropUp, contentDescription = stringResource(R.string.content_desc_prev_result))
+                Icon(Icons.Default.ArrowDropUp, contentDescription = stringResource(R.string.tooltip_prev_result))
             }
 
             Text(
@@ -493,7 +493,7 @@ fun SearchNavigationControls(
                 onClick = { onNavigate(searchState.currentSearchResultIndex + 1) },
                 enabled = searchState.currentSearchResultIndex < searchState.searchResultsCount - 1
             ) {
-                Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.content_desc_next_result))
+                Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.tooltip_next_result))
             }
         }
     }

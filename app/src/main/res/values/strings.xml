@@ -1,5 +1,6 @@
 <resources>
-    <string name="app_name">Episteme</string>
+    <!-- App name — brand name, must not be translated. -->
+    <string name="app_name" translatable="false">Episteme</string>
 
     <!-- General Actions & Words -->
     <string name="action_cancel">Cancel</string>
@@ -14,8 +15,8 @@
     <string name="action_search">Search</string>
     <string name="action_clear">Clear</string>
     <string name="action_apply">Apply</string>
+    <!-- Tab label in the multi-tab PDF reader — means the slot is available (unused), NOT "free of cost". -->
     <string name="tab_free">Free</string>
-    <string name="action_save_catalog">Save</string>
     <string name="active_tabs">Active Tabs</string>
     <string name="close_tab">Close Tab</string>
     <string name="close_all_tabs">Close All Tabs</string>
@@ -23,39 +24,50 @@
     <string name="dialog_close_all_tabs_desc">Are you sure you want to close all active tabs?</string>
 
     <!-- Shared Composables & Dialogs -->
+    <!-- Full legal agreement sentence. %1$s = introductory phrase (e.g. "By signing in,"); %2$s = hyperlinked "Terms of Service"; %3$s = hyperlinked "Privacy Policy". The three parts are assembled in code. -->
     <string name="legal_agreement_full">%1$s you agree to our %2$s and acknowledge you have read our %3$s.</string>
     <string name="legal_terms_of_service">Terms of Service</string>
     <string name="legal_privacy_policy">Privacy Policy</string>
     <string name="legal_licenses">Licenses</string>
+    <!-- Shown in the multi-select top bar. %1$d = number of items the user has selected. -->
     <string name="items_selected_count">%1$d selected</string>
     <string name="clear_selection">Clear Selection</string>
+    <!-- Combined toggle label for a pin/unpin action on a book. -->
     <string name="pin_unpin">Pin/Unpin</string>
     <string name="info">Info</string>
     <string name="select_all">Select All</string>
     <string name="dialog_delete_permanently">Delete File(s) Permanently</string>
     <string name="dialog_remove_from_recents">Remove from Recents</string>
     <string name="dialog_warning_folder_sync_delete">Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.</string>
+    <!-- %1$d = number of selected files to permanently delete. -->
     <string name="dialog_permanently_delete_desc">Do you want to permanently delete %1$d selected file(s) from your device? This action cannot be undone.</string>
+    <!-- %1$d = number of selected files to remove from the recents list. -->
     <string name="dialog_remove_recents_desc">Do you want to remove %1$d selected file(s) from the recent files list? It will reappear if you open it again from the library.</string>
     <string name="file_information">File Information</string>
     <string name="book_name">Book Name</string>
     <string name="copy_name">Copy Name</string>
+    <!-- Shown in the file information dialog. %1$s = the original filename before the user renamed it. -->
     <string name="original_name">Original Name: %1$s</string>
     <string name="revert_to_original">Revert to Original</string>
+    <!-- Shown in the file information dialog. %1$s = the file\'s name on disk. -->
     <string name="file_name">File Name: %1$s</string>
     <string name="author">Author</string>
     <string name="format">Format</string>
     <string name="size">Size</string>
     <string name="added">Added</string>
     <string name="location">Location</string>
+    <!-- "OPDS" is a technical protocol name and must not be translated. -->
     <string name="source_opds">Source: OPDS Stream</string>
     <string name="source_in_app">In-App Storage</string>
     <string name="internal_storage">Internal storage</string>
+    <!-- "Episteme" is the app brand name and must not be translated. -->
     <string name="about_title">About Episteme</string>
+    <!-- Shown in the About dialog header. %1$s = version string (e.g. "1.0.41"); %2$d = integer build number. -->
     <string name="about_version">Version: %1$s (Build: %2$d)</string>
     <string name="empty_select_file">Select a File</string>
     <string name="clear_cloud_data_title">Clear All Synced Data?</string>
     <string name="clear_cloud_data_desc">Are you sure you want to permanently delete all of your book data from the cloud? This will also wipe your local library to prevent re-syncing. This action cannot be undone.</string>
+    <!-- Destructive action button, intentionally styled in all-caps. -->
     <string name="delete_all_data">DELETE ALL DATA</string>
 
     <!-- Navigation & Home -->
@@ -69,18 +81,25 @@
     <string name="setup_folder_sync">Setup Folder Sync</string>
     <string name="sync_folder">Sync Folder</string>
     <string name="local_folder">Local Folder</string>
-    <string name="opds_stream">OPDS Stream</string>
+    <!-- "OPDS" is the name of a catalog protocol — do not translate. -->
+    <string name="opds_stream" translatable="false">OPDS Stream</string>
     <string name="pinned">Pinned</string>
+    <!-- Reading progress shown on a book card. %1$d = percentage (0–100). %% is a literal percent sign. -->
     <string name="progress_complete">%1$d%% complete</string>
     <string name="not_available_locally">Not available locally</string>
 
     <!-- Drawer Menu -->
+    <!-- "Google" is a brand name — keep as-is. -->
     <string name="drawer_sign_in">Sign in with Google</string>
     <string name="drawer_by_signing_in">By signing in,</string>
+    <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
     <string name="drawer_pro_unlocked">Episteme Pro</string>
+    <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
     <string name="drawer_upgrade_pro">Upgrade to Episteme Pro</string>
     <string name="drawer_sync_library">Sync Library</string>
+    <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="drawer_backup_local_folders">Cloud sync for Local Folders</string>
+    <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="drawer_backup_desc">Upload books from your synced folders to Google Drive.</string>
     <string name="drawer_custom_fonts">Custom Fonts</string>
     <string name="drawer_help_feedback">Help &amp; Feedback</string>
@@ -89,51 +108,70 @@
     <!-- Top Bar Options -->
     <string name="options_recent_limit">Recent Files Limit</string>
     <string name="options_no_limit">No limit</string>
+    <!-- Shown as a selectable limit option. %1$d = number of files (e.g. "10 files", "25 files"). -->
     <string name="options_files_limit">%1$d files</string>
     <string name="options_clear_book_cache">Clear Book Cache</string>
     <string name="options_clear_reflow_cache">Clear Reflow Cache</string>
 
     <!-- Library Screen -->
     <string name="library_title">Library</string>
+    <!-- Placeholder text inside the library search field. -->
     <string name="search_placeholder">Search title or author…</string>
+    <!-- Active file-type filter chip label. %1$s = comma-separated list of active types (e.g. "PDF, EPUB"). -->
     <string name="filter_types">Types: %1$s</string>
+    <!-- Active folder filter chip label. %1$d = number of folder filters currently active. -->
     <string name="filter_folders">Folders: %1$d</string>
+    <!-- Active read-status filter chip label. %1$s = status name (e.g. "Unread", "In Progress"). -->
     <string name="filter_status">Status: %1$s</string>
     <string name="tab_all_books">All Books</string>
     <string name="tab_shelves">Shelves</string>
     <string name="tab_folders">Folders</string>
     <string name="tab_catalogs">Catalogs</string>
+    <!-- Shown when the library search has no matches. %1$s = the user\'s search query. -->
     <string name="no_results_found">No results found for \"%1$s\"</string>
     <string name="library_empty_desc">Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.</string>
+    <!-- Floating action button label to add a file to the library. -->
     <string name="fab_add_file">Add file</string>
+    <!-- Floating action button label to create a new shelf. -->
     <string name="fab_new_shelf">New shelf</string>
     <string name="create_new_shelf">Create New Shelf</string>
     <string name="shelf_name_hint">Shelf Name</string>
     <string name="action_create">Create</string>
     <string name="menu_rename_shelf">Rename shelf</string>
     <string name="menu_delete_shelf">Delete shelf</string>
+    <!-- Floating action button label shown inside a shelf to add books to it. -->
     <string name="fab_add_books">Add books</string>
     <string name="shelf_empty">This shelf is empty</string>
+    <!-- FAB label shown while adding books. %1$s = the name of the target shelf. -->
     <string name="add_to_shelf">Add to %1$s</string>
+    <!-- FAB button label showing count of selected books. %1$d = number selected. Intentionally all-caps. -->
     <string name="fab_add_count">ADD (%1$d)</string>
     <string name="no_unshelved_books">No unshelved books to add</string>
     <string name="all_books_in_shelf">All books are already in this shelf</string>
     <string name="dialog_rename_shelf">Rename Shelf</string>
     <string name="dialog_delete_shelf">Delete Shelf?</string>
+    <!-- Confirmation dialog. %1$s = name of the shelf being deleted. -->
     <string name="dialog_delete_shelf_desc">Are you sure you want to delete the \'%1$s\' shelf? All books will be moved to Unshelved.</string>
     <string name="dialog_remove_from_shelf">Remove from Shelf?</string>
+    <!-- Confirmation dialog. %1$d = count of books; %2$s = "book" or "books" (resolved from a plural); %3$s = shelf name. -->
     <string name="dialog_remove_from_shelf_desc">Are you sure you want to remove %1$d %2$s from the \'%3$s\' shelf? The book(s) will remain in your library and appear under Unshelved.</string>
+    <!-- Dialog title when deleting multiple shelves. %1$s = shelf name(s). -->
     <string name="dialog_delete_shelves">Delete %1$s?</string>
+    <!-- Dialog body when deleting multiple shelves. %1$d = count of selected shelves; %2$s = "shelf" or "shelves" (resolved from a plural). -->
     <string name="dialog_delete_shelves_desc">Are you sure you want to delete the %1$d selected %2$s? All books within will be moved to Unshelved.</string>
 
     <!-- Folder Sync -->
     <string name="sync_local_folders">Sync Local Folders</string>
+    <!-- "Episteme" is the app brand name — do not translate. -->
     <string name="sync_folders_desc">Connect local folders to create a live library. Episteme will monitor files and sync progress.</string>
     <string name="fab_add_folder">Add Folder</string>
     <string name="scan_all">Scan All</string>
     <string name="scanning">Scanning…</string>
+    <!-- Button label on a folder sync card — triggers syncing only the metadata (not the actual files). -->
     <string name="sync_meta">Sync Meta</string>
+    <!-- Small uppercase label on a folder sync card, followed by a date/time stamp. -->
     <string name="last_sync">LAST SYNC</string>
+    <!-- Small uppercase label on a folder sync card, followed by the count of synced books. -->
     <string name="books_count">BOOKS</string>
     <string name="menu_edit_filters">Edit Filters</string>
     <string name="menu_remove_folder">Remove Folder</string>
@@ -148,7 +186,8 @@
 
     <!-- External File Behavior -->
     <string name="external_file_prompt_title">Save File?</string>
-    <string name="external_file_prompt_desc">Do you want to save this external file in the app\'s library? If not, it will be removed.\n\n(You can change this default behavior anytime from the Home Screen > More Options > External File Behavior).</string>
+    <string name="external_file_prompt_desc">Do you want to save this external file in the app\'s library? If not, it will be removed.\n\n(You can change this default behavior anytime from the Home Screen &gt; More Options &gt; External File Behavior).</string>
+    <!-- Checkbox label — "Don\'t ask again" for the external file save prompt. -->
     <string name="external_file_dont_ask">Don\'t ask again</string>
     <string name="external_file_keep">Keep in Library</string>
     <string name="external_file_delete">Remove</string>
@@ -157,108 +196,141 @@
     <string name="external_file_behavior_delete">Always Remove</string>
     <string name="options_external_file_behavior">External File Behavior</string>
 
-    <!-- OPDS -->
+    <!-- OPDS — "OPDS" is a technical protocol name, do not translate it. -->
     <string name="fab_add_catalog">Add Catalog</string>
     <string name="search_catalog_placeholder">Search catalog…</string>
     <string name="feed_empty">This feed is empty.</string>
     <string name="status_downloading">Downloading…</string>
     <string name="status_loading">Loading…</string>
+    <!-- Button label — "Stream" means to read directly from an OPDS catalog without downloading the file first. -->
     <string name="action_stream">Stream</string>
     <string name="action_unavailable">Unavailable</string>
     <string name="action_download">Download</string>
     <string name="download_format">Download Format</string>
+    <!-- Button label — starts streaming the book immediately from the OPDS catalog. -->
     <string name="action_stream_now">Stream Now</string>
     <string name="action_read">Read</string>
     <string name="no_supported_formats">No supported formats available.</string>
+    <!-- Uppercase section label in the OPDS book detail screen. -->
     <string name="publisher">PUBLISHER</string>
+    <!-- Uppercase section label in the OPDS book detail screen. -->
     <string name="published">PUBLISHED</string>
+    <!-- Uppercase section label in the OPDS book detail screen. -->
     <string name="language">LANGUAGE</string>
     <string name="synopsis">Synopsis</string>
     <string name="edit_catalog">Edit Catalog</string>
+    <!-- "OPDS" is a technical protocol name — do not translate. -->
     <string name="add_opds_catalog">Add OPDS Catalog</string>
     <string name="catalog_name">Catalog Name</string>
     <string name="url">URL</string>
-    <string name="url_placeholder">http://192.168.1.50:8080/opds</string>
+    <!-- Placeholder text for the catalog URL input field. This is an example address — do not translate. -->
+    <string name="url_placeholder" translatable="false">http://192.168.1.50:8080/opds</string>
     <string name="auth_optional">Authentication (Optional)</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
     <string name="delete_catalog">Delete Catalog</string>
+    <!-- Confirmation dialog. %1$s = the name of the catalog being deleted. -->
     <string name="delete_catalog_desc">Are you sure you want to delete \'%1$s\'?</string>
+    <!-- Warning shown when deleting a catalog that has associated streaming books. %1$d = number of streaming books that will also be removed from the library. -->
     <string name="delete_catalog_warning">Deleting this catalog will also permanently remove %1$d streaming books associated with it from your library.</string>
+    <!-- Label for a preset badge/chip shown on OPDS catalog entries. -->
     <string name="preset_label">Preset</string>
 
     <!-- Pro Screen -->
     <string name="free_plan">Free Plan</string>
-    <string name="price_free">$0</string>
+    <!-- Price displayed on the free plan card — "$0" should remain as-is. -->
+    <string name="price_free" translatable="false">$0</string>
     <string name="forever_free">Forever free</string>
     <string name="feature_multiple_formats">Multiple Formats</string>
+    <!-- File format names (PDF, EPUB, MOBI, AZW3) are technical identifiers — do not translate them. -->
     <string name="feature_multiple_formats_desc">Supports PDF, EPUB, MOBI, AZW3</string>
+    <!-- "Android" is a brand name — do not translate. TTS = Text-to-Speech (keep as abbreviation). -->
     <string name="feature_tts">Android Text-to-Speech</string>
     <string name="feature_tts_desc">Listen to your books with built-in TTS</string>
     <string name="feature_dict">Basic Dictionary</string>
     <string name="feature_dict_desc">Look up single words quickly</string>
     <string name="current_plan">Current Plan</string>
-    <string name="pro_sale_off">50%% OFF</string>
+    <!-- Promotional badge displayed on the Pro plan card. %% is a literal percent sign. -->
+    <string name="pro_sale_off" translatable="false">50%% OFF</string>
     <string name="loading_price">Loading price…</string>
     <string name="one_time_payment">One-time payment</string>
     <string name="lifetime_access">Lifetime Access</string>
     <string name="early_access_sale">Early Access Sale</string>
     <string name="pro_includes">Everything in Free, plus:</string>
     <string name="feature_cloud_sync">Cloud Sync Across Devices</string>
+    <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="feature_cloud_sync_desc">Keep your entire library, including book files and reading progress, synced across up to 4 devices.</string>
+    <!-- "Summarization" is a Pro AI feature name. -->
     <string name="feature_summarize">Summarization</string>
     <string name="feature_summarize_desc">Get quick summaries of chapters or pages</string>
+    <!-- "Smart Dictionary" is a Pro AI feature name. -->
     <string name="feature_smart_dict">Smart Dictionary</string>
     <string name="feature_smart_dict_desc">Search phrases and even paragraphs, not just single words</string>
     <string name="feature_priority">Priority Feature Requests</string>
     <string name="feature_priority_desc">Your suggestions get prioritized</string>
+    <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="pro_unlocked">Pro Features Unlocked!</string>
     <string name="sign_in_required">Sign in Required</string>
     <string name="verifying_purchase">Verifying purchase…</string>
     <string name="existing_purchase_found">Existing Purchase Found</string>
     <string name="get_lifetime_access">Get Lifetime Access</string>
     <string name="upgrade_unavailable">Upgrade currently unavailable. Please check your internet and try again.</string>
+    <!-- "Google" is a brand name. "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="sign_in_to_purchase">Please sign in to your Google account to purchase Episteme Pro.</string>
     <string name="verifying_purchase_desc">This may take a few moments. Your Pro status will be updated automatically.</string>
+    <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="dialog_existing_purchase_desc">This device already has a Pro purchase, but it\'s linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.</string>
+    <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="dialog_early_access_desc">You\'re getting Episteme Pro at a special discounted price during our early access period! This is a limited-time offer.</string>
+    <!-- "Google" is a brand name. "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="dialog_sign_in_required_desc">Please sign in to your Google account to purchase Episteme Pro and unlock all premium features.</string>
+    <!-- Dismissal button label for various pro-upgrade prompt dialogs. -->
     <string name="action_not_now">Not Now</string>
+    <!-- Confirmation button label for informational dialogs. -->
     <string name="action_got_it">Got It!</string>
 
     <!-- Fonts -->
     <string name="custom_fonts">Custom Fonts</string>
     <string name="import_font">Import Font</string>
     <string name="no_custom_fonts">No Custom Fonts</string>
+    <!-- TTF and OTF are font file format names — do not translate. -->
     <string name="import_fonts_desc">Import TTF or OTF files to use them in your books.</string>
-    <string name="font_preview_text">Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:</string>
+    <!-- English pangram used to preview all letters in a font. Translating this defeats the purpose — keep in English. -->
+    <string name="font_preview_text" translatable="false">Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:</string>
     <string name="font_preview_error">Preview unavailable (Invalid font file)</string>
     <string name="dialog_delete_font">Delete Font?</string>
+    <!-- Confirmation dialog. %1$s = display name of the font being deleted. -->
     <string name="dialog_delete_font_desc">Are you sure you want to delete \'%1$s\'? This will remove it from all your devices if sync is on.</string>
 
     <!-- Feedback -->
     <string name="get_in_touch">Get in Touch</string>
-    <string name="feedback_desc">Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or send us an email.</string>
+    <string name="feedback_desc">Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or email us.</string>
     <string name="github_issues">GitHub Issues</string>
     <string name="github_issues_desc">Report bugs, request features, and track development progress.</string>
     <string name="email_support">Email Support</string>
     <string name="email_support_desc">Contact us directly via email for any other inquiries.</string>
 
     <!-- Dialogs -->
+    <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="dialog_unlock_pro">Unlock Episteme Pro</string>
+    <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="dialog_unlock_pro_desc">Sync across devices is a Pro feature. Unlock all pro features with a single, one-time purchase.</string>
     <string name="action_upgrade">Upgrade</string>
     <string name="dialog_confirm_sign_out">Confirm Sign Out</string>
     <string name="dialog_confirm_sign_out_desc">Are you sure you want to sign out?</string>
     <string name="device_limit_reached">Device Limit Reached</string>
+    <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="device_limit_reached_desc">To use Episteme Pro on this device, please remove one of your existing registered devices.</string>
+    <!-- Shown in the device management list. %1$s = a formatted relative date/time string (e.g. "2 days ago"). -->
     <string name="last_seen">Last seen: %1$s</string>
     <string name="dialog_destructive_action">Confirm Destructive Action</string>
+    <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="dialog_destructive_action_desc">This will permanently delete all your books and reading progress from this device AND from your Google Drive account. This action cannot be undone. Are you sure?</string>
     <string name="dialog_clear_book_cache">Clear Book Cache</string>
     <string name="dialog_clear_book_cache_desc">This will clear all processed pages in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.</string>
     <string name="action_confirm_clear">Confirm &amp; Clear</string>
     <string name="dialog_clear_reflow_cache">Clear Reflow Cache</string>
+    <!-- "Text View" is the name of the PDF reflow feature in this app — keep consistent. -->
     <string name="dialog_clear_reflow_cache_desc">This will delete all generated \'Text View\' versions of your PDFs and clear their associated images/HTML cache. Your original PDFs will remain untouched.</string>
 
     <!-- Tooltip titles -->
@@ -266,11 +338,15 @@
     <string name="tooltip_dictionary">Dictionary</string>
     <string name="tooltip_more_options">More Options</string>
     <string name="tooltip_slider">Page Slider</string>
+    <!-- TOC = Table of Contents. -->
     <string name="tooltip_toc">Table of Contents</string>
     <string name="tooltip_format">Text Format</string>
     <string name="tooltip_search">Search</string>
+    <!-- AI = Artificial Intelligence. This is a toolbar icon tooltip. -->
     <string name="tooltip_ai">AI Features</string>
+    <!-- TTS = Text-to-Speech. -->
     <string name="tooltip_tts_start">Start Text-to-Speech</string>
+    <!-- TTS = Text-to-Speech. -->
     <string name="tooltip_tts_stop">Stop Text-to-Speech</string>
     <string name="tooltip_tts_pause">Pause</string>
     <string name="tooltip_tts_resume">Resume</string>
@@ -298,12 +374,15 @@
     <string name="tooltip_toc_desc">Browse chapters and navigate to any section</string>
     <string name="tooltip_format_desc">Adjust font, size, line height, alignment, and custom fonts</string>
     <string name="tooltip_search_desc">Find any word or phrase in this book</string>
+    <!-- AI = Artificial Intelligence. -->
     <string name="tooltip_ai_desc">Summarize the current chapter or page using AI</string>
     <string name="tooltip_tts_start_desc">Read the book aloud using your device\'s voice engine</string>
     <string name="tooltip_tts_stop_desc">Stop the current read-aloud session</string>
     <string name="tooltip_tts_pause_desc">Pause the current read-aloud playback</string>
     <string name="tooltip_tts_resume_desc">Resume paused read-aloud playback</string>
+    <!-- PDF = Portable Document Format (file format name — do not translate). -->
     <string name="tooltip_dark_mode_on_desc">Invert PDF colors for dark mode</string>
+    <!-- PDF = Portable Document Format (file format name — do not translate). -->
     <string name="tooltip_dark_mode_off_desc">Disable dark mode and restore the original PDF colors</string>
     <string name="tooltip_lock_pan_desc">Lock horizontal panning on the page</string>
     <string name="tooltip_unlock_pan_desc">Unlock panning to re-enable pinch-to-zoom and drag gestures</string>
@@ -322,41 +401,66 @@
     <string name="action_sign_in">Sign In</string>
     <string name="action_select_folder">Select Folder</string>
     <string name="action_select">Select</string>
+    <!-- Footer combining Privacy Policy, Terms of Service, and Licenses links separated by bullet points. "•" is punctuation — keep as-is or adapt spacing to your language. -->
     <string name="legal_footer_combined">Privacy Policy  •  Terms of Service  •  Licenses</string>
-    <string name="app_name_oss">Episteme OSS</string>
-    <string name="debug_show_device_management">[Debug] Show Device Management</string>
-    <string name="debug_clear_cloud_local_data">[Debug] Clear Cloud &amp; Local Data</string>
-    <string name="debug_fps">FPS: %1$d</string>
+    <!-- OSS = Open Source Software. "Episteme" is the app brand name — do not translate. -->
+    <string name="app_name_oss" translatable="false">Episteme OSS</string>
+    <!-- Debug-only menu item, not shown to regular users. -->
+    <string name="debug_show_device_management" translatable="false">[Debug] Show Device Management</string>
+    <!-- Debug-only menu item, not shown to regular users. -->
+    <string name="debug_clear_cloud_local_data" translatable="false">[Debug] Clear Cloud &amp; Local Data</string>
+    <!-- Debug overlay showing frames per second. %1$d = integer FPS value. Not shown to regular users. -->
+    <string name="debug_fps" translatable="false">FPS: %1$d</string>
     <string name="error_folder_selection_unsupported">Your device doesn\'t support folder selection. You can still import files individually.</string>
     <string name="error_no_file_manager">No file manager found. Please install a file manager app.</string>
-    <string name="feedback_email_subject">Feedback: Episteme Reader</string>
+    <!-- Email subject line for user feedback. "Episteme Reader" is the app name — do not translate. -->
+    <string name="feedback_email_subject" translatable="false">Feedback: Episteme Reader</string>
+    <!-- Banner shown after a file is downloaded from an OPDS catalog. %1$s = the downloaded filename. -->
     <string name="banner_downloaded">Downloaded %1$s</string>
+    <!-- Generic compound filter label. %1$s = filter category name; %2$s = filter value (e.g. "Type: PDF"). -->
     <string name="filter_facet">%1$s: %2$s</string>
+    <!-- Shown in the folder sync card\'s "Last Sync" field when the folder has never been scanned. -->
     <string name="never">Never</string>
+    <!-- Folder filter chip label. %1$s = folder display name; %2$d = number of books in that folder. -->
     <string name="folder_filter_count">%1$s: %2$d</string>
 
     <!-- ViewModel Messages: Banners & Errors -->
+    <!-- %1$d = count of streaming books that were removed when a catalog was deleted. -->
     <string name="banner_removed_streaming_books">Removed %1$d streaming books.</string>
+    <!-- %1$s = error reason/message from the system. -->
     <string name="error_import_font">Failed to import font: %1$s</string>
+    <!-- "Text view" is the name of the PDF reflow/text feature in this app. -->
     <string name="banner_text_view_deleted">Text view deleted.</string>
+    <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="error_sync_drive_permission">Sync requires Google Drive permission.</string>
     <string name="error_purchase_general">An error occurred with the purchase.</string>
+    <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="banner_upgrade_success">Upgrade successful! Welcome to Pro.</string>
     <string name="error_purchase_verification">Purchase verification failed. Please contact support if you were charged.</string>
     <string name="banner_device_removed">This device was removed from your account.</string>
     <string name="error_verify_device">Could not verify this device. Please check your connection.</string>
     <string name="error_update_devices">Failed to update devices. Please try again.</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="banner_saving_pdf">Saving PDF…</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="banner_pdf_saved">PDF saved successfully.</string>
     <string name="error_open_file_saving">Failed to open file for saving.</string>
+    <!-- %1$s = error message from the system. PDF = file format name — do not translate. -->
     <string name="error_saving_pdf">Error saving PDF: %1$s</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="banner_saving_original_pdf">Saving original PDF…</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_saved">Original PDF saved successfully.</string>
+    <!-- Email/share subject line. %1$s = the name of the file being shared. -->
     <string name="share_subject">Sharing: %1$s</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="share_chooser_title">Share PDF</string>
+    <!-- %1$s = error reason string from the system. -->
     <string name="error_share_failed">Share failed: %1$s</string>
+    <!-- %1$d = the maximum number of folders allowed (currently 3). -->
     <string name="error_folder_limit_reached">Limit reached: Maximum %1$d folders allowed.</string>
     <string name="error_folder_already_synced">This folder is already synced.</string>
+    <!-- %1$s = the display name or path of the folder that was added. -->
     <string name="banner_folder_added">Folder added: %1$s</string>
     <string name="error_access_folder_permissions">Failed to access folder permissions.</string>
     <string name="banner_folder_removed">Folder removed.</string>
@@ -365,6 +469,7 @@
     <string name="banner_folder_sync_complete">Folder Sync: Scan complete.</string>
     <string name="error_sync_failed">Sync failed.</string>
     <string name="error_enable_sync_download">Enable sync to download files.</string>
+    <!-- %1$s = the filename that failed to download. -->
     <string name="error_download_failed">Failed to download %1$s.</string>
     <string name="error_enable_sync_clear_cloud">Enable sync to clear cloud data.</string>
     <string name="error_not_signed_in_clear_cloud">Not signed in, cannot clear cloud data.</string>
@@ -375,7 +480,9 @@
     <string name="error_sign_in_failed">Sign in failed. Please try again.</string>
     <string name="error_no_google_account">Could not find a Google account. This can happen on a fresh install, please try again in a moment.</string>
     <string name="error_sign_in_internet">An error occurred during sign in. Please check your internet connection.</string>
+    <!-- Debug/developer message. -->
     <string name="error_sign_in_device_management">Please sign in to test device management.</string>
+    <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="error_sync_pro_feature">Sync is an Episteme Pro feature.</string>
     <string name="error_not_signed_in_sync">Not signed in, cannot sync.</string>
     <string name="banner_cloud_sync_checking">Cloud Sync: Checking for updates…</string>
@@ -384,105 +491,125 @@
     <string name="error_recent_item_not_found">Could not find recent item.</string>
     <string name="error_import_file_failed">Failed to import file.</string>
     <string name="error_file_location_not_found">Could not find file location.</string>
+    <!-- "Text view" is the name of the PDF reflow feature in this app. -->
     <string name="error_load_generated_text_view">Failed to load generated text view.</string>
+    <!-- "Text view" is the name of the PDF reflow feature in this app. -->
     <string name="error_text_view_generation_failed">Text view generation failed.</string>
+    <!-- FB2 is a file format name — do not translate. %1$s = error message from the system. -->
     <string name="error_load_fb2">Failed to load FB2: %1$s</string>
+    <!-- %1$s = error message from the system. -->
     <string name="error_load_file">Failed to load file: %1$s</string>
+    <!-- MOBI is a file format name — do not translate. %1$s = error message from the system. -->
     <string name="error_load_mobi">Failed to load MOBI: %1$s</string>
+    <!-- EPUB is a file format name — do not translate. %1$s = error message from the system. -->
     <string name="error_load_epub">Failed to load EPUB: %1$s</string>
     <string name="banner_file_deleted_from_folder">File deleted from folder. Removed from library.</string>
     <string name="error_shelf_exists">A shelf with that name already exists.</string>
     <string name="banner_deleting_all_devices">Deleting from all devices…</string>
     <string name="banner_deletion_complete">Deletion complete.</string>
     <string name="error_cloud_sync_failed_deleted_locally">Cloud sync failed, deleted locally.</string>
+    <!-- %1$d = number of books removed from the library. -->
     <string name="banner_books_removed_library">%1$d book(s) removed from library.</string>
+    <!-- "Text views" are PDF reflow versions of documents. -->
     <string name="banner_reflow_cache_cleared">Reflow cache &amp; generated text views cleared.</string>
 
     <!-- Common.kt: SearchTopBar & SearchNavigationControls -->
     <string name="search_in_book">Search in book…</string>
-    <string name="content_desc_close_search">Close Search</string>
-    <string name="content_desc_clear_search">Clear Search</string>
-    <string name="content_desc_hide_results">Hide Results</string>
-    <string name="content_desc_show_results">Show Results</string>
-    <string name="content_desc_prev_result">Previous Search Result</string>
-    <string name="content_desc_next_result">Next Search Result</string>
     <string name="search_no_results_simple">No results found.</string>
 
-    <!-- Common.kt: SummarizationPopup -->
-    <string name="generating_summary">Generating summary…</string>
+    <!-- Common.kt: SummarizationPopup — AI feature, not translated. -->
+    <string name="generating_summary" translatable="false">Generating summary…</string>
     <string name="action_stop">Stop</string>
     <string name="action_read_aloud">Read aloud</string>
     <string name="action_copy">Copy</string>
-    <string name="no_summary_generated">No summary could be generated.</string>
+    <string name="no_summary_generated" translatable="false">No summary could be generated.</string>
 
-    <!-- Common.kt: AiDefinitionPopup -->
-    <string name="ai_thinking">Thinking…</string>
+    <!-- Common.kt: AiDefinitionPopup — AI feature, not translated. -->
+    <string name="ai_thinking" translatable="false">Thinking…</string>
     <string name="content_desc_open_dictionary">Open in Dictionary App</string>
-    <string name="ai_no_definition">AI could not provide a definition.</string>
-    <string name="ai_asking_about">Asking AI about \'%1$s\'…</string>
+    <string name="ai_no_definition" translatable="false">AI could not provide a definition.</string>
+    <!-- AI feature string. %1$s = the word or phrase the user selected. -->
+    <string name="ai_asking_about" translatable="false">Asking AI about \'%1$s\'…</string>
 
     <!-- Common.kt: TtsSettingsSheet -->
+    <!-- TTS = Text-to-Speech. -->
     <string name="tts_settings">Text-to-Speech Settings</string>
     <string name="tts_stop_to_change_settings">Please stop playback to change settings.</string>
+    <!-- TTS synthesis mode refers to whether speech is generated on the device or in the cloud. -->
     <string name="tts_synthesis_mode">Synthesis Mode</string>
+    <!-- On-Device TTS mode — speech is generated locally without internet. -->
     <string name="tts_mode_on_device">On-Device</string>
-    <string name="tts_mode_cloud_hq">Cloud (HQ)</string>
+    <!-- Cloud TTS mode — speech is generated remotely for higher quality. Not translated (feature name). -->
+    <string name="tts_mode_cloud_hq" translatable="false">Cloud (HQ)</string>
     <string name="tts_voice_selection">Voice Selection</string>
     <string name="tts_play_sample">Play Sample</string>
 
     <!-- Common.kt: DeviceVoiceSettingsSheet -->
+    <!-- TTS = Text-to-Speech; "On-Device" = locally generated. -->
     <string name="tts_device_voice_settings">On-Device Voice Settings</string>
     <string name="content_desc_close_settings">Close Settings</string>
     <string name="tts_system_default">System Default</string>
+    <!-- "Android" is a brand name — do not translate. -->
     <string name="tts_system_default_desc">Matches your Android system settings</string>
     <string name="content_desc_selected">Selected</string>
     <string name="tts_loading_voices">Loading voices…</string>
     <string name="tts_no_voices">No voices available on this device.</string>
     <string name="tts_specific_voices">Specific Voices</string>
+    <!-- %1$d = total number of TTS voices available on this device. -->
     <string name="tts_available_voices_count">Available Voices (%1$d)</string>
     <string name="tts_no_voices_for_language">No voices found for this language.</string>
+    <!-- %1$s = the variant label provided by the TTS engine (e.g. "Male", "Female", locale variant string). -->
     <string name="tts_voice_variant">Variant: %1$s</string>
+    <!-- Sample sentence spoken aloud to preview a TTS voice. %1$s = voice name from the TTS engine. -->
     <string name="tts_voice_sample_text">This is a sample of %1$s.</string>
 
     <!-- Common.kt: ReaderThemePanel & ThemeBuilderView -->
     <string name="reading_themes">Reading Themes</string>
     <string name="theme_presets">Presets</string>
     <string name="theme_my_themes">My Themes</string>
+    <!-- "+" is a literal plus icon reference in the description. -->
     <string name="theme_no_custom">No custom themes yet. Tap \'+\' to create one.</string>
     <string name="theme_new">New Theme</string>
     <string name="theme_edit">Edit Theme</string>
     <string name="theme_name">Theme Name</string>
+    <!-- Short motivational quote used as preview text in the theme builder. -->
     <string name="theme_preview_quote">So many books, so little time.</string>
-    <string name="theme_preview_author">- Frank Zappa</string>
+    <!-- Attribution for the preview quote. "Frank Zappa" is a proper name — do not translate the name. The leading dash and formatting should be kept. -->
+    <string name="theme_preview_author" translatable="false">- Frank Zappa</string>
+    <!-- Warning shown when the chosen background/text color combination has low contrast. ⚠️ is an emoji — keep it. -->
     <string name="theme_low_contrast_warning">⚠️ Low contrast! This might cause eye strain.</string>
     <string name="theme_page_color">Page Color</string>
     <string name="theme_text_color">Text Color</string>
     <string name="theme_color_live_preview">Live Preview</string>
+    <!-- Short phrase shown in the live color preview area of the theme builder. -->
     <string name="theme_color_preview_text">Reading is dreaming.</string>
-    <string name="theme_color_hex">Hex</string>
+    <!-- "Hex" = hexadecimal color notation (e.g. #FF5733). Technical abbreviation — do not translate. -->
+    <string name="theme_color_hex" translatable="false">Hex</string>
 
-    <!-- Common.kt: RGB Inputs -->
-    <string name="color_r">R</string>
-    <string name="color_g">G</string>
-    <string name="color_b">B</string>
+    <!-- Common.kt: RGB Inputs — R, G, B are universal color-channel abbreviations, do not translate. -->
+    <string name="color_r" translatable="false">R</string>
+    <string name="color_g" translatable="false">G</string>
+    <string name="color_b" translatable="false">B</string>
 
-    <!-- Common.kt: fetchAiDefinition -->
-    <string name="error_text_empty">Text is empty.</string>
-    <string name="error_ai_empty_definition">AI returned an empty definition.</string>
-    <string name="error_could_not_get_definition">Could not get definition.</string>
-    <string name="error_unknown_server">An unknown server error occurred.</string>
-    <string name="error_network_check_connection">Network error. Check connection.</string>
+    <!-- Common.kt: fetchAiDefinition — AI feature errors, not translated. -->
+    <string name="error_text_empty" translatable="false">Text is empty.</string>
+    <string name="error_ai_empty_definition" translatable="false">AI returned an empty definition.</string>
+    <string name="error_could_not_get_definition" translatable="false">Could not get definition.</string>
+    <string name="error_unknown_server" translatable="false">An unknown server error occurred.</string>
+    <string name="error_network_check_connection" translatable="false">Network error. Check connection.</string>
 
-    <!-- Common.kt: fetchRecap -->
-    <string name="error_not_enough_context">Not enough context for a recap.</string>
-    <string name="error_parse_recap">Failed to parse recap.</string>
-    <string name="error_network_recap">Network error during recap generation.</string>
+    <!-- Common.kt: fetchRecap — Recap feature, not translated. -->
+    <string name="error_not_enough_context" translatable="false">Not enough context for a recap.</string>
+    <string name="error_parse_recap" translatable="false">Failed to parse recap.</string>
+    <string name="error_network_recap" translatable="false">Network error during recap generation.</string>
 
     <!-- DictionarySettingsDialog.kt -->
     <string name="dict_lookup_settings">Lookup Settings</string>
     <string name="dict_dictionary_engine">Dictionary Engine</string>
+    <!-- "AI" = Artificial Intelligence. Engine option label. -->
     <string name="dict_smart_ai">Smart (AI)</string>
     <string name="dict_external_app">External App</string>
+    <!-- "AI" = Artificial Intelligence. Describes the Smart AI dictionary engine behavior. -->
     <string name="dict_ai_description">Uses AI for definitions. Will fall back to the external app below if offline or if the selected phrase is too long.</string>
     <string name="dict_external_description">Uses the selected app for dictionary lookups.</string>
     <string name="dict_fallback_app">Fallback App</string>
@@ -494,25 +621,31 @@
     <string name="dict_search_app_description">App used for web searches.</string>
     <string name="dict_none">None</string>
 
-    <!-- EpubReaderAi.kt -->
-    <string name="ai_error_book_content_empty">The book content is empty.</string>
-    <string name="ai_error_parse_summary">Failed to parse summary from server response.</string>
-    <string name="ai_error_fetch_summary">Could not fetch summary.</string>
-    <string name="ai_error_with_code">Error: %1$d. %2$s</string>
-    <string name="ai_error_network_server">Network error. Please check connection and server status.</string>
-    <string name="ai_analyzing_chapter">Analyzing Chapter %1$d…</string>
-    <string name="ai_reading_position">Reading current position…</string>
-    <string name="ai_generating_recap">Generating Recap…</string>
-    <string name="ai_chapter_summary">Chapter Summary</string>
-    <string name="ai_story_recap_beta">Story Recap (Beta)</string>
-    <string name="ai_unlock_summarization">Unlock Chapter Summarization</string>
-    <string name="ai_unlock_summarization_desc">Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.</string>
+    <!-- EpubReaderAi.kt — AI feature strings, not translated. -->
+    <string name="ai_error_book_content_empty" translatable="false">The book content is empty.</string>
+    <string name="ai_error_parse_summary" translatable="false">Failed to parse summary from server response.</string>
+    <string name="ai_error_fetch_summary" translatable="false">Could not fetch summary.</string>
+    <!-- %1$d = HTTP or server error code; %2$s = human-readable error message from the server. -->
+    <string name="ai_error_with_code" translatable="false">Error: %1$d. %2$s</string>
+    <string name="ai_error_network_server" translatable="false">Network error. Please check connection and server status.</string>
+    <!-- %1$d = chapter number being analyzed. -->
+    <string name="ai_analyzing_chapter" translatable="false">Analyzing Chapter %1$d…</string>
+    <string name="ai_reading_position" translatable="false">Reading current position…</string>
+    <string name="ai_generating_recap" translatable="false">Generating Recap…</string>
+    <string name="ai_chapter_summary" translatable="false">Chapter Summary</string>
+    <!-- "(Beta)" indicates this feature is in beta — keep the label consistent. -->
+    <string name="ai_story_recap_beta" translatable="false">Story Recap (Beta)</string>
+    <string name="ai_unlock_summarization" translatable="false">Unlock Chapter Summarization</string>
+    <!-- "Episteme Pro" is the product tier name. -->
+    <string name="ai_unlock_summarization_desc" translatable="false">Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.</string>
     <string name="action_learn_more">Learn More</string>
-    <string name="ai_unlock_smart_dict">Unlock Smart Dictionary</string>
-    <string name="ai_unlock_smart_dict_desc">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
+    <string name="ai_unlock_smart_dict" translatable="false">Unlock Smart Dictionary</string>
+    <!-- "Pro" refers to the Episteme Pro product tier. -->
+    <string name="ai_unlock_smart_dict_desc" translatable="false">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
 
     <!-- EpubReaderAnnotations.kt -->
     <string name="content_desc_bookmark_icon">Bookmark</string>
+    <!-- Accessibility label for the currently selected color slot in the annotation palette. -->
     <string name="content_desc_selected_slot">Selected Slot</string>
     <string name="dialog_customize_palette">Customize Palette</string>
     <string name="palette_tap_slot_to_edit">Tap a slot to edit:</string>
@@ -528,10 +661,15 @@
     <string name="tooltip_theme">Theme</string>
     <string name="tooltip_theme_desc">Theme Settings</string>
     <string name="content_desc_more_options">More Options</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="menu_view_original_pdf">View Original PDF</string>
+    <!-- "Text View" is the name of the PDF reflow feature in this app — keep consistent. -->
     <string name="menu_delete_text_view">Delete Text View</string>
+    <!-- Menu item to switch reading mode. The colon-separated format "Reading Mode: Vertical" is intentional — do not omit the colon. -->
     <string name="menu_reading_mode_vertical">Reading Mode: Vertical</string>
+    <!-- Menu item to switch reading mode. The colon-separated format "Reading Mode: Paginated" is intentional — do not omit the colon. -->
     <string name="menu_reading_mode_paginated">Reading Mode: Paginated</string>
+    <!-- Accessibility label for a menu item that is currently active/checked. -->
     <string name="content_desc_enabled">Enabled</string>
     <string name="menu_remove_bookmark">Remove bookmark</string>
     <string name="menu_bookmark_this_page">Bookmark this page</string>
@@ -542,35 +680,51 @@
     <string name="menu_keep_screen_on">Keep Screen On</string>
     <string name="menu_visual_options">Visual Options</string>
     <string name="menu_auto_scroll">Auto Scroll</string>
+    <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_voice_settings">TTS Voice Settings</string>
+    <!-- TTS = Text-to-Speech. Debug-only menu item. -->
     <string name="menu_tts_settings_debug">TTS Settings (Debug)</string>
     <string name="content_desc_navigate_slider">Navigate with slider</string>
     <string name="content_desc_chapters_menu">Chapters Menu</string>
     <string name="content_desc_text_formatting">Text Formatting</string>
+    <!-- AI chapter summarization feature menu item. -->
     <string name="menu_chapter_summarization">Chapter Summarization</string>
-    <string name="menu_recap_beta">Recap (Beta)</string>
+    <!-- Recap is an AI feature. "(Beta)" indicates it is in beta — keep consistent. Not translated. -->
+    <string name="menu_recap_beta" translatable="false">Recap (Beta)</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_stop_tts">Stop TTS</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_start_tts">Start TTS</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_pause_tts">Pause TTS</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_resume_tts">Resume TTS</string>
     <string name="content_desc_exit_slider">Exit slider navigation</string>
     <string name="content_desc_start_page_thumbnail">Start page thumbnail</string>
     <string name="content_desc_expand">Expand</string>
     <string name="content_desc_collapse">Collapse</string>
-    <string name="content_desc_pause_playback">Pause</string>
     <string name="content_desc_start_playback">Play</string>
+    <!-- "Local Speed" = auto-scroll speed saved for the current file only. -->
     <string name="auto_scroll_local_speed">Local Speed</string>
+    <!-- "Global Speed" = auto-scroll speed that applies to all files. -->
     <string name="auto_scroll_global_speed">Global Speed</string>
+    <!-- Accessibility label for the text-selection mode toggle in the PDF reader. -->
     <string name="content_desc_select_mode">Select Mode</string>
     <string name="auto_scroll_applies_all_files">Applies to all files</string>
     <string name="auto_scroll_saved_for_file">Saved for this file only</string>
+    <!-- Musician Mode locks the reading position to allow hands-free page-reading while playing an instrument. -->
     <string name="content_desc_disable_musician_mode">Disable Musician Mode</string>
+    <!-- Musician Mode locks the reading position to allow hands-free page-reading while playing an instrument. -->
     <string name="content_desc_enable_musician_mode">Enable Musician Mode</string>
+    <!-- Accessibility label to swap the positions of playback control buttons (e.g., TTS/auto-scroll controls). -->
     <string name="content_desc_swap_controls">Swap Controls</string>
+    <!-- Min endpoint label for the auto-scroll speed slider. -->
     <string name="label_min">Min</string>
+    <!-- Max endpoint label for the auto-scroll speed slider. -->
     <string name="label_max">Max</string>
     <string name="content_desc_slower">Slower</string>
     <string name="content_desc_faster">Faster</string>
+    <!-- Shown in the PDF reader header. %1$d = current page number; %2$d = total page count. -->
     <string name="page_of_pages">Page %1$d of %2$d</string>
 
     <!-- EpubReaderDrawer.kt -->
@@ -578,9 +732,7 @@
     <string name="tab_bookmarks">Bookmarks</string>
     <string name="tab_highlights">Highlights</string>
     <string name="no_bookmarks_yet">You haven\'t added any bookmarks yet.</string>
-    <string name="bookmark_page_of">Page %1$d of %2$d</string>
     <string name="content_desc_more_options_bookmark">More options for bookmark</string>
-    <string name="menu_rename">Rename</string>
     <string name="dialog_rename_bookmark">Rename Bookmark</string>
     <string name="label_new_name">New Name</string>
     <string name="dialog_delete_bookmark">Delete Bookmark?</string>
@@ -592,7 +744,9 @@
     <string name="dialog_delete_highlight_desc">Are you sure you want to permanently delete this highlight?</string>
 
     <!-- EpubReaderScreen.kt -->
+    <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_not_found">Original PDF not found.</string>
+    <!-- Error state shown in the reader. %1$s = the file path that could not be found. -->
     <string name="error_book_content_not_found">Error: Book content not found. Path: %1$s</string>
     <string name="toast_select_dictionary_first">Please select a dictionary app first.</string>
     <string name="toast_select_translate_first">Please select a translate app first.</string>
@@ -602,7 +756,9 @@
     <string name="dialog_permission_required">Permission Required</string>
     <string name="dialog_permission_notification_desc">To show playback controls while the app is in the background, please grant the notification permission.</string>
     <string name="action_continue">Continue</string>
+    <!-- "Paginated Mode" is a reading mode name — keep consistent. -->
     <string name="dialog_justified_text_limitation">Justified Text Limitation</string>
+    <!-- "Paginated Mode" is a reading mode name — keep consistent. -->
     <string name="dialog_justified_text_limitation_desc">Using Justified alignment in Paginated Mode may cause text selection and highlights to be inaccurate due to layout limitations.</string>
     <string name="action_i_understand">I Understand</string>
     <string name="navigating_to_chapter">Navigating to chapter…</string>
@@ -611,15 +767,19 @@
     <string name="banner_wait_for_load">Wait for book to load fully.</string>
     <string name="release_for_previous_chapter">Release for Previous Chapter</string>
     <string name="release_for_next_chapter">Release for Next Chapter</string>
+    <!-- Shown while the user is pulling to navigate to another chapter. %1$d = current pull percentage (0–100). %% is a literal percent sign. -->
     <string name="pull_further_percent">Pull further… (%1$d%%)</string>
     <string name="chapter">Chapter</string>
     <string name="error_could_not_get_chapter_content">Could not get chapter content.</string>
     <string name="error_could_not_determine_chapter">Could not determine current chapter.</string>
     <string name="error_webview_not_available">WebView not available.</string>
+    <!-- Shown in the chapter navigation overlay. %1$d = current page within the chapter; %2$d = total pages in the chapter. -->
     <string name="page_number_of_total">Page %1$d/%2$d</string>
 
     <!-- EpubReaderSettings.kt -->
+    <!-- "Local Format" = text formatting settings saved for the current book only. -->
     <string name="format_local">Local Format</string>
+    <!-- "Global Format" = text formatting settings that apply to all books. -->
     <string name="format_global">Global Format</string>
     <string name="action_reset">Reset</string>
     <string name="label_size">Size</string>
@@ -630,38 +790,47 @@
     <string name="button_import_from_files">Import from Files</string>
     <string name="no_imported_fonts_yet">No imported fonts yet.</string>
     <string name="visual_options_title">Visual Options</string>
+    <!-- "Status Bar" and "Navigation Bar" are standard Android UI terms — keep consistent with your OS locale if applicable. -->
     <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
     <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>
     <string name="visual_options_progress_bar">Progress Bar</string>
     <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator at the bottom of the screen.</string>
+    <!-- "Seamless Chapter Transition" is a reading feature name. -->
     <string name="visual_options_seamless_chapter">Seamless Chapter Transition</string>
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
     <string name="visual_options_edge_padding">Remove Edge Padding</string>
     <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
 
     <!-- ExternalDictionaryHelper.kt -->
+    <!-- Label for the "Search" app category in the dictionary settings. -->
     <string name="dict_app_label_search">Search</string>
     <string name="error_opening_dictionary">Error opening dictionary</string>
     <string name="error_opening_translate">Error opening translate app</string>
     <string name="error_opening_search">Error opening search app</string>
 
     <!-- About Section -->
-    <string name="about_app_name">Episteme</string>
+    <!-- "Episteme" is the app brand name — do not translate. -->
+    <string name="about_app_name" translatable="false">Episteme</string>
+    <!-- OSS = Open Source Software. -->
     <string name="about_oss_version">Open Source Version</string>
     <string name="about_play_version">Playstore Version</string>
+    <!-- %1$s = version string (e.g. "1.0.41"). -->
     <string name="about_version_name">Version %1$s</string>
+    <!-- %1$s = build code string. -->
     <string name="about_build_code">Build %1$s</string>
-    <string name="about_github">GitHub</string>
+    <!-- "GitHub" is a brand name — do not translate. -->
+    <string name="about_github" translatable="false">GitHub</string>
+    <!-- "GitHub" is a brand name — do not translate. -->
     <string name="about_github_desc">Browse source code, star, fork, and report issues.</string>
-    <string name="about_privacy">Privacy Policy</string>
     <string name="about_privacy_desc">How we handle your data.</string>
-    <string name="about_terms">Terms of Service</string>
     <string name="about_terms_desc">Usage terms and conditions.</string>
     <string name="about_licenses_desc">Open source libraries used.</string>
+    <!-- %1$d = number of books being imported. -->
     <string name="banner_importing_multiple">Importing %1$d books… They will appear in your Library shortly.</string>
 
     <!-- General / Dialogs -->
     <string name="dialog_external_link_title">External Link</string>
+    <!-- %1$s = the full URL of the external link the user tapped. -->
     <string name="dialog_external_link_desc">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
     <string name="action_open">Open</string>
     <string name="error_no_browser">No browser found to open the link.</string>
@@ -669,31 +838,45 @@
     <!-- Annotations & Notes -->
     <string name="action_save_note">Save Note</string>
     <string name="placeholder_add_note">Add a note…</string>
+    <!-- Short label for the dictionary action in a text-selection popup. -->
     <string name="label_dict">Dict</string>
+    <!-- Short label for the speak/TTS action in a text-selection popup. -->
     <string name="label_speak">Speak</string>
+    <!-- Short label for the note action in a text-selection popup. -->
     <string name="label_note">Note</string>
+    <!-- Short label for the edit action in a text-selection popup. -->
     <string name="label_edit">Edit</string>
 
     <!-- Reader Settings & Formatting -->
+    <!-- All-caps section header in the reader settings sheet. -->
     <string name="section_font_alignment">FONT &amp; ALIGNMENT</string>
+    <!-- All-caps section header in the reader settings sheet. -->
     <string name="section_layout_spacing">LAYOUT &amp; SPACING</string>
     <string name="label_font_size">Font Size</string>
     <string name="label_line_height">Line Height</string>
     <string name="label_paragraph_gap">Paragraph Gap</string>
+    <!-- Short label for the "Original" font option in the reader settings. "Orig" is an abbreviation. -->
     <string name="label_original">Orig</string>
-    <string name="label_aa_preview">Aa</string>
+    <!-- Typographic sample label shown in the font size picker — "Aa" represents text size visually. Do not translate. -->
+    <string name="label_aa_preview" translatable="false">Aa</string>
 
     <!-- TTS & AutoScroll Controls -->
+    <!-- TTS = Text-to-Speech. -->
     <string name="tts_voice_adjustments">Voice Adjustments</string>
+    <!-- Speed multiplier label. %1$s = speed float value (e.g. "1.5"); the trailing "x" is a speed multiplier suffix. -->
     <string name="tts_speed_label">Speed (%1$sx)</string>
+    <!-- Pitch multiplier label. %1$s = pitch float value (e.g. "1.0"); the trailing "x" is a multiplier suffix. -->
     <string name="tts_pitch_label">Pitch (%1$sx)</string>
     <string name="tts_sample_text">This is how your current voice settings sound.</string>
     <string name="tts_pause_book">Pause Book</string>
     <string name="tts_resume_book">Resume Book</string>
+    <!-- Opens the Android system TTS/voice engine settings. "System" refers to the Android OS settings. -->
     <string name="tts_system_settings">System Voice / Engine Settings</string>
 
     <!-- Auto Scroll -->
+    <!-- "Global Speed" = speed that applies to all files. -->
     <string name="auto_scroll_global_label">Global Speed</string>
+    <!-- "Local Speed" = speed saved for the current file only. -->
     <string name="auto_scroll_local_label">Local Speed</string>
     <string name="auto_scroll_desc_global">Applies to all files</string>
     <string name="auto_scroll_desc_local">Saved for this file only</string>
@@ -705,18 +888,24 @@
 
     <!-- Navigation & Drawer -->
     <string name="tab_annotations">Annotations</string>
+    <!-- Filter option label to show all annotations. -->
     <string name="filter_all">All</string>
+    <!-- Filter option label to show only annotations that have attached notes. -->
     <string name="filter_with_notes">With Notes</string>
     <string name="menu_add_note">Add Note</string>
     <string name="menu_edit_note">Edit Note</string>
 
     <!-- Page Info -->
+    <!-- Compact page indicator. %1$d = current page; %2$d = total pages. -->
     <string name="page_format">%1$d / %2$d</string>
+    <!-- Full page indicator shown in the reader. %1$d = current page; %2$d = total pages. -->
     <string name="page_of_format">Page %1$d of %2$d</string>
 
     <!-- AnnotationDock -->
     <string name="content_desc_close_edit_mode">Close Edit Mode</string>
+    <!-- Toggle that shows or hides the annotation dock. -->
     <string name="content_desc_toggle_visibility">Toggle Visibility</string>
+    <!-- Stylus Only Mode restricts drawing input to a stylus, ignoring finger touches. -->
     <string name="content_desc_stylus_only_mode">Stylus Only Mode</string>
     <string name="content_desc_pen">Pen</string>
     <string name="content_desc_highlighter">Highlighter</string>
@@ -727,52 +916,78 @@
     <string name="content_desc_show_dock">Show Dock</string>
 
     <!-- PdfPageComposable -->
+    <!-- OCR = Optical Character Recognition. %1$s = error reason string. -->
     <string name="error_ocr_selection">OCR selection error: %1$s</string>
+    <!-- %1$s = error reason string from the selection engine. -->
     <string name="error_selection">Selection error: %1$s</string>
+    <!-- %1$s = error reason string from the rendering engine. -->
     <string name="error_processing_page">Error processing page: %1$s</string>
+    <!-- %1$d = the page number (1-indexed) that could not be rendered. -->
     <string name="error_unable_to_display_page">Unable to display page %1$d.</string>
 
     <!-- PdfViewerScreen & General Reader -->
     <string name="error_open_print_settings">Could not open print settings</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="loading_pdf">Loading PDF…</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="error_loading_pdf">Error loading PDF</string>
     <string name="loading_page">Loading page…</string>
+    <!-- PDF = file format name — do not translate. "Viewer" = the screen/component name. -->
     <string name="pdf_viewer">PDF Viewer</string>
-    <string name="content_desc_back">Back</string>
+    <!-- "Pen Playground" is the name of a developer/debug canvas for testing the annotation pen tool. -->
     <string name="pen_playground">Pen Playground</string>
+    <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->
     <string name="import_svg">Import SVG</string>
+    <!-- %1$d = number of SVG stroke paths that were successfully imported. -->
     <string name="msg_imported_svg_strokes">Imported %1$d SVG strokes!</string>
+    <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->
     <string name="error_import_svg_failed">Failed to import SVG or empty.</string>
+    <!-- OCR = Optical Character Recognition. -->
     <string name="menu_ocr_language">OCR Language</string>
     <string name="menu_insert_blank_page">Insert Blank Page</string>
     <string name="menu_delete_page">Delete Page</string>
+    <!-- Progress indicator while generating a text/reflow view. %1$d = percentage complete (0–100). %% is a literal percent sign. -->
     <string name="generating_reflow_progress">Generating… %1$d%%</string>
+    <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="action_open_text_view">Open Text View</string>
+    <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="action_generate_text_view">Generate Text View</string>
     <string name="action_share">Share</string>
     <string name="action_save_copy_to_device">Save copy to device</string>
     <string name="action_print">Print</string>
+    <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="generating_text_view">Generating Text View…</string>
+    <!-- %1$d = indexing completion percentage (0–100). -->
     <string name="msg_indexing_pages_progress">Indexing pages… %1$d%% done. Search results will update automatically.</string>
+    <!-- %1$d = number of pages that contain at least one search result. The "+" indicates "or more". -->
     <string name="msg_results_found_pages">Results found on %1$d+ pages</string>
+    <!-- Search position indicator. %1$d = current result index; %2$d = total result count. -->
     <string name="msg_search_result_index">Result %1$d / %2$d</string>
+    <!-- %1$d = number of pages containing results. The "+" indicates "or more". -->
     <string name="msg_search_pages_count">%1$d+ Pages</string>
-    <string name="page_format_simple">Page %1$d</string>
+    <!-- Overflow menu item in the PDF reader. %1$d = the current page number. -->
     <string name="action_summarize_page">Summarize Page (Page %1$d)</string>
+    <!-- OCR = Optical Character Recognition. %1$s = the language/locale name being downloaded (e.g. "Chinese (Simplified)"). -->
     <string name="msg_downloading_language_pack">Downloading %1$s language pack…</string>
+    <!-- OCR = Optical Character Recognition. -->
     <string name="title_select_ocr_language">Select OCR Language</string>
+    <!-- OCR = Optical Character Recognition. -->
     <string name="desc_select_ocr_language">Choose the primary language/script of this document for better text recognition results.</string>
-    <string name="desc_ocr_language_change_later">You can change this later in More Options > OCR Language.</string>
+    <!-- OCR = Optical Character Recognition. "More Options" is a UI menu name — keep consistent. -->
+    <string name="desc_ocr_language_change_later">You can change this later in More Options &gt; OCR Language.</string>
+    <!-- OCR = Optical Character Recognition. -->
     <string name="title_reindex_document">Re-index Document?</string>
+    <!-- OCR = Optical Character Recognition. %1$s = the name of the new OCR script/language selected by the user. -->
     <string name="desc_reindex_document_warning">You are changing the OCR script to %1$s.\n\nTo ensure search accuracy, we need to clear the existing index and re-scan pages that require OCR using this new language.\n\nThis will happen in the background.</string>
+    <!-- OCR = Optical Character Recognition. Button to confirm re-indexing. -->
     <string name="action_reindex">Re-index</string>
     <string name="title_password_protected">Password Protected</string>
     <string name="desc_password_protected">This document is encrypted. Please enter the password to view it.</string>
     <string name="label_password">Password</string>
     <string name="error_incorrect_password">Incorrect password</string>
-    <string name="action_open_password">Open</string>
     <string name="content_desc_hide_password">Hide password</string>
     <string name="content_desc_show_password">Show password</string>
+    <!-- Warning dialog shown before navigating to a URL from within a PDF. %1$s = the full destination URL. -->
     <string name="desc_external_link_warning">You are about to navigate to:\n%1$s</string>
     <string name="action_visit">Visit</string>
     <string name="title_save_to_device">Save to Device</string>
@@ -780,18 +995,26 @@
     <string name="action_with_annotations">With Annotations</string>
     <string name="action_original">Original</string>
     <string name="desc_choose_format_share">Choose format to share:</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="msg_preparing_pdf">Preparing PDF…</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="title_add_pdf_to_tab">Add PDF to Tab</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="msg_no_other_pdfs_found">No other PDFs found in your library.</string>
+    <!-- PDF = file format name — do not translate. -->
     <string name="msg_pdf_empty_or_error">PDF is empty or could not be displayed.</string>
+    <!-- %1$d = the page index (1-indexed) where the blank page was inserted. -->
     <string name="msg_page_added_at">Page added at %1$d</string>
     <string name="msg_page_deleted">Page deleted</string>
     <string name="msg_extra_page_removed">Extra page removed</string>
     <string name="msg_chapters_not_available">Chapters are not available for this book.</string>
+    <!-- Default name for a new highlighted section when no text label is provided. -->
     <string name="msg_highlighted_section_default">Highlighted section</string>
 
     <!-- ToolSettingsPopup -->
+    <!-- Toggle in the PDF annotation tools to snap drawn lines to a straight angle. -->
     <string name="label_straight_line">Straight Line</string>
+    <!-- Color picker tab/slider label — "Spectrum" = full color spectrum picker. -->
     <string name="label_spectrum">Spectrum</string>
     <string name="action_done">Done</string>
     <string name="color_red">Red</string>
@@ -799,10 +1022,12 @@
     <string name="color_blue">Blue</string>
 
     <!-- TextAnnotationDock -->
+    <!-- Default system font option in the annotation font picker. -->
     <string name="font_default_system">Default System Font</string>
     <string name="action_import">Import</string>
     <string name="msg_no_fonts_imported">No fonts imported</string>
     <string name="label_font_color">Font color</string>
+    <!-- Label for the highlight color picker in text annotations. -->
     <string name="label_highlight_color">Highlight</string>
 
     <!-- UniversalDocument -->

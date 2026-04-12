@@ -664,7 +664,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         },
-                        text = stringResource(R.string.about_privacy),
+                        text = stringResource(R.string.legal_privacy_policy),
                         subtitle = stringResource(R.string.about_privacy_desc),
                         onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
                     )
@@ -680,7 +680,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         },
-                        text = stringResource(R.string.about_terms),
+                        text = stringResource(R.string.legal_terms_of_service),
                         subtitle = stringResource(R.string.about_terms_desc),
                         onClick = { uriHandler.openUri(TERMS_URL) }
                     )

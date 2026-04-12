@@ -551,7 +551,7 @@ private fun BookmarksList(
                                     onDismissRequest = { bookmarkMenuExpandedFor = null }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_rename)) },
+                                        text = { Text(stringResource(R.string.action_rename)) },
                                         onClick = {
                                             showRenameBookmarkDialog = bookmark
                                             bookmarkMenuExpandedFor = null
