@@ -36,13 +36,9 @@
     <string name="pin_unpin">Pin/Unpin</string>
     <string name="info">Info</string>
     <string name="select_all">Select All</string>
-    <string name="dialog_delete_permanently">Delete File(s) Permanently</string>
     <string name="dialog_remove_from_recents">Remove from Recents</string>
     <string name="dialog_warning_folder_sync_delete">Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.</string>
-    <!-- %1$d = number of selected files to permanently delete. -->
-    <string name="dialog_permanently_delete_desc">Do you want to permanently delete %1$d selected file(s) from your device? This action cannot be undone.</string>
-    <!-- %1$d = number of selected files to remove from the recents list. -->
-    <string name="dialog_remove_recents_desc">Do you want to remove %1$d selected file(s) from the recent files list? It will reappear if you open it again from the library.</string>
+
     <string name="file_information">File Information</string>
     <string name="book_name">Book Name</string>
     <string name="copy_name">Copy Name</string>
@@ -153,8 +149,7 @@
     <!-- Confirmation dialog. %1$s = name of the shelf being deleted. -->
     <string name="dialog_delete_shelf_desc">Are you sure you want to delete the \'%1$s\' shelf? All books will be moved to Unshelved.</string>
     <string name="dialog_remove_from_shelf">Remove from Shelf?</string>
-    <!-- Confirmation dialog. %1$d = count of books; %2$s = "book" or "books" (resolved from a plural); %3$s = shelf name. -->
-    <string name="dialog_remove_from_shelf_desc">Are you sure you want to remove %1$d %2$s from the \'%3$s\' shelf? The book(s) will remain in your library and appear under Unshelved.</string>
+
     <!-- Dialog title when deleting multiple shelves. %1$s = shelf name(s). -->
     <string name="dialog_delete_shelves">Delete %1$s?</string>
     <!-- Dialog body when deleting multiple shelves. %1$d = count of selected shelves; %2$s = "shelf" or "shelves" (resolved from a plural). -->
@@ -508,8 +503,7 @@
     <string name="banner_deleting_all_devices">Deleting from all devices…</string>
     <string name="banner_deletion_complete">Deletion complete.</string>
     <string name="error_cloud_sync_failed_deleted_locally">Cloud sync failed, deleted locally.</string>
-    <!-- %1$d = number of books removed from the library. -->
-    <string name="banner_books_removed_library">%1$d book(s) removed from library.</string>
+
     <!-- "Text views" are PDF reflow versions of documents. -->
     <string name="banner_reflow_cache_cleared">Reflow cache &amp; generated text views cleared.</string>
 

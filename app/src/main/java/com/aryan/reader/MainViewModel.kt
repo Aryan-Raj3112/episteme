@@ -4330,7 +4330,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _internalState.update {
                     it.copy(
                         isLoading = false,
-                        bannerMessage = BannerMessage(appContext.getString(R.string.banner_books_removed_library, totalRemoved))
+                        bannerMessage = BannerMessage(appContext.resources.getQuantityString(R.plurals.banner_books_removed_library, totalRemoved, totalRemoved))
                     )
                 }
             }

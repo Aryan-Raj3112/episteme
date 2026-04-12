@@ -90,6 +90,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -295,16 +296,16 @@ fun DeleteConfirmationDialog(
     isPermanentDelete: Boolean = false,
     containsFolderItems: Boolean = false
 ) {
-    val title = if (isPermanentDelete) stringResource(R.string.dialog_delete_permanently) else stringResource(R.string.dialog_remove_from_recents)
+    val title = if (isPermanentDelete) pluralStringResource(R.plurals.dialog_delete_permanently, count) else stringResource(R.string.dialog_remove_from_recents)
 
     val text = if (isPermanentDelete) {
         if (containsFolderItems) {
             stringResource(R.string.dialog_warning_folder_sync_delete)
         } else {
-            stringResource(R.string.dialog_permanently_delete_desc, count)
+            pluralStringResource(R.plurals.dialog_permanently_delete_desc, count, count)
         }
     } else {
-        stringResource(R.string.dialog_remove_recents_desc, count)
+        pluralStringResource(R.plurals.dialog_remove_recents_desc, count, count)
     }
 
     val confirmText = if (isPermanentDelete) stringResource(R.string.action_delete) else stringResource(R.string.action_remove)
