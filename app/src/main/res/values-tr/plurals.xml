@@ -1,3 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d kitap</item>
+        <item quantity="other">%1$d kitap</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">kitap</item>
+        <item quantity="other">kitap</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d raf</item>
+        <item quantity="other">%1$d raf</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d sonuç bulundu</item>
+        <item quantity="other">%1$d sonuç bulundu</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Dosyayı Kalıcı Olarak Sil</item>
+        <item quantity="other">Dosyaları Kalıcı Olarak Sil</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Seçilmiş dosyayı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</item>
+        <item quantity="other">%1$d seçilmiş dosyayı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Seçilmiş dosyayı son dosyalar listesinden silmek istediğinize emin misiniz? Dosyayı kütüphaneden tekrar açarsanız yeniden burada gözükecektir.</item>
+        <item quantity="other">%1$d seçilmiş dosyayı son dosyalar listesinden silmek istediğinize emin misiniz? Dosyayı kütüphaneden tekrar açarsanız yeniden burada gözükecektir.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Kitabı \'%2$s\' rafından kaldırmak istediğinize emin misiniz? Kitap, kütüphanenizde kalmaya devam edecek ve Rafta Değil olarak gözükecektir.</item>
+        <item quantity="other">%1$d kitabı \'%2$s\' rafından kaldırmak istediğinize emin misiniz? Kitap, kütüphanenizde kalmaya devam edecek ve Rafta Değil olarak gözükecektir.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d kitap kütüphaneden kaldırıldı.</item>
+        <item quantity="other">%1$d kitap kütüphaneden kaldırıldı.</item>
+    </plurals>
 </resources>
