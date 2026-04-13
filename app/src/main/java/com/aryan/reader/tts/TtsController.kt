@@ -159,7 +159,8 @@ class TtsController(context: Context) : Player.Listener {
         chapterTitle: String?,
         coverImageUri: String?,
         ttsMode: TtsPlaybackManager.TtsMode,
-        playbackSource: String = "READER"
+        playbackSource: String = "READER",
+        authToken: String? = null
     ) {
         if (chunks.isEmpty()) {
             Timber.w("TtsController: start called with empty chunks!")
@@ -181,6 +182,7 @@ class TtsController(context: Context) : Player.Listener {
             putString(KEY_COVER_IMAGE_URI, coverImageUri)
             putString(KEY_TTS_MODE, ttsMode.name)
             putString(KEY_PLAYBACK_SOURCE, playbackSource)
+            putString(KEY_AUTH_TOKEN, authToken)
         }
         mediaController?.sendCustomCommand(START_TTS_COMMAND, args)
 

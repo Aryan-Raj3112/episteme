@@ -4490,6 +4490,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(useStrictFileFilter = enabled) }
     }
 
+    suspend fun getAuthToken(): String? {
+        return authRepository.getIdToken()
+    }
+
     companion object {
         private const val KEY_SORT_ORDER = "sort_order"
         internal const val KEY_SHELVES = "shelf_names"

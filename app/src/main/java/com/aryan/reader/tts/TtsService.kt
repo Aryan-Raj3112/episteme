@@ -49,7 +49,8 @@ data class WordTimingInfo(val word: String, val startTime: Double)
 data class TtsAudioData(
     val audioFile: File?,
     val serverText: String?,
-    val wordTimings: List<WordTimingInfo>?
+    val wordTimings: List<WordTimingInfo>?,
+    val error: String? = null
 )
 
 data class PageCharacterRange(
@@ -95,7 +96,8 @@ class TtsService : MediaSessionService() {
         chunkToSpeak: String,
         speakerId: String,
         serverUrl: String,
-        audioFileExtension: String
+        audioFileExtension: String,
+        authToken: String?
     ): TtsAudioData {
         if (chunkToSpeak.isBlank()) {
             return TtsAudioData(null, null, null)
@@ -108,6 +110,9 @@ class TtsService : MediaSessionService() {
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 connection.setRequestProperty("Accept", "application/json")
+                if (authToken != null) {
+                    connection.setRequestProperty("Authorization", "Bearer $authToken")
+                }
                 connection.connectTimeout = 15000
                 connection.readTimeout = 60000
                 connection.doOutput = true
@@ -123,6 +128,12 @@ class TtsService : MediaSessionService() {
                 }
 
                 val responseCode = connection.responseCode
+
+                if (responseCode == 402) {
+                    Timber.w("TTS Server: Insufficient Credits")
+                    return@withContext TtsAudioData(null, null, null, "INSUFFICIENT_CREDITS")
+                }
+
                 if (responseCode != HttpURLConnection.HTTP_OK) {
                     val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "" }
                     Timber.e("TTS Server request failed with code: $responseCode for URL: $serverUrl. Body: $errorBody")
@@ -171,14 +182,9 @@ class TtsService : MediaSessionService() {
         }
     }
 
-    private val downloadAudioChunk: suspend (String, String) -> TtsAudioData =
-        { chunkToSpeak, speakerId ->
-            downloadFromTtsServer(
-                chunkToSpeak,
-                speakerId,
-                googleCloudWorkerTtsUrl,
-                ".mp3"
-            )
+    private val downloadAudioChunk: suspend (String, String, String?) -> TtsAudioData =
+        { chunkToSpeak, speakerId, authToken ->
+            downloadFromTtsServer(chunkToSpeak, speakerId, googleCloudWorkerTtsUrl, ".mp3", authToken)
         }
 
     private val synthesizeBaseTtsChunk: suspend (String) -> TtsAudioData =
@@ -187,10 +193,10 @@ class TtsService : MediaSessionService() {
             TtsAudioData(file, text, null)
         }
 
-    private val audioGenerator: suspend (text: String, speaker: String, mode: TtsMode) -> TtsAudioData =
-        { text, speaker, mode ->
+    private val audioGenerator: suspend (text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
+        { text, speaker, mode, authToken ->
             when (mode) {
-                TtsMode.CLOUD -> downloadAudioChunk(text, speaker)
+                TtsMode.CLOUD -> downloadAudioChunk(text, speaker, authToken)
                 TtsMode.BASE -> synthesizeBaseTtsChunk(text)
             }
         }

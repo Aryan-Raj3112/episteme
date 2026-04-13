@@ -1039,7 +1039,7 @@ private fun AppDrawerContent(
                         uiState.currentUser.email?.let { email ->
                             Text(text = email, style = MaterialTheme.typography.bodyMedium)
                         }
-                        if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") {
+                        if (BuildConfig.FLAVOR == "pro") {
                             Surface(
                                 color = MaterialTheme.colorScheme.tertiaryContainer,
                                 shape = CircleShape,

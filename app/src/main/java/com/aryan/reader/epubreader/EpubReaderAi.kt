@@ -55,6 +55,7 @@ import java.net.URL
  */
 suspend fun summarizeBookContent(
     content: String,
+    authToken: String?,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -74,6 +75,9 @@ suspend fun summarizeBookContent(
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             connection.setRequestProperty("Accept", "application/json")
+            if (authToken != null) {
+                connection.setRequestProperty("Authorization", "Bearer $authToken")
+            }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true
@@ -88,7 +92,12 @@ suspend fun summarizeBookContent(
             }
 
             val responseCode = connection.responseCode
-            Timber.d("Summarization: Got response code $responseCode")
+
+            if (responseCode == 402) {
+                onError("INSUFFICIENT_CREDITS")
+                onFinish()
+                return@withContext
+            }
 
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 var hasReceivedData = false
@@ -137,6 +146,7 @@ suspend fun summarizeBookContent(
  * Fetches past summaries from cache/network and combines with current context.
  */
 suspend fun executeRecapLogic(
+    authToken: String?,
     epubBook: EpubBook,
     chapterIndex: Int,
     characterLimit: Int,
@@ -176,6 +186,7 @@ suspend fun executeRecapLogic(
 
                 summarizeBookContent(
                     content = textToSummarize,
+                    authToken = authToken,
                     onUpdate = { sb.append(it) },
                     onError = {
                         Timber.e("Failed to summarize Ch $i for recap: $it")
@@ -223,6 +234,7 @@ suspend fun executeRecapLogic(
         pastSummaries = pastSummaries,
         currentText = finalContextText,
         context = context,
+        authToken = authToken,
         onUpdate = { chunk -> onResultUpdate(chunk) },
         onError = { error -> onError(error) },
         onFinish = { onFinish() }
@@ -253,7 +265,8 @@ fun EpubReaderAiOverlays(
     onDismissDictionaryUpsell: () -> Unit,
     onNavigateToPro: () -> Unit,
     isTtsSessionActive: Boolean,
-    onOpenExternalDictionary: (String) -> Unit
+    onOpenExternalDictionary: (String) -> Unit,
+    getAuthToken: suspend () -> String?
 ) {
     if (showSummarizationPopup) {
         SummarizationPopup(
@@ -261,7 +274,8 @@ fun EpubReaderAiOverlays(
             result = summarizationResult,
             isLoading = isSummarizationLoading,
             onDismiss = onDismissSummarization,
-            isMainTtsActive = isTtsSessionActive
+            isMainTtsActive = isTtsSessionActive,
+            getAuthToken = getAuthToken
         )
     }
 
@@ -272,6 +286,7 @@ fun EpubReaderAiOverlays(
             isLoading = isRecapLoading,
             onDismiss = onDismissRecap,
             isMainTtsActive = isTtsSessionActive,
+            getAuthToken = getAuthToken
         )
     }
 
@@ -312,7 +327,8 @@ fun EpubReaderAiOverlays(
             isMainTtsActive = isTtsSessionActive,
             onOpenExternalDictionary = {
                 selectedTextForAi?.let { text -> onOpenExternalDictionary(text) }
-            }
+            },
+            getAuthToken = getAuthToken
         )
     }
 

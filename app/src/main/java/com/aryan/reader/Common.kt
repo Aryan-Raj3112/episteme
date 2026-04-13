@@ -507,6 +507,7 @@ fun SummarizationPopup(
     isLoading: Boolean,
     onDismiss: () -> Unit,
     isMainTtsActive: Boolean = false,
+    getAuthToken: suspend () -> String?
 ) {
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
@@ -581,18 +582,20 @@ fun SummarizationPopup(
                                     if (isTtsSessionActive) {
                                         ttsController.stop()
                                     } else {
-                                        val chunks = splitTextIntoChunks(textToUse).map {
-                                            TtsChunk(it, "", -1)
-                                        }
+                                        val chunks = splitTextIntoChunks(textToUse).map { TtsChunk(it, "", -1) }
                                         if (chunks.isNotEmpty()) {
-                                            ttsController.start(
-                                                chunks = chunks,
-                                                bookTitle = title,
-                                                chapterTitle = "Summary",
-                                                coverImageUri = null,
-                                                ttsMode = loadTtsMode(context),
-                                                playbackSource = "POPUP"
-                                            )
+                                            scope.launch {
+                                                val token = getAuthToken()
+                                                ttsController.start(
+                                                    chunks = chunks,
+                                                    bookTitle = title,
+                                                    chapterTitle = "Summary",
+                                                    coverImageUri = null,
+                                                    ttsMode = loadTtsMode(context),
+                                                    playbackSource = "POPUP",
+                                                    authToken = token
+                                                )
+                                            }
                                         }
                                     }
                                 },
@@ -676,7 +679,8 @@ fun AiDefinitionPopup(
     isLoading: Boolean,
     onDismiss: () -> Unit,
     isMainTtsActive: Boolean = false,
-    onOpenExternalDictionary: () -> Unit
+    onOpenExternalDictionary: () -> Unit,
+    getAuthToken: suspend () -> String?
 ) {
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
@@ -760,14 +764,18 @@ fun AiDefinitionPopup(
                                             TtsChunk(it, "", -1)
                                         }
                                         if (chunks.isNotEmpty()) {
-                                            ttsController.start(
-                                                chunks = chunks,
-                                                bookTitle = "AI Definition",
-                                                chapterTitle = word,
-                                                coverImageUri = null,
-                                                ttsMode = loadTtsMode(context),
-                                                playbackSource = "POPUP"
-                                            )
+                                            scope.launch {
+                                                val token = getAuthToken()
+                                                ttsController.start(
+                                                    chunks = chunks,
+                                                    bookTitle = "AI Definition",
+                                                    chapterTitle = word,
+                                                    coverImageUri = null,
+                                                    ttsMode = loadTtsMode(context),
+                                                    playbackSource = "POPUP",
+                                                    authToken = token
+                                                )
+                                            }
                                         }
                                     }
                                 },
@@ -912,6 +920,7 @@ fun SearchResultsPanel(
 suspend fun fetchAiDefinition(
     text: String,
     context: Context,
+    authToken: String?,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -931,6 +940,9 @@ suspend fun fetchAiDefinition(
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             connection.setRequestProperty("Accept", "application/json")
+            if (authToken != null) {
+                connection.setRequestProperty("Authorization", "Bearer $authToken")
+            }
             connection.connectTimeout = 10000
             connection.readTimeout = 30000
             connection.doOutput = true
@@ -942,6 +954,11 @@ suspend fun fetchAiDefinition(
             }
 
             val responseCode = connection.responseCode
+            if (responseCode == 402) {
+                onError("INSUFFICIENT_CREDITS")
+                onFinish()
+                return@withContext
+            }
             Timber.d("Definition: Got response code $responseCode")
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 var hasReceivedData = false
@@ -1097,6 +1114,7 @@ suspend fun fetchRecap(
     pastSummaries: List<String>,
     currentText: String,
     context: Context,
+    authToken: String?,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -1115,6 +1133,9 @@ suspend fun fetchRecap(
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             connection.setRequestProperty("Accept", "application/json")
+            if (authToken != null) {
+                connection.setRequestProperty("Authorization", "Bearer $authToken")
+            }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true
@@ -1130,6 +1151,11 @@ suspend fun fetchRecap(
             }
 
             val responseCode = connection.responseCode
+            if (responseCode == 402) {
+                onError("INSUFFICIENT_CREDITS")
+                onFinish()
+                return@withContext
+            }
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 var hasReceivedData = false
                 connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->

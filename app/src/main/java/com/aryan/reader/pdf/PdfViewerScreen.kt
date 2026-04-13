@@ -2737,17 +2737,20 @@ fun PdfViewerScreen(
                         coroutineScope.launch {
                             isAiDefinitionLoading = true
                             aiDefinitionResult = null
+                            val token = viewModel.getAuthToken()
                             fetchAiDefinition(
-                                text = text, onUpdate = { chunk ->
-                                val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                aiDefinitionResult = AiDefinitionResult(
-                                    definition = currentDefinition + chunk
-                                )
-                            }, onError = { error ->
-                                aiDefinitionResult = AiDefinitionResult(error = error)
-                            }, onFinish = {
-                                isAiDefinitionLoading = false
-                            }, context = context
+                                text = text,
+                                authToken = token,
+                                onUpdate = { chunk ->
+                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                    aiDefinitionResult = AiDefinitionResult(
+                                        definition = currentDefinition + chunk
+                                    )
+                                }, onError = { error ->
+                                    aiDefinitionResult = AiDefinitionResult(error = error)
+                                }, onFinish = {
+                                    isAiDefinitionLoading = false
+                                }, context = context
                             )
                         }
                     } else {
@@ -2835,6 +2838,7 @@ fun PdfViewerScreen(
     }
 
     suspend fun summarizeCurrentPage(
+        authToken: String?,
         onUpdate: (SummarizationResult) -> Unit, onFinish: () -> Unit
     ) {
         val currentPageIndex = currentPage
@@ -2891,6 +2895,9 @@ fun PdfViewerScreen(
                 val jsonPayload = JSONObject().apply {
                     put("content_type", "image")
                     put("data", base64Image)
+                }
+                if (authToken != null) {
+                    connection.setRequestProperty("Authorization", "Bearer $authToken")
                 }
                 connection.outputStream.use { os ->
                     os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
@@ -3037,6 +3044,7 @@ fun PdfViewerScreen(
             return
         }
         coroutineScope.launch {
+            val token = viewModel.getAuthToken()
             val pageToRead = pageToReadOverride ?: currentPage
             var rawPageText: String? = null
             var tempPage: ReaderPage? = null
@@ -3108,7 +3116,8 @@ fun PdfViewerScreen(
                     chapterTitle = pageTitle,
                     coverImageUri = null,
                     ttsMode = currentTtsMode,
-                    playbackSource = "READER"
+                    playbackSource = "READER",
+                    authToken = token
                 )
 
                 if (isAutoPagingForTts) {
@@ -6454,11 +6463,15 @@ fun PdfViewerScreen(
                                                     coroutineScope.launch {
                                                         isAiDefinitionLoading = true
                                                         summarizationResult = null
-                                                        summarizeCurrentPage(onUpdate = { result ->
-                                                            summarizationResult = result
-                                                        }, onFinish = {
-                                                            isAiDefinitionLoading = false
-                                                        })
+                                                        val token = viewModel.getAuthToken()
+                                                        summarizeCurrentPage(
+                                                            authToken = token,
+                                                            onUpdate = { result ->
+                                                                summarizationResult = result
+                                                            }, onFinish = {
+                                                                isAiDefinitionLoading = false
+                                                            }
+                                                        )
                                                     }
                                                 } else {
                                                     showSummarizationUpsellDialog = true
@@ -7196,7 +7209,8 @@ fun PdfViewerScreen(
                         result = summarizationResult,
                         isLoading = isSummarizationLoading,
                         onDismiss = { showSummarizationPopup = false },
-                        isMainTtsActive = isTtsSessionActive
+                        isMainTtsActive = isTtsSessionActive,
+                        getAuthToken = { viewModel.getAuthToken() }
                     )
                 }
                 if (showPermissionRationaleDialog) {
@@ -7342,7 +7356,8 @@ fun PdfViewerScreen(
                                     showDictionarySettingsSheet = true
                                 }
                             }
-                        }
+                        },
+                        getAuthToken = { viewModel.getAuthToken() }
                     )
                 }
                 if (showDictionaryUpsellDialog) {

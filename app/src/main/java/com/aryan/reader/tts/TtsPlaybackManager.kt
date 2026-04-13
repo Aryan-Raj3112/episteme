@@ -68,13 +68,14 @@ const val KEY_TTS_MODE = "KEY_TTS_MODE"
 const val KEY_WORD_TIMESTAMPS = "KEY_WORD_TIMESTAMPS"
 const val KEY_WORD_OFFSETS = "KEY_WORD_OFFSETS"
 const val KEY_PLAYBACK_SOURCE = "KEY_PLAYBACK_SOURCE"
+const val KEY_AUTH_TOKEN = "KEY_AUTH_TOKEN"
 
 private const val PREFETCH_LOOKAHEAD = 2
 
 @UnstableApi
 class TtsPlaybackManager(
     private val player: Player,
-    private val generateAudioChunk: suspend (textChunk: String, speakerId: String, mode: TtsMode) -> TtsAudioData
+    private val generateAudioChunk: suspend (textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData
 ) : MediaSession.Callback, Player.Listener {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -82,6 +83,7 @@ class TtsPlaybackManager(
     private val prefetchingJobs = mutableMapOf<Int, Job>()
     private var wordTrackingJob: Job? = null
     private var preparationJob: Job? = null
+    private var currentAuthToken: String? = null
 
     enum class TtsMode {
         CLOUD, BASE
@@ -192,7 +194,8 @@ class TtsPlaybackManager(
                     chunks.map { TtsChunk(it, "", -1) }
                 }
 
-                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource)
+                val authToken = args.getString(KEY_AUTH_TOKEN)
+                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource, authToken)
             }
             STOP_TTS_COMMAND -> {
                 Timber.d("Received STOP command.")
@@ -285,7 +288,8 @@ class TtsPlaybackManager(
         chapterTitle: String?,
         coverImageUri: String?,
         ttsMode: TtsMode,
-        playbackSource: String?
+        playbackSource: String?,
+        authToken: String?
     ) {
         if (chunks.isEmpty()) {
             _ttsState.value = _ttsState.value.copy(errorMessage = "No text to read.")
@@ -299,7 +303,7 @@ class TtsPlaybackManager(
         this.chapterTitle = chapterTitle
         this.coverImageUri = coverImageUri
         _ttsState.value = TtsState(isLoading = true, speakerId = speakerId, playbackSource = playbackSource)
-
+        currentAuthToken = authToken
         preparationJob = scope.launch {
             prepareAndPlayFirstChunk()
         }
@@ -319,7 +323,13 @@ class TtsPlaybackManager(
             return
         }
 
-        val ttsAudioData = generateAudioChunk(firstChunk.text, currentSpeakerId, currentTtsMode)
+        val ttsAudioData = generateAudioChunk(firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+
+        if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
+            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
+            return
+        }
+
         val audioFile = ttsAudioData.audioFile
         val serverText = ttsAudioData.serverText
 
@@ -513,7 +523,13 @@ class TtsPlaybackManager(
 
                 val job = scope.launch {
                     val nextChunk = textChunks[targetIndex]
-                    val ttsAudioData = generateAudioChunk(nextChunk.text, currentSpeakerId, currentTtsMode)
+                    val ttsAudioData = generateAudioChunk(nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+
+                    if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
+                        _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
+                        return@launch
+                    }
+
                     val audioFile = ttsAudioData.audioFile
                     val serverText = ttsAudioData.serverText
 

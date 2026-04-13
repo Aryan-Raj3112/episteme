@@ -80,7 +80,7 @@ fun ProScreen(
     var showEarlyAccessInfoDialog by remember { mutableStateOf(false) }
     var showSignInRequiredDialog by remember { mutableStateOf(false) }
 
-    val tabCount = if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") 3 else 2
+    val tabCount = if (BuildConfig.FLAVOR == "pro") 3 else 2
     val pagerState = rememberPagerState(initialPage = 1, pageCount = { tabCount })
     var selectedTabIndex by remember { mutableIntStateOf(1) }
     val scope = rememberCoroutineScope()
@@ -223,7 +223,7 @@ fun ProScreen(
                     selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") {
+                if (BuildConfig.FLAVOR == "pro") {
                     Tab(
                         selected = selectedTabIndex == 2,
                         onClick = { selectedTabIndex = 2 },
@@ -277,7 +277,7 @@ fun ProScreen(
                             onSignInRequiredClick = { showSignInRequiredDialog = true })
                     }
 
-                    2 if BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro" -> {
+                    2 if BuildConfig.FLAVOR == "pro" -> {
                         CreditTierCard(
                             credits = uiState.credits,
                             creditProducts = proUpgradeState.creditProducts,

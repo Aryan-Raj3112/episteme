@@ -22,4 +22,6 @@ class AuthRepository(private val applicationContext: Context) {
     fun observeAuthState(): Flow<UserData?> {
         return flowOf(null)
     }
+
+    suspend fun getIdToken(): String? = null
 }
