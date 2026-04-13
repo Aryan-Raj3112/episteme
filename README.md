@@ -92,12 +92,9 @@ Powered by the Android OSS ecosystem:
 
 ## Translations
 
-Help translate Episteme Reader into your native language! We use [Weblate](https://hosted.weblate.org/engage/episteme/) to manage localization.
+Help translate Episteme Reader into your native language! [Weblate](https://hosted.weblate.org/engage/episteme/) is used to manage localization.
 
-| Language | Status |
-|----------|--------|
-| English | <a href="https://hosted.weblate.org/projects/episteme/-/en/"><img src="https://hosted.weblate.org/widget/episteme/-/en/svg-badge.svg" alt="English translation status"/></a> |
-| Turkish | <a href="https://hosted.weblate.org/projects/episteme/-/tr/"><img src="https://hosted.weblate.org/widget/episteme/-/tr/svg-badge.svg" alt="Turkish translation status"/></a> |
+[![Translation status](https://hosted.weblate.org/widget/episteme/multi-auto.svg)](https://hosted.weblate.org/engage/episteme/)
 
 ## License
 
