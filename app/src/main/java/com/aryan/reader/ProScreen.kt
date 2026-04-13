@@ -61,10 +61,12 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.data.ProductDetailsEntity
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Currency
 
+@Suppress("KotlinConstantConditions")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ProScreen(
@@ -78,7 +80,8 @@ fun ProScreen(
     var showEarlyAccessInfoDialog by remember { mutableStateOf(false) }
     var showSignInRequiredDialog by remember { mutableStateOf(false) }
 
-    val pagerState = rememberPagerState(initialPage = 1, pageCount = { 2 })
+    val tabCount = if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") 3 else 2
+    val pagerState = rememberPagerState(initialPage = 1, pageCount = { tabCount })
     var selectedTabIndex by remember { mutableIntStateOf(1) }
     val scope = rememberCoroutineScope()
 
@@ -220,6 +223,31 @@ fun ProScreen(
                     selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") {
+                    Tab(
+                        selected = selectedTabIndex == 2,
+                        onClick = { selectedTabIndex = 2 },
+                        modifier = Modifier
+                            .height(56.dp)
+                            .clip(CircleShape)
+                            .background(if (selectedTabIndex == 2) MaterialTheme.colorScheme.surface else Color.Transparent)
+                            .border(
+                                width = if (selectedTabIndex == 2) 2.dp else 0.dp,
+                                color = if (selectedTabIndex == 2) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                shape = CircleShape
+                            ),
+                        text = {
+                            AutoSizeText("Credits", // Hardcoding string for debug
+                                style = LocalTextStyle.current.copy(
+                                    color = if (selectedTabIndex == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -229,22 +257,35 @@ fun ProScreen(
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                 userScrollEnabled = true
             ) { page ->
-                if (page == 0) {
-                    FreeTierCard()
-                } else {
-                    ProTierCard(
-                        isProUser = uiState.isProUser,
-                        isUserSignedIn = uiState.currentUser != null,
-                        proUpgradeState = proUpgradeState,
-                        onUpgradeClick = {
-                            (context as? Activity)?.let {
-                                viewModel.launchPurchaseFlow(it)
-                            }
-                        },
-                        onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
-                        onShowEarlyAccessInfo = { showEarlyAccessInfoDialog = true },
-                        onSignInRequiredClick = { showSignInRequiredDialog = true }
-                    )
+                when (page) {
+                    0 -> {
+                        FreeTierCard()
+                    }
+
+                    1 -> {
+                        ProTierCard(
+                            isProUser = uiState.isProUser,
+                            isUserSignedIn = uiState.currentUser != null,
+                            proUpgradeState = proUpgradeState,
+                            onUpgradeClick = {
+                                (context as? Activity)?.let {
+                                    viewModel.launchPurchaseFlow(it)
+                                }
+                            },
+                            onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
+                            onShowEarlyAccessInfo = { showEarlyAccessInfoDialog = true },
+                            onSignInRequiredClick = { showSignInRequiredDialog = true })
+                    }
+
+                    2 if BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro" -> {
+                        CreditTierCard(
+                            credits = uiState.credits,
+                            creditProducts = proUpgradeState.creditProducts,
+                            isVerifying = proUpgradeState.isVerifying,
+                            onBuyCredits = { productId ->
+                                (context as? Activity)?.let { viewModel.launchPurchaseFlow(it, productId) }
+                            })
+                    }
                 }
             }
         }
@@ -705,4 +746,77 @@ fun SignInRequiredDialog(onSignInClick: () -> Unit, onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_not_now)) }
         }
     )
+}
+
+@Composable
+private fun CreditTierCard(
+    credits: Int,
+    creditProducts: List<ProductDetailsEntity>,
+    isVerifying: Boolean,
+    onBuyCredits: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("AI & Cloud Credits", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "$credits",
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text("Credits Available", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                FeatureListItem(iconRes = R.drawable.cloud_sync, text = "Cloud TTS")
+                FeatureListItem(iconRes = R.drawable.summarize, text = "AI Summarization & Recap")
+                Text(
+                    "Top-up credits below to use them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 36.dp, bottom = 16.dp, top = 8.dp)
+                )
+            }
+
+            if (isVerifying) {
+                CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                Text("Processing Purchase...", style = MaterialTheme.typography.bodySmall)
+            } else if (creditProducts.isEmpty()) {
+                Text("Loading credit packages...", modifier = Modifier.padding(16.dp))
+            } else {
+                creditProducts.forEach { product ->
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        onClick = { onBuyCredits(product.productId) },
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(product.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                                Text(product.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Button(onClick = { onBuyCredits(product.productId) }) {
+                                Text(product.formattedPrice)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 data class ProUpgradeState(
     val productDetails: ProductDetailsEntity? = null,
+    val creditProducts: List<ProductDetailsEntity> = emptyList(),
     val hasValidPurchase: Boolean = false,
     val activePurchases: List<PurchaseEntity> = emptyList(),
     val billingClientReady: Boolean = false,
@@ -34,9 +35,10 @@ class BillingClientWrapper(
         // No-op
     }
 
-    fun launchPurchaseFlow(activity: Activity) {
+    fun launchPurchaseFlow(activity: Activity, productId: String = PRO_LIFETIME_PRODUCT_ID) {
         _proUpgradeState.value = _proUpgradeState.value.copy(error = "Not available in Open Source version")
     }
+    fun consumePurchase(purchaseToken: String) {}
 
     fun clearError() {
         _proUpgradeState.value = _proUpgradeState.value.copy(error = null)

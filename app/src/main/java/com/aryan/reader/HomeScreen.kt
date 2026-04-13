@@ -1039,6 +1039,19 @@ private fun AppDrawerContent(
                         uiState.currentUser.email?.let { email ->
                             Text(text = email, style = MaterialTheme.typography.bodyMedium)
                         }
+                        if (BuildConfig.DEBUG && BuildConfig.FLAVOR == "pro") {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                shape = CircleShape,
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.FormatListNumbered, contentDescription = "Credits", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("${uiState.credits} Credits", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                }
+                            }
+                        }
                     }
                 } else {
                     // Signed-out: Show Sign In button at the top

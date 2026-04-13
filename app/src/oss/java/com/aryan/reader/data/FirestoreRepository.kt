@@ -80,9 +80,8 @@ class FirestoreRepository {
         // No-op
     }
 
-    fun listenToUserProfile(userId: String, onUpdate: (isPro: Boolean) -> Unit): Any? {
-        // In OSS, user is never Pro. Return null as the "listener"
-        onUpdate(false)
+    fun listenToUserProfile(userId: String, onUpdate: (isPro: Boolean, credits: Int) -> Unit): Any? {
+        onUpdate(false, 0)
         return null
     }
 

@@ -214,6 +214,7 @@ data class ReaderScreenState(
     val currentUser: UserData? = null,
     val isAuthMenuExpanded: Boolean = false,
     val isProUser: Boolean = false,
+    val credits: Int = 0,
     val isSyncEnabled: Boolean = false,
     val isFolderSyncEnabled: Boolean = false,
     val bannerMessage: BannerMessage? = null,
@@ -800,9 +801,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update { it.copy(hasUnreadFeedback = hasUnread) }
                         }
 
-                    userProfileListener =
-                        firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend ->
-                            _internalState.update { it.copy(isProUser = isProFromBackend) }
+                    userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend ->
+                        _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend) }
 
                             if (isProFromBackend) {
                                 verifyDeviceForProUser()
@@ -1010,40 +1010,45 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         purchase: PurchaseEntity, isSilentMigrationCheck: Boolean = false
     ) {
         viewModelScope.launch {
-            if (!purchase.products.contains(BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
+            val productId = purchase.products.firstOrNull()
+
+            if (productId == null || (!productId.startsWith("credits_") && productId != BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
                 Timber.e("Purchase verification failed: Incorrect product ID.")
                 if (!isSilentMigrationCheck) {
-                    _internalState.update {
-                        it.copy(
-                            bannerMessage = BannerMessage(appContext.getString(R.string.error_purchase_general), isError = true)
-                        )
-                    }
+                    _internalState.update { it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.error_purchase_general), isError = true)) }
                 }
                 billingClientWrapper.clearVerificationState()
                 return@launch
             }
 
-            val result = cloudflareRepository.verifyPurchase(purchase.purchaseToken)
+            val result = cloudflareRepository.verifyPurchase(purchase.purchaseToken, productId)
 
             if (result.isSuccess) {
                 Timber.i("Backend verification successful. Firestore will update the app.")
-                _internalState.update {
-                    it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.banner_upgrade_success)))
+
+                if (productId.startsWith("credits_")) {
+                    billingClientWrapper.consumePurchase(purchase.purchaseToken)
+                    if (!isSilentMigrationCheck) {
+                        _internalState.update { it.copy(bannerMessage = BannerMessage("Credits successfully added!")) }
+                    }
+                } else {
+                    if (!isSilentMigrationCheck) {
+                        _internalState.update { it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.banner_upgrade_success))) }
+                    }
+                    verifyDeviceForProUser()
                 }
-                verifyDeviceForProUser()
             } else {
                 val exception = result.exceptionOrNull()
                 if (exception?.message?.contains("already claimed") == true) {
-                    Timber.i(
-                        "Migration check: Purchase token is already claimed by another account. Silently ignoring."
-                    )
+                    Timber.i("Migration/Refresh check: Purchase token is already claimed. Silently ignoring.")
+                    if (productId.startsWith("credits_")) {
+                        billingClientWrapper.consumePurchase(purchase.purchaseToken)
+                    }
                 } else {
                     val errorMessage = appContext.getString(R.string.error_purchase_verification)
                     Timber.e(exception, "Backend verification failed")
                     if (!isSilentMigrationCheck) {
-                        _internalState.update {
-                            it.copy(bannerMessage = BannerMessage(errorMessage, isError = true))
-                        }
+                        _internalState.update { it.copy(bannerMessage = BannerMessage(errorMessage, isError = true)) }
                     }
                 }
             }
@@ -2136,9 +2141,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun launchPurchaseFlow(activity: android.app.Activity) {
-        Timber.d("Attempting to launch purchase flow. Pro state is: ${proUpgradeState.value}")
-        billingClientWrapper.launchPurchaseFlow(activity)
+    fun launchPurchaseFlow(activity: android.app.Activity, productId: String = BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID) {
+        Timber.d("Attempting to launch purchase flow for $productId. Pro state is: ${proUpgradeState.value}")
+        billingClientWrapper.launchPurchaseFlow(activity, productId)
     }
 
     fun clearBillingError() {

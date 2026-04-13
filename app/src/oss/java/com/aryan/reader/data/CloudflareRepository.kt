@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PurchaseVerificationRequest(
     val purchaseToken: String,
-    val idToken: String
+    val idToken: String,
+    val productId: String
 )
 
 @Serializable
