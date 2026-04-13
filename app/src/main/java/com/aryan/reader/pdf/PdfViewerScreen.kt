@@ -1230,6 +1230,7 @@ fun PdfViewerScreen(
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
     val documentCache = remember { DocumentCache(3) }
     val tabStateMap = remember { mutableStateMapOf<String, Int>() }
+    var showInsufficientCreditsDialog by remember { mutableStateOf(false) }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         PdfBuiltInThemes.find { it.id == currentThemeId }
@@ -1584,6 +1585,23 @@ fun PdfViewerScreen(
             delay(500)
             lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
             savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+        }
+    }
+
+    val ttsController = rememberTtsController()
+    val ttsState by ttsController.ttsState.collectAsState()
+    ttsState.currentText
+
+    LaunchedEffect(ttsState.errorMessage) {
+        ttsState.errorMessage?.let { message ->
+            if (message == "INSUFFICIENT_CREDITS") {
+                showInsufficientCreditsDialog = true
+                ttsController.stop()
+            } else {
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar(message)
+                }
+            }
         }
     }
 
@@ -2666,10 +2684,6 @@ fun PdfViewerScreen(
     val uriHandler = LocalUriHandler.current
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
 
-    val ttsController = rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
-    ttsState.currentText
-
     var showRenameBookmarkDialog by remember { mutableStateOf<PdfBookmark?>(null) }
 
     var isOcrModelDownloading by remember { mutableStateOf(false) }
@@ -2723,38 +2737,39 @@ fun PdfViewerScreen(
         }
     }
 
-    val onDictionaryLookupStable = remember(isProUser, executeWithOcrCheck, useOnlineDictionary, selectedDictPackage) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage) {
         { text: String ->
             executeWithOcrCheck {
                 val isOss = BuildConfig.FLAVOR == "oss"
                 val effectiveUseOnline = !isOss && useOnlineDictionary
 
                 if (effectiveUseOnline) {
-                    val wordCount = countWords(text)
-                    if (isProUser || wordCount <= 1) {
-                        selectedTextForAi = text
-                        showAiDefinitionPopup = true
-                        coroutineScope.launch {
-                            isAiDefinitionLoading = true
-                            aiDefinitionResult = null
-                            val token = viewModel.getAuthToken()
-                            fetchAiDefinition(
-                                text = text,
-                                authToken = token,
-                                onUpdate = { chunk ->
-                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                    aiDefinitionResult = AiDefinitionResult(
-                                        definition = currentDefinition + chunk
-                                    )
-                                }, onError = { error ->
-                                    aiDefinitionResult = AiDefinitionResult(error = error)
-                                }, onFinish = {
+                    selectedTextForAi = text
+                    showAiDefinitionPopup = true
+                    coroutineScope.launch {
+                        isAiDefinitionLoading = true
+                        aiDefinitionResult = null
+                        val token = viewModel.getAuthToken()
+                        fetchAiDefinition(
+                            text = text,
+                            authToken = token,
+                            onUpdate = { chunk ->
+                                val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                aiDefinitionResult = AiDefinitionResult(
+                                    definition = currentDefinition + chunk
+                                )
+                            }, onError = { error ->
+                                if (error == "INSUFFICIENT_CREDITS") {
+                                    showInsufficientCreditsDialog = true
+                                    showAiDefinitionPopup = false
                                     isAiDefinitionLoading = false
-                                }, context = context
-                            )
-                        }
-                    } else {
-                        showDictionaryUpsellDialog = true
+                                } else {
+                                    aiDefinitionResult = AiDefinitionResult(error = error)
+                                }
+                            }, onFinish = {
+                                isAiDefinitionLoading = false
+                            }, context = context
+                        )
                     }
                 } else {
                     if (!selectedDictPackage.isNullOrEmpty()) {
@@ -2905,6 +2920,11 @@ fun PdfViewerScreen(
 
                 val responseCode = connection.responseCode
                 Timber.d("Summarization API response code: $responseCode")
+                if (responseCode == 402) {
+                    onUpdate(SummarizationResult(error = "INSUFFICIENT_CREDITS"))
+                    onFinish()
+                    return@withContext
+                }
 
                 if (responseCode == HttpURLConnection.HTTP_OK) {
                     val fullText = StringBuilder()
@@ -6458,23 +6478,24 @@ fun PdfViewerScreen(
                                                 Text(stringResource(R.string.action_summarize_page))
                                             }, onClick = {
                                                 showAiFeaturesMenu = false
-                                                if (isProUser) {
-                                                    showSummarizationPopup = true
-                                                    coroutineScope.launch {
-                                                        isAiDefinitionLoading = true
-                                                        summarizationResult = null
-                                                        val token = viewModel.getAuthToken()
-                                                        summarizeCurrentPage(
-                                                            authToken = token,
-                                                            onUpdate = { result ->
+                                                showSummarizationPopup = true
+                                                coroutineScope.launch {
+                                                    isSummarizationLoading = true
+                                                    summarizationResult = null
+                                                    val token = viewModel.getAuthToken()
+                                                    summarizeCurrentPage(
+                                                        authToken = token,
+                                                        onUpdate = { result ->
+                                                            if (result.error == "INSUFFICIENT_CREDITS") {
+                                                                showInsufficientCreditsDialog = true
+                                                                showSummarizationPopup = false
+                                                            } else {
                                                                 summarizationResult = result
-                                                            }, onFinish = {
-                                                                isAiDefinitionLoading = false
                                                             }
-                                                        )
-                                                    }
-                                                } else {
-                                                    showSummarizationUpsellDialog = true
+                                                        }, onFinish = {
+                                                            isSummarizationLoading = false
+                                                        }
+                                                    )
                                                 }
                                             }, enabled = !isSummarizationLoading && pdfDocument != null
                                         )
@@ -7266,6 +7287,26 @@ fun PdfViewerScreen(
                                 Text(stringResource(R.string.action_not_now))
                             }
                         })
+                }
+
+                if (showInsufficientCreditsDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showInsufficientCreditsDialog = false },
+                        icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
+                        title = { Text("Out of Credits") },
+                        text = { Text("You don't have enough credits. Get Episteme Pro for unlimited summaries and dictionary lookups, or add more credits to use AI TTS and Story Recap.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showInsufficientCreditsDialog = false
+                                onNavigateToPro()
+                            }) { Text("Get Pro / Add Credits") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showInsufficientCreditsDialog = false }) {
+                                Text(stringResource(R.string.action_cancel))
+                            }
+                        }
+                    )
                 }
 
                 if (showPasswordDialog) {

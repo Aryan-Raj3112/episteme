@@ -2009,27 +2009,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun triggerLegacyPurchaseMigration() {
         val user = _internalState.value.currentUser
-        val isProOnBackend = _internalState.value.isProUser
         val localPurchases = billingClientWrapper.proUpgradeState.value.activePurchases
 
-        val checkedUids = prefs.getStringSet(KEY_MIGRATION_CHECKED_UIDS, emptySet()) ?: emptySet()
-        if (user != null && user.uid in checkedUids) {
-            Timber.d(
-                "Migration check for user ${user.uid} already performed on this device. Skipping."
-            )
-            return // Already checked, do nothing.
-        }
+        if (user != null && localPurchases.isNotEmpty()) {
+            Timber.i("Checking for unconsumed purchases or legacy pro statuses...")
 
-        if (user != null && !isProOnBackend && localPurchases.isNotEmpty() && !migrationAttempted.value) {
-            migrationAttempted.value = true
-            Timber.i(
-                "MIGRATION: Found legacy user with local purchase. Verifying with backend silently..."
-            )
-            val purchaseToVerify = localPurchases.first()
-
-            verifyPurchaseWithBackend(purchaseToVerify, isSilentMigrationCheck = true)
-
-            prefs.edit { putStringSet(KEY_MIGRATION_CHECKED_UIDS, checkedUids + user.uid) }
+            localPurchases.forEach { purchase ->
+                verifyPurchaseWithBackend(purchase, isSilentMigrationCheck = true)
+            }
         }
     }
 

@@ -65,15 +65,12 @@ private fun loadSpeaker(context: Context): String {
 }
 
 @OptIn(UnstableApi::class)
-@Suppress("KotlinConstantConditions")
 fun loadTtsMode(context: Context): TtsPlaybackManager.TtsMode {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     val savedModeName = prefs.getString("tts_mode", TtsPlaybackManager.TtsMode.BASE.name)
         ?: TtsPlaybackManager.TtsMode.BASE.name
 
-    val isCloudAllowed = BuildConfig.DEBUG &&
-            BuildConfig.IS_PRO &&
-            BuildConfig.TTS_WORKER_URL.isNotBlank()
+    val isCloudAllowed = BuildConfig.TTS_WORKER_URL.isNotBlank()
 
     return if (isCloudAllowed) {
         try {

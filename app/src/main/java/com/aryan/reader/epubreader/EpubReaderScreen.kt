@@ -683,20 +683,17 @@ fun EpubReaderHost(
 
         if (effectiveUseOnline) {
             val wordCount = countWords(word)
-            if (isProUser || wordCount <= 1) {
+            run {
                 selectedTextForAi = word
                 showAiDefinitionPopup = true
                 scope.launch {
                     val token = viewModel.getAuthToken()
                     isAiDefinitionLoading = true
                     aiDefinitionResult = null
-                    fetchAiDefinition(
-                        text = word, onUpdate = { chunk ->
+                    fetchAiDefinition(text = word, onUpdate = { chunk ->
                         val currentDefinition = aiDefinitionResult?.definition ?: ""
-                        aiDefinitionResult =
-                            AiDefinitionResult(definition = currentDefinition + chunk)
-                    }, authToken = token,
-                    onError = { error ->
+                        aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
+                    }, authToken = token, onError = { error ->
                         if (error == "INSUFFICIENT_CREDITS") {
                             showInsufficientCreditsDialog = true
                             showAiDefinitionPopup = false
@@ -707,8 +704,6 @@ fun EpubReaderHost(
                     }, onFinish = { isAiDefinitionLoading = false }, context = context
                     )
                 }
-            } else {
-                showDictionaryUpsellDialog = true
             }
         } else {
             if (!selectedDictPackage.isNullOrEmpty()) {
@@ -3808,63 +3803,59 @@ fun EpubReaderHost(
                         showFormatAdjustmentBars = false
                     },
                     onSummarize = {
-                        if (isProUser) {
-                            showSummarizationPopup = true
-                            isSummarizationLoading = true
-                            summarizationResult = null
-                            when (currentRenderMode) {
-                                RenderMode.VERTICAL_SCROLL -> {
-                                    webViewRefForTts?.evaluateJavascript("javascript:AiBridgeHelper.extractAndRelayTextForSummarization();") { result ->
-                                        Timber.d("JS summarization request: $result")
-                                    } ?: run {
-                                        isSummarizationLoading = false
-                                        summarizationResult = SummarizationResult(error = "WebView not available.")
-                                    }
+                        showSummarizationPopup = true
+                        isSummarizationLoading = true
+                        summarizationResult = null
+                        when (currentRenderMode) {
+                            RenderMode.VERTICAL_SCROLL -> {
+                                webViewRefForTts?.evaluateJavascript("javascript:AiBridgeHelper.extractAndRelayTextForSummarization();") { result ->
+                                    Timber.d("JS summarization request: $result")
+                                } ?: run {
+                                    isSummarizationLoading = false
+                                    summarizationResult = SummarizationResult(error = "WebView not available.")
                                 }
-                                RenderMode.PAGINATED -> {
-                                    scope.launch {
-                                        val currentPage = paginatedPagerState.currentPage
-                                        val token = viewModel.getAuthToken()
-                                        val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(currentPage)
-                                        if (chapterIndex != null) {
-                                            val text = paginator?.getPlainTextForChapter(chapterIndex)
-                                            if (!text.isNullOrBlank()) {
-                                                summarizeBookContent(
-                                                    content = text,
-                                                    authToken = token,
-                                                    onUpdate = { chunk ->
-                                                        val currentSummary =
-                                                            summarizationResult?.summary
-                                                                ?: ""
-                                                        summarizationResult =
-                                                            SummarizationResult(
-                                                                summary = currentSummary + chunk
-                                                            )
-                                                    },
-                                                    onError = { error ->
-                                                        summarizationResult =
-                                                            SummarizationResult(
-                                                                error = error
-                                                            )
-                                                    },
-                                                    onFinish = {
-                                                        isSummarizationLoading =
-                                                            false
-                                                    }
-                                                )
-                                            } else {
-                                                summarizationResult = SummarizationResult(error = "Could not get chapter content.")
-                                                isSummarizationLoading = false
-                                            }
+                            }
+                            RenderMode.PAGINATED -> {
+                                scope.launch {
+                                    val currentPage = paginatedPagerState.currentPage
+                                    val token = viewModel.getAuthToken()
+                                    val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(currentPage)
+                                    if (chapterIndex != null) {
+                                        val text = paginator?.getPlainTextForChapter(chapterIndex)
+                                        if (!text.isNullOrBlank()) {
+                                            summarizeBookContent(
+                                                content = text,
+                                                authToken = token,
+                                                onUpdate = { chunk ->
+                                                    val currentSummary =
+                                                        summarizationResult?.summary
+                                                            ?: ""
+                                                    summarizationResult =
+                                                        SummarizationResult(
+                                                            summary = currentSummary + chunk
+                                                        )
+                                                },
+                                                onError = { error ->
+                                                    summarizationResult =
+                                                        SummarizationResult(
+                                                            error = error
+                                                        )
+                                                },
+                                                onFinish = {
+                                                    isSummarizationLoading =
+                                                        false
+                                                }
+                                            )
                                         } else {
-                                            summarizationResult = SummarizationResult(error = "Could not determine current chapter.")
+                                            summarizationResult = SummarizationResult(error = "Could not get chapter content.")
                                             isSummarizationLoading = false
                                         }
+                                    } else {
+                                        summarizationResult = SummarizationResult(error = "Could not determine current chapter.")
+                                        isSummarizationLoading = false
                                     }
                                 }
                             }
-                        } else {
-                            showSummarizationUpsellDialog = true
                         }
                     },
                     onRecap = {
@@ -4344,7 +4335,7 @@ fun EpubReaderHost(
                 onDismissRequest = { showInsufficientCreditsDialog = false },
                 icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
                 title = { Text("Out of Credits") },
-                text = { Text("You don't have enough credits to perform this action. You can switch to device TTS in settings or get more credits in the Pro menu.") },
+                text = { Text("You don't have enough credits. Get Episteme Pro for unlimited summaries and dictionary lookups, or add more credits to use AI TTS and Story Recap.") },
                 confirmButton = {
                     TextButton(onClick = {
                         showInsufficientCreditsDialog = false
