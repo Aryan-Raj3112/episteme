@@ -35,13 +35,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class WordTimingInfo(val word: String, val startTime: Double)
 data class TtsAudioData(
@@ -80,120 +85,253 @@ class TtsService : MediaSessionService() {
         super.onUpdateNotification(session, startInForegroundRequired)
     }
 
-    private suspend fun downloadFromTtsServer(
-        bookTitle: String,
-        chunkToSpeak: String,
-        speakerId: String,
-        serverUrl: String,
-        audioFileExtension: String,
-        authToken: String?
-    ): TtsAudioData {
-        if (chunkToSpeak.isBlank()) {
-            return TtsAudioData(null, null, null)
+    private val okHttpClient = OkHttpClient.Builder().build()
+    private val liveClient by lazy { GeminiLiveClient(okHttpClient) }
+
+    class GeminiLiveClient(private val client: OkHttpClient) {
+        private var webSocket: WebSocket? = null
+        private val mutex = Mutex()
+        private var audioChannel = Channel<GeminiWsEvent>(Channel.UNLIMITED)
+        private var setupDeferred = CompletableDeferred<Boolean>().apply { complete(false) }
+
+        sealed class GeminiWsEvent {
+            data class Audio(val bytes: ByteArray) : GeminiWsEvent()
+            object TurnComplete : GeminiWsEvent()
+            data class Error(val message: String) : GeminiWsEvent()
         }
 
-        Timber.tag("TTS_CLOUD_DIAG").d("downloadFromTtsServer Start: speaker=$speakerId, textLen=${chunkToSpeak.length}, tokenPresent=${!authToken.isNullOrBlank()}")
-
-        val useCache = loadTtsCacheEnabled(applicationContext)
-        val cacheManager = TtsCacheManager(applicationContext)
-        val params = mapOf("speaker" to speakerId)
-
-        if (useCache) {
-            val cachedFile = cacheManager.getCachedFile(bookTitle, chunkToSpeak, params)
-            if (cachedFile != null) {
-                Timber.tag("TTS_CLOUD_DIAG").d("Cache HIT for speaker: $speakerId")
-                return TtsAudioData(cachedFile, chunkToSpeak, emptyList())
+        suspend fun ensureConnected(serverUrl: String, speaker: String, authToken: String?) {
+            if (webSocket != null) {
+                val isSetup = setupDeferred.await()
+                if (isSetup) return
             }
-        }
 
-        Timber.tag("TTS_CLOUD_DIAG").d("Cache MISS for speaker: $speakerId. Fetching from network.")
+            val sanitizedUrl = serverUrl.removeSuffix("/")
+            val wsUrlStr = sanitizedUrl.replace("https://", "wss://").replace("http://", "ws://")
+            val url = "$wsUrlStr/live?speaker=$speaker&token=${authToken ?: ""}"
 
-        return withContext(Dispatchers.IO) {
-            var tempAudioFile: File? = null
-            try {
-                val url = URL(serverUrl)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                connection.setRequestProperty("Accept", "application/json")
-                if (authToken != null) connection.setRequestProperty("Authorization", "Bearer $authToken")
-                connection.connectTimeout = 15000
-                connection.readTimeout = 60000
-                connection.doOutput = true
-                connection.doInput = true
+            Timber.tag("TTS_CLOUD_DIAG").d("Connecting to WS: $url")
+            val request = Request.Builder().url(url).build()
+            val connectedDeferred = CompletableDeferred<Boolean>()
 
-                val jsonPayload = JSONObject().apply {
-                    put("text", chunkToSpeak)
-                    put("speaker", speakerId)
+            setupDeferred = CompletableDeferred<Boolean>()
+
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Timber.tag("TTS_CLOUD_DIAG").d("WS Opened. Sending Setup configuration to Gemini...")
+
+                    val systemPrompt = """
+                        You are a professional audiobook narrator. 
+                        Your ONLY task is to read the exact text provided to you, word for word, with perfect pacing, natural emotion, and clarity. 
+                        Do NOT add any conversational filler, acknowledgments, or extra words (e.g., do not say "Sure, here is the text"). 
+                        Do NOT skip any parts or summarize. Output ONLY the audio reading of the provided text.
+                    """.trimIndent()
+
+                    val setupMsg = JSONObject().apply {
+                        put("setup", JSONObject().apply {
+                            put("model", "models/gemini-3.1-flash-live-preview")
+                            put("systemInstruction", JSONObject().apply {
+                                put("parts", org.json.JSONArray().apply {
+                                    put(JSONObject().apply {
+                                        put("text", systemPrompt)
+                                    })
+                                })
+                            })
+                            put("generationConfig", JSONObject().apply {
+                                put("responseModalities", org.json.JSONArray().apply { put("AUDIO") })
+                                put("speechConfig", JSONObject().apply {
+                                    put("voiceConfig", JSONObject().apply {
+                                        put("prebuiltVoiceConfig", JSONObject().apply {
+                                            put("voiceName", speaker)
+                                        })
+                                    })
+                                })
+                            })
+                        })
+                    }.toString()
+
+                    Timber.tag("TTS_CLOUD_DIAG").d("Sending Setup Configuration: $setupMsg")
+                    webSocket.send(setupMsg)
+                    connectedDeferred.complete(true)
                 }
-                connection.outputStream.use { os ->
-                    val input = jsonPayload.toString().toByteArray(Charsets.UTF_8)
-                    os.write(input, 0, input.size)
-                }
 
-                val responseCode = connection.responseCode
-                Timber.tag("TTS_CLOUD_DIAG").d("Network response code: $responseCode")
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    Timber.tag("TTS_CLOUD_DIAG").d("WS Raw JSON Received: \n$text") // Detailed inspection
 
-                if (responseCode == 402) {
-                    Timber.tag("TTS_CLOUD_DIAG").w("TTS Server: Insufficient Credits")
-                    return@withContext TtsAudioData(null, null, null, "INSUFFICIENT_CREDITS")
-                }
-
-                if (responseCode != HttpURLConnection.HTTP_OK) {
-                    val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "Could not read error stream" }
-                    Timber.tag("TTS_CLOUD_DIAG").e("HTTP Error $responseCode: $errorBody")
-                    return@withContext TtsAudioData(null, null, null)
-                }
-
-                val responseBody = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                Timber.tag("TTS_CLOUD_DIAG").d("Received successful response, body length: ${responseBody.length}")
-
-                val jsonResponse = JSONObject(responseBody)
-
-                if (jsonResponse.has("audio_base64") && jsonResponse.has("text_chunk")) {
-                    val audioBase64 = jsonResponse.getString("audio_base64")
-                    val serverTextChunk = jsonResponse.getString("text_chunk")
-                    val mimeType = jsonResponse.optString("mime_type", "audio/pcm;rate=24000")
-                    var audioBytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
-
-                    val isRawPcm = mimeType.contains("audio/pcm", ignoreCase = true) ||
-                            mimeType.contains("audio/l16", ignoreCase = true) ||
-                            mimeType.contains("audio/raw", ignoreCase = true)
-
-                    if (isRawPcm) {
-                        var sampleRate = 24000
-                        val rateRegex = Regex("rate=(\\d+)")
-                        val match = rateRegex.find(mimeType)
-                        if (match != null) {
-                            sampleRate = match.groupValues[1].toInt()
+                    try {
+                        val json = JSONObject(text)
+                        if (json.has("error")) {
+                            Timber.tag("TTS_CLOUD_DIAG").e("API ERROR RETURNED: ${json.optJSONObject("error")}")
+                            setupDeferred.complete(false)
+                            return
                         }
-                        audioBytes = addWavHeader(audioBytes, sampleRate)
-                    }
+                        if (json.has("setupComplete")) {
+                            Timber.tag("TTS_CLOUD_DIAG").i("Received setupComplete from Gemini!")
+                            setupDeferred.complete(true)
+                        }
 
-                    if (useCache) {
-                        tempAudioFile = cacheManager.saveToCache(bookTitle, chunkToSpeak, params, audioBytes)
-                    } else {
-                        tempAudioFile = File.createTempFile("tts_audio_chunk_", ".wav", applicationContext.cacheDir)
-                        FileOutputStream(tempAudioFile).use { it.write(audioBytes) }
-                    }
+                        val serverContent = json.optJSONObject("serverContent")
+                        if (serverContent != null) {
 
-                    TtsAudioData(tempAudioFile, serverTextChunk, emptyList())
-                } else {
-                    Timber.tag("TTS_CLOUD_DIAG").e("Response JSON missing expected keys.")
-                    TtsAudioData(null, null, null)
+                            // Log if Gemini interrupted itself or stopped early
+                            if (serverContent.optBoolean("interrupted", false)) {
+                                Timber.tag("TTS_CLOUD_DIAG").w("Gemini interrupted the response!")
+                            }
+
+                            val turnComplete = serverContent.optBoolean("turnComplete", false)
+                            val modelTurn = serverContent.optJSONObject("modelTurn")
+                            val parts = modelTurn?.optJSONArray("parts")
+
+                            if (parts != null) {
+                                for (i in 0 until parts.length()) {
+                                    val part = parts.getJSONObject(i)
+
+                                    // Add log for text response so we know if it fell back to Text-Only
+                                    if (part.has("text")) {
+                                        Timber.tag("TTS_CLOUD_DIAG").i("Received Text Response: ${part.optString("text")}")
+                                    }
+
+                                    val inlineData = part.optJSONObject("inlineData")
+                                    if (inlineData != null) {
+                                        val b64 = inlineData.optString("data")
+                                        if (b64.isNotEmpty()) {
+                                            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                                            Timber.tag("TTS_CLOUD_DIAG").d("Decoded audio chunk: ${bytes.size} bytes")
+                                            audioChannel.trySend(GeminiWsEvent.Audio(bytes))
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (turnComplete) {
+                                Timber.tag("TTS_CLOUD_DIAG").d("Received TurnComplete signal")
+                                audioChannel.trySend(GeminiWsEvent.TurnComplete)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag("TTS_CLOUD_DIAG").e(e, "Error parsing WS message text")
+                    }
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+                    Timber.tag("TTS_CLOUD_DIAG").w("WS Received Raw Binary! Size: ${bytes.size}")
+
+                    // Decode the binary frame into a UTF-8 string
+                    val decodedText = bytes.utf8()
+
+                    // Route it back into your existing JSON parsing logic
+                    onMessage(webSocket, decodedText)
+                }
+
+                fun onResponse(webSocket: WebSocket, response: Response) {
+                    Timber.tag("TTS_CLOUD_DIAG").d("WS HTTP Response Code: ${response.code}, Message: ${response.message}")
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    val errorMsg = "WS Failure: ${t.message} | Response: ${response?.code}"
+                    Timber.tag("TTS_CLOUD_DIAG").e(t, errorMsg)
+                    audioChannel.trySend(GeminiWsEvent.Error(errorMsg))
+                    this@GeminiLiveClient.webSocket = null
+                    connectedDeferred.complete(false)
+                    setupDeferred.complete(false)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    Timber.tag("TTS_CLOUD_DIAG").w("WS Closed. Code: $code, Reason: $reason")
+                    audioChannel.trySend(GeminiWsEvent.Error("Connection Closed: $reason"))
+                    this@GeminiLiveClient.webSocket = null
+                    setupDeferred.complete(false)
+                }
+            })
+
+            val isConnected = connectedDeferred.await()
+            if (!isConnected) {
+                throw IllegalStateException("Failed to connect to proxy WebSocket")
+            }
+
+            // Wait up to 10 seconds for Gemini to acknowledge the setup
+            val isSetup = try {
+                kotlinx.coroutines.withTimeout(10000L) {
+                    setupDeferred.await()
                 }
             } catch (e: Exception) {
-                Timber.tag("TTS_CLOUD_DIAG").e(e, "DownloadAudioChunk Exception: ${e.message}")
-                tempAudioFile?.delete()
-                TtsAudioData(null, null, null)
+                false
+            }
+
+            if (!isSetup) {
+                Timber.tag("TTS_CLOUD_DIAG").e("Setup failed or timed out (never received setupComplete)")
+                webSocket?.close(1000, "Setup failed")
+                webSocket = null
+                throw IllegalStateException("Failed to complete Gemini setup")
             }
         }
-    }
 
-    private val downloadAudioChunk: suspend (String, String, String, String?) -> TtsAudioData =
-        { bookTitle, chunkToSpeak, speakerId, authToken ->
-            downloadFromTtsServer(bookTitle, chunkToSpeak, speakerId, googleCloudWorkerTtsUrl, ".mp3", authToken)
+        suspend fun generateChunk(context: android.content.Context, text: String): TtsAudioData = mutex.withLock {
+            if (text.isBlank()) return TtsAudioData(null, null, null, "Text is blank")
+
+            audioChannel = Channel(Channel.UNLIMITED)
+
+            val payload = JSONObject().apply {
+                put("realtimeInput", JSONObject().apply {
+                    put("text", text)
+                })
+            }.toString()
+
+            Timber.tag("TTS_CLOUD_DIAG").d("Sending Text Payload: $payload")
+            val sent = webSocket?.send(payload) ?: false
+
+            if (!sent) {
+                Timber.tag("TTS_CLOUD_DIAG").e("Failed to send text payload over WS")
+                return TtsAudioData(null, null, null, "WebSocket send failure")
+            }
+
+            val accumulatedBytes = java.io.ByteArrayOutputStream()
+            var error: String? = null
+
+            try {
+                kotlinx.coroutines.withTimeout(20000L) {
+                    for (event in audioChannel) {
+                        when (event) {
+                            is GeminiWsEvent.Audio -> {
+                                accumulatedBytes.write(event.bytes)
+                            }
+                            is GeminiWsEvent.TurnComplete -> {
+                                Timber.tag("TTS_CLOUD_DIAG").d("Accumulation finished via TurnComplete")
+                                break
+                            }
+                            is GeminiWsEvent.Error -> {
+                                error = event.message
+                                break
+                            }
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                error = "Timeout waiting for Gemini response"
+                Timber.tag("TTS_CLOUD_DIAG").e("Timeout: No audio or TurnComplete received within 20s")
+            }
+
+            if (error != null) return TtsAudioData(null, null, null, error)
+            if (accumulatedBytes.size() == 0) {
+                Timber.tag("TTS_CLOUD_DIAG").w("Accumulated bytes is 0")
+                return TtsAudioData(null, null, null, "No audio received")
+            }
+
+            Timber.tag("TTS_CLOUD_DIAG").d("Total Audio Bytes Accumulated: ${accumulatedBytes.size()}")
+            val finalWavBytes = addWavHeader(accumulatedBytes.toByteArray(), 24000)
+            val tempFile = File.createTempFile("tts_live_", ".wav", context.cacheDir).apply {
+                writeBytes(finalWavBytes)
+            }
+
+            return TtsAudioData(tempFile, text, emptyList())
         }
+
+        fun close() {
+            webSocket?.close(1000, "Context Reset")
+            webSocket = null
+            setupDeferred = CompletableDeferred<Boolean>().apply { complete(false) }
+        }
+    }
 
     private val synthesizeBaseTtsChunk: suspend (String) -> TtsAudioData =
         { chunkToSpeak ->
@@ -202,9 +340,17 @@ class TtsService : MediaSessionService() {
         }
 
     private val audioGenerator: suspend (bookTitle: String, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
-        { bookTitle, text, speaker, mode, authToken ->
+        { _, text, speaker, mode, authToken ->
             when (mode) {
-                TtsMode.CLOUD -> downloadAudioChunk(bookTitle, text, speaker, authToken)
+                TtsMode.CLOUD -> {
+                    try {
+                        liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken)
+                        liveClient.generateChunk(applicationContext, text)
+                    } catch (e: Exception) {
+                        Timber.e(e, "Cloud TTS generation failed")
+                        TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = e.message ?: "Failed to connect to TTS service")
+                    }
+                }
                 TtsMode.BASE -> synthesizeBaseTtsChunk(text)
             }
         }
@@ -234,7 +380,8 @@ class TtsService : MediaSessionService() {
 
         playbackManager = TtsPlaybackManager(
             player = player,
-            generateAudioChunk = audioGenerator
+            generateAudioChunk = audioGenerator,
+            onResetContext = { liveClient.close() }
         )
 
         mediaSession = MediaSession.Builder(this, player)

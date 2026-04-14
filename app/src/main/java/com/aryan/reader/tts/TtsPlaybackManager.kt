@@ -75,7 +75,8 @@ private const val PREFETCH_LOOKAHEAD = 2
 @UnstableApi
 class TtsPlaybackManager(
     private val player: Player,
-    private val generateAudioChunk: suspend (bookTitle: String, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData
+    private val generateAudioChunk: suspend (bookTitle: String, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
+    private val onResetContext: () -> Unit
 ) : MediaSession.Callback, Player.Listener {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -213,6 +214,7 @@ class TtsPlaybackManager(
             }
             FLUSH_PREFETCH_COMMAND -> {
                 Timber.d("Flushing prefetched TTS chunks for new parameters.")
+                onResetContext()
                 prefetchingJobs.values.forEach { it.cancel() }
                 prefetchingJobs.clear()
                 scope.launch(Dispatchers.IO) {
@@ -238,6 +240,8 @@ class TtsPlaybackManager(
     private fun handleSliceAndReload() {
         val currentIdx = player.currentMediaItemIndex
         if (currentIdx == C.INDEX_UNSET) return
+
+        onResetContext()
 
         val offset = _ttsState.value.currentWordStartOffset
         val currentChunk = textChunks.getOrNull(currentIdx) ?: return
@@ -304,6 +308,7 @@ class TtsPlaybackManager(
         this.bookTitle = bookTitle
         this.chapterTitle = chapterTitle
         this.coverImageUri = coverImageUri
+        onResetContext()
         _ttsState.value = TtsState(isLoading = true, speakerId = speakerId, playbackSource = playbackSource)
         currentAuthToken = authToken
         preparationJob = scope.launch {
@@ -396,6 +401,7 @@ class TtsPlaybackManager(
     }
 
     private fun handleStopTts(clearState: Boolean = true, userInitiated: Boolean = false) {
+        onResetContext()
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
         if (clearState) {
@@ -643,7 +649,7 @@ class TtsPlaybackManager(
 
     private fun deleteTempFile(file: File?) {
         file?.let {
-            if (it.name.startsWith("tts_audio_chunk_") || it.name.startsWith("base_tts_")) {
+            if (it.name.startsWith("tts_audio_chunk_") || it.name.startsWith("base_tts_") || it.name.startsWith("tts_live_")) {
                 it.delete()
             }
         }
