@@ -4,7 +4,6 @@
 package com.aryan.reader
 
 import android.content.Context
-import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import androidx.compose.animation.AnimatedContent
@@ -151,7 +150,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
-import androidx.core.net.toUri
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.epubreader.PREF_CUSTOM_THEMES
 import com.aryan.reader.epubreader.PREF_READER_THEME
@@ -1358,23 +1356,8 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
 fun TtsCacheSettingsTab(context: Context) {
     val cacheManager = remember { TtsCacheManager(context) }
     var useCache by remember { mutableStateOf(loadTtsCacheEnabled(context)) }
-    var cacheSizeMb by remember { mutableFloatStateOf(cacheManager.getCacheSizeMb()) }
-    var latestFiles by remember { mutableStateOf(cacheManager.getLatestCachedFiles()) }
-
-    // Raw MediaPlayer for debugging cached files
-    val mediaPlayer = remember { MediaPlayer() }
-    var playingFile by remember { mutableStateOf<File?>(null) }
-
-    DisposableEffect(Unit) {
-        mediaPlayer.setOnCompletionListener { playingFile = null }
-        mediaPlayer.setOnErrorListener { _, _, _ ->
-            playingFile = null
-            true
-        }
-        onDispose {
-            mediaPlayer.release()
-        }
-    }
+    var groups by remember { mutableStateOf(cacheManager.getCacheGroups()) }
+    val totalSizeMb by remember { derivedStateOf { groups.sumOf { it.sizeBytes } / (1024f * 1024f) } }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("AI Audio Cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
@@ -1395,30 +1378,24 @@ fun TtsCacheSettingsTab(context: Context) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("Current Storage", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                    Text(String.format("%.2f MB Used", cacheSizeMb), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(String.format("%.2f MB Used", totalSizeMb), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 Button(
                     onClick = {
                         cacheManager.clearCache()
-                        cacheSizeMb = 0f
-                        latestFiles = emptyList()
-                        if (playingFile != null) {
-                            mediaPlayer.stop()
-                            mediaPlayer.reset()
-                            playingFile = null
-                        }
+                        groups = cacheManager.getCacheGroups()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                    enabled = groups.isNotEmpty()
                 ) {
-                    Text("Clear Cache")
+                    Text("Clear All")
                 }
             }
         }
 
-        // Debug UI: Latest 10 Cached Files
-        if (latestFiles.isNotEmpty()) {
+        if (groups.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
-            Text("Debug: Latest 10 Cached Files", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            Text("Storage by Book", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
             LazyColumn(
                 modifier = Modifier
@@ -1427,34 +1404,19 @@ fun TtsCacheSettingsTab(context: Context) {
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp))
             ) {
-                items(latestFiles) { file ->
-                    val isPlaying = playingFile == file
+                items(groups) { group ->
                     ListItem(
-                        headlineContent = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text("${file.length() / 1024} KB") },
+                        headlineContent = { Text(group.bookTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text("${group.fileCount} chunks • ${String.format("%.2f", group.sizeBytes / (1024f * 1024f))} MB") },
                         trailingContent = {
                             IconButton(onClick = {
-                                if (isPlaying) {
-                                    mediaPlayer.stop()
-                                    mediaPlayer.reset()
-                                    playingFile = null
-                                } else {
-                                    try {
-                                        mediaPlayer.reset()
-                                        mediaPlayer.setDataSource(file.absolutePath)
-                                        mediaPlayer.prepare()
-                                        mediaPlayer.start()
-                                        playingFile = file
-                                    } catch (e: Exception) {
-                                        Timber.e(e, "Failed to play cached file: ${file.name}")
-                                        playingFile = null
-                                    }
-                                }
+                                cacheManager.deleteGroup(group.bookTitle)
+                                groups = cacheManager.getCacheGroups()
                             }) {
                                 Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete cache for ${group.bookTitle}",
+                                    tint = MaterialTheme.colorScheme.error
                                 )
                             }
                         },

@@ -81,6 +81,7 @@ class TtsService : MediaSessionService() {
     }
 
     private suspend fun downloadFromTtsServer(
+        bookTitle: String,
         chunkToSpeak: String,
         speakerId: String,
         serverUrl: String,
@@ -95,9 +96,10 @@ class TtsService : MediaSessionService() {
 
         val useCache = loadTtsCacheEnabled(applicationContext)
         val cacheManager = TtsCacheManager(applicationContext)
+        val params = mapOf("speaker" to speakerId)
 
         if (useCache) {
-            val cachedFile = cacheManager.getCachedFile(chunkToSpeak, speakerId)
+            val cachedFile = cacheManager.getCachedFile(bookTitle, chunkToSpeak, params)
             if (cachedFile != null) {
                 Timber.tag("TTS_CLOUD_DIAG").d("Cache HIT for speaker: $speakerId")
                 return TtsAudioData(cachedFile, chunkToSpeak, emptyList())
@@ -112,7 +114,6 @@ class TtsService : MediaSessionService() {
                 val url = URL(serverUrl)
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
-                // ... (Keep existing headers/setup)
                 connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 connection.setRequestProperty("Accept", "application/json")
                 if (authToken != null) connection.setRequestProperty("Authorization", "Bearer $authToken")
@@ -170,7 +171,7 @@ class TtsService : MediaSessionService() {
                     }
 
                     if (useCache) {
-                        tempAudioFile = cacheManager.saveToCache(chunkToSpeak, speakerId, audioBytes)
+                        tempAudioFile = cacheManager.saveToCache(bookTitle, chunkToSpeak, params, audioBytes)
                     } else {
                         tempAudioFile = File.createTempFile("tts_audio_chunk_", ".wav", applicationContext.cacheDir)
                         FileOutputStream(tempAudioFile).use { it.write(audioBytes) }
@@ -189,9 +190,9 @@ class TtsService : MediaSessionService() {
         }
     }
 
-    private val downloadAudioChunk: suspend (String, String, String?) -> TtsAudioData =
-        { chunkToSpeak, speakerId, authToken ->
-            downloadFromTtsServer(chunkToSpeak, speakerId, googleCloudWorkerTtsUrl, ".mp3", authToken)
+    private val downloadAudioChunk: suspend (String, String, String, String?) -> TtsAudioData =
+        { bookTitle, chunkToSpeak, speakerId, authToken ->
+            downloadFromTtsServer(bookTitle, chunkToSpeak, speakerId, googleCloudWorkerTtsUrl, ".mp3", authToken)
         }
 
     private val synthesizeBaseTtsChunk: suspend (String) -> TtsAudioData =
@@ -200,10 +201,10 @@ class TtsService : MediaSessionService() {
             TtsAudioData(file, text, null)
         }
 
-    private val audioGenerator: suspend (text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
-        { text, speaker, mode, authToken ->
+    private val audioGenerator: suspend (bookTitle: String, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
+        { bookTitle, text, speaker, mode, authToken ->
             when (mode) {
-                TtsMode.CLOUD -> downloadAudioChunk(text, speaker, authToken)
+                TtsMode.CLOUD -> downloadAudioChunk(bookTitle, text, speaker, authToken)
                 TtsMode.BASE -> synthesizeBaseTtsChunk(text)
             }
         }

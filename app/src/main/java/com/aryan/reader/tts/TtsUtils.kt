@@ -52,33 +52,62 @@ val GEMINI_TTS_SPEAKERS = listOf(
 class TtsCacheManager(private val context: Context) {
     val cacheDir = java.io.File(context.cacheDir, "tts_audio_cache").apply { if (!exists()) mkdirs() }
 
-    fun getCachedFile(text: String, speakerId: String): java.io.File? {
-        val hash = hashString(text + speakerId)
-        val file = java.io.File(cacheDir, "$hash.wav")
-        val exists = file.exists() && file.length() > 0
-        Timber.tag("TTS_CLOUD_DIAG").d("Cache check: speaker=$speakerId, hash=$hash, exists=$exists")
-        return if (exists) file else null
+    private fun getParamsHash(params: Map<String, String>): String {
+        val paramsStr = params.entries.sortedBy { it.key }.joinToString("&") { "${it.key}=${it.value}" }
+        return hashString(paramsStr)
     }
 
-    fun saveToCache(text: String, speakerId: String, audioBytes: ByteArray): java.io.File {
-        val hash = hashString(text + speakerId)
-        val file = java.io.File(cacheDir, "$hash.wav")
+    fun getCachedFile(bookTitle: String, text: String, params: Map<String, String>): java.io.File? {
+        val paramsHash = getParamsHash(params)
+        val textHash = hashString(text)
+        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+        val file = java.io.File(cacheDir, "${safeTitle}__${paramsHash}__${textHash}.wav")
+
+        val oldFile = java.io.File(cacheDir, "${hashString(text + params["speaker"])}.wav")
+
+        if (file.exists() && file.length() > 0) return file
+        if (oldFile.exists() && oldFile.length() > 0) return oldFile
+
+        return null
+    }
+
+    fun saveToCache(bookTitle: String, text: String, params: Map<String, String>, audioBytes: ByteArray): java.io.File {
+        val paramsHash = getParamsHash(params)
+        val textHash = hashString(text)
+        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+        val file = java.io.File(cacheDir, "${safeTitle}__${paramsHash}__${textHash}.wav")
         file.writeBytes(audioBytes)
-        Timber.tag("TTS_CLOUD_DIAG").d("Saved to cache: speaker=$speakerId, hash=$hash, size=${audioBytes.size} bytes")
+        Timber.tag("TTS_CLOUD_DIAG").d("Saved to cache: $safeTitle, size=${audioBytes.size} bytes")
         return file
     }
 
-    fun getLatestCachedFiles(limit: Int = 10): List<java.io.File> {
-        return cacheDir.listFiles()
-            ?.filter { it.isFile && it.extension == "wav" }
-            ?.sortedByDescending { it.lastModified() }
-            ?.take(limit)
-            ?: emptyList()
+    data class CacheGroup(val bookTitle: String, val sizeBytes: Long, val fileCount: Int)
+
+    fun getCacheGroups(): List<CacheGroup> {
+        val groups = mutableMapOf<String, MutableList<java.io.File>>()
+        cacheDir.listFiles()?.filter { it.isFile && it.extension == "wav" }?.forEach { file ->
+            val parts = file.nameWithoutExtension.split("__")
+            val bookTitle = if (parts.size == 3) parts[0].replace("_", " ") else "Old Files / Samples"
+            groups.getOrPut(bookTitle) { mutableListOf() }.add(file)
+        }
+        return groups.map { (title, files) ->
+            CacheGroup(
+                bookTitle = title,
+                sizeBytes = files.sumOf { it.length() },
+                fileCount = files.size
+            )
+        }.sortedByDescending { it.sizeBytes }
     }
 
-    fun getCacheSizeMb(): Float {
-        val sizeBytes = cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        return sizeBytes / (1024f * 1024f)
+    fun deleteGroup(bookTitle: String) {
+        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+        cacheDir.listFiles()?.filter { it.isFile && it.extension == "wav" }?.forEach { file ->
+            val parts = file.nameWithoutExtension.split("__")
+            val fileBookTitle = if (parts.size == 3) parts[0] else "Old Files / Samples"
+            if (fileBookTitle == safeTitle || fileBookTitle == bookTitle) {
+                file.delete()
+            }
+        }
     }
 
     fun clearCache() {
@@ -207,7 +236,8 @@ class SpeakerSamplePlayer(
                 }
 
                 connection.connectTimeout = 15000
-                var cachedFile = if (useCache) cacheManager.getCachedFile(TTS_SAMPLE_TEXT, speakerId) else null
+                val params = mapOf("speaker" to speakerId)
+                var cachedFile = if (useCache) cacheManager.getCachedFile("Voice Samples", TTS_SAMPLE_TEXT, params) else null
 
                 if (cachedFile == null) {
                     val url = URL(googleCloudWorkerTtsUrl)
@@ -250,7 +280,7 @@ class SpeakerSamplePlayer(
                         }
 
                         cachedFile = if (useCache) {
-                            cacheManager.saveToCache(TTS_SAMPLE_TEXT, speakerId, audioBytes)
+                            cacheManager.saveToCache("Voice Samples", TTS_SAMPLE_TEXT, params, audioBytes)
                         } else {
                             java.io.File.createTempFile("tts_sample_", ".wav", context.cacheDir).apply {
                                 writeBytes(audioBytes)

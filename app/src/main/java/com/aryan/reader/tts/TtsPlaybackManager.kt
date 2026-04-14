@@ -75,7 +75,7 @@ private const val PREFETCH_LOOKAHEAD = 2
 @UnstableApi
 class TtsPlaybackManager(
     private val player: Player,
-    private val generateAudioChunk: suspend (textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData
+    private val generateAudioChunk: suspend (bookTitle: String, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData
 ) : MediaSession.Callback, Player.Listener {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -325,7 +325,7 @@ class TtsPlaybackManager(
             return
         }
 
-        val ttsAudioData = generateAudioChunk(firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
             _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
@@ -526,7 +526,7 @@ class TtsPlaybackManager(
 
                 val job = scope.launch {
                     val nextChunk = textChunks[targetIndex]
-                    val ttsAudioData = generateAudioChunk(nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+                    val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
 
                     if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
                         _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
