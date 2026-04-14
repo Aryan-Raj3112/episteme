@@ -25,7 +25,6 @@ import timber.log.Timber
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.net.toUri
 import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,22 +33,76 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import androidx.core.content.edit
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
 const val TTS_SAMPLE_TEXT = "The greater danger for most of us lies not in setting our aim too high and falling short; but in setting our aim too low, and achieving our mark."
-
 const val TTS_CHUNK_MAX_LENGTH = 250
+const val DEFAULT_SPEAKER_ID = "Aoede"
 
-const val DEFAULT_SPEAKER_ID = "en-US-Standard-F"
-
-@Suppress("unused")
-val GOOGLE_TTS_SPEAKERS = listOf(
-    "US Female: F" to "en-US-Standard-F",
-    "US Female: H" to "en-US-Standard-H",
-    "US Male: I" to "en-US-Standard-I",
-    "US Male: J" to "en-US-Standard-J"
+val GEMINI_TTS_SPEAKERS = listOf(
+    "Aoede" to "Aoede",
+    "Charon" to "Charon",
+    "Fenrir" to "Fenrir",
+    "Kore" to "Kore",
+    "Puck" to "Puck"
 )
+
+class TtsCacheManager(private val context: Context) {
+    val cacheDir = java.io.File(context.cacheDir, "tts_audio_cache").apply { if (!exists()) mkdirs() }
+
+    fun getCachedFile(text: String, speakerId: String): java.io.File? {
+        val hash = hashString(text + speakerId)
+        val file = java.io.File(cacheDir, "$hash.wav")
+        val exists = file.exists() && file.length() > 0
+        Timber.tag("TTS_CLOUD_DIAG").d("Cache check: speaker=$speakerId, hash=$hash, exists=$exists")
+        return if (exists) file else null
+    }
+
+    fun saveToCache(text: String, speakerId: String, audioBytes: ByteArray): java.io.File {
+        val hash = hashString(text + speakerId)
+        val file = java.io.File(cacheDir, "$hash.wav")
+        file.writeBytes(audioBytes)
+        Timber.tag("TTS_CLOUD_DIAG").d("Saved to cache: speaker=$speakerId, hash=$hash, size=${audioBytes.size} bytes")
+        return file
+    }
+
+    fun getLatestCachedFiles(limit: Int = 10): List<java.io.File> {
+        return cacheDir.listFiles()
+            ?.filter { it.isFile && it.extension == "wav" }
+            ?.sortedByDescending { it.lastModified() }
+            ?.take(limit)
+            ?: emptyList()
+    }
+
+    fun getCacheSizeMb(): Float {
+        val sizeBytes = cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return sizeBytes / (1024f * 1024f)
+    }
+
+    fun clearCache() {
+        cacheDir.listFiles()?.forEach { it.delete() }
+    }
+
+    private fun hashString(input: String): String {
+        val bytes = java.security.MessageDigest.getInstance("MD5").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+}
+
+fun loadTtsCacheEnabled(context: Context): Boolean {
+    return context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).getBoolean("use_tts_cache", true)
+}
+
+fun saveTtsCacheEnabled(context: Context, enabled: Boolean) {
+    context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).edit {
+        putBoolean(
+            "use_tts_cache",
+            enabled
+        )
+    }
+}
 
 fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH): List<String> {
     if (text.isBlank()) return emptyList()
@@ -90,7 +143,8 @@ fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LEN
 
 class SpeakerSamplePlayer(
     private val context: Context,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val getAuthToken: suspend () -> String?
 ) {
     private val sampleMediaPlayer = MediaPlayer()
     var loadingSpeakerId by mutableStateOf<String?>(null)
@@ -135,53 +189,95 @@ class SpeakerSamplePlayer(
         loadingSpeakerId = speakerId
         playingSpeakerId = null
 
+        val useCache = loadTtsCacheEnabled(context)
+        val cacheManager = TtsCacheManager(context)
+
         withContext(Dispatchers.IO) {
+            val authToken = getAuthToken()
+            Timber.tag("TTS_CLOUD_DIAG").d("SpeakerSamplePlayer: playSample for speaker=$speakerId. AuthToken present: ${!authToken.isNullOrBlank()}")
             try {
                 val url = URL(googleCloudWorkerTtsUrl)
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 connection.setRequestProperty("Accept", "application/json")
+
+                if (authToken != null) {
+                    connection.setRequestProperty("Authorization", "Bearer $authToken")
+                }
+
                 connection.connectTimeout = 15000
-                connection.readTimeout = 30000
-                connection.doOutput = true
-                connection.doInput = true
+                var cachedFile = if (useCache) cacheManager.getCachedFile(TTS_SAMPLE_TEXT, speakerId) else null
 
-                val jsonPayload = JSONObject().apply {
-                    put("text", TTS_SAMPLE_TEXT)
-                    put("speaker", speakerId)
-                }
-                connection.outputStream.use { os ->
-                    os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
-                }
+                if (cachedFile == null) {
+                    val url = URL(googleCloudWorkerTtsUrl)
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    connection.setRequestProperty("Accept", "application/json")
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 30000
+                    connection.doOutput = true
+                    connection.doInput = true
 
+                    val jsonPayload = JSONObject().apply {
+                        put("text", TTS_SAMPLE_TEXT)
+                        put("speaker", speakerId)
+                    }
+                    connection.outputStream.use { os ->
+                        os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
+                    }
 
-                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                    val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
-                    val audioBase64 = JSONObject(responseBody).getString("audio_base64")
+                    if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                        val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+                        val jsonResponse = JSONObject(responseBody)
+                        val audioBase64 = jsonResponse.getString("audio_base64")
+                        val mimeType = jsonResponse.optString("mime_type", "audio/pcm;rate=24000")
+                        var audioBytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
 
-                    val dataUri = "data:audio/mpeg;base64,$audioBase64"
+                        val isRawPcm = mimeType.contains("audio/pcm", ignoreCase = true) ||
+                                mimeType.contains("audio/l16", ignoreCase = true) ||
+                                mimeType.contains("audio/raw", ignoreCase = true)
 
-                    withContext(Dispatchers.Main) {
-                        if (loadingSpeakerId != speakerId) {
-                            return@withContext
+                        if (isRawPcm) {
+                            var sampleRate = 24000
+                            val rateRegex = Regex("rate=(\\d+)")
+                            val match = rateRegex.find(mimeType)
+                            if (match != null) {
+                                sampleRate = match.groupValues[1].toInt()
+                            }
+                            audioBytes = addWavHeader(audioBytes, sampleRate)
                         }
-                        sampleMediaPlayer.setDataSource(context, dataUri.toUri())
-                        sampleMediaPlayer.setOnPreparedListener { mp ->
-                            if (loadingSpeakerId == speakerId) {
-                                mp.start()
-                                playingSpeakerId = speakerId
-                                loadingSpeakerId = null
+
+                        cachedFile = if (useCache) {
+                            cacheManager.saveToCache(TTS_SAMPLE_TEXT, speakerId, audioBytes)
+                        } else {
+                            java.io.File.createTempFile("tts_sample_", ".wav", context.cacheDir).apply {
+                                writeBytes(audioBytes)
                             }
                         }
-                        sampleMediaPlayer.setOnCompletionListener {
-                            if (playingSpeakerId == speakerId) playingSpeakerId = null
-                        }
-                        sampleMediaPlayer.prepareAsync()
+                    } else {
+                        val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "Could not read error stream" }
+                        Timber.tag("TTS_CLOUD_DIAG").e("Failed to fetch sample for $speakerId. Code: ${connection.responseCode}, Body: $errorBody")
+                        withContext(Dispatchers.Main) { if (loadingSpeakerId == speakerId) loadingSpeakerId = null }
+                        return@withContext
                     }
-                } else {
-                    Timber.e("Failed to fetch sample for $speakerId. Code: ${connection.responseCode}")
-                    withContext(Dispatchers.Main) { if (loadingSpeakerId == speakerId) loadingSpeakerId = null }
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (loadingSpeakerId != speakerId) return@withContext
+                    sampleMediaPlayer.setDataSource(cachedFile!!.absolutePath)
+                    sampleMediaPlayer.setOnPreparedListener { mp ->
+                        if (loadingSpeakerId == speakerId) {
+                            mp.start()
+                            playingSpeakerId = speakerId
+                            loadingSpeakerId = null
+                        }
+                    }
+                    sampleMediaPlayer.setOnCompletionListener {
+                        if (playingSpeakerId == speakerId) playingSpeakerId = null
+                    }
+                    sampleMediaPlayer.prepareAsync()
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Exception playing sample for $speakerId: ${e.message}")
@@ -189,7 +285,39 @@ class SpeakerSamplePlayer(
             }
         }
     }
+
     fun release() {
         sampleMediaPlayer.release()
     }
+}
+
+fun addWavHeader(pcmData: ByteArray, sampleRate: Int): ByteArray {
+    val numChannels = 1
+    val bitsPerSample = 16
+    val byteRate = sampleRate * numChannels * bitsPerSample / 8
+    val blockAlign = numChannels * bitsPerSample / 8
+    val dataLength = pcmData.size
+
+    val header = java.nio.ByteBuffer.allocate(44)
+    header.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+
+    header.put("RIFF".toByteArray(Charsets.US_ASCII))
+    header.putInt(36 + dataLength)
+    header.put("WAVE".toByteArray(Charsets.US_ASCII))
+    header.put("fmt ".toByteArray(Charsets.US_ASCII))
+    header.putInt(16) // Subchunk1Size
+    header.putShort(1.toShort()) // AudioFormat (PCM)
+    header.putShort(numChannels.toShort())
+    header.putInt(sampleRate)
+    header.putInt(byteRate)
+    header.putShort(blockAlign.toShort())
+    header.putShort(bitsPerSample.toShort())
+    header.put("data".toByteArray(Charsets.US_ASCII))
+    header.putInt(dataLength)
+
+    val combined = ByteArray(44 + dataLength)
+    System.arraycopy(header.array(), 0, combined, 0, 44)
+    System.arraycopy(pcmData, 0, combined, 44, dataLength)
+
+    return combined
 }

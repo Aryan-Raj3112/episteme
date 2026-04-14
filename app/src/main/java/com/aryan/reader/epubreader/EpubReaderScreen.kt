@@ -148,7 +148,6 @@ import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.CustomTopBanner
-import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.ReaderThemePanel
@@ -995,7 +994,9 @@ fun EpubReaderHost(
     }
 
     val searchState = rememberSearchState(scope = scope, searcher = epubSearcher)
-    val speakerPlayer = remember(context, scope) { SpeakerSamplePlayer(context, scope) }
+    val speakerPlayer = remember(context, scope) {
+        SpeakerSamplePlayer(context, scope, getAuthToken = { viewModel.getAuthToken() })
+    }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
     var isAutoScrollPlaying by remember { mutableStateOf(false) }
@@ -1053,7 +1054,6 @@ fun EpubReaderHost(
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
-    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
     var showTtsControlsSheet by remember { mutableStateOf(false) }
     var showThemePanel by remember { mutableStateOf(false) }
     var showPaletteManager by remember { mutableStateOf(false) }
@@ -3628,7 +3628,6 @@ fun EpubReaderHost(
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
-                    onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
                     onOpenVisualOptions = { showVisualOptionsSheet = true },
                     onToggleReflow = if (onToggleReflow != null) {
@@ -4209,14 +4208,15 @@ fun EpubReaderHost(
                 onSpeakerChange = { newSpeaker ->
                     ttsController.changeSpeaker(newSpeaker)
                 },
-                isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER"
+                isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER",
+                getAuthToken = { viewModel.getAuthToken() }
             )
         }
 
         if (showTtsControlsSheet) {
             TtsControlsSheet(
                 onDismiss = { showTtsControlsSheet = false },
-                onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                onOpenTtsSettings = { showTtsSettingsSheet = true },
                 ttsController = ttsController
             )
         }
@@ -4257,13 +4257,6 @@ fun EpubReaderHost(
                     selectedSearchPackage = pkg
                     saveExternalSearchPackage(context, pkg)
                 }
-            )
-        }
-
-        if (showDeviceVoiceSettingsSheet) {
-            DeviceVoiceSettingsSheet(
-                isVisible = true,
-                onDismiss = { showDeviceVoiceSettingsSheet = false }
             )
         }
 

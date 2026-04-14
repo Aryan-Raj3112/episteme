@@ -188,7 +188,6 @@ fun EpubReaderTopBar(
     onTogglePageTurnAnimation: (Boolean) -> Unit,
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
-    onOpenDeviceVoiceSettings: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
     onOpenVisualOptions: () -> Unit,
@@ -470,7 +469,7 @@ fun EpubReaderTopBar(
                                     text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
                                     onClick = {
                                         showMoreMenu = false
-                                        onOpenDeviceVoiceSettings()
+                                        onOpenTtsSettings()
                                     },
                                     leadingIcon = {
                                         Icon(
@@ -478,24 +477,8 @@ fun EpubReaderTopBar(
                                             contentDescription = null,
                                             modifier = Modifier.size(20.dp)
                                         )
-                                    })
-
-                                if (BuildConfig.DEBUG) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            onOpenTtsSettings()
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.text_to_speech),
-                                                contentDescription = null,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    )
-                                }
+                                    }
+                                )
                             }
                         }
                     }
@@ -1452,7 +1435,7 @@ fun CustomizeToolsSheet(
 @Composable
 fun TtsControlsSheet(
     onDismiss: () -> Unit,
-    onOpenDeviceVoiceSettings: () -> Unit,
+    onOpenTtsSettings: () -> Unit,
     ttsController: com.aryan.reader.tts.TtsController
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1631,7 +1614,7 @@ fun TtsControlsSheet(
             OutlinedButton(
                 onClick = {
                     onDismiss()
-                    onOpenDeviceVoiceSettings()
+                    onOpenTtsSettings()
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {

@@ -270,7 +270,6 @@ import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
-import com.aryan.reader.DeviceVoiceSettingsSheet
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
@@ -283,7 +282,6 @@ import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.TtsSettingsSheet
-import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
@@ -1342,8 +1340,6 @@ fun PdfViewerScreen(
     var selectedDictPackage by remember { mutableStateOf(loadExternalDictPackage(context)) }
     var selectedTranslatePackage by remember { mutableStateOf(loadExternalTranslatePackage(context)) }
     var selectedSearchPackage by remember { mutableStateOf(loadExternalSearchPackage(context)) }
-
-    var showDeviceVoiceSettingsSheet by remember { mutableStateOf(false) }
 
     fun triggerAutoScrollTempPause(durationMs: Long) {
         if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
@@ -2677,8 +2673,13 @@ fun PdfViewerScreen(
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
     var startPageThumbnail by remember { mutableStateOf<Bitmap?>(null) }
 
-    val speakerPlayer =
-        remember(context, coroutineScope) { SpeakerSamplePlayer(context, coroutineScope) }
+    val speakerPlayer = remember(context, coroutineScope) {
+        SpeakerSamplePlayer(
+            context = context,
+            scope = coroutineScope,
+            getAuthToken = { viewModel.getAuthToken() }
+        )
+    }
 
     var clickedLinkUrl by remember { mutableStateOf<String?>(null) }
     val uriHandler = LocalUriHandler.current
@@ -5864,7 +5865,7 @@ fun PdfViewerScreen(
                                                     text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
                                                     onClick = {
                                                         showMoreMenu = false
-                                                        showDeviceVoiceSettingsSheet = true
+                                                        showTtsSettingsSheet = true
                                                     },
                                                     leadingIcon = {
                                                         Icon(
@@ -5874,24 +5875,6 @@ fun PdfViewerScreen(
                                                         )
                                                     }
                                                 )
-
-                                                if (BuildConfig.DEBUG) {
-                                                    DropdownMenuItem(
-                                                        text = { Text(stringResource(R.string.menu_tts_settings_debug)) },
-                                                        onClick = {
-                                                            showMoreMenu = false
-                                                            showTtsSettingsSheet = true
-                                                        },
-                                                        leadingIcon = {
-                                                            Icon(
-                                                                painter = painterResource(id = R.drawable.text_to_speech),
-                                                                contentDescription = null,
-                                                                modifier = Modifier.size(20.dp)
-                                                            )
-                                                        }
-                                                    )
-                                                }
-                                                HorizontalDivider()
                                             }
                                             if (!hiddenTools.contains(PdfReaderTool.BOOKMARK.name)) {
                                                 DropdownMenuItem(text = {
@@ -7524,14 +7507,15 @@ fun PdfViewerScreen(
                         onSpeakerChange = { newSpeaker ->
                             ttsController.changeSpeaker(newSpeaker)
                         },
-                        isTtsActive = isTtsSessionActive
+                        isTtsActive = isTtsSessionActive,
+                        getAuthToken = { viewModel.getAuthToken() }
                     )
                 }
 
                 if (showTtsControlsSheet) {
                     TtsControlsSheet(
                         onDismiss = { showTtsControlsSheet = false },
-                        onOpenDeviceVoiceSettings = { showDeviceVoiceSettingsSheet = true },
+                        onOpenTtsSettings = { showTtsSettingsSheet = true },
                         ttsController = ttsController
                     )
                 }
@@ -7561,13 +7545,6 @@ fun PdfViewerScreen(
                             selectedSearchPackage = pkg
                             saveExternalSearchPackage(context, pkg)
                         }
-                    )
-                }
-
-                if (showDeviceVoiceSettingsSheet) {
-                    DeviceVoiceSettingsSheet(
-                        isVisible = true,
-                        onDismiss = { showDeviceVoiceSettingsSheet = false }
                     )
                 }
 

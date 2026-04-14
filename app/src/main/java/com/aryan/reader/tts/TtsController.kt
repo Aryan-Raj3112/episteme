@@ -181,18 +181,8 @@ class TtsController(context: Context) : Player.Listener {
             putString(KEY_PLAYBACK_SOURCE, playbackSource)
             putString(KEY_AUTH_TOKEN, authToken)
         }
+        Timber.tag("TTS_CLOUD_DIAG").d("TtsController sending START. Mode: $ttsMode, Chunks: ${chunks.size}, Token present: ${!authToken.isNullOrBlank()}")
         mediaController?.sendCustomCommand(START_TTS_COMMAND, args)
-
-        val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
-            .setArtist(bookTitle)
-            .setTitle(chapterTitle ?: "Reading Aloud")
-        coverImageUri?.let { metadataBuilder.setArtworkUri(it.toUri()) }
-
-        val metadata = MediaItem.Builder()
-            .setMediaId("tts_session")
-            .setMediaMetadata(metadataBuilder.build())
-            .build()
-        mediaController?.setMediaItem(metadata)
     }
 
     fun pause() {

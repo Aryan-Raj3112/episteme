@@ -195,6 +195,7 @@ class TtsPlaybackManager(
                 }
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
+                Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
                 handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource, authToken)
             }
             STOP_TTS_COMMAND -> {
@@ -219,7 +220,8 @@ class TtsPlaybackManager(
                     if (currentIdx == C.INDEX_UNSET) return@launch
                     val keysToRemove = audioFiles.keys.filter { it > currentIdx }
                     keysToRemove.forEach { key ->
-                        audioFiles.remove(key)?.delete()
+                        val file = audioFiles.remove(key)
+                        deleteTempFile(file)
                     }
                     withContext(Dispatchers.Main) {
                         prefetchNextChunkAudio(currentIdx)
@@ -447,8 +449,9 @@ class TtsPlaybackManager(
             val previousChunkIndex = previousMediaItem.mediaId.toIntOrNull()
 
             if (previousChunkIndex != null) {
-                scope.launch {
-                    audioFiles.remove(previousChunkIndex)?.delete()
+                scope.launch(Dispatchers.IO) {
+                    val file = audioFiles.remove(previousChunkIndex)
+                    deleteTempFile(file)
                 }
             }
         }
@@ -638,9 +641,17 @@ class TtsPlaybackManager(
             .build()
     }
 
+    private fun deleteTempFile(file: File?) {
+        file?.let {
+            if (it.name.startsWith("tts_audio_chunk_") || it.name.startsWith("base_tts_")) {
+                it.delete()
+            }
+        }
+    }
+
     private suspend fun clearAudioFiles() {
         withContext(Dispatchers.IO) {
-            audioFiles.values.forEach { it.delete() }
+            audioFiles.values.forEach { deleteTempFile(it) }
             audioFiles.clear()
         }
     }

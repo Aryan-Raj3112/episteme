@@ -23,8 +23,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Base64
-import timber.log.Timber
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -33,17 +31,17 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import org.json.JSONArray
 
 data class WordTimingInfo(val word: String, val startTime: Double)
 data class TtsAudioData(
@@ -82,16 +80,6 @@ class TtsService : MediaSessionService() {
         super.onUpdateNotification(session, startInForegroundRequired)
     }
 
-    /**
-     * Generic function to download TTS audio from a server endpoint.
-     * This is used for both the self-hosted server and the Google Cloud worker.
-     *
-     * @param chunkToSpeak The text to synthesize.
-     * @param speakerId The identifier for the voice.
-     * @param serverUrl The base URL of the TTS server.
-     * @param audioFileExtension The file extension for the temporary audio file (e.g., ".flac", ".mp3").
-     * @return A pair containing the temporary audio file and the text chunk returned by the server, or null if it fails.
-     */
     private suspend fun downloadFromTtsServer(
         chunkToSpeak: String,
         speakerId: String,
@@ -102,80 +90,99 @@ class TtsService : MediaSessionService() {
         if (chunkToSpeak.isBlank()) {
             return TtsAudioData(null, null, null)
         }
+
+        Timber.tag("TTS_CLOUD_DIAG").d("downloadFromTtsServer Start: speaker=$speakerId, textLen=${chunkToSpeak.length}, tokenPresent=${!authToken.isNullOrBlank()}")
+
+        val useCache = loadTtsCacheEnabled(applicationContext)
+        val cacheManager = TtsCacheManager(applicationContext)
+
+        if (useCache) {
+            val cachedFile = cacheManager.getCachedFile(chunkToSpeak, speakerId)
+            if (cachedFile != null) {
+                Timber.tag("TTS_CLOUD_DIAG").d("Cache HIT for speaker: $speakerId")
+                return TtsAudioData(cachedFile, chunkToSpeak, emptyList())
+            }
+        }
+
+        Timber.tag("TTS_CLOUD_DIAG").d("Cache MISS for speaker: $speakerId. Fetching from network.")
+
         return withContext(Dispatchers.IO) {
             var tempAudioFile: File? = null
             try {
                 val url = URL(serverUrl)
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
+                // ... (Keep existing headers/setup)
                 connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 connection.setRequestProperty("Accept", "application/json")
-                if (authToken != null) {
-                    connection.setRequestProperty("Authorization", "Bearer $authToken")
-                }
+                if (authToken != null) connection.setRequestProperty("Authorization", "Bearer $authToken")
                 connection.connectTimeout = 15000
                 connection.readTimeout = 60000
                 connection.doOutput = true
                 connection.doInput = true
 
-                val jsonPayload = JSONObject()
-                jsonPayload.put("text", chunkToSpeak)
-                jsonPayload.put("speaker", speakerId)
-                val jsonInputString = jsonPayload.toString()
+                val jsonPayload = JSONObject().apply {
+                    put("text", chunkToSpeak)
+                    put("speaker", speakerId)
+                }
                 connection.outputStream.use { os ->
-                    val input = jsonInputString.toByteArray(Charsets.UTF_8)
+                    val input = jsonPayload.toString().toByteArray(Charsets.UTF_8)
                     os.write(input, 0, input.size)
                 }
 
                 val responseCode = connection.responseCode
+                Timber.tag("TTS_CLOUD_DIAG").d("Network response code: $responseCode")
 
                 if (responseCode == 402) {
-                    Timber.w("TTS Server: Insufficient Credits")
+                    Timber.tag("TTS_CLOUD_DIAG").w("TTS Server: Insufficient Credits")
                     return@withContext TtsAudioData(null, null, null, "INSUFFICIENT_CREDITS")
                 }
 
                 if (responseCode != HttpURLConnection.HTTP_OK) {
-                    val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "" }
-                    Timber.e("TTS Server request failed with code: $responseCode for URL: $serverUrl. Body: $errorBody")
+                    val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "Could not read error stream" }
+                    Timber.tag("TTS_CLOUD_DIAG").e("HTTP Error $responseCode: $errorBody")
                     return@withContext TtsAudioData(null, null, null)
                 }
 
-                val responseBody =
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val responseBody = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                Timber.tag("TTS_CLOUD_DIAG").d("Received successful response, body length: ${responseBody.length}")
+
                 val jsonResponse = JSONObject(responseBody)
+
                 if (jsonResponse.has("audio_base64") && jsonResponse.has("text_chunk")) {
                     val audioBase64 = jsonResponse.getString("audio_base64")
                     val serverTextChunk = jsonResponse.getString("text_chunk")
-                    val audioBytes = Base64.decode(audioBase64, Base64.DEFAULT)
+                    val mimeType = jsonResponse.optString("mime_type", "audio/pcm;rate=24000")
+                    var audioBytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
 
-                    val wordTimings = mutableListOf<WordTimingInfo>()
-                    if (jsonResponse.has("word_timings")) {
-                        val timingsArray: JSONArray = jsonResponse.getJSONArray("word_timings")
-                        for (i in 0 until timingsArray.length()) {
-                            val timingObject = timingsArray.getJSONObject(i)
-                            wordTimings.add(
-                                WordTimingInfo(
-                                    word = timingObject.getString("word"),
-                                    startTime = timingObject.getDouble("startTime")
-                                )
-                            )
+                    val isRawPcm = mimeType.contains("audio/pcm", ignoreCase = true) ||
+                            mimeType.contains("audio/l16", ignoreCase = true) ||
+                            mimeType.contains("audio/raw", ignoreCase = true)
+
+                    if (isRawPcm) {
+                        var sampleRate = 24000
+                        val rateRegex = Regex("rate=(\\d+)")
+                        val match = rateRegex.find(mimeType)
+                        if (match != null) {
+                            sampleRate = match.groupValues[1].toInt()
                         }
+                        audioBytes = addWavHeader(audioBytes, sampleRate)
                     }
 
-                    tempAudioFile = File.createTempFile(
-                        "tts_audio_chunk_",
-                        audioFileExtension,
-                        applicationContext.cacheDir
-                    )
-                    FileOutputStream(tempAudioFile).use { output -> output.write(audioBytes) }
-                    TtsAudioData(tempAudioFile, serverTextChunk, wordTimings)
+                    if (useCache) {
+                        tempAudioFile = cacheManager.saveToCache(chunkToSpeak, speakerId, audioBytes)
+                    } else {
+                        tempAudioFile = File.createTempFile("tts_audio_chunk_", ".wav", applicationContext.cacheDir)
+                        FileOutputStream(tempAudioFile).use { it.write(audioBytes) }
+                    }
+
+                    TtsAudioData(tempAudioFile, serverTextChunk, emptyList())
                 } else {
-                    Timber.e("DownloadAudioChunk: 'audio_base64' or 'text_chunk' field missing."
-                    )
+                    Timber.tag("TTS_CLOUD_DIAG").e("Response JSON missing expected keys.")
                     TtsAudioData(null, null, null)
                 }
             } catch (e: Exception) {
-                Timber.e(e, "DownloadAudioChunk: TTS Request Exception: ${e.message}")
+                Timber.tag("TTS_CLOUD_DIAG").e(e, "DownloadAudioChunk Exception: ${e.message}")
                 tempAudioFile?.delete()
                 TtsAudioData(null, null, null)
             }
