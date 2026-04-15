@@ -603,15 +603,14 @@ fun EpubReaderBottomBar(
                                         showAiFeaturesMenu = false
                                         onSummarize()
                                     })
-                                if (BuildConfig.DEBUG && isProUser) {
-                                    HorizontalDivider()
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_recap_beta)) },
-                                        onClick = {
-                                            showAiFeaturesMenu = false
-                                            onRecap()
-                                        })
-                                }
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_recap_beta)) },
+                                    onClick = {
+                                        showAiFeaturesMenu = false
+                                        onRecap()
+                                    }
+                                )
                             }
                         }
                     }

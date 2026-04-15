@@ -1361,6 +1361,8 @@ fun EpubReaderHost(
 
         scope.launch {
             val token = viewModel.getAuthToken()
+            var currentCost = 0
+
             executeRecapLogic(
                 epubBook = epubBook,
                 chapterIndex = chapterIdx,
@@ -1369,10 +1371,14 @@ fun EpubReaderHost(
                 paginator = paginator,
                 context = context,
                 onProgressUpdate = { recapProgressMessage = it },
+                onCostReceived = { currentCost = it },
                 onResultUpdate = { chunk ->
                     isRecapLoading = false
                     val current = recapResult?.summary ?: ""
-                    recapResult = SummarizationResult(summary = current + chunk)
+                    recapResult = SummarizationResult(
+                        summary = current + chunk,
+                        cost = currentCost
+                    )
                 },
                 authToken = token,
                 onError = { error ->
@@ -2656,14 +2662,20 @@ fun EpubReaderHost(
                                                     val bookTitleToSave = epubBook.title
                                                     val finalSummaryBuilder = StringBuilder()
 
+                                                    var currentCost = 0
+
                                                     summarizeBookContent(
                                                         content = content,
+                                                        authToken = token,
+                                                        onCostReceived = { currentCost = it },
                                                         onUpdate = { chunk ->
                                                             finalSummaryBuilder.append(chunk)
                                                             val currentSummary = summarizationResult?.summary ?: ""
-                                                            summarizationResult = SummarizationResult(summary = currentSummary + chunk)
+                                                            summarizationResult = SummarizationResult(
+                                                                summary = currentSummary + chunk,
+                                                                cost = currentCost
+                                                            )
                                                         },
-                                                        authToken = token,
                                                         onError = { error ->
                                                             if (error == "INSUFFICIENT_CREDITS") {
                                                                 showInsufficientCreditsDialog = true
@@ -3807,11 +3819,17 @@ fun EpubReaderHost(
                         summarizationResult = null
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
-                                webViewRefForTts?.evaluateJavascript("javascript:AiBridgeHelper.extractAndRelayTextForSummarization();") { result ->
-                                    Timber.d("JS summarization request: $result")
-                                } ?: run {
+                                val cached = summaryCacheManager.getSummary(epubBook.title, currentChapterIndex)
+                                if (cached != null) {
+                                    summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
                                     isSummarizationLoading = false
-                                    summarizationResult = SummarizationResult(error = "WebView not available.")
+                                } else {
+                                    webViewRefForTts?.evaluateJavascript("javascript:AiBridgeHelper.extractAndRelayTextForSummarization();") { result ->
+                                        Timber.d("JS summarization request: $result")
+                                    } ?: run {
+                                        isSummarizationLoading = false
+                                        summarizationResult = SummarizationResult(error = "WebView not available.")
+                                    }
                                 }
                             }
                             RenderMode.PAGINATED -> {
@@ -3820,19 +3838,28 @@ fun EpubReaderHost(
                                     val token = viewModel.getAuthToken()
                                     val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(currentPage)
                                     if (chapterIndex != null) {
+                                        val cached = summaryCacheManager.getSummary(epubBook.title, chapterIndex)
+                                        if (cached != null) {
+                                            summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
+                                            isSummarizationLoading = false
+                                            return@launch
+                                        }
+
                                         val text = paginator?.getPlainTextForChapter(chapterIndex)
                                         if (!text.isNullOrBlank()) {
+                                            var currentCost = 0
+                                            val finalSummaryBuilder = StringBuilder()
                                             summarizeBookContent(
                                                 content = text,
                                                 authToken = token,
+                                                onCostReceived = { currentCost = it },
                                                 onUpdate = { chunk ->
-                                                    val currentSummary =
-                                                        summarizationResult?.summary
-                                                            ?: ""
-                                                    summarizationResult =
-                                                        SummarizationResult(
-                                                            summary = currentSummary + chunk
-                                                        )
+                                                    finalSummaryBuilder.append(chunk)
+                                                    val currentSummary = summarizationResult?.summary ?: ""
+                                                    summarizationResult = SummarizationResult(
+                                                        summary = currentSummary + chunk,
+                                                        cost = currentCost
+                                                    )
                                                 },
                                                 onError = { error ->
                                                     summarizationResult =
@@ -3841,8 +3868,11 @@ fun EpubReaderHost(
                                                         )
                                                 },
                                                 onFinish = {
-                                                    isSummarizationLoading =
-                                                        false
+                                                    isSummarizationLoading = false
+                                                    val fullSummary = finalSummaryBuilder.toString()
+                                                    if (fullSummary.isNotBlank()) {
+                                                        summaryCacheManager.saveSummary(epubBook.title, chapterIndex, fullSummary)
+                                                    }
                                                 }
                                             )
                                         } else {
@@ -3954,6 +3984,8 @@ fun EpubReaderHost(
                 )
 
                 EpubReaderAiOverlays(
+                    bookTitle = epubBook.title,
+                    summaryCacheManager = summaryCacheManager,
                     showSummarizationPopup = showSummarizationPopup,
                     summarizationResult = summarizationResult,
                     isSummarizationLoading = isSummarizationLoading,

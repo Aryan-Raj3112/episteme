@@ -56,6 +56,7 @@ import java.net.URL
 suspend fun summarizeBookContent(
     content: String,
     authToken: String?,
+    onCostReceived: (Int) -> Unit = {},
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -107,6 +108,9 @@ suspend fun summarizeBookContent(
                         Timber.d("Summarization: Received line: $line")
                         try {
                             val jsonResponse = JSONObject(line!!)
+
+                            jsonResponse.optInt("cost_deducted", -1).takeIf { it > -1 }?.let { onCostReceived(it) }
+
                             jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
                                 onUpdate(it)
                                 hasReceivedData = true
@@ -155,6 +159,7 @@ suspend fun executeRecapLogic(
     context: Context,
     onProgressUpdate: (String) -> Unit,
     onResultUpdate: (String) -> Unit,
+    onCostReceived: (Int) -> Unit = {},
     onError: (String) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -236,6 +241,7 @@ suspend fun executeRecapLogic(
         context = context,
         authToken = authToken,
         onUpdate = { chunk -> onResultUpdate(chunk) },
+        onCostReceived = onCostReceived,
         onError = { error -> onError(error) },
         onFinish = { onFinish() }
     )
@@ -246,6 +252,8 @@ suspend fun executeRecapLogic(
  */
 @Composable
 fun EpubReaderAiOverlays(
+    bookTitle: String,
+    summaryCacheManager: SummaryCacheManager,
     showSummarizationPopup: Boolean,
     summarizationResult: SummarizationResult?,
     isSummarizationLoading: Boolean,
@@ -271,6 +279,9 @@ fun EpubReaderAiOverlays(
     if (showSummarizationPopup) {
         SummarizationPopup(
             title = stringResource(R.string.ai_chapter_summary),
+            bookTitle = bookTitle,
+            summaryCacheManager = summaryCacheManager,
+            showCacheManager = true,
             result = summarizationResult,
             isLoading = isSummarizationLoading,
             onDismiss = onDismissSummarization,
@@ -282,6 +293,9 @@ fun EpubReaderAiOverlays(
     if (showRecapPopup) {
         SummarizationPopup(
             title = stringResource(R.string.ai_story_recap_beta),
+            bookTitle = bookTitle,
+            summaryCacheManager = summaryCacheManager,
+            showCacheManager = false,
             result = recapResult,
             isLoading = isRecapLoading,
             onDismiss = onDismissRecap,
