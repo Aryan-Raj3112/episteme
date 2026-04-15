@@ -44,6 +44,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
@@ -255,10 +256,11 @@ class TtsService : MediaSessionService() {
     class GeminiLiveClient(private val client: OkHttpClient) {
         private var webSocket: WebSocket? = null
 
-        // Concurrency mechanisms
         private val connectionMutex = Mutex()
-        private var turnLock = Channel<Unit>(1).apply { trySend(Unit) }
         private var clientScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+        private var generationTaskQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+        private var queueWorker: Job? = null
 
         private var audioChannel = Channel<GeminiWsEvent>(Channel.UNLIMITED)
         private var setupDeferred = CompletableDeferred<Boolean>().apply { complete(false) }
@@ -269,7 +271,18 @@ class TtsService : MediaSessionService() {
             data class Error(val message: String) : GeminiWsEvent()
         }
 
+        private fun startQueueWorker() {
+            if (queueWorker?.isActive == true) return
+            queueWorker = clientScope.launch {
+                for (task in generationTaskQueue) {
+                    task()
+                }
+            }
+        }
+
         suspend fun ensureConnected(serverUrl: String, speaker: String, authToken: String?) = connectionMutex.withLock {
+            startQueueWorker()
+
             val connectStartTime = System.currentTimeMillis()
             if (webSocket != null) {
                 val isSetup = setupDeferred.await()
@@ -410,17 +423,11 @@ class TtsService : MediaSessionService() {
             val header = createWavHeaderUnknownLength(24000)
             concurrentStream.write(header)
 
-            // REMOVED the 65KB silence array here!
-            // It was causing massive playback desync and buffer tricks.
-
-            clientScope.launch {
+            generationTaskQueue.trySend {
                 try {
-                    Timber.tag("TTS_CLOUD_DIAG").d("Waiting for turn lock for chunk: ${text.take(15)}...")
-                    turnLock.receive()
+                    if (!clientScope.isActive) return@trySend
 
-                    if (!isActive) return@launch
-
-                    Timber.tag("TTS_CLOUD_DIAG").d("Turn lock acquired for chunk: ${text.take(15)}...")
+                    Timber.tag("TTS_CLOUD_DIAG").d("Starting API generation task for chunk: ${text.take(15)}...")
 
                     audioChannel = Channel(Channel.UNLIMITED)
                     val chunkGenStartTime = System.currentTimeMillis()
@@ -435,7 +442,7 @@ class TtsService : MediaSessionService() {
                     val sent = webSocket?.send(payload) ?: false
                     if (!sent) {
                         Timber.tag("TTS_CLOUD_DIAG").e("Failed to send text payload over WS")
-                        return@launch
+                        return@trySend
                     }
 
                     var receivedAudioBytes = 0
@@ -451,7 +458,7 @@ class TtsService : MediaSessionService() {
                                     receivedAudioBytes += event.bytes.size
                                 }
                                 is GeminiWsEvent.TurnComplete -> {
-                                    Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes")
+                                    Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes, Total time: ${System.currentTimeMillis() - chunkGenStartTime}ms")
                                     StreamRegistry.markFinished(streamId, receivedAudioBytes.toLong() + 44)
                                     break
                                 }
@@ -469,9 +476,8 @@ class TtsService : MediaSessionService() {
                 } catch (e: Exception) {
                     Timber.tag("TTS_CLOUD_DIAG").e(e, "Exception piping audio")
                 } finally {
-                    Timber.tag("TTS_CLOUD_DIAG").d("Closing stream and releasing turn lock")
+                    Timber.tag("TTS_CLOUD_DIAG").d("Closing stream for ${text.take(15)}")
                     concurrentStream.close()
-                    turnLock.trySend(Unit)
                 }
             }
 
@@ -479,9 +485,11 @@ class TtsService : MediaSessionService() {
         }
 
         fun close() {
-            // Cancel all actively generating chunks safely
             clientScope.cancel()
             clientScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+            generationTaskQueue = Channel(Channel.UNLIMITED)
+            queueWorker = null
 
             webSocket?.close(1000, "Context Reset")
             webSocket = null
