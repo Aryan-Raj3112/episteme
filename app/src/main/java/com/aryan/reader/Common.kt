@@ -1245,15 +1245,14 @@ fun TtsSettingsSheet(
                 }
             }
 
-            // Custom Segmented Control for Tabs
             Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(4.dp)) {
-                val tabs = listOf("AI Voices", "Device Voices", "Cache")
+                val tabs = listOf("AI Voices", "Device Voices")
                 tabs.forEachIndexed { index, title ->
                     val isSelected = selectedTabIndex == index
                     Box(
                         modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(20.dp))
                             .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable(enabled = !isTtsActive || index == 2) {
+                            .clickable(enabled = !isTtsActive) {
                                 selectedTabIndex = index
                                 if (index == 0) onModeChange(TtsPlaybackManager.TtsMode.CLOUD)
                                 if (index == 1) onModeChange(TtsPlaybackManager.TtsMode.BASE)
@@ -1270,7 +1269,6 @@ fun TtsSettingsSheet(
             when (selectedTabIndex) {
                 0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer)
                 1 -> DeviceVoicesTab(isTtsActive, context)
-                2 -> TtsCacheSettingsTab(context)
             }
         }
     }

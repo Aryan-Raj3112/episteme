@@ -330,7 +330,11 @@ class TtsPlaybackManager(
             return
         }
 
+        val chunkStartTime = System.currentTimeMillis()
+        Timber.tag("TTS_CLOUD_DIAG").i("Starting audio generation for first chunk (index=$startAtIndex).")
+
         val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+        Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
             _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
@@ -351,12 +355,14 @@ class TtsPlaybackManager(
             val mediaItem = createMediaItem(serverText, audioFile.absolutePath, startAtIndex, updatedChunk)
 
             withContext(Dispatchers.Main) {
+                val prepStartTime = System.currentTimeMillis()
                 player.setMediaItem(mediaItem)
                 player.prepare()
                 if (startAtPosition > 0) {
                     player.seekTo(startAtPosition)
                 }
                 player.playWhenReady = playWhenReady
+                Timber.tag("TTS_CLOUD_DIAG").i("ExoPlayer setMediaItem & prepare called in ${System.currentTimeMillis() - prepStartTime}ms")
                 _ttsState.value = _ttsState.value.copy(
                     isLoading = false,
                     isPlaying = playWhenReady,
@@ -532,7 +538,12 @@ class TtsPlaybackManager(
 
                 val job = scope.launch {
                     val nextChunk = textChunks[targetIndex]
+                    val prefetchStartTime = System.currentTimeMillis()
+                    Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
+
                     val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+
+                    Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio generation for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 
                     if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
                         _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
@@ -694,5 +705,16 @@ class TtsPlaybackManager(
         player.removeListener(this)
         handleStopTts(userInitiated = true)
         Timber.d("TtsPlaybackManager released.")
+    }
+
+    override fun onPlaybackStateChanged(playbackState: Int) {
+        val stateName = when (playbackState) {
+            Player.STATE_IDLE -> "STATE_IDLE"
+            Player.STATE_BUFFERING -> "STATE_BUFFERING"
+            Player.STATE_READY -> "STATE_READY"
+            Player.STATE_ENDED -> "STATE_ENDED"
+            else -> "UNKNOWN"
+        }
+        Timber.tag("TTS_CLOUD_DIAG").d("ExoPlayer playback state changed: $stateName")
     }
 }

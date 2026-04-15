@@ -101,6 +101,7 @@ class TtsService : MediaSessionService() {
         }
 
         suspend fun ensureConnected(serverUrl: String, speaker: String, authToken: String?) {
+            val connectStartTime = System.currentTimeMillis()
             if (webSocket != null) {
                 val isSetup = setupDeferred.await()
                 if (isSetup) return
@@ -156,8 +157,6 @@ class TtsService : MediaSessionService() {
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    Timber.tag("TTS_CLOUD_DIAG").d("WS Raw JSON Received: \n$text") // Detailed inspection
-
                     try {
                         val json = JSONObject(text)
                         if (json.has("error")) {
@@ -214,12 +213,7 @@ class TtsService : MediaSessionService() {
                 }
 
                 override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
-                    Timber.tag("TTS_CLOUD_DIAG").w("WS Received Raw Binary! Size: ${bytes.size}")
-
-                    // Decode the binary frame into a UTF-8 string
                     val decodedText = bytes.utf8()
-
-                    // Route it back into your existing JSON parsing logic
                     onMessage(webSocket, decodedText)
                 }
 
@@ -249,7 +243,6 @@ class TtsService : MediaSessionService() {
                 throw IllegalStateException("Failed to connect to proxy WebSocket")
             }
 
-            // Wait up to 10 seconds for Gemini to acknowledge the setup
             val isSetup = try {
                 kotlinx.coroutines.withTimeout(10000L) {
                     setupDeferred.await()
@@ -263,6 +256,8 @@ class TtsService : MediaSessionService() {
                 webSocket?.close(1000, "Setup failed")
                 webSocket = null
                 throw IllegalStateException("Failed to complete Gemini setup")
+            } else {
+                Timber.tag("TTS_CLOUD_DIAG").i("WS Connection & Setup complete in ${System.currentTimeMillis() - connectStartTime}ms")
             }
         }
 
@@ -270,6 +265,8 @@ class TtsService : MediaSessionService() {
             if (text.isBlank()) return TtsAudioData(null, null, null, "Text is blank")
 
             audioChannel = Channel(Channel.UNLIMITED)
+            val chunkGenStartTime = System.currentTimeMillis()
+            var firstByteTime = -1L
 
             val payload = JSONObject().apply {
                 put("realtimeInput", JSONObject().apply {
@@ -293,10 +290,14 @@ class TtsService : MediaSessionService() {
                     for (event in audioChannel) {
                         when (event) {
                             is GeminiWsEvent.Audio -> {
+                                if (firstByteTime == -1L) {
+                                    firstByteTime = System.currentTimeMillis()
+                                    Timber.tag("TTS_CLOUD_DIAG").i("TTFB (Time to First Byte): ${firstByteTime - chunkGenStartTime}ms")
+                                }
                                 accumulatedBytes.write(event.bytes)
                             }
                             is GeminiWsEvent.TurnComplete -> {
-                                Timber.tag("TTS_CLOUD_DIAG").d("Accumulation finished via TurnComplete")
+                                Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Total time: ${System.currentTimeMillis() - chunkGenStartTime}ms")
                                 break
                             }
                             is GeminiWsEvent.Error -> {
@@ -306,7 +307,7 @@ class TtsService : MediaSessionService() {
                         }
                     }
                 }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
                 error = "Timeout waiting for Gemini response"
                 Timber.tag("TTS_CLOUD_DIAG").e("Timeout: No audio or TurnComplete received within 20s")
             }
