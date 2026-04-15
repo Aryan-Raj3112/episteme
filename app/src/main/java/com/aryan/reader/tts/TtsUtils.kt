@@ -52,35 +52,6 @@ val GEMINI_TTS_SPEAKERS = listOf(
 class TtsCacheManager(private val context: Context) {
     val cacheDir = java.io.File(context.cacheDir, "tts_audio_cache").apply { if (!exists()) mkdirs() }
 
-    private fun getParamsHash(params: Map<String, String>): String {
-        val paramsStr = params.entries.sortedBy { it.key }.joinToString("&") { "${it.key}=${it.value}" }
-        return hashString(paramsStr)
-    }
-
-    fun getCachedFile(bookTitle: String, text: String, params: Map<String, String>): java.io.File? {
-        val paramsHash = getParamsHash(params)
-        val textHash = hashString(text)
-        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        val file = java.io.File(cacheDir, "${safeTitle}__${paramsHash}__${textHash}.wav")
-
-        val oldFile = java.io.File(cacheDir, "${hashString(text + params["speaker"])}.wav")
-
-        if (file.exists() && file.length() > 0) return file
-        if (oldFile.exists() && oldFile.length() > 0) return oldFile
-
-        return null
-    }
-
-    fun saveToCache(bookTitle: String, text: String, params: Map<String, String>, audioBytes: ByteArray): java.io.File {
-        val paramsHash = getParamsHash(params)
-        val textHash = hashString(text)
-        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        val file = java.io.File(cacheDir, "${safeTitle}__${paramsHash}__${textHash}.wav")
-        file.writeBytes(audioBytes)
-        Timber.tag("TTS_CLOUD_DIAG").d("Saved to cache: $safeTitle, size=${audioBytes.size} bytes")
-        return file
-    }
-
     data class CacheGroup(val bookTitle: String, val sizeBytes: Long, val fileCount: Int)
 
     fun getCacheGroups(): List<CacheGroup> {
@@ -112,11 +83,6 @@ class TtsCacheManager(private val context: Context) {
 
     fun clearCache() {
         cacheDir.listFiles()?.forEach { it.delete() }
-    }
-
-    private fun hashString(input: String): String {
-        val bytes = java.security.MessageDigest.getInstance("MD5").digest(input.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
     }
 }
 
@@ -331,4 +297,30 @@ fun addWavHeader(pcmData: ByteArray, sampleRate: Int): ByteArray {
     System.arraycopy(pcmData, 0, combined, 44, dataLength)
 
     return combined
+}
+
+fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray {
+    val numChannels = 1
+    val bitsPerSample = 16
+    val byteRate = sampleRate * numChannels * bitsPerSample / 8
+    val blockAlign = numChannels * bitsPerSample / 8
+
+    val header = java.nio.ByteBuffer.allocate(44)
+    header.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+
+    header.put("RIFF".toByteArray(Charsets.US_ASCII))
+    header.putInt(0x7FFFFFFF)
+    header.put("WAVE".toByteArray(Charsets.US_ASCII))
+    header.put("fmt ".toByteArray(Charsets.US_ASCII))
+    header.putInt(16)
+    header.putShort(1.toShort())
+    header.putShort(numChannels.toShort())
+    header.putInt(sampleRate)
+    header.putInt(byteRate)
+    header.putShort(blockAlign.toShort())
+    header.putShort(bitsPerSample.toShort())
+    header.put("data".toByteArray(Charsets.US_ASCII))
+    header.putInt(0x7FFFFFFF - 36)
+
+    return header.array()
 }

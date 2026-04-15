@@ -85,6 +85,8 @@ class TtsPlaybackManager(
     private var wordTrackingJob: Job? = null
     private var preparationJob: Job? = null
     private var currentAuthToken: String? = null
+    private var loadedChunks: MutableSet<Int> = mutableSetOf()
+    private val chunkStreamIds: MutableMap<Int, String> = mutableMapOf()
 
     enum class TtsMode {
         CLOUD, BASE
@@ -217,17 +219,36 @@ class TtsPlaybackManager(
                 onResetContext()
                 prefetchingJobs.values.forEach { it.cancel() }
                 prefetchingJobs.clear()
-                scope.launch(Dispatchers.IO) {
-                    val currentIdx = withContext(Dispatchers.Main) { player.currentMediaItemIndex }
+
+                scope.launch(Dispatchers.Main) {
+                    val currentIdx = player.currentMediaItemIndex
                     if (currentIdx == C.INDEX_UNSET) return@launch
-                    val keysToRemove = audioFiles.keys.filter { it > currentIdx }
-                    keysToRemove.forEach { key ->
-                        val file = audioFiles.remove(key)
-                        deleteTempFile(file)
+
+                    val keysToRemove = loadedChunks.filter { it > currentIdx }
+                    withContext(Dispatchers.IO) {
+                        keysToRemove.forEach { key ->
+                            loadedChunks.remove(key)
+                            val file = audioFiles.remove(key)
+                            deleteTempFile(file)
+                            val streamId = chunkStreamIds.remove(key) // ADDED
+                            if (streamId != null) {
+                                StreamRegistry.remove(streamId)
+                            }
+                        }
                     }
-                    withContext(Dispatchers.Main) {
-                        prefetchNextChunkAudio(currentIdx)
+
+                    val itemsToRemove = mutableListOf<Int>()
+                    for (k in 0 until player.mediaItemCount) {
+                        val id = player.getMediaItemAt(k).mediaId.toIntOrNull() ?: -1
+                        if (id > currentIdx) {
+                            itemsToRemove.add(k)
+                        }
                     }
+                    itemsToRemove.reversed().forEach {
+                        player.removeMediaItem(it)
+                    }
+
+                    prefetchNextChunkAudio(currentIdx)
                 }
             }
             SLICE_CURRENT_AND_RELOAD_COMMAND -> {
@@ -255,6 +276,7 @@ class TtsPlaybackManager(
 
         preparationJob = scope.launch {
             clearAudioFiles()
+            loadedChunks.clear()
 
             if (offset == -1) {
                 prepareAndPlayFirstChunk(startAtIndex = currentIdx, playWhenReady = false)
@@ -309,6 +331,7 @@ class TtsPlaybackManager(
         this.chapterTitle = chapterTitle
         this.coverImageUri = coverImageUri
         onResetContext()
+        loadedChunks.clear()
         _ttsState.value = TtsState(isLoading = true, speakerId = speakerId, playbackSource = playbackSource)
         currentAuthToken = authToken
         preparationJob = scope.launch {
@@ -342,17 +365,27 @@ class TtsPlaybackManager(
         }
 
         val audioFile = ttsAudioData.audioFile
+        val streamUri = ttsAudioData.streamUri
         val serverText = ttsAudioData.serverText
 
-        if (audioFile != null && serverText != null) {
-            audioFiles[startAtIndex] = audioFile
+        if ((audioFile != null || streamUri != null) && serverText != null) {
+            if (audioFile != null) {
+                audioFiles[startAtIndex] = audioFile
+            }
+            loadedChunks.add(startAtIndex)
 
             val updatedChunk = processWordTimings(firstChunk, serverText, ttsAudioData.wordTimings)
             val mutableChunks = textChunks.toMutableList()
             mutableChunks[startAtIndex] = updatedChunk
             textChunks = mutableChunks.toList()
 
-            val mediaItem = createMediaItem(serverText, audioFile.absolutePath, startAtIndex, updatedChunk)
+            if (streamUri != null) {
+                val uriStr = streamUri.toUri()
+                val id = uriStr.host ?: uriStr.lastPathSegment
+                if (id != null) chunkStreamIds[startAtIndex] = id
+            }
+            val pathToUse = streamUri ?: audioFile!!.absolutePath
+            val mediaItem = createMediaItem(serverText, pathToUse, startAtIndex, updatedChunk)
 
             withContext(Dispatchers.Main) {
                 val prepStartTime = System.currentTimeMillis()
@@ -407,6 +440,7 @@ class TtsPlaybackManager(
     }
 
     private fun handleStopTts(clearState: Boolean = true, userInitiated: Boolean = false) {
+        Timber.tag("TTS_CLOUD_DIAG").d("handleStopTts called. clearState=$clearState, userInitiated=$userInitiated")
         onResetContext()
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
@@ -427,6 +461,7 @@ class TtsPlaybackManager(
         textChunks = emptyList()
         prefetchingJobs.values.forEach { it.cancel() }
         prefetchingJobs.clear()
+        loadedChunks.clear()
 
         scope.launch {
             clearAudioFiles()
@@ -435,6 +470,7 @@ class TtsPlaybackManager(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val newPlaylistIndex = player.currentMediaItemIndex
+        Timber.tag("TTS_CLOUD_DIAG").d("onMediaItemTransition to playlistIndex: $newPlaylistIndex, mediaId: ${mediaItem?.mediaId}, reason: $reason")
         if (newPlaylistIndex == C.INDEX_UNSET) return
 
         val currentChunkIndex = mediaItem?.mediaId?.toIntOrNull() ?: return
@@ -464,6 +500,11 @@ class TtsPlaybackManager(
                 scope.launch(Dispatchers.IO) {
                     val file = audioFiles.remove(previousChunkIndex)
                     deleteTempFile(file)
+                    loadedChunks.remove(previousChunkIndex)
+                    val streamId = chunkStreamIds.remove(previousChunkIndex)
+                    if (streamId != null) {
+                        StreamRegistry.remove(streamId)
+                    }
                 }
             }
         }
@@ -510,14 +551,17 @@ class TtsPlaybackManager(
         _ttsState.value = nextState
 
         if (!isPlaying && player.playbackState == Player.STATE_IDLE) {
-            if (!nextState.sessionEndedByStop) {
+            if (!nextState.sessionEndedByStop && !nextState.isLoading && preparationJob?.isActive != true) {
+                Timber.tag("TTS_CLOUD_DIAG").d("Auto-stopping TTS from onIsPlayingChanged (IDLE and not loading)")
                 handleStopTts(userInitiated = true)
+            } else {
+                Timber.tag("TTS_CLOUD_DIAG").d("Ignoring STATE_IDLE in onIsPlayingChanged because isLoading=${nextState.isLoading}, preparationJob.isActive=${preparationJob?.isActive}")
             }
         }
     }
 
     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-        Timber.e(error, "Player error: ${error.message}")
+        Timber.tag("TTS_CLOUD_DIAG").e(error, "Player error: [${error.errorCodeName}] ${error.message}")
         _ttsState.value = _ttsState.value.copy(errorMessage = "Playback error: ${error.message}")
         handleStopTts(userInitiated = true)
     }
@@ -531,6 +575,10 @@ class TtsPlaybackManager(
                 }
 
                 if (audioFiles.containsKey(targetIndex)) {
+                    continue
+                }
+
+                if (loadedChunks.contains(targetIndex)) {
                     continue
                 }
 
@@ -551,17 +599,29 @@ class TtsPlaybackManager(
                     }
 
                     val audioFile = ttsAudioData.audioFile
+                    val streamUri = ttsAudioData.streamUri
                     val serverText = ttsAudioData.serverText
 
-                    if (audioFile != null && serverText != null) {
-                        audioFiles[targetIndex] = audioFile
+                    if ((audioFile != null || streamUri != null) && serverText != null) {
+                        if (audioFile != null) {
+                            audioFiles[targetIndex] = audioFile
+                        }
+                        loadedChunks.add(targetIndex)
 
                         val updatedChunk = processWordTimings(nextChunk, serverText, ttsAudioData.wordTimings)
                         val mutableChunks = textChunks.toMutableList()
                         mutableChunks[targetIndex] = updatedChunk
                         textChunks = mutableChunks.toList()
 
-                        val nextMediaItem = createMediaItem(serverText, audioFile.absolutePath, targetIndex, updatedChunk)
+                        val pathToUse = streamUri ?: audioFile!!.absolutePath
+
+                        if (streamUri != null) {
+                            val uriStr = streamUri.toUri()
+                            val id = uriStr.host ?: uriStr.lastPathSegment
+                            if (id != null) chunkStreamIds[targetIndex] = id
+                        }
+
+                        val nextMediaItem = createMediaItem(serverText, pathToUse, targetIndex, updatedChunk)
                         withContext(Dispatchers.Main) {
                             val wasLoading = _ttsState.value.isLoading
 
@@ -605,28 +665,64 @@ class TtsPlaybackManager(
     }
 
     private suspend fun trackWordByWord() {
+        var loopCount = 0
         while (true) {
             val currentMediaItem = withContext(Dispatchers.Main) { player.currentMediaItem } ?: break
             val playbackPosition = withContext(Dispatchers.Main) { player.currentPosition }
 
-            val extras = currentMediaItem.mediaMetadata.extras ?: break
-            val timestamps = extras.getDoubleArray(KEY_WORD_TIMESTAMPS) ?: break
-            val offsets = extras.getIntArray(KEY_WORD_OFFSETS) ?: break
-            val sourceCfi = extras.getString("sourceCfi") ?: break
+            val uri = currentMediaItem.localConfiguration?.uri
+            if (uri?.scheme == "ttsstream") {
+                val streamId = uri.host ?: uri.lastPathSegment
+                if (streamId != null) {
+                    val (isFinished, totalBytes) = StreamRegistry.getStreamMetadata(streamId)
+                    if (isFinished && totalBytes > 44) {
+                        val expectedDurationMs = (totalBytes - 44) / 48
 
-            val currentWordIndex = timestamps.indexOfLast { (it * 1000).toLong() <= playbackPosition }
-
-            if (currentWordIndex != -1) {
-                val currentWordOffset = offsets[currentWordIndex]
-                if (_ttsState.value.currentWordStartOffset != currentWordOffset || _ttsState.value.currentWordSourceCfi != sourceCfi) {
-                    _ttsState.value = _ttsState.value.copy(
-                        currentWordSourceCfi = sourceCfi,
-                        currentWordStartOffset = currentWordOffset
-                    )
+                        if (playbackPosition >= expectedDurationMs) {
+                            Timber.tag("TTS_CLOUD_DIAG").i("Stream finished naturally: pos=$playbackPosition, expected=$expectedDurationMs. Transitioning to next chunk.")
+                            withContext(Dispatchers.Main) {
+                                if (player.hasNextMediaItem()) {
+                                    player.seekToNextMediaItem()
+                                } else {
+                                    player.stop()
+                                }
+                            }
+                            break
+                        }
+                    }
                 }
             }
-            delay(100)
+
+            val extras = currentMediaItem.mediaMetadata.extras ?: break
+            val sourceCfi = extras.getString("sourceCfi") ?: break
+
+            val timestamps = extras.getDoubleArray(KEY_WORD_TIMESTAMPS)
+            val offsets = extras.getIntArray(KEY_WORD_OFFSETS)
+
+            if (timestamps != null && offsets != null) {
+                val currentWordIndex = timestamps.indexOfLast { (it * 1000).toLong() <= playbackPosition }
+                if (currentWordIndex != -1) {
+                    val currentWordOffset = offsets[currentWordIndex]
+                    if (_ttsState.value.currentWordStartOffset != currentWordOffset || _ttsState.value.currentWordSourceCfi != sourceCfi) {
+                        _ttsState.value = _ttsState.value.copy(
+                            currentWordSourceCfi = sourceCfi,
+                            currentWordStartOffset = currentWordOffset
+                        )
+                    }
+                }
+            }
+
+            delay(50)
+            loopCount++
         }
+    }
+
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        Timber.tag("TTS_CLOUD_DIAG").d("onPlayWhenReadyChanged: playWhenReady=$playWhenReady, reason=$reason")
+    }
+
+    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+        Timber.tag("TTS_CLOUD_DIAG").d("onPositionDiscontinuity: reason=$reason")
     }
 
     private fun createMediaItem(text: String, path: String, index: Int, chunk: TtsChunk): MediaItem {
@@ -651,8 +747,10 @@ class TtsPlaybackManager(
             .setExtras(extras)
             .build()
 
+        val uri = if (path.startsWith("ttsstream://")) path.toUri() else Uri.fromFile(File(path))
+
         return MediaItem.Builder()
-            .setUri(Uri.fromFile(File(path)))
+            .setUri(uri)
             .setMediaId(index.toString())
             .setMediaMetadata(metadata)
             .build()
@@ -670,6 +768,9 @@ class TtsPlaybackManager(
         withContext(Dispatchers.IO) {
             audioFiles.values.forEach { deleteTempFile(it) }
             audioFiles.clear()
+            chunkStreamIds.values.forEach { StreamRegistry.remove(it) } // ADDED
+            chunkStreamIds.clear() // ADDED
+            loadedChunks.clear()
         }
     }
 
