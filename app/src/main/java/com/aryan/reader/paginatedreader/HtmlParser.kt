@@ -460,8 +460,12 @@ private class SemanticHtmlParser(
                 try {
                     BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         .also { BitmapFactory.decodeFile(imageFile.absolutePath, it) }
-                        .let { Pair(it.outWidth.toFloat(), it.outHeight.toFloat()) }
-                } catch (_: Exception) {
+                        .let {
+                            Timber.tag("IMAGE_DIAG").d("Parsed file bounds: ${it.outWidth}x${it.outHeight} for ${imageFile.name}")
+                            Pair(it.outWidth.toFloat(), it.outHeight.toFloat())
+                        }
+                } catch (e: Exception) {
+                    Timber.tag("IMAGE_DIAG").e(e, "Failed to parse image bounds for ${imageFile.name}")
                     Pair(null, null)
                 }
             }

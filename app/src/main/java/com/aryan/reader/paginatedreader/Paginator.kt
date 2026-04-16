@@ -742,26 +742,25 @@ private suspend fun measureBlockHeight(
             val imageIntrinsicWidth = block.intrinsicWidth
             val imageIntrinsicHeight = block.intrinsicHeight
 
-            if (imageIntrinsicWidth != null && imageIntrinsicHeight != null && imageIntrinsicWidth > 0) {
-                val aspectRatio = imageIntrinsicHeight / imageIntrinsicWidth
-                val styledWidthDp = block.style.width
+            val styledHeightPx = if (block.style.height.isSpecified) with(density) { block.style.height.toPx() } else null
+            val styledWidthPx = if (block.style.width.isSpecified) with(density) { block.style.width.toPx() } else null
 
-                val imageRenderWidthPx = if (styledWidthDp != Dp.Unspecified) {
-                    with(density) { styledWidthDp.toPx() }
-                } else {
-                    contentMaxWidth
+            val measuredHeight = when {
+                styledHeightPx != null && styledHeightPx > 0f -> styledHeightPx
+                styledWidthPx != null && styledWidthPx > 0f && imageIntrinsicWidth != null && imageIntrinsicHeight != null && imageIntrinsicWidth > 0 -> {
+                    val aspectRatio = imageIntrinsicHeight / imageIntrinsicWidth
+                    styledWidthPx * aspectRatio
                 }
-
-                val height = (imageRenderWidthPx * aspectRatio).roundToInt()
-                height
-            } else {
-                Timber.w("Image at '${block.path}' has no valid intrinsic dimensions, falling back to fixed height.")
-                if (block.style.height != Dp.Unspecified) {
-                    with(density) { block.style.height.toPx().roundToInt() }
-                } else {
-                    with(density) { 250.dp.toPx().roundToInt() }
+                imageIntrinsicWidth != null && imageIntrinsicHeight != null && imageIntrinsicWidth > 0 -> {
+                    val aspectRatio = imageIntrinsicHeight / imageIntrinsicWidth
+                    contentMaxWidth * aspectRatio
                 }
+                else -> with(density) { 250.dp.toPx() }
             }
+
+            val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
+            Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
+            finalHeight
         }
         is SpacerBlock -> {
             val height = with(density) { block.height.toPx().roundToInt() }

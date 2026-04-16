@@ -1,4 +1,6 @@
 // PaginatedReader.kt
+@file:Suppress("VariableNeverRead")
+
 package com.aryan.reader.paginatedreader
 
 import android.annotation.SuppressLint
@@ -9,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.widget.Toast
+import androidx.compose.ui.unit.isSpecified
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -24,7 +27,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -614,6 +617,18 @@ fun PaginatedReaderScreen(
             )
         }
 
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.currentPage }.collect { page ->
+                Timber.tag("PageTurnDiag").i("Pager Settled: Now on page $page at ${System.currentTimeMillis()}")
+            }
+        }
+
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
+                Timber.tag("PageTurnDiag").d("Pager Scroll State: isScrolling=$isScrolling")
+            }
+        }
+
         LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, fontFamily, textAlign) {
             if (fontSizeMultiplier != debouncedFontSizeMult || lineHeightMultiplier != debouncedLineHeightMult || paragraphGapMultiplier != debouncedParagraphGapMult || fontFamily != debouncedFontFamily || textAlign != debouncedTextAlign) {
                 Timber.d("Formatting changed. Waiting for debounce.")
@@ -831,7 +846,15 @@ fun PaginatedReaderScreen(
             textStyle = textStyle,
             horizontalPadding = horizontalPadding,
             verticalPadding = verticalPadding,
-            onGetPage = { pageIndex -> paginator.getPageContent(pageIndex) },
+            onGetPage = { pageIndex ->
+                val startTime = System.currentTimeMillis()
+                val result = paginator.getPageContent(pageIndex)
+                val duration = System.currentTimeMillis() - startTime
+                if (duration > 16) {
+                    Timber.tag("PageTurnDiag").w("HEAVY TASK: paginator.getPageContent($pageIndex) took ${duration}ms on Thread ${Thread.currentThread().name}")
+                }
+                result
+            },
             onGetChapterPath = { pageIndex -> paginator.getChapterPathForPage(pageIndex) },
             onGetChapterInfo = { pageIndex ->
                 paginator.findChapterIndexForPage(pageIndex)?.let { chapterIndex ->
@@ -1568,6 +1591,7 @@ internal fun PaginatedReaderContent(
                                     val down = event.changes.firstOrNull { it.pressed }
                                     if (down != null) {
                                         pageTurnTouchY = down.position.y
+                                        Timber.tag("PageTurnFixDiag").v("Touch Event: Y=${down.position.y} at OffsetFraction=${pagerState.currentPageOffsetFraction}")
                                     }
                                 }
                             }
@@ -1592,8 +1616,19 @@ internal fun PaginatedReaderContent(
                         var currentChapterPath by remember { mutableStateOf<String?>(null) }
 
                         LaunchedEffect(pageIndex, uiState.generation) {
+                            val fetchStartTime = System.currentTimeMillis()
+                            Timber.tag("PageTurnDiag").d("Page $pageIndex: Starting content fetch")
+
                             pageContent = onGetPage(pageIndex)
+
+                            val fetchDuration = System.currentTimeMillis() - fetchStartTime
+                            Timber.tag("PageTurnDiag").d("Page $pageIndex: Content fetched in ${fetchDuration}ms")
+
                             onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
+                        }
+
+                        SideEffect {
+                            Timber.tag("PageTurnDiag").v("Page $pageIndex: Re-composing content area")
                         }
 
                         val textBlocksOnPage =
@@ -2263,10 +2298,6 @@ internal fun PaginatedReaderContent(
                                                         }
 
                                                         is FlexContainerBlock -> {
-                                                            // Background, border, and padding are
-                                                            // already applied by the outer Box wrapper.
-                                                            // Only apply padding + width here.
-                                                            val containerModifier = paddingModifier
 
                                                             if (block.style.flexDirection == "row") {
                                                                 val horizontalArrangement =
@@ -2284,7 +2315,7 @@ internal fun PaginatedReaderContent(
                                                                         else -> Alignment.Top
                                                                     }
                                                                 Row(
-                                                                    modifier = containerModifier.fillMaxWidth(),
+                                                                    modifier = paddingModifier.fillMaxWidth(),
                                                                     horizontalArrangement = horizontalArrangement,
                                                                     verticalAlignment = verticalAlignment
                                                                 ) {
@@ -2336,7 +2367,7 @@ internal fun PaginatedReaderContent(
                                                                         else -> Alignment.Start
                                                                     }
                                                                 Column(
-                                                                    modifier = containerModifier.fillMaxWidth(),
+                                                                    modifier = paddingModifier.fillMaxWidth(),
                                                                     verticalArrangement = verticalArrangement,
                                                                     horizontalAlignment = horizontalAlignment
                                                                 ) {
@@ -2505,27 +2536,21 @@ internal fun PaginatedReaderContent(
                                                         is ImageBlock -> {
                                                             val style = block.style
                                                             val finalImageModifier = Modifier.then(
-                                                                if (style.width != Dp.Unspecified) Modifier.width(
-                                                                    style.width
-                                                                )
+                                                                if (style.width.isSpecified && style.width > 0.dp) Modifier.width(style.width)
+                                                                else Modifier.fillMaxWidth()
+                                                            ).then(
+                                                                if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) Modifier.widthIn(max = style.maxWidth)
                                                                 else Modifier
                                                             ).then(
-                                                                if (style.maxWidth != Dp.Unspecified) Modifier.widthIn(
-                                                                    max = style.maxWidth
-                                                                )
-                                                                else Modifier
-                                                            ).then(
-                                                                if (block.intrinsicWidth != null && block.intrinsicHeight != null && block.intrinsicWidth > 0f && block.intrinsicHeight > 0f) {
-                                                                    Modifier.aspectRatio(
-                                                                        block.intrinsicWidth / block.intrinsicHeight,
-                                                                        matchHeightConstraintsFirst = false
-                                                                    )
-                                                                } else if (style.height != Dp.Unspecified) {
-                                                                    Modifier.height(style.height)
+                                                                if (block.expectedHeight > 0) {
+                                                                    Modifier.height(with(density) { block.expectedHeight.toDp() })
                                                                 } else {
                                                                     Modifier.height(250.dp)
                                                                 }
                                                             ).then(paddingModifier)
+                                                                .onGloballyPositioned { coords ->
+                                                                    Timber.tag("IMAGE_DIAG").v("Actual Rendered Height for [#${block.blockIndex}]: ${coords.size.height}px")
+                                                                }
 
                                                             val colorFilter =
                                                                 if (block.style.filter == "invert(100%)") {
@@ -2732,24 +2757,13 @@ internal fun PaginatedReaderContent(
                                                                                         }
 
                                                                                         is ImageBlock -> {
-                                                                                            val imageModifier =
-                                                                                                Modifier.fillMaxWidth()
-                                                                                                    .then(
-                                                                                                        if (blockInCell.intrinsicWidth != null && blockInCell.intrinsicHeight != null && blockInCell.intrinsicWidth > 0f && blockInCell.intrinsicHeight > 0f) {
-                                                                                                            Modifier.aspectRatio(
-                                                                                                                blockInCell.intrinsicWidth / blockInCell.intrinsicHeight,
-                                                                                                                matchHeightConstraintsFirst = false
-                                                                                                            )
-                                                                                                        } else if (blockInCell.style.height != Dp.Unspecified) {
-                                                                                                            Modifier.height(
-                                                                                                                blockInCell.style.height
-                                                                                                            )
-                                                                                                        } else {
-                                                                                                            Modifier.height(
-                                                                                                                250.dp
-                                                                                                            )
-                                                                                                        }
-                                                                                                    )
+                                                                                            val imageModifier = Modifier.fillMaxWidth().then(
+                                                                                                if (blockInCell.expectedHeight > 0) {
+                                                                                                    Modifier.height(with(density) { blockInCell.expectedHeight.toDp() })
+                                                                                                } else {
+                                                                                                    Modifier.height(250.dp)
+                                                                                                }
+                                                                                            )
                                                                                             AsyncImage(
                                                                                                 model = Builder(
                                                                                                     LocalContext.current
@@ -3457,18 +3471,16 @@ private fun RenderFlexChildBlock(
             val style = childBlock.style
             val imageModifier = Modifier
                 .then(
-                    if (style.width != Dp.Unspecified) Modifier.width(style.width)
+                    if (style.width != Dp.Unspecified && style.width > 0.dp) Modifier.width(style.width)
                     else Modifier
                 )
                 .then(
-                    if (style.maxWidth != Dp.Unspecified) Modifier.widthIn(max = style.maxWidth)
+                    if (style.maxWidth != Dp.Unspecified && style.maxWidth > 0.dp) Modifier.widthIn(max = style.maxWidth)
                     else Modifier
                 )
                 .then(
-                    if (childBlock.intrinsicWidth != null && childBlock.intrinsicHeight != null && childBlock.intrinsicWidth > 0f && childBlock.intrinsicHeight > 0f) {
-                        Modifier.aspectRatio(childBlock.intrinsicWidth / childBlock.intrinsicHeight, matchHeightConstraintsFirst = false)
-                    } else if (style.height != Dp.Unspecified) {
-                        Modifier.height(style.height)
+                    if (childBlock.expectedHeight > 0) {
+                        Modifier.height(with(density) { childBlock.expectedHeight.toDp() })
                     } else {
                         Modifier.height(250.dp)
                     }
@@ -3582,10 +3594,8 @@ private fun RenderFlexChildBlock(
                                         )
                                     } else if (blockInCell is ImageBlock) {
                                         val imageModifier = Modifier.fillMaxWidth().then(
-                                            if (blockInCell.intrinsicWidth != null && blockInCell.intrinsicHeight != null && blockInCell.intrinsicWidth > 0f && blockInCell.intrinsicHeight > 0f) {
-                                                Modifier.aspectRatio(blockInCell.intrinsicWidth / blockInCell.intrinsicHeight, matchHeightConstraintsFirst = false)
-                                            } else if (blockInCell.style.height != Dp.Unspecified) {
-                                                Modifier.height(blockInCell.style.height)
+                                            if (blockInCell.expectedHeight > 0) {
+                                                Modifier.height(with(density) { blockInCell.expectedHeight.toDp() })
                                             } else {
                                                 Modifier.height(250.dp)
                                             }
@@ -3625,6 +3635,11 @@ private fun Modifier.realisticBookPage(
     isDarkTheme: Boolean,
     touchY: Float?
 ): Modifier = composed {
+    // Log composition frequency
+    SideEffect {
+        Timber.tag("PageTurnFixDiag").v("Page $pageIndex re-composed. Offset: ${pagerState.currentPageOffsetFraction}")
+    }
+
     val frontPath = remember { Path() }
     val backPath = remember { Path() }
     val reflectedScreenPath = remember { Path() }
@@ -3632,6 +3647,11 @@ private fun Modifier.realisticBookPage(
     this
         .graphicsLayer {
             val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+
+            // Log layer property updates
+            if (abs(pageOffset) > 0.001f && abs(pageOffset) < 0.999f) {
+                Timber.tag("PageTurnFixDiag").d("graphicsLayer: Page $pageIndex, Offset: $pageOffset")
+            }
 
             if (pageOffset <= 1f && pageOffset > -1f) {
                 translationX = -pageOffset * size.width
@@ -3644,6 +3664,7 @@ private fun Modifier.realisticBookPage(
             }
         }
         .drawWithContent {
+            val drawStart = System.nanoTime()
             val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
 
             if (abs(pageOffset) < 0.001f) {
@@ -3670,9 +3691,20 @@ private fun Modifier.realisticBookPage(
                 val dy = cornerY - dragY
                 val nLen = kotlin.math.sqrt(dx * dx + dy * dy)
 
+                // CRITICAL GEOMETRY LOG
+                if (progress > 0.8f) { // Focus logs on the "end" of the turn where the stall happens
+                    Timber.tag("PageTurnFixDiag").i(
+                        "Geometry Page $pageIndex: progress=$progress, nLen=$nLen, cornerY=$cornerY, dragX=$dragX, midX=$midX"
+                    )
+                }
+
                 if (nLen > 0f) {
                     val nx = dx / nLen
                     val ny = dy / nLen
+
+                    if (nx.isNaN() || ny.isNaN()) {
+                        Timber.tag("PageTurnFixDiag").e("NAN DETECTED in Normal Vectors: nx=$nx, ny=$ny")
+                    }
 
                     val huge = w * 3f
                     val vx = -ny
@@ -3733,17 +3765,12 @@ private fun Modifier.realisticBookPage(
                     clipRect(0f, 0f, w, h) {
                         clipPath(frontPath) {
                             drawPath(reflectedScreenPath, color = paperColor)
-
                             val flapTint = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
                             drawPath(reflectedScreenPath, color = flapTint)
 
                             val innerShadowWidth = shadowWidth * 0.7f
                             val innerShadowBrush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.25f),
-                                    Color.Black.copy(alpha = 0.05f),
-                                    Color.Transparent
-                                ),
+                                colors = listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.05f), Color.Transparent),
                                 start = Offset(midX, midY),
                                 end = Offset(midX - nx * innerShadowWidth, midY - ny * innerShadowWidth)
                             )
@@ -3769,15 +3796,14 @@ private fun Modifier.realisticBookPage(
                     drawContent()
                 }
             }
-            else if (pageOffset > 0f && pageOffset <= 1f) {
-                drawRect(color = paperColor)
-                drawContent()
-                val dimAlpha = (0.25f * pageOffset).coerceIn(0f, 0.4f)
-                drawRect(color = Color.Black.copy(alpha = dimAlpha))
-            }
             else {
                 drawRect(color = paperColor)
                 drawContent()
+            }
+
+            val drawDuration = (System.nanoTime() - drawStart) / 1_000_000.0
+            if (drawDuration > 12.0) { // Log slow frames (anything near the 16ms frame budget)
+                Timber.tag("PageTurnFixDiag").w("Slow Draw on Page $pageIndex: ${drawDuration}ms")
             }
         }
 }
