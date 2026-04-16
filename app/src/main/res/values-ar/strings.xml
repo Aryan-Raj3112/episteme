@@ -22,6 +22,7 @@
     <string name="legal_terms_of_service">شروط الخدمة</string>
     <string name="legal_privacy_policy">سياسة الخصوصية</string>
     <string name="legal_licenses">التراخيص</string>
+<<<<<<< HEAD
     <string name="items_selected_count">تم اختيار %1$d</string>
     <string name="clear_selection">إلغاء التحديد</string>
     <string name="pin_unpin">تثبيت/إلغاء التثبيت</string>
@@ -642,4 +643,6 @@
     <string name="label_highlight_color">مُظلِل</string>
     <string name="msg_page_unavailable">الصفحة غير متوفرة</string>
     <string name="sign_in_to_purchase_credits">يرجى تسجيل الدخول إلى حساب Google الخاص بك لشراء رصيد.</string>
+=======
+>>>>>>> f20d463 (Translated using Weblate (Arabic))
 </resources>
