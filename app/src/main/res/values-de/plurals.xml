@@ -1,3 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d Buch</item>
+        <item quantity="other">%1$d Bücher</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">Buch</item>
+        <item quantity="other">Bücher</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d Regal</item>
+        <item quantity="other">%1$d Regale</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d Ergebnis gefunden</item>
+        <item quantity="other">%1$d Ergebnisse gefunden</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Datei dauerhaft löschen</item>
+        <item quantity="other">Dateien dauerhaft löschen</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Möchten Sie %1$d ausgewählte Datei dauerhaft von Ihrem Gerät löschen? Diese Aktion kann nicht rückgängig gemacht werden.</item>
+        <item quantity="other">Möchten Sie %1$d ausgewählte Dateien dauerhaft von Ihrem Gerät löschen? Diese Aktion kann nicht rückgängig gemacht werden.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Möchten Sie %1$d ausgewählte Datei aus der Liste der zuletzt verwendeten Dateien entfernen? Sie wird wieder erscheinen, wenn Sie sie wieder aus der Bibliothek öffnen.</item>
+        <item quantity="other">Möchten Sie %1$d ausgewählte Dateien aus der Liste der zuletzt verwendeten Dateien entfernen? Sie werden wieder erscheinen, wenn Sie sie wieder aus der Bibliothek öffnen.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Sind Sie sicher, dass Sie %1$d Buch aus dem Regal \'%2$s\' entfernen möchten? Das Buch bleibt in Ihrer Bibliothek und erscheint unter \'Unsortiert\'.</item>
+        <item quantity="other">Sind Sie sicher, dass Sie %1$d Bücher aus dem Regal \'%2$s\' entfernen möchten? Die Bücher bleiben in Ihrer Bibliothek und erscheinen unter \'Unsortiert\'.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d Buch aus der Bibliothek entfernt.</item>
+        <item quantity="other">%1$d Bücher aus der Bibliothek entfernt.</item>
+    </plurals>
 </resources>
