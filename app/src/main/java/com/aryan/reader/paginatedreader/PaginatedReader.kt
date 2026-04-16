@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -1280,6 +1282,149 @@ private fun TextWithEmphasis(
                             )
                             drawCircle(markColor, markSize / 2, center, style = Stroke(1f))
                         } catch (_: Exception) { }
+                    }
+                }
+            }
+
+            val customUnderlines = text.getStringAnnotations("CustomUnderline", 0, text.length)
+            if (customUnderlines.isNotEmpty()) {
+                val maxIdx = maxOf(0, text.length - 1)
+
+                // Deduplicate and merge overlapping annotations of the same style
+                val groupedUnderlines = customUnderlines.groupBy { it.item }
+                val mergedUnderlines = mutableListOf<AnnotatedString.Range<String>>()
+
+                groupedUnderlines.forEach { (item, annotations) ->
+                    val sorted = annotations.sortedBy { it.start }
+                    var currentStart = -1
+                    var currentEnd = -1
+
+                    for (ann in sorted) {
+                        if (currentStart == -1) {
+                            currentStart = ann.start
+                            currentEnd = ann.end
+                        } else if (ann.start <= currentEnd) {
+                            // Overlap or adjacent, extend current
+                            currentEnd = maxOf(currentEnd, ann.end)
+                        } else {
+                            // Gap, save current and start new
+                            mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
+                            currentStart = ann.start
+                            currentEnd = ann.end
+                        }
+                    }
+                    if (currentStart != -1) {
+                        mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
+                    }
+                }
+
+                mergedUnderlines.forEach { annotation ->
+                    val parts = annotation.item.split('|')
+                    val decoStyle = parts.getOrNull(0) ?: "solid"
+                    val colorStr = parts.getOrNull(1) ?: "Unspecified"
+                    val decoColor = if (colorStr != "Unspecified") Color(colorStr.toULong()) else style.color
+
+                    val safeStart = annotation.start.coerceIn(0, text.length)
+                    val safeEnd = annotation.end.coerceIn(0, text.length)
+                    if (safeStart >= safeEnd) return@forEach
+
+                    val startLine = layoutResult.getLineForOffset(safeStart.coerceIn(0, maxIdx))
+                    val endLine = layoutResult.getLineForOffset((safeEnd - 1).coerceIn(0, maxIdx))
+
+                    for (line in startLine..endLine) {
+                        val lineStart = layoutResult.getLineStart(line)
+                        val lineEnd = layoutResult.getLineEnd(line, visibleEnd = true)
+
+                        val intersectionStart = maxOf(safeStart, lineStart)
+                        val intersectionEnd = minOf(safeEnd, lineEnd)
+
+                        var actualStart = intersectionStart
+                        // Trim leading whitespace for the line segment
+                        while (actualStart < intersectionEnd && text[actualStart].isWhitespace()) {
+                            actualStart++
+                        }
+
+                        var actualEnd = intersectionEnd
+                        // Trim trailing whitespace for the line segment
+                        while (actualEnd > actualStart && text[actualEnd - 1].isWhitespace()) {
+                            actualEnd--
+                        }
+
+                        if (actualStart >= actualEnd) continue
+
+                        // Calculate bounds explicitly to prevent getPathForRange spanning artifacts
+                        var minX = Float.POSITIVE_INFINITY
+                        var maxX = Float.NEGATIVE_INFINITY
+                        for (i in actualStart until actualEnd) {
+                            val box = layoutResult.getBoundingBox(i)
+                            minX = minOf(minX, box.left, box.right)
+                            maxX = maxOf(maxX, box.left, box.right)
+                        }
+
+                        if (minX >= maxX || minX.isInfinite() || maxX.isInfinite()) {
+                            continue
+                        }
+
+                        val baseline = layoutResult.getLineBaseline(line)
+                        val defaultOffset = layoutResult.layoutInput.style.fontSize.toPx() * 0.1f
+                        val requestedOffset = parts.getOrNull(2)?.toFloatOrNull()?.dp?.toPx()
+                        val y = baseline + (requestedOffset ?: defaultOffset)
+
+                        when (decoStyle) {
+                            "wavy" -> {
+                                val path = Path()
+                                path.moveTo(minX, y)
+                                val waveLength = 4.dp.toPx()
+                                val amplitude = 1.dp.toPx()
+                                var currentX = minX
+                                var isUp = true
+
+                                while (currentX < maxX) {
+                                    val nextX = minOf(currentX + waveLength / 2f, maxX)
+                                    val midX = currentX + (nextX - currentX) / 2f
+                                    val cpY = if (isUp) y - amplitude else y + amplitude
+                                    path.quadraticBezierTo(midX, cpY, nextX, y)
+                                    currentX = nextX
+                                    isUp = !isUp
+                                }
+                                drawPath(path, color = decoColor, style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                            }
+                            "dashed" -> {
+                                drawLine(
+                                    color = decoColor,
+                                    start = Offset(minX, y),
+                                    end = Offset(maxX, y),
+                                    strokeWidth = 1.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
+                                )
+                            }
+                            "dotted" -> {
+                                drawLine(
+                                    color = decoColor,
+                                    start = Offset(minX, y),
+                                    end = Offset(maxX, y),
+                                    strokeWidth = 2.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(1f, 4.dp.toPx()))
+                                )
+                            }
+                            else -> { // Solid or Double
+                                drawLine(
+                                    color = decoColor,
+                                    start = Offset(minX, y),
+                                    end = Offset(maxX, y),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                                if (decoStyle == "double") {
+                                    drawLine(
+                                        color = decoColor,
+                                        start = Offset(minX, y + 2.dp.toPx()),
+                                        end = Offset(maxX, y + 2.dp.toPx()),
+                                        strokeWidth = 1.dp.toPx()
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

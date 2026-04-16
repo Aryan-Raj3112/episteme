@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -250,7 +252,17 @@ class ContentStyler(
             )
         }
 
-        return style.copy(spanStyle = newSpanStyle, blockStyle = newBlockStyle)
+        val newTextDecorationColor = if (style.textDecorationColor.isSpecified) {
+            CssParser.adaptColorForTheme(style.textDecorationColor, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
+        } else {
+            style.textDecorationColor
+        }
+
+        return style.copy(
+            spanStyle = newSpanStyle,
+            blockStyle = newBlockStyle,
+            textDecorationColor = newTextDecorationColor
+        )
     }
 
     private fun embedImagesInSvg(svgContent: String): String {
@@ -402,11 +414,43 @@ class ContentStyler(
                             else -> null
                         }
 
-                        val finalSpanStyle = themedSpanStyle.spanStyle.copy(
+                        var finalSpanStyle = themedSpanStyle.spanStyle.copy(
                             fontFamily = effectiveSpanFontFamily,
                             baselineShift = baselineShift
                         )
+
+                        val hasCustomDeco = themedSpanStyle.textDecorationStyle != null ||
+                                themedSpanStyle.textDecorationColor.isSpecified ||
+                                themedSpanStyle.textUnderlineOffset.isSpecified
+
+                        val combinedDeco = finalSpanStyle.textDecoration ?: TextDecoration.None
+
+                        if (hasCustomDeco && combinedDeco.contains(TextDecoration.Underline)) {
+                            val decos = mutableListOf<TextDecoration>()
+                            if (combinedDeco.contains(TextDecoration.LineThrough)) decos.add(TextDecoration.LineThrough)
+                            finalSpanStyle = finalSpanStyle.copy(
+                                textDecoration = if (decos.isNotEmpty()) TextDecoration.combine(decos) else TextDecoration.None
+                            )
+
+                            val styleStr = themedSpanStyle.textDecorationStyle ?: "solid"
+                            val colorStr = if (themedSpanStyle.textDecorationColor.isSpecified) themedSpanStyle.textDecorationColor.value.toString() else "Unspecified"
+                            val offsetStr = if (themedSpanStyle.textUnderlineOffset.isSpecified) themedSpanStyle.textUnderlineOffset.value.toString() else "0"
+
+                            val annotationData = "$styleStr|$colorStr|$offsetStr"
+                            addStringAnnotation("CustomUnderline", annotationData, span.start, span.end)
+                        }
+
                         addStyle(initialSpanStyle.merge(finalSpanStyle), span.start, span.end)
+
+                        val ws = themedSpanStyle.wordSpacing
+                        if (ws.isSpecified && ws.value != 0f) {
+                            val textToStyle = block.text.substring(span.start, span.end)
+                            for (i in textToStyle.indices) {
+                                if (textToStyle[i] == ' ') {
+                                    addStyle(SpanStyle(letterSpacing = ws), span.start + i, span.start + i + 1)
+                                }
+                            }
+                        }
 
                         if (span.linkHref != null) {
                             addStringAnnotation("URL", span.linkHref, span.start, span.end)

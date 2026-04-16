@@ -303,7 +303,11 @@ data class CssStyle(
     @ProtoNumber(9) val content: String? = null,
     @ProtoNumber(10) val hyphens: String? = null,
     @ProtoNumber(11) val fontVariantNumeric: String? = null,
-    @ProtoNumber(12) val textEmphasis: TextEmphasis? = null
+    @ProtoNumber(12) val textEmphasis: TextEmphasis? = null,
+    @ProtoNumber(13) @Serializable(with = TextUnitSerializer::class) val wordSpacing: TextUnit = TextUnit.Unspecified,
+    @ProtoNumber(14) val textDecorationStyle: String? = null,
+    @ProtoNumber(15) @Serializable(with = ColorSerializer::class) val textDecorationColor: Color = Color.Unspecified,
+    @ProtoNumber(16) @Serializable(with = DpSerializer::class) val textUnderlineOffset: Dp = Dp.Unspecified
 ) {
     fun merge(other: CssStyle): CssStyle {
         return CssStyle(
@@ -318,7 +322,11 @@ data class CssStyle(
             content = other.content ?: this.content,
             hyphens = other.hyphens ?: this.hyphens,
             fontVariantNumeric = other.fontVariantNumeric ?: this.fontVariantNumeric,
-            textEmphasis = other.textEmphasis ?: this.textEmphasis
+            textEmphasis = other.textEmphasis ?: this.textEmphasis,
+            wordSpacing = if (other.wordSpacing.isSpecified) other.wordSpacing else this.wordSpacing,
+            textDecorationStyle = other.textDecorationStyle ?: this.textDecorationStyle,
+            textDecorationColor = if (other.textDecorationColor.isSpecified) other.textDecorationColor else this.textDecorationColor,
+            textUnderlineOffset = if (other.textUnderlineOffset.isSpecified) other.textUnderlineOffset else this.textUnderlineOffset
         )
     }
 }
