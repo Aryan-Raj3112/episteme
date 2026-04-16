@@ -62,9 +62,9 @@ suspend fun loadChapterContent(
         val (headContent, chunks) = if (htmlFile.exists()) {
             val doc = Jsoup.parse(htmlFile, "UTF-8")
             val head = doc.head().html()
-            val bodyChildren = doc.body().children().toList()
-            val chunkedList = bodyChildren.chunked(20).map { chunkOfElements ->
-                chunkOfElements.joinToString(separator = "\n") { it.outerHtml() }
+            val bodyNodes = doc.body().childNodes().toList()
+            val chunkedList = bodyNodes.chunked(20).map { chunkOfNodes ->
+                chunkOfNodes.joinToString(separator = "\n") { it.outerHtml() }
             }
             if (chunkedList.isEmpty()) {
                 head to listOf("<body><p>${context.getString(R.string.chapter_empty)}</p></body>")

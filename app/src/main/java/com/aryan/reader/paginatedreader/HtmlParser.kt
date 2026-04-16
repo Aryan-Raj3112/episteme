@@ -131,7 +131,7 @@ private class SemanticHtmlParser(
                 baseFontSizeSp = textStyle.fontSize.value,
                 density = density.density,
                 constraints = constraints,
-                isDarkTheme = false // Semantic parsing is always theme-agnostic
+                isDarkTheme = false
             )
 
             if (inlineParseResult.fontFaces.isNotEmpty()) {
@@ -144,9 +144,7 @@ private class SemanticHtmlParser(
         }
 
         val body = document.body()
-        return body.children().flatMap { childElement ->
-            parseNodeToSemanticBlocks(childElement, getElementStyle(body))
-        }
+        return parseContainer(body, getElementStyle(body))
     }
 
     private fun parseNodeToSemanticBlocks(
