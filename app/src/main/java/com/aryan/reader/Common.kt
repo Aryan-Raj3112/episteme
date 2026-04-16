@@ -217,6 +217,7 @@ data class SummarizationResult(
     val summary: String? = null,
     val error: String? = null,
     val cost: Int? = null,
+    val freeRemaining: Int? = null,
     val isCacheHit: Boolean = false
 )
 
@@ -656,19 +657,23 @@ fun SummarizationPopup(
                     if (result != null && (!result.summary.isNullOrBlank() || isLoading)) {
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.End) {
                             Surface(
-                                color = if (result.isCacheHit) Color(0xFF4CAF50).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
+                                color = if (result.isCacheHit || (result.cost == 0 && result.freeRemaining != null)) Color(0xFF4CAF50).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
                                     text = if (result.isCacheHit) {
                                         "⚡ Cache Hit • Free"
                                     } else if (result.cost != null) {
-                                        "✨ Generated • Cost: ${result.cost} credits"
+                                        if (result.cost == 0 && result.freeRemaining != null) {
+                                            "✨ Generated • Free (${result.freeRemaining}/10 left)"
+                                        } else {
+                                            "✨ Generated • Cost: ${result.cost} credits"
+                                        }
                                     } else {
                                         "✨ Generating... • Cost: Calculating"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (result.isCacheHit) Color(0xFF388E3C) else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    color = if (result.isCacheHit || (result.cost == 0 && result.freeRemaining != null)) Color(0xFF388E3C) else MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }

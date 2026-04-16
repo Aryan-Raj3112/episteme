@@ -2666,20 +2666,25 @@ fun EpubReaderHost(
                                                     val finalSummaryBuilder = StringBuilder()
 
                                                     var currentCost = 0
+                                                    var currentFreeRemaining: Int? = null
 
                                                     summarizeBookContent(
                                                         content = content,
                                                         authToken = token,
-                                                        onCostReceived = { cost ->
+                                                        onUsageReceived = { cost, freeRemaining ->
                                                             currentCost = cost
-                                                            summarizationResult = summarizationResult?.copy(cost = cost) ?: SummarizationResult(cost = cost)
+                                                            currentFreeRemaining = freeRemaining
+                                                            summarizationResult = summarizationResult?.copy(
+                                                                cost = cost, freeRemaining = freeRemaining
+                                                            ) ?: SummarizationResult(cost = cost, freeRemaining = freeRemaining)
                                                         },
                                                         onUpdate = { chunk ->
                                                             finalSummaryBuilder.append(chunk)
                                                             val currentSummary = summarizationResult?.summary ?: ""
                                                             summarizationResult = SummarizationResult(
                                                                 summary = currentSummary + chunk,
-                                                                cost = currentCost
+                                                                cost = currentCost,
+                                                                freeRemaining = currentFreeRemaining
                                                             )
                                                         },
                                                         onError = { error ->
@@ -3855,20 +3860,25 @@ fun EpubReaderHost(
                                         val text = paginator?.getPlainTextForChapter(chapterIndex)
                                         if (!text.isNullOrBlank()) {
                                             var currentCost = 0
+                                            var currentFreeRemaining: Int? = null
                                             val finalSummaryBuilder = StringBuilder()
                                             summarizeBookContent(
                                                 content = text,
                                                 authToken = token,
-                                                onCostReceived = { cost ->
+                                                onUsageReceived = { cost, freeRemaining ->
                                                     currentCost = cost
-                                                    summarizationResult = summarizationResult?.copy(cost = cost) ?: SummarizationResult(cost = cost)
+                                                    currentFreeRemaining = freeRemaining
+                                                    summarizationResult = summarizationResult?.copy(
+                                                        cost = cost, freeRemaining = freeRemaining
+                                                    ) ?: SummarizationResult(cost = cost, freeRemaining = freeRemaining)
                                                 },
                                                 onUpdate = { chunk ->
                                                     finalSummaryBuilder.append(chunk)
                                                     val currentSummary = summarizationResult?.summary ?: ""
                                                     summarizationResult = SummarizationResult(
                                                         summary = currentSummary + chunk,
-                                                        cost = currentCost
+                                                        cost = currentCost,
+                                                        freeRemaining = currentFreeRemaining
                                                     )
                                                 },
                                                 onError = { error ->
@@ -4371,7 +4381,7 @@ fun EpubReaderHost(
                 onDismissRequest = { showInsufficientCreditsDialog = false },
                 icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
                 title = { Text("Out of Credits") },
-                text = { Text("You don't have enough credits. Get Episteme Pro for unlimited summaries and dictionary lookups, or add more credits to use AI TTS and Story Recap.") },
+                text = { Text("You don't have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.") },
                 confirmButton = {
                     TextButton(onClick = {
                         showInsufficientCreditsDialog = false

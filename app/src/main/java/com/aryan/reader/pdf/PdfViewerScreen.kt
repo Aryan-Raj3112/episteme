@@ -7277,7 +7277,7 @@ fun PdfViewerScreen(
                         onDismissRequest = { showInsufficientCreditsDialog = false },
                         icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
                         title = { Text("Out of Credits") },
-                        text = { Text("You don't have enough credits. Get Episteme Pro for unlimited summaries and dictionary lookups, or add more credits to use AI TTS and Story Recap.") },
+                        text = { Text("You don't have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.") },
                         confirmButton = {
                             TextButton(onClick = {
                                 showInsufficientCreditsDialog = false

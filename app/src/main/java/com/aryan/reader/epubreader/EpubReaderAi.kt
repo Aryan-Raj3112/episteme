@@ -56,7 +56,7 @@ import java.net.URL
 suspend fun summarizeBookContent(
     content: String,
     authToken: String?,
-    onCostReceived: (Int) -> Unit = {},
+    onUsageReceived: (cost: Int, freeRemaining: Int?) -> Unit = { _, _ -> },
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -108,9 +108,12 @@ suspend fun summarizeBookContent(
                         try {
                             val jsonResponse = JSONObject(line!!)
 
-                            jsonResponse.optInt("cost_deducted", -1).takeIf { it > -1 }?.let { cost ->
-                                Timber.i("[AI-Billing] Recap stream cost received: $cost credits")
-                                onCostReceived(cost)
+                            val cost = jsonResponse.optInt("cost_deducted", -1)
+                            val freeRemaining = jsonResponse.optInt("free_summaries_remaining", -1)
+                            if (cost > -1 || freeRemaining > -1) {
+                                val finalCost = if (cost > -1) cost else 0
+                                val finalRemaining = if (freeRemaining > -1) freeRemaining else null
+                                onUsageReceived(finalCost, finalRemaining)
                             }
 
                             jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
@@ -194,7 +197,7 @@ suspend fun executeRecapLogic(
                 summarizeBookContent(
                     content = textToSummarize,
                     authToken = authToken,
-                    onCostReceived = { cost ->
+                    onUsageReceived = { cost, _ ->
                         Timber.i("[AI-Billing] Background past chapter summary cost: $cost credits")
                     },
                     onUpdate = { sb.append(it) },
