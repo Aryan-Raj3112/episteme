@@ -1,3 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="zero">لا كتب</item>
+        <item quantity="one">كتاب واحد</item>
+        <item quantity="two">كتابان</item>
+        <item quantity="few">%1$d كتب</item>
+        <item quantity="many">%1$d كتابًا</item>
+        <item quantity="other">%1$d كتاب</item>
+    </plurals>
 </resources>
