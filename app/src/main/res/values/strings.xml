@@ -251,13 +251,13 @@
     <string name="one_time_payment">One-time payment</string>
     <string name="lifetime_access">Lifetime Access</string>
     <string name="early_access_sale">Early Access Sale</string>
-    <string name="pro_includes">Everything in Free, plus:</string>
+    <string name="pro_includes">Features:</string>
     <string name="feature_cloud_sync">Cloud Sync Across Devices</string>
     <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="feature_cloud_sync_desc">Keep your entire library, including book files and reading progress, synced across up to 4 devices.</string>
     <!-- "Summarization" is a Pro AI feature name. -->
     <string name="feature_summarize">Summarization</string>
-    <string name="feature_summarize_desc">Get quick summaries of chapters or pages</string>
+    <string name="feature_summarize_desc">Get 10 free summaries of chapters or pages per day</string>
     <!-- "Smart Dictionary" is a Pro AI feature name. -->
     <string name="feature_smart_dict">Smart Dictionary</string>
     <string name="feature_smart_dict_desc">Search phrases and even paragraphs, not just single words</string>

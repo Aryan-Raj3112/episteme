@@ -80,9 +80,10 @@ fun ProScreen(
     var showEarlyAccessInfoDialog by remember { mutableStateOf(false) }
     var showSignInRequiredDialog by remember { mutableStateOf(false) }
 
-    val tabCount = if (BuildConfig.FLAVOR == "pro") 3 else 2
-    val pagerState = rememberPagerState(initialPage = 1, pageCount = { tabCount })
-    var selectedTabIndex by remember { mutableIntStateOf(1) }
+    // Removed Free Tab, so tabCount is max 2
+    val tabCount = if (BuildConfig.FLAVOR == "pro") 2 else 1
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabCount })
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(pagerState.currentPage) {
@@ -95,8 +96,9 @@ fun ProScreen(
         }
     }
 
+    // Default to the Credits tab if they already own Pro
     LaunchedEffect(uiState.isProUser) {
-        if (uiState.isProUser) {
+        if (uiState.isProUser && BuildConfig.FLAVOR == "pro") {
             selectedTabIndex = 1
         }
     }
@@ -133,7 +135,7 @@ fun ProScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { }, // Removed header content
+                title = { },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -173,34 +175,9 @@ fun ProScreen(
                         .background(
                             if (selectedTabIndex == 0) MaterialTheme.colorScheme.surface else Color.Transparent
                         )
-                        .border( // Border for selected Free tab
+                        .border(
                             width = if (selectedTabIndex == 0) 2.dp else 0.dp,
                             color = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            shape = CircleShape
-                        ),
-                    text = {
-                        AutoSizeText(stringResource(R.string.tab_free),
-                            style = LocalTextStyle.current.copy(
-                                color = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        )
-                    },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Tab(
-                    selected = selectedTabIndex == 1,
-                    onClick = { selectedTabIndex = 1 },
-                    modifier = Modifier
-                        .height(56.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (selectedTabIndex == 1) MaterialTheme.colorScheme.surface else Color.Transparent
-                        )
-                        .border( // Border for selected Pro tab
-                            width = if (selectedTabIndex == 1) 2.dp else 0.dp,
-                            color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
                             shape = CircleShape
                         ),
                     text = {
@@ -209,12 +186,12 @@ fun ProScreen(
                                 painter = painterResource(id = R.drawable.crown),
                                 contentDescription = "Pro",
                                 modifier = Modifier.size(16.dp),
-                                tint = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             AutoSizeText(stringResource(R.string.drawer_pro_unlocked),
                                 style = LocalTextStyle.current.copy(
-                                    color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             )
@@ -225,21 +202,21 @@ fun ProScreen(
                 )
                 if (BuildConfig.FLAVOR == "pro") {
                     Tab(
-                        selected = selectedTabIndex == 2,
-                        onClick = { selectedTabIndex = 2 },
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
                         modifier = Modifier
                             .height(56.dp)
                             .clip(CircleShape)
-                            .background(if (selectedTabIndex == 2) MaterialTheme.colorScheme.surface else Color.Transparent)
+                            .background(if (selectedTabIndex == 1) MaterialTheme.colorScheme.surface else Color.Transparent)
                             .border(
-                                width = if (selectedTabIndex == 2) 2.dp else 0.dp,
-                                color = if (selectedTabIndex == 2) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                width = if (selectedTabIndex == 1) 2.dp else 0.dp,
+                                color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
                                 shape = CircleShape
                             ),
                         text = {
-                            AutoSizeText("Credits", // Hardcoding string for debug
+                            AutoSizeText("Credits",
                                 style = LocalTextStyle.current.copy(
-                                    color = if (selectedTabIndex == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             )
@@ -259,10 +236,6 @@ fun ProScreen(
             ) { page ->
                 when (page) {
                     0 -> {
-                        FreeTierCard()
-                    }
-
-                    1 -> {
                         ProTierCard(
                             isProUser = uiState.isProUser,
                             isUserSignedIn = uiState.currentUser != null,
@@ -277,89 +250,18 @@ fun ProScreen(
                             onSignInRequiredClick = { showSignInRequiredDialog = true })
                     }
 
-                    2 if BuildConfig.FLAVOR == "pro" -> {
-                        CreditTierCard(
-                            credits = uiState.credits,
-                            creditProducts = proUpgradeState.creditProducts,
-                            isVerifying = proUpgradeState.isVerifying,
-                            onBuyCredits = { productId ->
-                                (context as? Activity)?.let { viewModel.launchPurchaseFlow(it, productId) }
-                            })
+                    1 -> {
+                        if (BuildConfig.FLAVOR == "pro") {
+                            CreditTierCard(
+                                credits = uiState.credits,
+                                creditProducts = proUpgradeState.creditProducts,
+                                isVerifying = proUpgradeState.isVerifying,
+                                onBuyCredits = { productId ->
+                                    (context as? Activity)?.let { viewModel.launchPurchaseFlow(it, productId) }
+                                })
+                        }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FreeTierCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(stringResource(R.string.free_plan),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.price_free),
-                style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
-                fontWeight = FontWeight.Bold
-            )
-            Text(stringResource(R.string.forever_free),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.Start
-            ) {
-                FeatureListItem(iconRes = R.drawable.library_books, text = stringResource(R.string.feature_multiple_formats))
-                Text(stringResource(R.string.feature_multiple_formats_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
-                )
-                FeatureListItem(iconRes = R.drawable.text_to_speech, text = stringResource(R.string.feature_tts))
-                Text(stringResource(R.string.feature_tts_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
-                )
-                FeatureListItem(iconRes = R.drawable.dictionary, text = stringResource(R.string.feature_dict))
-                Text(stringResource(R.string.feature_dict_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 36.dp, bottom = 8.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = { /* Do nothing, it's the current plan */ },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = MaterialTheme.shapes.medium,
-                enabled = false,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            ) {
-                Text(stringResource(R.string.current_plan), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -778,17 +680,6 @@ private fun CreditTierCard(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
-                FeatureListItem(iconRes = R.drawable.cloud_sync, text = "Cloud TTS")
-                FeatureListItem(iconRes = R.drawable.summarize, text = "AI Summarization & Recap")
-                Text(
-                    "Top-up credits below to use them.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 36.dp, bottom = 16.dp, top = 8.dp)
-                )
-            }
-
             if (isVerifying) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp))
                 Text("Processing Purchase...", style = MaterialTheme.typography.bodySmall)
@@ -806,17 +697,78 @@ private fun CreditTierCard(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(product.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                                Text(product.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (product.description.isNotBlank()) {
+                                    Text(product.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
-                            Button(onClick = { onBuyCredits(product.productId) }) {
+                            Button(
+                                onClick = { onBuyCredits(product.productId) },
+                                modifier = Modifier.wrapContentWidth()
+                            ) {
                                 Text(product.formattedPrice)
                             }
                         }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(32.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                "Estimated Cost Breakdown",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            CostBreakdownItem(
+                iconRes = R.drawable.text_to_speech,
+                title = "Cloud TTS",
+                description = "Cost: ~3-4 credits per minute of audio generated."
+            )
+            CostBreakdownItem(
+                iconRes = R.drawable.summarize,
+                title = "AI Summaries & Recap",
+                description = "Cost: ~1-4 credits per request based on chapter length.\nPro Users get 10 free summaries daily."
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun CostBreakdownItem(
+    @androidx.annotation.DrawableRes iconRes: Int,
+    title: String,
+    description: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp).padding(top = 2.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp
+            )
         }
     }
 }
