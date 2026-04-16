@@ -581,25 +581,22 @@
             var scrollHeight = Math.round(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
             var clientHeight = Math.round(document.documentElement.clientHeight || window.innerHeight || 0);
 
-            if (clientHeight === 0) return;
+          if (clientHeight === 0) return;
 
-            var activeFragment = null;
-            var hasFoundAnyElementInDom = false;
+          var activeFragment = null;
+          var hasFoundVisible = false;
 
-            if (window.TOC_FRAGMENTS && window.TOC_FRAGMENTS.length > 0) {
-                // Adjust threshold to be slightly more forgiving (padding + 60px)
+          if (window.TOC_FRAGMENTS && window.TOC_FRAGMENTS.length > 0) {
                 var threshold = window.VIEWPORT_PADDING_TOP + 60;
 
                 for (var i = 0; i < window.TOC_FRAGMENTS.length; i++) {
                     var id = window.TOC_FRAGMENTS[i];
-                    // FIX: Look for both 'id' and 'name' attributes
                     var el = document.getElementById(id) || document.querySelector('[name="' + id + '"]');
 
                     if (el) {
                         hasFoundVisible = true;
                         var rect = el.getBoundingClientRect();
 
-                        // Log individual element positions so we can see them in your FRAG_NAV_DEBUG filter
                         console.log("FRAG_NAV_DEBUG: Checking #" + id + " | rect.top: " + Math.round(rect.top) + " | threshold: " + threshold);
 
                         if (rect.top <= threshold) {
@@ -660,8 +657,24 @@
         );
     };
 
-    window.addEventListener("scroll", window.reportScrollState, { passive: true });
-    window.addEventListener("resize", window.reportScrollState);
+    let scrollThrottleTimeout = null;
+     let lastScrollTime = 0;
+
+     window.addEventListener("scroll", function() {
+         const now = Date.now();
+         if (now - lastScrollTime >= 100) {
+             window.reportScrollState();
+             lastScrollTime = now;
+         } else {
+             if (scrollThrottleTimeout) clearTimeout(scrollThrottleTimeout);
+             scrollThrottleTimeout = setTimeout(function() {
+                 window.reportScrollState();
+                 lastScrollTime = Date.now();
+             }, 100);
+         }
+     }, { passive: true });
+
+     window.addEventListener("resize", window.reportScrollState);
 
     window.triggerInitialScrollStateReport = function () {
         var attempts = 0;
