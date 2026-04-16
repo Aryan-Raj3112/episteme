@@ -75,7 +75,7 @@ private const val PREFETCH_LOOKAHEAD = 2
 @UnstableApi
 class TtsPlaybackManager(
     private val player: Player,
-    private val generateAudioChunk: suspend (bookTitle: String, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
+    private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit
 ) : MediaSession.Callback, Player.Listener {
 
@@ -363,7 +363,7 @@ class TtsPlaybackManager(
         val chunkStartTime = System.currentTimeMillis()
         Timber.tag("TTS_CLOUD_DIAG").i("Starting audio generation for first chunk (index=$startAtIndex).")
 
-        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
         Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
@@ -597,7 +597,7 @@ class TtsPlaybackManager(
                         val prefetchStartTime = System.currentTimeMillis()
                         Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
 
-                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
 
                         Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 
@@ -683,9 +683,8 @@ class TtsPlaybackManager(
             val playbackPosition = withContext(Dispatchers.Main) { player.currentPosition }
 
             if (loopCount % 20 == 0) {
-                val state = withContext(Dispatchers.Main) { player.playbackState }
-                val isPlay = withContext(Dispatchers.Main) { player.isPlaying }
-                Timber.tag("TTS_CLOUD_DIAG").d("Tracking: state=$state, isPlaying=$isPlay, pos=$playbackPosition, chunkId=${currentMediaItem.mediaId}")
+                withContext(Dispatchers.Main) { player.playbackState }
+                withContext(Dispatchers.Main) { player.isPlaying }
             }
 
             val uri = currentMediaItem.localConfiguration?.uri

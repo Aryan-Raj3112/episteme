@@ -162,7 +162,6 @@ object StreamRegistry {
 @UnstableApi
 class InputStreamDataSource : androidx.media3.datasource.BaseDataSource(true) {
     private var inputStream: java.io.InputStream? = null
-    private var bytesRemaining: Long = 0
     private var opened = false
     private var uri: android.net.Uri? = null
     private var bytesReadTotal: Long = 0
@@ -235,6 +234,7 @@ class TtsService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var playbackManager: TtsPlaybackManager
     private lateinit var baseTtsSynthesizer: BaseTtsSynthesizer
+    private lateinit var cacheManager: TtsCacheManager
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -297,6 +297,8 @@ class TtsService : MediaSessionService() {
             val request = Request.Builder().url(url).build()
             val connectedDeferred = CompletableDeferred<Boolean>()
 
+            var connectionError: String? = null
+
             setupDeferred = CompletableDeferred()
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -305,7 +307,7 @@ class TtsService : MediaSessionService() {
 
                     val systemPrompt = """
                         You are a professional audiobook narrator. 
-                        Your ONLY task is to read the exact text provided to you, word for word, with perfect pacing, natural emotion, and clarity. 
+                        Your ONLY task is to read the exact text provided to you, word for word, with good pacing. 
                         Do NOT add any conversational filler, acknowledgments, or extra words (e.g., do not say "Sure, here is the text"). 
                         Do NOT skip any parts or summarize. Output ONLY the audio reading of the provided text.
                     """.trimIndent()
@@ -383,9 +385,13 @@ class TtsService : MediaSessionService() {
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    val errorMsg = "WS Failure: ${t.message} | Response: ${response?.code}"
-                    Timber.tag("TTS_CLOUD_DIAG").e(t, errorMsg)
-                    audioChannel.trySend(GeminiWsEvent.Error(errorMsg))
+                    connectionError = if (response?.code == 402) {
+                        "INSUFFICIENT_CREDITS"
+                    } else {
+                        "WS Failure: ${t.message} | Response: ${response?.code}"
+                    }
+                    Timber.tag("TTS_CLOUD_DIAG").e(t)
+                    audioChannel.trySend(GeminiWsEvent.Error(connectionError))
                     this@GeminiLiveClient.webSocket = null
                     connectedDeferred.complete(false)
                     setupDeferred.complete(false)
@@ -399,7 +405,7 @@ class TtsService : MediaSessionService() {
             })
 
             val isConnected = connectedDeferred.await()
-            if (!isConnected) throw IllegalStateException("Failed to connect to proxy WebSocket")
+            if (!isConnected) throw IllegalStateException(connectionError ?: "Failed to connect to proxy WebSocket")
 
             val isSetup = try {
                 kotlinx.coroutines.withTimeout(10000L) { setupDeferred.await() }
@@ -414,7 +420,7 @@ class TtsService : MediaSessionService() {
             }
         }
 
-        fun generateChunk(context: android.content.Context, text: String): TtsAudioData {
+        fun generateChunk(text: String, cacheFile: File?): TtsAudioData {
             if (text.isBlank()) return TtsAudioData(null, null, null, "Text is blank")
 
             val streamId = java.util.UUID.randomUUID().toString()
@@ -424,8 +430,18 @@ class TtsService : MediaSessionService() {
             concurrentStream.write(header)
 
             generationTaskQueue.trySend {
+                var fileOutputStream: java.io.FileOutputStream? = null
+                var tempFile: File? = null
+
                 try {
                     if (!clientScope.isActive) return@trySend
+
+                    // Prepare cache temp file
+                    if (cacheFile != null) {
+                        tempFile = File(cacheFile.absolutePath + ".tmp")
+                        fileOutputStream = java.io.FileOutputStream(tempFile)
+                        fileOutputStream.write(header)
+                    }
 
                     Timber.tag("TTS_CLOUD_DIAG").d("Starting API generation task for chunk: ${text.take(15)}...")
 
@@ -455,11 +471,21 @@ class TtsService : MediaSessionService() {
                                         Timber.tag("TTS_CLOUD_DIAG").i("TTFB: ${firstByteTime - chunkGenStartTime}ms")
                                     }
                                     concurrentStream.write(event.bytes)
+                                    fileOutputStream?.write(event.bytes) // Tee to disk
                                     receivedAudioBytes += event.bytes.size
                                 }
                                 is GeminiWsEvent.TurnComplete -> {
-                                    Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes, Total time: ${System.currentTimeMillis() - chunkGenStartTime}ms")
+                                    Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes")
                                     StreamRegistry.markFinished(streamId, receivedAudioBytes.toLong() + 44)
+
+                                    // Finalize Cache file
+                                    fileOutputStream?.close()
+                                    fileOutputStream = null
+                                    if (tempFile != null && cacheFile != null && receivedAudioBytes > 0) {
+                                        patchWavHeader(tempFile, receivedAudioBytes)
+                                        tempFile.renameTo(cacheFile)
+                                        Timber.tag("TTS_CLOUD_DIAG").d("Successfully cached chunk to ${cacheFile.name}")
+                                    }
                                     break
                                 }
                                 is GeminiWsEvent.Error -> {
@@ -478,6 +504,10 @@ class TtsService : MediaSessionService() {
                 } finally {
                     Timber.tag("TTS_CLOUD_DIAG").d("Closing stream for ${text.take(15)}")
                     concurrentStream.close()
+                    fileOutputStream?.close()
+                    if (cacheFile != null && !cacheFile.exists()) {
+                        tempFile?.delete()
+                    }
                 }
             }
 
@@ -504,16 +534,23 @@ class TtsService : MediaSessionService() {
             TtsAudioData(file, text, null)
         }
 
-    private val audioGenerator: suspend (bookTitle: String, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
-        { _, text, speaker, mode, authToken ->
+    val audioGenerator: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
+        { bookTitle, chapterTitle, chunkIndex, text, speaker, mode, authToken ->
             when (mode) {
                 TtsMode.CLOUD -> {
-                    try {
-                        liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken)
-                        liveClient.generateChunk(applicationContext, text)
-                    } catch (e: Exception) {
-                        Timber.tag("TTS_CLOUD_DIAG").e(e, "Cloud TTS generation failed")
-                        TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = e.message ?: "Failed to connect to TTS service")
+                    val cachedFile = cacheManager.getCacheFile(bookTitle, chapterTitle, chunkIndex, text, speaker, mode)
+
+                    if (cachedFile.exists() && cachedFile.length() > 44) {
+                        Timber.tag("TTS_CLOUD_DIAG").i("Using cached audio for chunk $chunkIndex")
+                        TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null)
+                    } else {
+                        try {
+                            liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken)
+                            liveClient.generateChunk(text, cachedFile)
+                        } catch (e: Exception) {
+                            Timber.tag("TTS_CLOUD_DIAG").e(e, "Cloud TTS generation failed")
+                            TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = e.message ?: "Failed to connect to TTS service")
+                        }
                     }
                 }
                 TtsMode.BASE -> synthesizeBaseTtsChunk(text)
@@ -523,6 +560,8 @@ class TtsService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Timber.d("TtsService created.")
+
+        cacheManager = TtsCacheManager(this)
 
         baseTtsSynthesizer = BaseTtsSynthesizer(this)
         scope.launch {

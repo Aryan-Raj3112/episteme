@@ -21,18 +21,23 @@ package com.aryan.reader.tts
 
 import android.content.Context
 import android.media.MediaPlayer
+import androidx.annotation.OptIn
 import timber.log.Timber
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
@@ -47,6 +52,51 @@ val GEMINI_TTS_SPEAKERS = listOf(
     "Kore" to "Kore",
     "Puck" to "Puck"
 )
+
+class TtsCacheManager(private val context: Context) {
+    private fun sanitize(name: String): String = name.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+
+    private fun hash(input: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
+    @OptIn(UnstableApi::class)
+    fun getCacheFile(
+        bookTitle: String,
+        chapterTitle: String?,
+        chunkIndex: Int,
+        text: String,
+        speakerId: String,
+        mode: TtsPlaybackManager.TtsMode
+    ): File {
+        val baseDir = File(context.filesDir, "TTS_Cache")
+        val bookDir = File(baseDir, sanitize(bookTitle.take(50)))
+        val chapterDir = File(bookDir, sanitize((chapterTitle ?: "Unknown_Chapter").take(50)))
+        if (!chapterDir.exists()) {
+            chapterDir.mkdirs()
+        }
+
+        // Hash combines the text, speaker, and mode so changes to settings force a re-fetch
+        val hashParams = hash(text + speakerId + mode.name)
+        return File(chapterDir, "cached_chunk_${chunkIndex}_$hashParams.wav")
+    }
+}
+
+fun patchWavHeader(file: File, pcmDataLength: Int) {
+    try {
+        RandomAccessFile(file, "rw").use { raf ->
+            // ChunkSize (pos 4) = 36 + data length
+            raf.seek(4)
+            raf.writeInt(Integer.reverseBytes(36 + pcmDataLength))
+            // Subchunk2Size (pos 40) = data length
+            raf.seek(40)
+            raf.writeInt(Integer.reverseBytes(pcmDataLength))
+        }
+    } catch (e: Exception) {
+        Timber.tag("TTS_CLOUD_DIAG").e(e, "Failed to patch WAV header for cached file")
+    }
+}
 
 fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH): List<String> {
     if (text.isBlank()) return emptyList()
