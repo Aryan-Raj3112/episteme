@@ -1371,7 +1371,10 @@ fun EpubReaderHost(
                 paginator = paginator,
                 context = context,
                 onProgressUpdate = { recapProgressMessage = it },
-                onCostReceived = { currentCost = it },
+                onCostReceived = { cost ->
+                    currentCost = cost
+                    recapResult = recapResult?.copy(cost = cost) ?: SummarizationResult(cost = cost)
+                },
                 onResultUpdate = { chunk ->
                     isRecapLoading = false
                     val current = recapResult?.summary ?: ""
@@ -2667,7 +2670,10 @@ fun EpubReaderHost(
                                                     summarizeBookContent(
                                                         content = content,
                                                         authToken = token,
-                                                        onCostReceived = { currentCost = it },
+                                                        onCostReceived = { cost ->
+                                                            currentCost = cost
+                                                            summarizationResult = summarizationResult?.copy(cost = cost) ?: SummarizationResult(cost = cost)
+                                                        },
                                                         onUpdate = { chunk ->
                                                             finalSummaryBuilder.append(chunk)
                                                             val currentSummary = summarizationResult?.summary ?: ""
@@ -2689,7 +2695,8 @@ fun EpubReaderHost(
                                                             isSummarizationLoading = false
                                                             val fullSummary = finalSummaryBuilder.toString()
                                                             if (fullSummary.isNotBlank()) {
-                                                                summaryCacheManager.saveSummary(bookTitleToSave, chapterIndexToSave, fullSummary)
+                                                                val chapterTitle = chapters.getOrNull(chapterIndexToSave)?.title ?: "Chapter ${chapterIndexToSave + 1}"
+                                                                summaryCacheManager.saveSummary(bookTitleToSave, chapterIndexToSave, chapterTitle, fullSummary)
                                                             }
                                                         }
                                                     )
@@ -3852,7 +3859,10 @@ fun EpubReaderHost(
                                             summarizeBookContent(
                                                 content = text,
                                                 authToken = token,
-                                                onCostReceived = { currentCost = it },
+                                                onCostReceived = { cost ->
+                                                    currentCost = cost
+                                                    summarizationResult = summarizationResult?.copy(cost = cost) ?: SummarizationResult(cost = cost)
+                                                },
                                                 onUpdate = { chunk ->
                                                     finalSummaryBuilder.append(chunk)
                                                     val currentSummary = summarizationResult?.summary ?: ""
@@ -3871,7 +3881,8 @@ fun EpubReaderHost(
                                                     isSummarizationLoading = false
                                                     val fullSummary = finalSummaryBuilder.toString()
                                                     if (fullSummary.isNotBlank()) {
-                                                        summaryCacheManager.saveSummary(epubBook.title, chapterIndex, fullSummary)
+                                                        val chapterTitle = chapters.getOrNull(chapterIndex)?.title ?: "Chapter ${chapterIndex + 1}"
+                                                        summaryCacheManager.saveSummary(epubBook.title, chapterIndex, chapterTitle, fullSummary)
                                                     }
                                                 }
                                             )

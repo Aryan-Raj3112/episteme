@@ -33,7 +33,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import androidx.core.content.edit
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
@@ -48,56 +47,6 @@ val GEMINI_TTS_SPEAKERS = listOf(
     "Kore" to "Kore",
     "Puck" to "Puck"
 )
-
-class TtsCacheManager(private val context: Context) {
-    val cacheDir = java.io.File(context.cacheDir, "tts_audio_cache").apply { if (!exists()) mkdirs() }
-
-    data class CacheGroup(val bookTitle: String, val sizeBytes: Long, val fileCount: Int)
-
-    fun getCacheGroups(): List<CacheGroup> {
-        val groups = mutableMapOf<String, MutableList<java.io.File>>()
-        cacheDir.listFiles()?.filter { it.isFile && it.extension == "wav" }?.forEach { file ->
-            val parts = file.nameWithoutExtension.split("__")
-            val bookTitle = if (parts.size == 3) parts[0].replace("_", " ") else "Old Files / Samples"
-            groups.getOrPut(bookTitle) { mutableListOf() }.add(file)
-        }
-        return groups.map { (title, files) ->
-            CacheGroup(
-                bookTitle = title,
-                sizeBytes = files.sumOf { it.length() },
-                fileCount = files.size
-            )
-        }.sortedByDescending { it.sizeBytes }
-    }
-
-    fun deleteGroup(bookTitle: String) {
-        val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        cacheDir.listFiles()?.filter { it.isFile && it.extension == "wav" }?.forEach { file ->
-            val parts = file.nameWithoutExtension.split("__")
-            val fileBookTitle = if (parts.size == 3) parts[0] else "Old Files / Samples"
-            if (fileBookTitle == safeTitle || fileBookTitle == bookTitle) {
-                file.delete()
-            }
-        }
-    }
-
-    fun clearCache() {
-        cacheDir.listFiles()?.forEach { it.delete() }
-    }
-}
-
-fun loadTtsCacheEnabled(context: Context): Boolean {
-    return context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).getBoolean("use_tts_cache", true)
-}
-
-fun saveTtsCacheEnabled(context: Context, enabled: Boolean) {
-    context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).edit {
-        putBoolean(
-            "use_tts_cache",
-            enabled
-        )
-    }
-}
 
 fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH): List<String> {
     if (text.isBlank()) return emptyList()

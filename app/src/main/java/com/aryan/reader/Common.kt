@@ -220,7 +220,12 @@ data class SummarizationResult(
     val isCacheHit: Boolean = false
 )
 
-data class CachedSummaryItem(val chapterIndex: Int, val summary: String, val file: File)
+data class CachedSummaryItem(
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val summary: String,
+    val file: File
+)
 
 class SummaryCacheManager(context: Context) {
     private val cacheDir = File(context.cacheDir, "chapter_summaries")
@@ -236,11 +241,12 @@ class SummaryCacheManager(context: Context) {
         return "summary_${safeTitle}_$chapterIndex.txt"
     }
 
-    fun saveSummary(bookTitle: String, chapterIndex: Int, summary: String) {
+    fun saveSummary(bookTitle: String, chapterIndex: Int, chapterTitle: String, summary: String) {
         try {
             val file = File(cacheDir, getFileName(bookTitle, chapterIndex))
-            file.writeText(summary)
-            Timber.d("Saved summary for $bookTitle Ch $chapterIndex")
+            val contentToSave = "$chapterTitle\n$summary"
+            file.writeText(contentToSave)
+            Timber.d("Saved summary with title for $bookTitle Ch $chapterIndex")
         } catch (e: Exception) {
             Timber.e(e, "Failed to save summary")
         }
@@ -263,13 +269,27 @@ class SummaryCacheManager(context: Context) {
     fun getAllSummaries(bookTitle: String): List<CachedSummaryItem> {
         val safeTitle = bookTitle.replace(Regex("[^a-zA-Z0-9.-]"), "_")
         val prefix = "summary_${safeTitle}_"
-        return cacheDir.listFiles()?.filter { it.name.startsWith(prefix) && it.name.endsWith(".txt") }?.mapNotNull { file ->
+        val files = cacheDir.listFiles()?.filter { it.name.startsWith(prefix) && it.name.endsWith(".txt") } ?: emptyList()
+
+        return files.mapNotNull { file ->
             try {
                 val indexStr = file.name.removePrefix(prefix).removeSuffix(".txt")
                 val index = indexStr.toInt()
-                CachedSummaryItem(index, file.readText(), file)
-            } catch (_: Exception) { null }
-        }?.sortedBy { it.chapterIndex } ?: emptyList()
+
+                val fullText = file.readText()
+                val lines = fullText.lines()
+
+                val title = lines.firstOrNull()?.trim() ?: "Chapter ${index + 1}"
+                val summaryText = if (lines.size > 1) lines.drop(1).joinToString("\n") else ""
+
+                Timber.d("Cache Load: Ch $index, Title: $title")
+
+                CachedSummaryItem(index, title, summaryText, file)
+            } catch (e: Exception) {
+                Timber.e(e, "Error parsing cache file: ${file.name}")
+                null
+            }
+        }.sortedBy { it.chapterIndex }
     }
 
     fun deleteSummary(bookTitle: String, chapterIndex: Int) {
@@ -633,14 +653,20 @@ fun SummarizationPopup(
 
                 if (selectedTabIndex == 0) {
                     // ADDED CACHE / COST PILL
-                    if (result != null && !result.summary.isNullOrBlank()) {
+                    if (result != null && (!result.summary.isNullOrBlank() || isLoading)) {
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.End) {
                             Surface(
                                 color = if (result.isCacheHit) Color(0xFF4CAF50).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
-                                    text = if (result.isCacheHit) "⚡ Cache Hit • Free" else "✨ Generated • Cost: ${result.cost ?: 0}",
+                                    text = if (result.isCacheHit) {
+                                        "⚡ Cache Hit • Free"
+                                    } else if (result.cost != null) {
+                                        "✨ Generated • Cost: ${result.cost} credits"
+                                    } else {
+                                        "✨ Generating... • Cost: Calculating"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (result.isCacheHit) Color(0xFF388E3C) else MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -783,14 +809,23 @@ fun SummarizationPopup(
                                 items(cachedItems.size) { index ->
                                     val item = cachedItems[index]
                                     ListItem(
-                                        headlineContent = { Text("Chapter ${item.chapterIndex + 1}") },
-                                        supportingContent = { Text(item.summary.take(45) + "...", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        headlineContent = {
+                                            Text(
+                                                text = item.chapterTitle,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        },
                                         trailingContent = {
                                             IconButton(onClick = {
                                                 summaryCacheManager.deleteSummary(bookTitle, item.chapterIndex)
                                                 cachedItems = summaryCacheManager.getAllSummaries(bookTitle)
                                             }) {
-                                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete",
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
                                             }
                                         }
                                     )

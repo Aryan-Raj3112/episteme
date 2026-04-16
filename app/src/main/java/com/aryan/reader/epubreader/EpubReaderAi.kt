@@ -105,11 +105,13 @@ suspend fun summarizeBookContent(
                 connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        Timber.d("Summarization: Received line: $line")
                         try {
                             val jsonResponse = JSONObject(line!!)
 
-                            jsonResponse.optInt("cost_deducted", -1).takeIf { it > -1 }?.let { onCostReceived(it) }
+                            jsonResponse.optInt("cost_deducted", -1).takeIf { it > -1 }?.let { cost ->
+                                Timber.i("[AI-Billing] Recap stream cost received: $cost credits")
+                                onCostReceived(cost)
+                            }
 
                             jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
                                 onUpdate(it)
@@ -192,18 +194,37 @@ suspend fun executeRecapLogic(
                 summarizeBookContent(
                     content = textToSummarize,
                     authToken = authToken,
+                    onCostReceived = { cost ->
+                        Timber.i("[AI-Billing] Background past chapter summary cost: $cost credits")
+                    },
                     onUpdate = { sb.append(it) },
                     onError = {
                         Timber.e("Failed to summarize Ch $i for recap: $it")
                         latch.complete(false)
                     },
-                    onFinish = { latch.complete(true) }
+                    onFinish = {
+                        latch.complete(true)
+                        val summary = sb.toString()
+                        if (summary.isNotBlank()) {
+                            val chapterTitle = chapters.getOrNull(i)?.title ?: "Chapter ${i + 1}"
+                            summaryCacheManager.saveSummary(epubBook.title, i, chapterTitle, summary)
+                            pastSummaries.add(summary)
+                        }
+                    }
                 )
 
                 val success = latch.await()
                 if (success && sb.isNotEmpty()) {
                     val summary = sb.toString()
-                    summaryCacheManager.saveSummary(epubBook.title, i, summary)
+
+                    val chapterTitle = chapters.getOrNull(i)?.title ?: "Chapter ${i + 1}"
+
+                    summaryCacheManager.saveSummary(
+                        bookTitle = epubBook.title,
+                        chapterIndex = i,
+                        chapterTitle = chapterTitle,
+                        summary = summary
+                    )
                     pastSummaries.add(summary)
                 }
             }
