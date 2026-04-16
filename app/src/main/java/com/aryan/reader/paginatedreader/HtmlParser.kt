@@ -23,15 +23,18 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import timber.log.Timber
 import androidx.annotation.RequiresApi
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -265,9 +268,15 @@ private class SemanticHtmlParser(
                         elementStyle.blockStyle.borderBottomLeftRadius > 0.dp
 
                 if (hasBoxStyles) {
-                    val children = element.children().flatMap { child ->
-                        parseNodeToSemanticBlocks(child, elementStyle)
-                    }
+                    val childStyle = elementStyle.copy(
+                        blockStyle = elementStyle.blockStyle.copy(
+                            backgroundColor = Color.Unspecified,
+                            borderTop = null, borderRight = null, borderBottom = null, borderLeft = null,
+                            padding = BoxBorders(),
+                            margin = BoxBorders()
+                        )
+                    )
+                    val children = parseContainer(element, childStyle)
                     listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                 } else {
                     parseContainer(element, elementStyle)
@@ -278,16 +287,57 @@ private class SemanticHtmlParser(
             "math-placeholder" -> parseMathPlaceholderToSemantic(element, elementStyle)
             "img" -> parseImageElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
-                val (text, spans) = buildSemanticTextAndSpans(element, elementStyle)
-                if (text.isNotBlank()) {
+                val hasNonTextChildren = element.select("img, svg, math-placeholder, table, hr, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty()
+                if (hasNonTextChildren) {
                     val level = tagName.substring(1).toIntOrNull() ?: 1
-                    listOf(SemanticHeader(level, text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
-                } else emptyList()
+                    val fontSizeMultiplier = when (level) {
+                        1 -> 1.5f; 2 -> 1.4f; 3 -> 1.3f; 4 -> 1.2f; 5 -> 1.1f; else -> 1.0f
+                    }
+                    val headerStyle = elementStyle.copy(
+                        spanStyle = elementStyle.spanStyle.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (textStyle.fontSize.value * fontSizeMultiplier).sp
+                        )
+                    )
+
+                    val hasBoxStyles = headerStyle.blockStyle.backgroundColor.isSpecified ||
+                            headerStyle.blockStyle.borderTop != null ||
+                            headerStyle.blockStyle.borderRight != null ||
+                            headerStyle.blockStyle.borderBottom != null ||
+                            headerStyle.blockStyle.borderLeft != null ||
+                            headerStyle.blockStyle.padding != BoxBorders() ||
+                            headerStyle.blockStyle.borderTopLeftRadius > 0.dp ||
+                            headerStyle.blockStyle.borderTopRightRadius > 0.dp ||
+                            headerStyle.blockStyle.borderBottomRightRadius > 0.dp ||
+                            headerStyle.blockStyle.borderBottomLeftRadius > 0.dp
+
+                    if (hasBoxStyles) {
+                        val childStyle = headerStyle.copy(
+                            blockStyle = headerStyle.blockStyle.copy(
+                                backgroundColor = Color.Unspecified,
+                                borderTop = null, borderRight = null, borderBottom = null, borderLeft = null,
+                                padding = BoxBorders(),
+                                margin = BoxBorders()
+                            )
+                        )
+                        val children = parseContainer(element, childStyle)
+                        listOf(SemanticFlexContainer(children, headerStyle, elementId, cfi, blockIndex = nextBlockIndex++))
+                    } else {
+                        parseContainer(element, headerStyle)
+                    }
+                } else {
+                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle)
+                    if (text.isNotBlank()) {
+                        val level = tagName.substring(1).toIntOrNull() ?: 1
+                        listOf(SemanticHeader(level, text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
+                    } else emptyList()
+                }
             }
             "hr" -> listOf(SemanticSpacer(style = elementStyle, elementId = elementId, cfi = cfi, blockIndex = nextBlockIndex++))
             "ul", "ol" -> parseListElementToSemantic(element, elementStyle)
             else -> {
-                if (element.isBlock) {
+                val hasBlockDescendant = !element.isBlock && element.select("img, svg, math-placeholder, hr, table, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty()
+                if (element.isBlock || hasBlockDescendant) {
                     parseContainer(element, elementStyle)
                 } else {
                     val (text, spans) = buildSemanticTextAndSpans(element, elementStyle)
@@ -314,13 +364,30 @@ private class SemanticHtmlParser(
             if (textNodesBuffer.isEmpty()) return
             val (text, spans) = buildSemanticTextAndSpansFromNodes(textNodesBuffer, style)
             if (text.isNotBlank()) {
-                children.add(SemanticParagraph(text, spans, style, element.id().ifBlank { null }, element.getCfiPath(), blockIndex = nextBlockIndex++))            }
+                val finalSpans = spans.toMutableList()
+                if (element.tagName().lowercase() == "a") {
+                    val href = element.attr("href").ifBlank { null }
+                    if (href != null) {
+                        finalSpans.add(SemanticSpan(
+                            start = 0,
+                            end = text.length,
+                            style = style,
+                            linkHref = href,
+                            tag = "a",
+                            elementId = element.id().ifBlank { null }
+                        ))
+                    }
+                }
+                children.add(SemanticParagraph(text, finalSpans, style, element.id().ifBlank { null }, element.getCfiPath(), blockIndex = nextBlockIndex++))
+            }
             textNodesBuffer.clear()
         }
 
         element.childNodes().forEach { node ->
             if (node is Element) {
-                val isEffectivelyBlock = node.isBlock || node.tagName().lowercase() in listOf("img", "svg", "math-placeholder", "hr")
+                val tagName = node.tagName().lowercase()
+                val isEffectivelyBlock = node.isBlock || tagName in listOf("img", "svg", "math-placeholder", "hr") ||
+                        (!node.isBlock && node.select("img, svg, math-placeholder, hr, table, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty())
 
                 if (isEffectivelyBlock) {
                     flushTextBuffer()
