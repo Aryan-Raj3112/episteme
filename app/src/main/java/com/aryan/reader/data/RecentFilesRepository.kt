@@ -360,51 +360,57 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     suspend fun markAsNotRecent(bookIds: List<String>) = withContext(Dispatchers.IO) {
-        if (bookIds.isNotEmpty()) {
-            Timber.d("DeleteDebug: DAO - Marking ${bookIds.size} items as not recent.")
-            recentFileDao.markAsNotRecent(bookIds, System.currentTimeMillis())
+        bookIds.chunked(900).forEach { chunk ->
+            if (chunk.isNotEmpty()) {
+                Timber.d("DeleteDebug: DAO - Marking ${chunk.size} items as not recent.")
+                recentFileDao.markAsNotRecent(chunk, System.currentTimeMillis())
+            }
         }
     }
 
     suspend fun markAsDeleted(bookIds: List<String>) = withContext(Dispatchers.IO) {
-        if (bookIds.isNotEmpty()) {
-            recentFileDao.markAsDeleted(bookIds, System.currentTimeMillis())
-            Timber.d("DeleteDebug: DAO - Marked ${bookIds.size} items as deleted.")
+        bookIds.chunked(900).forEach { chunk ->
+            if (chunk.isNotEmpty()) {
+                recentFileDao.markAsDeleted(chunk, System.currentTimeMillis())
+                Timber.d("DeleteDebug: DAO - Marked ${chunk.size} items as deleted.")
+            }
         }
     }
 
     suspend fun deleteFilePermanently(bookIds: List<String>) = withContext(Dispatchers.IO) {
         if (bookIds.isEmpty()) return@withContext
 
-        val itemsToRemove = bookIds.mapNotNull { recentFileDao.getFileByBookId(it) }
+        bookIds.chunked(900).forEach { chunk ->
+            val itemsToRemove = chunk.mapNotNull { recentFileDao.getFileByBookId(it) }
 
-        if (itemsToRemove.isNotEmpty()) {
-            Timber.d("DeleteDebug: DAO - Permanently deleting ${itemsToRemove.size} files.")
-            itemsToRemove.forEach { item ->
-                item.coverImagePath?.let { deleteCachedCover(it) }
-                try {
-                    item.uriString?.let { bookImporter.deleteBookByUriString(it) }
-                } catch (e: Exception) {
-                    Timber.w("DeleteDebug: Physical file deletion failed (likely already gone) for ${item.bookId}: ${e.message}")
+            if (itemsToRemove.isNotEmpty()) {
+                Timber.d("DeleteDebug: DAO - Permanently deleting ${itemsToRemove.size} files.")
+                itemsToRemove.forEach { item ->
+                    item.coverImagePath?.let { deleteCachedCover(it) }
+                    try {
+                        item.uriString?.let { bookImporter.deleteBookByUriString(it) }
+                    } catch (e: Exception) {
+                        Timber.w("DeleteDebug: Physical file deletion failed (likely already gone) for ${item.bookId}: ${e.message}")
+                    }
+
+                    try {
+                        pdfAnnotationRepository.getAnnotationFileForSync(item.bookId)?.delete()
+                        pdfRichTextRepository.getFileForSync(item.bookId).delete()
+                        pageLayoutRepository.getLayoutFile(item.bookId).delete()
+                        pdfTextBoxRepository.getFileForSync(item.bookId).delete()
+                        pdfHighlightRepository.getFileForSync(item.bookId).delete()
+
+                        val cacheDir = File(context.cacheDir, "imported_file_${item.bookId}")
+                        if (cacheDir.exists()) cacheDir.deleteRecursively()
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error during deep cleanup of sidecars for ${item.bookId}: ${e.message}")
+                    }
                 }
-
-                try {
-                    pdfAnnotationRepository.getAnnotationFileForSync(item.bookId)?.delete()
-                    pdfRichTextRepository.getFileForSync(item.bookId).delete()
-                    pageLayoutRepository.getLayoutFile(item.bookId).delete()
-                    pdfTextBoxRepository.getFileForSync(item.bookId).delete()
-                    pdfHighlightRepository.getFileForSync(item.bookId).delete()
-
-                    val cacheDir = File(context.cacheDir, "imported_file_${item.bookId}")
-                    if (cacheDir.exists()) cacheDir.deleteRecursively()
-                } catch (e: Exception) {
-                    Timber.e(e, "Error during deep cleanup of sidecars for ${item.bookId}: ${e.message}")
-                }
+                recentFileDao.deleteFilePermanently(itemsToRemove.map { it.bookId })
+                Timber.d("Permanently removed recent files from DB.")
+            } else {
+                Timber.w("DeleteDebug: DAO - Files not found for permanent deletion.")
             }
-            recentFileDao.deleteFilePermanently(itemsToRemove.map { it.bookId })
-            Timber.d("Permanently removed recent files from DB.")
-        } else {
-            Timber.w("DeleteDebug: DAO - Files not found for permanent deletion.")
         }
     }
 
@@ -490,8 +496,10 @@ class RecentFilesRepository(private val context: Context) {
 
     suspend fun addRecentFiles(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext
-        val entities = items.map { it.toRecentFileEntity() }
-        recentFileDao.insertOrUpdateFiles(entities)
+        items.chunked(900).forEach { chunk ->
+            val entities = chunk.map { it.toRecentFileEntity() }
+            recentFileDao.insertOrUpdateFiles(entities)
+        }
         Timber.d("Batch inserted/updated ${items.size} recent files in DB.")
     }
 }

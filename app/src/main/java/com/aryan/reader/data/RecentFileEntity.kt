@@ -53,3 +53,28 @@ data class RecentFileEntity(
     @ColumnInfo(defaultValue = "NULL") val highlights: String?,
     @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long
 )
+
+data class RecentFileSummary(
+    val bookId: String,
+    val uriString: String?,
+    val type: FileType,
+    val displayName: String,
+    val timestamp: Long,
+    val coverImagePath: String?,
+    val title: String?,
+    val author: String?,
+    @ColumnInfo(name = "lastChapterIndex") val lastChapterIndex: Int?,
+    val lastPage: Int?,
+    @ColumnInfo(name = "lastPositionCfi") val lastPositionCfi: String?,
+    @ColumnInfo(name = "progressPercentage") val progressPercentage: Float?,
+    @ColumnInfo(defaultValue = "1") val isRecent: Boolean,
+    @ColumnInfo(defaultValue = "1") val isAvailable: Boolean,
+    val lastModifiedTimestamp: Long,
+    @ColumnInfo(defaultValue = "0") val isDeleted: Boolean,
+    val locatorBlockIndex: Int?,
+    val locatorCharOffset: Int?,
+    @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?,
+    @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean,
+    @ColumnInfo(defaultValue = "NULL") val customName: String?,
+    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long
+)

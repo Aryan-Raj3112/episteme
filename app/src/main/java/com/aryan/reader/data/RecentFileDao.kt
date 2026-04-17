@@ -34,8 +34,8 @@ interface RecentFileDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
 
-    @Query("SELECT * FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
-    fun getRecentFiles(): Flow<List<RecentFileEntity>>
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
+    fun getRecentFiles(): Flow<List<RecentFileSummary>>
 
     @Query("SELECT * FROM recent_files WHERE sourceFolderUri = :sourceFolderUri AND isDeleted = 0")
     suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileEntity>
@@ -46,8 +46,8 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 
-    @Query("SELECT * FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
-    fun getRecentFilesList(limit: Int): List<RecentFileEntity>
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
+    fun getRecentFilesList(limit: Int): List<RecentFileSummary>
 
     @Query("DELETE FROM recent_files WHERE bookId IN (:bookIds)")
     suspend fun deleteFilePermanently(bookIds: List<String>)

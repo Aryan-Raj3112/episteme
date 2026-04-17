@@ -158,3 +158,32 @@ fun BookMetadata.toRecentFileItem(): RecentFileItem {
         highlightsJson = this.highlightsJson
     )
 }
+
+fun RecentFileSummary.toRecentFileItem(): RecentFileItem {
+    return RecentFileItem(
+        bookId = this.bookId,
+        uriString = this.uriString,
+        type = this.type,
+        displayName = this.displayName,
+        timestamp = this.timestamp,
+        coverImagePath = this.coverImagePath,
+        title = this.title,
+        author = this.author,
+        lastChapterIndex = this.lastChapterIndex,
+        locatorBlockIndex = this.locatorBlockIndex,
+        locatorCharOffset = this.locatorCharOffset,
+        lastPage = this.lastPage,
+        lastPositionCfi = this.lastPositionCfi,
+        progressPercentage = this.progressPercentage,
+        isRecent = this.isRecent,
+        isAvailable = this.isAvailable,
+        lastModifiedTimestamp = this.lastModifiedTimestamp,
+        isDeleted = this.isDeleted,
+        bookmarksJson = null,
+        sourceFolderUri = this.sourceFolderUri,
+        isReflowPreferred = this.isReflowPreferred,
+        customName = this.customName,
+        highlightsJson = null,
+        fileSize = this.fileSize
+    )
+}
