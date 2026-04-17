@@ -1415,7 +1415,7 @@ fun TtsSettingsSheet(
             Spacer(Modifier.height(16.dp))
 
             when (selectedTabIndex) {
-                0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer)
+                0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode)
                 1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
                 2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
             }
@@ -1425,11 +1425,18 @@ fun TtsSettingsSheet(
 
 @UnstableApi
 @Composable
-fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isTtsActive: Boolean, samplePlayer: SpeakerSamplePlayer) {
+fun AiVoicesTab(
+    currentSpeakerId: String,
+    onSpeakerChange: (String) -> Unit,
+    isTtsActive: Boolean,
+    samplePlayer: SpeakerSamplePlayer,
+    currentMode: TtsPlaybackManager.TtsMode
+) {
     val context = LocalContext.current
+    val isCloudMode = currentMode == TtsPlaybackManager.TtsMode.CLOUD
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("Select Gemini High-Quality Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text("Select High-Quality Cloud Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         if (samplePlayer.cachedSpeakers.isNotEmpty()) {
             TextButton(onClick = { samplePlayer.clearSamples() }, modifier = Modifier.heightIn(min = 24.dp)) {
                 Text("Clear Samples", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
@@ -1444,9 +1451,15 @@ fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isT
             val isCached = samplePlayer.cachedSpeakers.contains(voice.id)
 
             ListItem(
-                headlineContent = { Text(voice.name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                headlineContent = { Text(voice.name, fontWeight = if (isSelected && isCloudMode) FontWeight.Bold else FontWeight.Normal) },
                 supportingContent = { Text(voice.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                leadingContent = { if (isSelected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) else Icon(Icons.Default.Cloud, null, tint = Color.Gray) },
+                leadingContent = {
+                    if (isSelected && isCloudMode) {
+                        Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Icon(Icons.Default.Cloud, null, tint = Color.Gray)
+                    }
+                },
                 trailingContent = {
                     if (!isTtsActive) {
                         IconButton(onClick = { samplePlayer.playOrStop(voice.id) }) {
@@ -1464,8 +1477,10 @@ fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isT
                         }
                     }
                 },
-                modifier = Modifier.clickable(enabled = !isTtsActive) { onSpeakerChange(voice.id) },
-                colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent)
+                modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) { onSpeakerChange(voice.id) },
+                colors = ListItemDefaults.colors(
+                    containerColor = if (isSelected && isCloudMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent
+                )
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         }

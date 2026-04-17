@@ -40,7 +40,6 @@ import kotlin.math.pow
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
-const val TTS_SAMPLE_TEXT = "The greater danger for most of us lies not in setting our aim too high and falling short; but in setting our aim too low, and achieving our mark."
 const val TTS_CHUNK_MAX_LENGTH = 250
 const val DEFAULT_SPEAKER_ID = "Aoede"
 
@@ -74,7 +73,9 @@ val GEMINI_TTS_SPEAKERS = listOf(
     GeminiVoice("Achird", "Achird", "Friendly, Lower middle pitch"),
     GeminiVoice("Zubenelgenubi", "Zubenelgenubi", "Casual, Lower middle pitch"),
     GeminiVoice("Vindemiatrix", "Vindemiatrix", "Gentle, Middle pitch"),
-    GeminiVoice("Sadachbia", "Sadachbia", "Lively, Lower pitch")
+    GeminiVoice("Sadachbia", "Sadachbia", "Lively, Lower pitch"),
+    GeminiVoice("Sadaltager", "Sadaltager", "Lively, Lower pitch"),
+    GeminiVoice("Sulafat", "Sulafat", "Warn, Middle pitch"),
 )
 
 data class TtsChapterCacheInfo(
@@ -299,23 +300,23 @@ class SpeakerSamplePlayer(
             val cacheFile = File(context.cacheDir, "sample_$speakerId.wav")
             try {
                 if (!cacheFile.exists()) {
-                    val authToken = getAuthToken()
-                    liveClient.ensureConnected(googleCloudWorkerTtsUrl, speakerId, authToken)
-                    val audioData = liveClient.generateChunk(TTS_SAMPLE_TEXT, cacheFile)
+                    val bucketName = "reader-9fc469d7.firebasestorage.app"
+                    val sampleUrl = "https://firebasestorage.googleapis.com/v0/b/$bucketName/o/samples%2Fsample_${speakerId}.wav?alt=media"
 
-                    val streamId = audioData.streamUri?.substringAfter("ttsstream://")
-                    val stream = streamId?.let { StreamRegistry.get(it) } as? ConcurrentInputStream
-                    if (stream != null) {
-                        val buffer = ByteArray(4096)
-                        while (stream.read(buffer, 0, buffer.size) != -1) { }
-                        stream.close()
-                        StreamRegistry.remove(streamId)
-                    }
+                    val request = okhttp3.Request.Builder()
+                        .url(sampleUrl)
+                        .build()
 
-                    var retries = 0
-                    while (!cacheFile.exists() && retries < 30) {
-                        kotlinx.coroutines.delay(100)
-                        retries++
+                    val response = httpClient.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        response.body?.byteStream()?.use { input ->
+                            cacheFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    } else {
+                        Timber.e("Failed to download sample for $speakerId. HTTP ${response.code}")
+                        throw Exception("Failed to cache sample")
                     }
                 }
 
@@ -337,7 +338,7 @@ class SpeakerSamplePlayer(
                         sampleMediaPlayer.prepareAsync()
                     }
                 } else {
-                    throw Exception("Failed to cache sample")
+                    throw Exception("Sample file missing after download attempt")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Exception playing sample for $speakerId")

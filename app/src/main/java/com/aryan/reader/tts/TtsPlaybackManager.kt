@@ -71,7 +71,7 @@ const val KEY_WORD_OFFSETS = "KEY_WORD_OFFSETS"
 const val KEY_PLAYBACK_SOURCE = "KEY_PLAYBACK_SOURCE"
 const val KEY_AUTH_TOKEN = "KEY_AUTH_TOKEN"
 
-private const val PREFETCH_LOOKAHEAD = 2
+private const val PREFETCH_LOOKAHEAD = 3
 
 @UnstableApi
 class TtsPlaybackManager(

@@ -311,7 +311,7 @@ class TtsService : MediaSessionService() {
                         You are a professional audiobook narrator. 
                         Your ONLY task is to read the exact text provided to you, word for word, neutral emotion, and with good pacing. 
                         Do NOT add any conversational filler, acknowledgments, or extra words (e.g., do not say "Sure, here is the text"). 
-                        Do NOT skip any parts or summarize. Output ONLY the audio reading of the provided text.
+                        Do NOT skip any parts or summarize. Output ONLY the audio reading of the provided text. If you encounter unreadable, non-verbal, or non-linguistic content (e.g., symbols like "※▼◆", raw formatting markers, broken characters, or pure punctuation clusters with no readable words), silently skip it and continue reading.
                     """.trimIndent()
 
                     val setupMsg = JSONObject().apply {
