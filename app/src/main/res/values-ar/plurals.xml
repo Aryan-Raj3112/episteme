@@ -8,4 +8,68 @@
         <item quantity="many">%1$d كتابًا</item>
         <item quantity="other">%1$d كتاب</item>
     </plurals>
+    <plurals name="book_word">
+        <item quantity="zero">لا كتب</item>
+        <item quantity="one">كتاب واحد</item>
+        <item quantity="two">كتابان</item>
+        <item quantity="few">%1$d كتب</item>
+        <item quantity="many">%1$d كتابًا</item>
+        <item quantity="other">%1$d كتاب</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="zero">لا توجد رفوف</item>
+        <item quantity="one">رف واحد</item>
+        <item quantity="two">رفان</item>
+        <item quantity="few">%1$d رفوف</item>
+        <item quantity="many">%1$d رفاً</item>
+        <item quantity="other">%1$d رف</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="zero">لم يتم العثور على نتائج</item>
+        <item quantity="one">تم العثور على نتيجة واحدة</item>
+        <item quantity="two">تم العثور على نتيجتين</item>
+        <item quantity="few">تم العثور على %1$d نتائج</item>
+        <item quantity="many">تم العثور على %1$d نتيجة</item>
+        <item quantity="other">تم العثور على %1$d نتيجة</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="zero">لا توجد ملفات لحذفها نهائياً</item>
+        <item quantity="one">حذف الملف نهائياً</item>
+        <item quantity="two">حذف الملفين نهائياً</item>
+        <item quantity="few">حذف الـ %1$d ملفات نهائياً</item>
+        <item quantity="many">حذف الـ %1$d ملفاً نهائياً</item>
+        <item quantity="other">حذف الـ %1$d ملف نهائياً</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="zero">لا توجد ملفات مختارة</item>
+        <item quantity="one">هل تريد حذف الملف المختار نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
+        <item quantity="two">هل تريد حذف الملفين المختارين نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
+        <item quantity="few">هل تريد حذف الـ %1$d ملفات المختارة نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
+        <item quantity="many">هل تريد حذف الـ %1$d ملفاً مختاراً نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
+        <item quantity="other">هل تريد حذف الـ %1$d ملف مختار نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="zero">لا توجد ملفات مختارة لإزالتها من القائمة.</item>
+        <item quantity="one">هل تريد إزالة الملف المختار من قائمة الملفات الأخيرة؟ سيظهر مجدداً إذا فتحته من المكتبة.</item>
+        <item quantity="two">هل تريد إزالة الملفين المختارين من قائمة الملفات الأخيرة؟ سيظهران مجدداً إذا فتحتهما من المكتبة.</item>
+        <item quantity="few">هل تريد إزالة الـ %1$d ملفات المختارة من قائمة الملفات الأخيرة؟ ستظهر مجدداً إذا فتحتها من المكتبة.</item>
+        <item quantity="many">هل تريد إزالة الـ %1$d ملفاً مختاراً من قائمة الملفات الأخيرة؟ ستظهر مجدداً إذا فتحتها من المكتبة.</item>
+        <item quantity="other">هل تريد إزالة الـ %1$d ملف مختار من قائمة الملفات الأخيرة؟ ستظهر مجدداً إذا فتحتها من المكتبة.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="zero">لا توجد كتب مختارة لإزالتها من الرف.</item>
+        <item quantity="one">هل أنت متأكد من أنك تريد إزالة كتاب واحد من رف \'%2$s\'؟ سيبقى الكتاب في مكتبتك وسيظهر ضمن القسم \"غير مصنف\".</item>
+        <item quantity="two">هل أنت متأكد من أنك تريد إزالة كتابين من رف \'%2$s\'؟ سيبقى الكتابان في مكتبتك وسيظهران ضمن القسم \"غير مصنف\".</item>
+        <item quantity="few">هل أنت متأكد من أنك تريد إزالة %1$d كتب من رف \'%2$s\'؟ ستبقى الكتب في مكتبتك وستظهر ضمن القسم \"غير مصنف\".</item>
+        <item quantity="many">هل أنت متأكد من أنك تريد إزالة %1$d كتاباً من رف \'%2$s\'؟ ستبقى الكتب في مكتبتك وستظهر ضمن القسم \"غير مصنف\".</item>
+        <item quantity="other">هل أنت متأكد من أنك تريد إزالة %1$d كتاب من رف \'%2$s\'؟ ستبقى الكتب في مكتبتك وستظهر ضمن القسم \"غير مصنف\".</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="zero">لم يتم إزالة أي كتب من المكتبة.</item>
+        <item quantity="one">تم إزالة كتاب واحد من المكتبة.</item>
+        <item quantity="two">تم إزالة كتابين من المكتبة.</item>
+        <item quantity="few">تم إزالة %1$d كتب من المكتبة.</item>
+        <item quantity="many">تم إزالة %1$d كتاباً من المكتبة.</item>
+        <item quantity="other">تم إزالة %1$d كتاب من المكتبة.</item>
+    </plurals>
 </resources>
