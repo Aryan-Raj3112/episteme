@@ -386,6 +386,17 @@ class TtsPlaybackManager(
         }
     }
 
+    fun forceStopWithError(errorMessage: String) {
+        scope.launch(Dispatchers.Main) {
+            _ttsState.value = _ttsState.value.copy(
+                isLoading = false,
+                isPlaying = false,
+                errorMessage = errorMessage
+            )
+            handleStopTts(clearState = false)
+        }
+    }
+
     private fun handleChangeSpeaker(newSpeakerId: String) {
         if (currentSpeakerId == newSpeakerId) return
         currentSpeakerId = newSpeakerId
@@ -407,7 +418,10 @@ class TtsPlaybackManager(
         Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
+            withContext(Dispatchers.Main) {
+                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = "INSUFFICIENT_CREDITS")
+                handleStopTts(clearState = false)
+            }
             return
         }
 
@@ -642,7 +656,10 @@ class TtsPlaybackManager(
                         Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 
                         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
-                            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "INSUFFICIENT_CREDITS")
+                            withContext(Dispatchers.Main) {
+                                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = "INSUFFICIENT_CREDITS")
+                                handleStopTts(clearState = false)
+                            }
                             return@launch
                         }
 

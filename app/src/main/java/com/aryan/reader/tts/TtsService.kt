@@ -250,9 +250,18 @@ class TtsService : MediaSessionService() {
     }
 
     private val okHttpClient = OkHttpClient.Builder().build()
-    private val liveClient by lazy { GeminiLiveClient(okHttpClient) }
+    private val liveClient by lazy {
+        GeminiLiveClient(okHttpClient) { errorMsg ->
+            if (::playbackManager.isInitialized) {
+                playbackManager.forceStopWithError(errorMsg)
+            }
+        }
+    }
 
-    class GeminiLiveClient(private val client: OkHttpClient) {
+    class GeminiLiveClient(
+        private val client: OkHttpClient,
+        private val onAsyncError: (String) -> Unit = {}
+    ) {
         private var webSocket: WebSocket? = null
 
         private val connectionMutex = Mutex()
@@ -336,7 +345,10 @@ class TtsService : MediaSessionService() {
                     try {
                         val json = JSONObject(text)
                         if (json.has("error")) {
-                            Timber.tag("TTS_CLOUD_DIAG").e("API ERROR RETURNED: ${json.optJSONObject("error")}")
+                            val errObj = json.opt("error")
+                            val errMsg = if (errObj is JSONObject) errObj.toString() else errObj?.toString() ?: "Unknown API Error"
+                            Timber.tag("TTS_CLOUD_DIAG").e("API ERROR RETURNED: $errMsg")
+                            audioChannel.trySend(GeminiWsEvent.Error(errMsg))
                             setupDeferred.complete(false)
                             return
                         }
@@ -484,6 +496,7 @@ class TtsService : MediaSessionService() {
                                     }
                                     is GeminiWsEvent.Error -> {
                                         Timber.tag("TTS_CLOUD_DIAG").e("WS Error received: ${event.message}")
+                                        onAsyncError(event.message)
                                         break
                                     }
                                 }
