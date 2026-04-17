@@ -72,30 +72,35 @@ fun AppNavigation(
 
     LaunchedEffect(uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
-            when (uiState.selectedFileType) {
-                FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
-                    if (uiState.selectedPdfUri != null) {
-                        if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
-                            navController.navigate(AppDestinations.PDF_VIEWER_ROUTE) {
-                                popUpTo(AppDestinations.MAIN_ROUTE)
+            try {
+                when (uiState.selectedFileType) {
+                    FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
+                        if (uiState.selectedPdfUri != null) {
+                            if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
+                                navController.navigate(AppDestinations.PDF_VIEWER_ROUTE) {
+                                    popUpTo(AppDestinations.MAIN_ROUTE)
+                                }
                             }
                         }
                     }
-                }
-                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
-                    if (uiState.selectedEpubBook != null) {
-                        if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
-                            navController.navigate(AppDestinations.EPUB_READER_ROUTE) {
-                                popUpTo(AppDestinations.MAIN_ROUTE)
+                    FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
+                        if (uiState.selectedEpubBook != null) {
+                            if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
+                                navController.navigate(AppDestinations.EPUB_READER_ROUTE) {
+                                    popUpTo(AppDestinations.MAIN_ROUTE)
+                                }
                             }
                         }
                     }
-                }
-                null -> {
-                    if (navController.currentDestination?.route != AppDestinations.MAIN_ROUTE) {
-                        navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
+                    null -> {
+                        val currentRoute = navController.currentBackStackEntry?.destination?.route
+                        if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
+                            navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
+                        }
                     }
                 }
+            } catch (e: IllegalStateException) {
+                Timber.w(e, "Navigation transition already in progress, ignoring.")
             }
         }
     }
