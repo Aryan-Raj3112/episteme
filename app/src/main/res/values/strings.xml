@@ -272,6 +272,7 @@
     <string name="upgrade_unavailable">Upgrade currently unavailable. Please check your internet and try again.</string>
     <!-- "Google" is a brand name. "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="sign_in_to_purchase">Please sign in to your Google account to purchase Episteme Pro.</string>
+    <string name="sign_in_to_purchase_credits">Please sign in to your Google account to purchase credits.</string>
     <string name="verifying_purchase_desc">This may take a few moments. Your Pro status will be updated automatically.</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="dialog_existing_purchase_desc">This device already has a Pro purchase, but it\'s linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.</string>

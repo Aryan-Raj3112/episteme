@@ -256,6 +256,8 @@ fun ProScreen(
                                 credits = uiState.credits,
                                 creditProducts = proUpgradeState.creditProducts,
                                 isVerifying = proUpgradeState.isVerifying,
+                                isUserSignedIn = uiState.currentUser != null,
+                                onSignInRequiredClick = { showSignInRequiredDialog = true },
                                 onBuyCredits = { productId ->
                                     (context as? Activity)?.let { viewModel.launchPurchaseFlow(it, productId) }
                                 })
@@ -655,6 +657,8 @@ private fun CreditTierCard(
     credits: Int,
     creditProducts: List<ProductDetailsEntity>,
     isVerifying: Boolean,
+    isUserSignedIn: Boolean,
+    onSignInRequiredClick: () -> Unit,
     onBuyCredits: (String) -> Unit
 ) {
     Card(
@@ -682,14 +686,17 @@ private fun CreditTierCard(
 
             if (isVerifying) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp))
-                Text("Processing Purchase...", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.verifying_purchase), style = MaterialTheme.typography.bodySmall)
             } else if (creditProducts.isEmpty()) {
-                Text("Loading credit packages...", modifier = Modifier.padding(16.dp))
+                Text(stringResource(R.string.loading_price), modifier = Modifier.padding(16.dp))
             } else {
                 creditProducts.forEach { product ->
                     OutlinedCard(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        onClick = { onBuyCredits(product.productId) },
+                        onClick = {
+                            if (isUserSignedIn) onBuyCredits(product.productId)
+                            else onSignInRequiredClick()
+                        },
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
                     ) {
                         Row(
@@ -704,7 +711,10 @@ private fun CreditTierCard(
                                 }
                             }
                             Button(
-                                onClick = { onBuyCredits(product.productId) },
+                                onClick = {
+                                    if (isUserSignedIn) onBuyCredits(product.productId)
+                                    else onSignInRequiredClick()
+                                },
                                 modifier = Modifier.wrapContentWidth()
                             ) {
                                 Text(product.formattedPrice)
@@ -712,6 +722,16 @@ private fun CreditTierCard(
                         }
                     }
                 }
+            }
+
+            if (!isUserSignedIn) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.sign_in_to_purchase_credits),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             Spacer(modifier = Modifier.height(32.dp))

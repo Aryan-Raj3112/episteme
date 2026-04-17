@@ -113,6 +113,7 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
@@ -823,12 +824,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     }
                                 }
                             }
-                            triggerLegacyPurchaseMigration()
                         }
                 } else {
                     _internalState.update { it.copy(isProUser = false, hasUnreadFeedback = false) }
                 }
             }
+        }
+        viewModelScope.launch {
+            combine(
+                billingClientWrapper.proUpgradeState.map { it.activePurchases },
+                _internalState.map { it.currentUser?.uid }
+            ) { purchases, uid ->
+                Pair(purchases, uid)
+            }
+                .distinctUntilChanged()
+                .collect { (purchases, uid) ->
+                    if (uid != null && purchases.isNotEmpty()) {
+                        Timber.d("Active purchases or User changed, triggering migration check")
+                        triggerLegacyPurchaseMigration()
+                    }
+                }
         }
     }
 
