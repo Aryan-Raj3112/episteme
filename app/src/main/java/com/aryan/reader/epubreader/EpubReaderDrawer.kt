@@ -354,63 +354,113 @@ private fun ChaptersList(
         result
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxHeight().padding(end = 12.dp)
-        ) {
-            items(
-                items = visibleItemInfo,
-                key = { (index, entry) -> "${entry.absolutePath}_${entry.fragmentId}_$index" }
-            ) { (originalIndex, entry) ->
-                val nextItem = effectiveToc.getOrNull(originalIndex + 1)
-                val hasChildren = nextItem != null && nextItem.depth > entry.depth
-                val isExpanded = expandedEntryIndices.contains(originalIndex)
+    val coroutineScope = rememberCoroutineScope()
 
-                // HIGHLIGHT LOGIC FIXED
-                val isCurrentPath = currentChapterPath == entry.absolutePath
-                val matchesFragment = entry.fragmentId == activeFragmentId
+    val activeTocEntry = remember(effectiveToc, currentChapterPath, activeFragmentId, firstEntryForCurrentChapter) {
+        effectiveToc.find {
+            it.absolutePath == currentChapterPath && it.fragmentId == activeFragmentId
+        } ?: firstEntryForCurrentChapter
+    }
 
-                // Fallback logic
-                val isFallback = activeFragmentId == null && entry == firstEntryForCurrentChapter
-                val isHighlighting = isCurrentPath && (matchesFragment || isFallback)
-
-                if (isCurrentPath) {
-                    Timber.tag("FRAG_NAV_DEBUG").d("Row: '${entry.label}' | isPathMatch: $isCurrentPath | isFragMatch: $matchesFragment | isFallback: $isFallback")
-                }
-
-                if (isCurrentPath) {
-                    Timber.tag("FRAG_NAV_DEBUG").d("Entry: '${entry.label}' | ID: ${entry.fragmentId} | Active: $activeFragmentId | Highlight: $isHighlighting")
-                }
-
-                TocTreeItem(
-                    label = entry.label,
-                    depth = entry.depth,
-                    isExpanded = isExpanded,
-                    hasChildren = hasChildren,
-                    isCurrent = isHighlighting,
-                    onToggleExpand = {
-                        expandedEntryIndices = if (isExpanded) {
-                            expandedEntryIndices - originalIndex
-                        } else {
-                            expandedEntryIndices + originalIndex
-                        }
-                    },
-                    onClick = {
-                        if (tocEntries.isEmpty()) {
-                            onNavigateToChapter(originalIndex)
-                        } else {
-                            onNavigateToTocEntry(entry)
-                        }
+    val onScrollToCurrent = {
+        coroutineScope.launch {
+            val targetEntry = activeTocEntry ?: return@launch
+            val targetOriginalIndex = effectiveToc.indexOf(targetEntry)
+            if (targetOriginalIndex != -1) {
+                // Ensure parents are expanded
+                var currentLevel = targetEntry.depth
+                val newExpanded = expandedEntryIndices.toMutableSet()
+                for (i in targetOriginalIndex downTo 0) {
+                    val entry = effectiveToc[i]
+                    if (entry.depth < currentLevel) {
+                        newExpanded.add(i)
+                        currentLevel = entry.depth
                     }
-                )
+                }
+                expandedEntryIndices = newExpanded
+
+                // Delay to allow visibility array to recompose
+                kotlinx.coroutines.delay(100)
+
+                val visibleIdx = visibleItemInfo.indexOfFirst { it.second == targetEntry }
+                if (visibleIdx != -1) {
+                    listState.animateScrollToItem(visibleIdx)
+                }
+            }
+        }
+        Unit
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            TextButton(onClick = { expandedEntryIndices = effectiveToc.indices.toSet() }) {
+                Text("Expand All")
+            }
+            TextButton(onClick = { expandedEntryIndices = emptySet() }) {
+                Text("Collapse All")
+            }
+            TextButton(onClick = onScrollToCurrent) {
+                Text("Locate")
             }
         }
 
-        VerticalScrollbar(
-            listState = listState,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        HorizontalDivider()
+
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(end = 12.dp)
+            ) {
+                items(
+                    items = visibleItemInfo,
+                    key = { (index, entry) -> "${entry.absolutePath}_${entry.fragmentId}_$index" }
+                ) { (originalIndex, entry) ->
+                    val nextItem = effectiveToc.getOrNull(originalIndex + 1)
+                    val hasChildren = nextItem != null && nextItem.depth > entry.depth
+                    val isExpanded = expandedEntryIndices.contains(originalIndex)
+
+                    val isCurrentPath = currentChapterPath == entry.absolutePath
+                    val matchesFragment = entry.fragmentId == activeFragmentId
+
+                    val isFallback = activeFragmentId == null && entry == firstEntryForCurrentChapter
+                    val isHighlighting = isCurrentPath && (matchesFragment || isFallback)
+
+                    TocTreeItem(
+                        label = entry.label,
+                        depth = entry.depth,
+                        isExpanded = isExpanded,
+                        hasChildren = hasChildren,
+                        isCurrent = isHighlighting,
+                        onToggleExpand = {
+                            expandedEntryIndices = if (isExpanded) {
+                                expandedEntryIndices - originalIndex
+                            } else {
+                                expandedEntryIndices + originalIndex
+                            }
+                        },
+                        onClick = {
+                            if (tocEntries.isEmpty()) {
+                                onNavigateToChapter(originalIndex)
+                            } else {
+                                onNavigateToTocEntry(entry)
+                            }
+                        }
+                    )
+                }
+            }
+
+            VerticalScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
     }
 }
 

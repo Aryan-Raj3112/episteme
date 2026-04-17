@@ -4030,55 +4030,103 @@ fun PdfViewerScreen(
                                         }
                                     }
 
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        LazyColumn(
-                                            state = listState,
-                                            modifier = Modifier
-                                                .fillMaxHeight()
-                                                .padding(end = 12.dp)
-                                        ) {
-                                            items(
-                                                items = visibleItemInfo,
-                                                key = { it.second.title + it.first }
-                                            ) { item ->
-                                                val (originalIndex, entry) = item
-
-                                                val nextItem = flatTableOfContents.getOrNull(originalIndex + 1)
-                                                val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
-                                                val isExpanded = expandedEntryIndices.contains(originalIndex)
-                                                val isCurrentChapter = entry == currentTocEntry
-
-                                                PdfTocTreeItem(
-                                                    label = entry.title,
-                                                    nestLevel = entry.nestLevel,
-                                                    isExpanded = isExpanded,
-                                                    hasChildren = hasChildren,
-                                                    isCurrent = isCurrentChapter,
-                                                    onToggleExpand = {
-                                                        expandedEntryIndices = if (isExpanded) {
-                                                            expandedEntryIndices - originalIndex
-                                                        } else {
-                                                            expandedEntryIndices + originalIndex
-                                                        }
-                                                    },
-                                                    onClick = {
-                                                        coroutineScope.launch {
-                                                            drawerState.close()
-                                                            if (displayMode == DisplayMode.PAGINATION) {
-                                                                pagerState.scrollToPage(entry.pageIndex)
-                                                            } else {
-                                                                verticalReaderState.scrollToPage(entry.pageIndex)
-                                                            }
-                                                        }
+                                    val onScrollToCurrent = {
+                                        drawerScope.launch {
+                                            val targetEntry = currentTocEntry ?: return@launch
+                                            val targetOriginalIndex = flatTableOfContents.indexOf(targetEntry)
+                                            if (targetOriginalIndex != -1) {
+                                                var currentLevel = targetEntry.nestLevel
+                                                val newExpanded = expandedEntryIndices.toMutableSet()
+                                                for (i in targetOriginalIndex downTo 0) {
+                                                    val entry = flatTableOfContents[i]
+                                                    if (entry.nestLevel < currentLevel) {
+                                                        newExpanded.add(i)
+                                                        currentLevel = entry.nestLevel
                                                     }
-                                                )
+                                                }
+                                                expandedEntryIndices = newExpanded
+
+                                                delay(100)
+
+                                                val visibleIdx = visibleItemInfo.indexOfFirst { it.second == targetEntry }
+                                                if (visibleIdx != -1) {
+                                                    listState.animateScrollToItem(visibleIdx)
+                                                }
+                                            }
+                                        }
+                                        Unit
+                                    }
+
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceEvenly
+                                        ) {
+                                            TextButton(onClick = { expandedEntryIndices = flatTableOfContents.indices.toSet() }) {
+                                                Text("Expand All")
+                                            }
+                                            TextButton(onClick = { expandedEntryIndices = emptySet() }) {
+                                                Text("Collapse All")
+                                            }
+                                            TextButton(onClick = onScrollToCurrent) {
+                                                Text("Locate")
                                             }
                                         }
 
-                                        VerticalScrollbar(
-                                            listState = listState,
-                                            modifier = Modifier.align(Alignment.CenterEnd)
-                                        )
+                                        HorizontalDivider()
+
+                                        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                            LazyColumn(
+                                                state = listState,
+                                                modifier = Modifier
+                                                    .fillMaxHeight()
+                                                    .padding(end = 12.dp)
+                                            ) {
+                                                items(
+                                                    items = visibleItemInfo,
+                                                    key = { it.second.title + it.first }
+                                                ) { item ->
+                                                    val (originalIndex, entry) = item
+
+                                                    val nextItem = flatTableOfContents.getOrNull(originalIndex + 1)
+                                                    val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                                    val isExpanded = expandedEntryIndices.contains(originalIndex)
+                                                    val isCurrentChapter = entry == currentTocEntry
+
+                                                    PdfTocTreeItem(
+                                                        label = entry.title,
+                                                        nestLevel = entry.nestLevel,
+                                                        isExpanded = isExpanded,
+                                                        hasChildren = hasChildren,
+                                                        isCurrent = isCurrentChapter,
+                                                        onToggleExpand = {
+                                                            expandedEntryIndices = if (isExpanded) {
+                                                                expandedEntryIndices - originalIndex
+                                                            } else {
+                                                                expandedEntryIndices + originalIndex
+                                                            }
+                                                        },
+                                                        onClick = {
+                                                            coroutineScope.launch {
+                                                                drawerState.close()
+                                                                if (displayMode == DisplayMode.PAGINATION) {
+                                                                    pagerState.scrollToPage(entry.pageIndex)
+                                                                } else {
+                                                                    verticalReaderState.scrollToPage(entry.pageIndex)
+                                                                }
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            }
+
+                                            VerticalScrollbar(
+                                                listState = listState,
+                                                modifier = Modifier.align(Alignment.CenterEnd)
+                                            )
+                                        }
                                     }
                                 }
                             }
