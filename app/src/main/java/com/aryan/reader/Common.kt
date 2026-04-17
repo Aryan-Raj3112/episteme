@@ -64,7 +64,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -1349,7 +1348,8 @@ fun TtsSettingsSheet(
     currentSpeakerId: String,
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
-    getAuthToken: suspend () -> String?
+    getAuthToken: suspend () -> String?,
+    bookTitle: String
 ) {
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1383,17 +1383,19 @@ fun TtsSettingsSheet(
                 }
             }
 
+            Text("Active TTS Engine", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(4.dp)) {
-                val tabs = listOf("AI Voices", "Device Voices")
-                tabs.forEachIndexed { index, title ->
-                    val isSelected = selectedTabIndex == index
+                val modes = listOf(TtsPlaybackManager.TtsMode.CLOUD to "Cloud AI", TtsPlaybackManager.TtsMode.BASE to "Device Native")
+                modes.forEach { (mode, title) ->
+                    val isSelected = currentMode == mode
                     Box(
                         modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(20.dp))
                             .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
                             .clickable(enabled = !isTtsActive) {
-                                selectedTabIndex = index
-                                if (index == 0) onModeChange(TtsPlaybackManager.TtsMode.CLOUD)
-                                if (index == 1) onModeChange(TtsPlaybackManager.TtsMode.BASE)
+                                onModeChange(mode)
+                                if (mode == TtsPlaybackManager.TtsMode.CLOUD && selectedTabIndex == 1) selectedTabIndex = 0
+                                if (mode == TtsPlaybackManager.TtsMode.BASE && selectedTabIndex != 1) selectedTabIndex = 1
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1404,9 +1406,18 @@ fun TtsSettingsSheet(
 
             Spacer(Modifier.height(16.dp))
 
+            TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
+                Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("Cloud Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("Device Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                Tab(selected = selectedTabIndex == 2, onClick = { selectedTabIndex = 2 }, text = { Text("Cloud Cache", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+            }
+
+            Spacer(Modifier.height(16.dp))
+
             when (selectedTabIndex) {
                 0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer)
                 1 -> DeviceVoicesTab(isTtsActive, context)
+                2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
             }
         }
     }
@@ -1509,19 +1520,25 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-        Surface(
-            onClick = { if (!isTtsActive) languageMenuExpanded = true },
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(48.dp)
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = languageMenuExpanded,
+        onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    ) {
+        OutlinedTextField(
+            value = selectedLanguage,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Language Filter") },
+            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
+            colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            enabled = !isTtsActive
+        )
+        ExposedDropdownMenu(
+            expanded = languageMenuExpanded,
+            onDismissRequest = { languageMenuExpanded = false }
         ) {
-            Row(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Language: $selectedLanguage", style = MaterialTheme.typography.labelLarge)
-                Icon(Icons.Default.ArrowDropDown, null)
-            }
-        }
-        DropdownMenu(expanded = languageMenuExpanded, onDismissRequest = { languageMenuExpanded = false }) {
             languages.forEach { lang ->
                 DropdownMenuItem(text = { Text(lang) }, onClick = {
                     selectedLanguage = lang
@@ -1562,97 +1579,98 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TtsCacheManagerSheet(bookTitle: String, context: Context, onDismiss: () -> Unit) {
+fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
     val cacheManager = remember { TtsCacheManager(context) }
-    var selectedSpeakerFilter by remember { mutableStateOf("All") }
+    var selectedSpeakerFilter by remember { mutableStateOf(currentSpeakerId) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
 
     val allSpeakers = remember(bookTitle) {
-        cacheManager.getBookCacheDir(bookTitle).listFiles()?.flatMap { ch ->
+        val fromCache = cacheManager.getBookCacheDir(bookTitle).listFiles()?.flatMap { ch ->
             ch.listFiles()?.mapNotNull { file ->
                 val parts = file.name.split("_")
                 if (parts.size >= 5) parts[3] else null
             } ?: emptyList()
         }?.distinct()?.sorted() ?: emptyList()
+        (listOf(currentSpeakerId) + fromCache).distinct()
     }
 
     var chapters by remember(selectedSpeakerFilter) { mutableStateOf(cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)) }
     val totalSize = remember(chapters) { chapters.sumOf { it.sizeBytes } }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, contentWindowInsets = { WindowInsets.navigationBars }) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Cloud TTS Cache", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp)) {
-                    Text(formatBytes(totalSize), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Cloud TTS Cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp)) {
+                Text(formatBytes(totalSize), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             }
+        }
 
-            Text("Manage downloaded audio chunks for this book.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-
-            if (allSpeakers.isNotEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                    Surface(
-                        onClick = { filterMenuExpanded = true },
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(40.dp)
-                    ) {
-                        Row(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Voice Filter: $selectedSpeakerFilter", style = MaterialTheme.typography.labelMedium)
-                            Icon(Icons.Default.ArrowDropDown, null)
-                        }
-                    }
-                    DropdownMenu(expanded = filterMenuExpanded, onDismissRequest = { filterMenuExpanded = false }) {
-                        DropdownMenuItem(text = { Text("All") }, onClick = { selectedSpeakerFilter = "All"; filterMenuExpanded = false })
-                        allSpeakers.forEach { spkr ->
-                            DropdownMenuItem(text = { Text(spkr) }, onClick = { selectedSpeakerFilter = spkr; filterMenuExpanded = false })
-                        }
-                    }
-                }
-            }
-
-            if (chapters.isEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                    Text("No audio cached for this filter.", style = MaterialTheme.typography.bodyMedium)
-                }
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
-                    items(chapters.size) { index ->
-                        val chapter = chapters[index]
-                        ListItem(
-                            headlineContent = {
-                                val totalText = if (chapter.totalChunks != null) "/${chapter.totalChunks}" else ""
-                                Text("${chapter.chapterTitle} (${chapter.chunkCount}$totalText chunks)", fontWeight = FontWeight.Medium)
-                            },
-                            supportingContent = { Text(formatBytes(chapter.sizeBytes)) },
-                            trailingContent = {
-                                IconButton(onClick = {
-                                    cacheManager.deleteSpecificFiles(chapter.matchingFiles, chapter.directory)
-                                    chapters = cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                        )
-                        HorizontalDivider()
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-                        chapters.forEach { cacheManager.deleteSpecificFiles(it.matchingFiles, it.directory) }
-                        chapters = emptyList()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
+        if (allSpeakers.isNotEmpty()) {
+            androidx.compose.material3.ExposedDropdownMenuBox(
+                expanded = filterMenuExpanded,
+                onExpandedChange = { filterMenuExpanded = it },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                OutlinedTextField(
+                    value = selectedSpeakerFilter,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Voice Filter") },
+                    trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterMenuExpanded) },
+                    colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = filterMenuExpanded,
+                    onDismissRequest = { filterMenuExpanded = false }
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (selectedSpeakerFilter == "All") "Clear All Audio for Book" else "Clear All for $selectedSpeakerFilter")
+                    allSpeakers.forEach { spkr ->
+                        DropdownMenuItem(text = { Text(spkr) }, onClick = { selectedSpeakerFilter = spkr; filterMenuExpanded = false })
+                    }
                 }
+            }
+        }
+
+        if (chapters.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                Text("No audio cached for this voice.", style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))) {
+                items(chapters.size) { index ->
+                    val chapter = chapters[index]
+                    ListItem(
+                        headlineContent = {
+                            val totalText = if (chapter.totalChunks != null) "/${chapter.totalChunks}" else ""
+                            Text("${chapter.chapterTitle} (${chapter.chunkCount}$totalText chunks)", fontWeight = FontWeight.Medium)
+                        },
+                        supportingContent = { Text(formatBytes(chapter.sizeBytes)) },
+                        trailingContent = {
+                            IconButton(onClick = {
+                                cacheManager.deleteSpecificFiles(chapter.matchingFiles, chapter.directory)
+                                chapters = cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    chapters.forEach { cacheManager.deleteSpecificFiles(it.matchingFiles, it.directory) }
+                    chapters = cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Clear Cache for $selectedSpeakerFilter")
             }
         }
     }

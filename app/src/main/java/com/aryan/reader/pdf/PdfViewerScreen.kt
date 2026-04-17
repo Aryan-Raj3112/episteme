@@ -280,7 +280,6 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TooltipIconButton
-import com.aryan.reader.TtsCacheManagerSheet
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -304,7 +303,6 @@ import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
-import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import io.legere.pdfiumandroid.api.Bookmark
@@ -1321,7 +1319,6 @@ fun PdfViewerScreen(
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
     var isTtsCollapsed by remember { mutableStateOf(false) }
-    var showTtsCacheManagerSheet by remember { mutableStateOf(false) }
 
     var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
@@ -7460,6 +7457,7 @@ fun PdfViewerScreen(
                 }
 
                 if (showTtsSettingsSheet) {
+                    val bookTitle = documentMetadataTitle ?: originalFileName
                     TtsSettingsSheet(
                         isVisible = true,
                         onDismiss = { showTtsSettingsSheet = false },
@@ -7473,17 +7471,8 @@ fun PdfViewerScreen(
                             ttsController.changeSpeaker(newSpeaker)
                         },
                         isTtsActive = isTtsSessionActive,
-                        getAuthToken = { viewModel.getAuthToken() }
-                    )
-                }
-
-                if (showTtsCacheManagerSheet) {
-                    val bookTitle = documentMetadataTitle ?: originalFileName
-
-                    TtsCacheManagerSheet(
-                        bookTitle = bookTitle,
-                        context = context,
-                        onDismiss = { showTtsCacheManagerSheet = false }
+                        getAuthToken = { viewModel.getAuthToken() },
+                        bookTitle = bookTitle
                     )
                 }
 
@@ -7803,7 +7792,6 @@ fun PdfViewerScreen(
                         isCollapsed = isTtsCollapsed,
                         onCollapseChange = { isTtsCollapsed = it },
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
-                        onOpenCacheManager = { showTtsCacheManagerSheet = true },
                         onClose = {
                             ttsController.stop()
                         }

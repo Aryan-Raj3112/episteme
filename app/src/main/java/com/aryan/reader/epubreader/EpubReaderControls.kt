@@ -53,7 +53,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
@@ -76,7 +75,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Menu
@@ -1402,7 +1400,6 @@ fun TtsOverlayControls(
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
     onOpenTtsSettings: () -> Unit,
-    onOpenCacheManager: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1516,11 +1513,6 @@ fun TtsOverlayControls(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                IconButton(onClick = onOpenCacheManager, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Cloud, "Cache", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                                }
-                            }
                             IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Default.ChevronRight, "Collapse", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }

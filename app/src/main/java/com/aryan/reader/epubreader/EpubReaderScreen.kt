@@ -155,7 +155,6 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
-import com.aryan.reader.TtsCacheManagerSheet
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
@@ -551,7 +550,6 @@ fun EpubReaderHost(
 
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
     var isTtsCollapsed by remember { mutableStateOf(false) }
-    var showTtsCacheManagerSheet by remember { mutableStateOf(false) }
 
     val bookId = remember(epubBook.title, epubBook.fileName) {
         if (epubBook.fileName.length > 20) epubBook.fileName else getBookIdForPrefs(epubBook.title)
@@ -3706,7 +3704,6 @@ fun EpubReaderHost(
                         isCollapsed = isTtsCollapsed,
                         onCollapseChange = { isTtsCollapsed = it },
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
-                        onOpenCacheManager = { showTtsCacheManagerSheet = true },
                         onClose = {
                             userStoppedTts = true
                             ttsController.stop()
@@ -4295,15 +4292,8 @@ fun EpubReaderHost(
                     ttsController.changeSpeaker(newSpeaker)
                 },
                 isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER",
-                getAuthToken = { viewModel.getAuthToken() }
-            )
-        }
-
-        if (showTtsCacheManagerSheet) {
-            TtsCacheManagerSheet(
-                bookTitle = epubBook.title,
-                context = context,
-                onDismiss = { showTtsCacheManagerSheet = false }
+                getAuthToken = { viewModel.getAuthToken() },
+                bookTitle = epubBook.title
             )
         }
 
