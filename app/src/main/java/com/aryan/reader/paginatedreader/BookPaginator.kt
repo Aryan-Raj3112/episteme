@@ -1075,7 +1075,7 @@ class BookPaginator(
 
     suspend fun findPageForLocator(locator: Locator): Int? {
         val targetChapterIndex = locator.chapterIndex
-        Timber.i("Finding page for locator: Chapter $targetChapterIndex, Block ${locator.blockIndex}, Offset ${locator.charOffset}")
+        Timber.tag("POS_DIAG").d("findPageForLocator: Searching for $locator")
 
         val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
         val chapterStartPage = chapterStartPageIndices[targetChapterIndex] ?: 0
@@ -1106,6 +1106,7 @@ class BookPaginator(
 
                         if (isInside) {
                             val finalPageIndex = chapterStartPage + pageIndex
+                            Timber.tag("POS_DIAG").i("findPageForLocator: FOUND match on absolute page $finalPageIndex")
                             return finalPageIndex
                         }
                     } else {
@@ -1118,11 +1119,11 @@ class BookPaginator(
 
         if (fallbackPageInChapter != -1) {
             val finalPageIndex = chapterStartPage + fallbackPageInChapter
-            Timber.w("Locator offset not found. Using FALLBACK page. Final page index: $finalPageIndex")
+            Timber.tag("POS_DIAG").w("findPageForLocator: Exact offset not found, using block-start fallback page $finalPageIndex")
             return finalPageIndex
         }
 
-        Timber.e("Locator navigation FAILED. Block ${locator.blockIndex} not found in chapter $targetChapterIndex.")
+        Timber.tag("POS_DIAG").e("findPageForLocator: FAILED to resolve locator in chapter $targetChapterIndex")
         return null
     }
 
@@ -1134,11 +1135,13 @@ class BookPaginator(
         val targetBlock = firstTextBlock ?: pageContent.content.firstOrNull() ?: return null
         val charOffset = (targetBlock as? TextContentBlock)?.startCharOffsetInSource ?: 0
 
-        return Locator(
+        val locator = Locator(
             chapterIndex = chapterIndex,
             blockIndex = targetBlock.blockIndex,
             charOffset = charOffset
         )
+        Timber.tag("POS_DIAG").d("getLocatorForPage: Generated $locator for absolute page $pageIndex")
+        return locator
     }
 
     override fun findPageForCfi(chapterIndex: Int, cfi: String, onResult: (pageIndex: Int) -> Unit) {

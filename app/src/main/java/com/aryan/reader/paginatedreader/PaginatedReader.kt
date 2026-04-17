@@ -772,7 +772,7 @@ fun PaginatedReaderScreen(
 
         LaunchedEffect(paginator) {
             if (anchorLocatorForReconfig != null) {
-                Timber.tag("ThemeReconfig").d("Restoration Effect Triggered for Locator: $anchorLocatorForReconfig")
+                Timber.tag("POS_DIAG").d("Restoration Triggered. Anchor Locator: $anchorLocatorForReconfig")
 
                 snapshotFlow { paginator.isLoading }.filter { !it }.first()
 
@@ -780,19 +780,15 @@ fun PaginatedReaderScreen(
                 if (targetLocator != null) {
                     val page = paginator.findPageForLocator(targetLocator)
 
-                    Timber.tag("ThemeReconfig").d("""
-                Restoration Progress:
-                - Target Locator: $targetLocator
-                - Paginator found Page: $page
-                - Chapter Start Page: ${paginator.chapterStartPageIndices[targetLocator.chapterIndex]}
-            """.trimIndent())
+                    Timber.tag("POS_DIAG").d("Restoration Result: Paginator resolved locator to page: $page")
 
                     if (page != null) {
                         pagerState.scrollToPage(page)
+                        Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $page")
                     } else {
                         val startPage = paginator.chapterStartPageIndices[targetLocator.chapterIndex]
                         if (startPage != null) {
-                            Timber.tag("ThemeReconfig").w("Precise page not found, falling back to chapter start: $startPage")
+                            Timber.tag("POS_DIAG").w("Restoration: Precise page not found, falling back to chapter start: $startPage")
                             pagerState.scrollToPage(startPage)
                         }
                     }

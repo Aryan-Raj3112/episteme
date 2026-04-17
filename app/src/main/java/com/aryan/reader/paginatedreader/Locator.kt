@@ -142,6 +142,7 @@ class LocatorConverter(
     }
 
     suspend fun getLocatorFromCfi(book: EpubBook, chapterIndex: Int, cfi: String): Locator? = withContext(Dispatchers.IO) {
+        Timber.tag("POS_DIAG").d("getLocatorFromCfi: Input CFI='$cfi' for chapterIndex=$chapterIndex")
         val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = chapterIndex)
 
         var allBlocks: List<SemanticBlock>? = null
@@ -167,14 +168,15 @@ class LocatorConverter(
         val bestMatch = findBestMatchingBlock(allBlocks, baseCfiPath)
 
         if (bestMatch != null) {
-            Timber.tag("PosSaveDiag").d("Found best match for baseCfiPath $baseCfiPath -> blockIndex=${bestMatch.blockIndex}, actualBlockCfi=${bestMatch.cfi}")
-            Locator(
+            val locator = Locator(
                 chapterIndex = chapterIndex,
                 blockIndex = bestMatch.blockIndex,
                 charOffset = charOffset
             )
+            Timber.tag("POS_DIAG").d("getLocatorFromCfi: Successfully resolved to $locator")
+            locator
         } else {
-            Timber.tag("PosSaveDiag").e("No semantic block match found for baseCfiPath $baseCfiPath inside ${allBlocks.size} parsed blocks")
+            Timber.tag("POS_DIAG").e("getLocatorFromCfi: Failed to find semantic block match for CFI path $baseCfiPath")
             null
         }
     }
@@ -201,15 +203,20 @@ class LocatorConverter(
             .filter { it.cfi != null }
             .map { block ->
                 val blockCfi = block.cfi!!
+
+                val isPrefix = inputCfi == blockCfi || inputCfi.startsWith("$blockCfi/")
+                val prefixScore = if (isPrefix) blockCfi.length else 0
+
                 var i = inputCfi.length - 1
                 var j = blockCfi.length - 1
-                var length = 0
+                var suffixScore = 0
                 while (i >= 0 && j >= 0 && inputCfi[i] == blockCfi[j]) {
-                    length++
+                    suffixScore++
                     i--
                     j--
                 }
-                Pair(block, length)
+
+                Pair(block, maxOf(prefixScore, suffixScore))
             }
             .maxByOrNull { it.second }
             ?.first
@@ -218,6 +225,7 @@ class LocatorConverter(
     }
 
     suspend fun getCfiFromLocator(book: EpubBook, locator: Locator): String? = withContext(Dispatchers.IO) {
+        Timber.tag("POS_DIAG").d("getCfiFromLocator: Input $locator")
         val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)
 
         var blocks: List<SemanticBlock>? = null
@@ -236,13 +244,15 @@ class LocatorConverter(
         }
 
         val foundBlock = findBlockByBlockIndex(blocks, locator.blockIndex)
-        foundBlock?.cfi?.let { cfi ->
+        val resultCfi = foundBlock?.cfi?.let { cfi ->
             if (locator.charOffset > 0) {
                 "$cfi:${locator.charOffset}"
             } else {
                 cfi
             }
         }
+        Timber.tag("POS_DIAG").d("getCfiFromLocator: Resulting CFI='$resultCfi'")
+        resultCfi
     }
 
     private fun findBlockByBlockIndex(blocks: List<SemanticBlock>, targetBlockIndex: Int): SemanticBlock? {

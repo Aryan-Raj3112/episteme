@@ -909,12 +909,8 @@
         }
 
         try {
-            console.log(`$ {
-                TTS_HIGHLIGHT_LOG_TAG
-            }
-
-            : Resolving CFI to node...`);
-            const location = window.getNodeAndOffsetFromCfi(cfi);
+            console.log(`${TTS_HIGHLIGHT_LOG_TAG}: Resolving CFI to node...`);
+            const location = window.getNodeAndOffsetFromCfi(cfi, true);
 
             if (!location || !location.node) {
                 const errorMsg = "JS: Could not find node for CFI.";
@@ -1417,7 +1413,7 @@
         `);
     }
 
-    function resolveCfiPath(rootElement, path) {
+    function resolveCfiPath(rootElement, path, requestChunkIfMissing = false) {
         let currentNode = rootElement;
         const steps = path.substring(1).split("/").map(Number);
 
@@ -1433,12 +1429,26 @@
 
                 let chunkElement = currentNode.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
                 if (chunkElement) {
-                    if (chunkElement.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
-                        console.log("CFI_DIAGNOSIS: Chunk " + chunkIndex + " was empty, restoring content for CFI resolution.");
-                        chunkElement.innerHTML = window.virtualization.chunksData[chunkIndex];
-                        chunkElement.style.height = "";
-                        if (window.CURRENT_HIGHLIGHTS) {
-                            window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                    if (chunkElement.innerHTML === "") {
+                        if (window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                            console.log("CFI_DIAGNOSIS: Chunk " + chunkIndex + " was empty, restoring content for CFI resolution.");
+                            chunkElement.innerHTML = window.virtualization.chunksData[chunkIndex];
+                            chunkElement.style.height = "";
+                            if (window.CURRENT_HIGHLIGHTS) {
+                                window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
+                            }
+                        } else {
+                            if (requestChunkIfMissing) {
+                                console.log("PosSaveDiag: Requesting missing chunk " + chunkIndex + " for CFI resolution.");
+                                if (window.ContentBridge && window.ContentBridge.requestChunk) {
+                                    if (!window._requestedChunksForCfi) window._requestedChunksForCfi = {};
+                                    if (!window._requestedChunksForCfi[chunkIndex]) {
+                                        window._requestedChunksForCfi[chunkIndex] = true;
+                                        window.ContentBridge.requestChunk(chunkIndex);
+                                    }
+                                }
+                            }
+                            return null;
                         }
                     }
 
@@ -1463,7 +1473,7 @@
         return currentNode;
     }
 
-    window.getNodeAndOffsetFromCfi = function (cfi) {
+    window.getNodeAndOffsetFromCfi = function (cfi, requestChunkIfMissing = false) {
         try {
             var pathParts = cfi.split(":");
             var nodePath = pathParts[0];
@@ -1483,7 +1493,7 @@
                 return { node: cfiRoot, offset: charOffset };
             }
 
-            let resolvedNode = resolveCfiPath(cfiRoot, pathToResolve);
+            let resolvedNode = resolveCfiPath(cfiRoot, pathToResolve, requestChunkIfMissing);
 
             if (!resolvedNode) return null;
 
@@ -1663,6 +1673,7 @@
         }
 
         console.log("NavDiag: JS scrollToCfi called with cleanCfi=" + cleanCfi);
+        window._requestedChunksForCfi = {}; // Reset the requested cache
 
         if (!cleanCfi || !cleanCfi.startsWith('/')) {
             if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
@@ -1672,7 +1683,7 @@
         }
 
         let attempts = 0;
-        const maxAttempts = 20;
+        const maxAttempts = 40; // Increased to 40 attempts (4 seconds) to give Kotlin time to inject chunks
         let stabilizingFrames = 0;
         const maxStabilizingFrames = 8;
 
@@ -1680,7 +1691,8 @@
             attempts++;
 
             try {
-                const location = window.getNodeAndOffsetFromCfi(cleanCfi);
+                // Pass 'true' to dynamically request any missing chunks needed to resolve the position
+                const location = window.getNodeAndOffsetFromCfi(cleanCfi, true);
 
                 if (location && location.node) {
                     if (!document.body.contains(location.node)) {
@@ -1713,9 +1725,24 @@
 
                             const range = document.createRange();
                             const validOffset = Math.min(remainingOffset, currentNode.nodeValue.length);
-                            range.setStart(currentNode, validOffset);
-                            range.collapse(true);
-                            const rect = range.getBoundingClientRect();
+
+                            const endOffset = Math.min(validOffset + 1, currentNode.nodeValue.length);
+                            if (validOffset < endOffset) {
+                                range.setStart(currentNode, validOffset);
+                                range.setEnd(currentNode, endOffset);
+                            } else if (validOffset > 0) {
+                                range.setStart(currentNode, validOffset - 1);
+                                range.setEnd(currentNode, validOffset);
+                            } else {
+                                range.setStart(currentNode, validOffset);
+                                range.collapse(true);
+                            }
+
+                            let rect = range.getBoundingClientRect();
+                            const rects = range.getClientRects();
+                            if (rects && rects.length > 0) {
+                                rect = rects[0];
+                            }
 
                             if (rect.top !== 0 || rect.bottom !== 0) {
                                 targetScrollY = window.scrollY + rect.top - (window.VIEWPORT_PADDING_TOP + 5);
@@ -1752,12 +1779,14 @@
                     if (attempts < maxAttempts) {
                         setTimeout(attemptScroll, 100);
                     } else {
+                        console.log("PosSaveDiag: attemptScroll failed after " + maxAttempts + " attempts for CFI: " + cleanCfi);
                         if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                             window.CfiBridge.onScrollFinished(false);
                         }
                     }
                 }
             } catch (e) {
+                console.log("PosSaveDiag: attemptScroll exception: " + e.message);
                 if (window.CfiBridge && window.CfiBridge.onScrollFinished) {
                     window.CfiBridge.onScrollFinished(false);
                 }
