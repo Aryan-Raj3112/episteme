@@ -44,7 +44,6 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
@@ -257,13 +256,13 @@ class TtsService : MediaSessionService() {
         private var webSocket: WebSocket? = null
 
         private val connectionMutex = Mutex()
+        private val generationMutex = Mutex()
         private var clientScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-        private var generationTaskQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
-        private var queueWorker: Job? = null
 
         private var audioChannel = Channel<GeminiWsEvent>(Channel.UNLIMITED)
         private var setupDeferred = CompletableDeferred<Boolean>().apply { complete(false) }
+
+        var connectedSpeaker: String? = null
 
         sealed class GeminiWsEvent {
             data class Audio(val bytes: ByteArray) : GeminiWsEvent()
@@ -271,22 +270,15 @@ class TtsService : MediaSessionService() {
             data class Error(val message: String) : GeminiWsEvent()
         }
 
-        private fun startQueueWorker() {
-            if (queueWorker?.isActive == true) return
-            queueWorker = clientScope.launch {
-                for (task in generationTaskQueue) {
-                    task()
-                }
-            }
-        }
-
         suspend fun ensureConnected(serverUrl: String, speaker: String, authToken: String?) = connectionMutex.withLock {
-            startQueueWorker()
-
-            val connectStartTime = System.currentTimeMillis()
             if (webSocket != null) {
-                val isSetup = setupDeferred.await()
-                if (isSetup) return@withLock
+                if (connectedSpeaker == speaker) {
+                    val isSetup = try { setupDeferred.await() } catch(_: Exception) { false }
+                    if (isSetup) return@withLock
+                }
+                Timber.tag("TTS_CLOUD_DIAG").d("Closing existing WS. Speaker changed or setup failed.")
+                webSocket?.close(1000, "Reconnecting")
+                webSocket = null
             }
 
             val sanitizedUrl = serverUrl.removeSuffix("/")
@@ -300,6 +292,7 @@ class TtsService : MediaSessionService() {
             var connectionError: String? = null
 
             setupDeferred = CompletableDeferred()
+            connectedSpeaker = speaker
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -414,9 +407,10 @@ class TtsService : MediaSessionService() {
             if (!isSetup) {
                 webSocket?.close(1000, "Setup failed")
                 webSocket = null
+                connectedSpeaker = null
                 throw IllegalStateException("Failed to complete Gemini setup")
             } else {
-                Timber.tag("TTS_CLOUD_DIAG").i("WS Connection & Setup complete in ${System.currentTimeMillis() - connectStartTime}ms")
+                Timber.tag("TTS_CLOUD_DIAG").d("Gemini setup complete")
             }
         }
 
@@ -429,84 +423,85 @@ class TtsService : MediaSessionService() {
             val header = createWavHeaderUnknownLength(24000)
             concurrentStream.write(header)
 
-            generationTaskQueue.trySend {
-                var fileOutputStream: java.io.FileOutputStream? = null
-                var tempFile: File? = null
+            clientScope.launch {
+                generationMutex.withLock {
+                    var fileOutputStream: java.io.FileOutputStream? = null
+                    var tempFile: File? = null
 
-                try {
-                    if (!clientScope.isActive) return@trySend
+                    try {
+                        if (!isActive) return@launch
 
-                    // Prepare cache temp file
-                    if (cacheFile != null) {
-                        tempFile = File(cacheFile.absolutePath + ".tmp")
-                        fileOutputStream = java.io.FileOutputStream(tempFile)
-                        fileOutputStream.write(header)
-                    }
+                        // Prepare cache temp file
+                        if (cacheFile != null) {
+                            tempFile = File(cacheFile.absolutePath + ".tmp")
+                            fileOutputStream = java.io.FileOutputStream(tempFile)
+                            fileOutputStream.write(header)
+                        }
 
-                    Timber.tag("TTS_CLOUD_DIAG").d("Starting API generation task for chunk: ${text.take(15)}...")
+                        Timber.tag("TTS_CLOUD_DIAG").d("Starting API generation task for chunk: ${text.take(15)}...")
 
-                    audioChannel = Channel(Channel.UNLIMITED)
-                    val chunkGenStartTime = System.currentTimeMillis()
-                    var firstByteTime = -1L
+                        audioChannel = Channel(Channel.UNLIMITED)
+                        val chunkGenStartTime = System.currentTimeMillis()
+                        var firstByteTime = -1L
 
-                    val payload = JSONObject().apply {
-                        put("realtimeInput", JSONObject().apply {
-                            put("text", text)
-                        })
-                    }.toString()
+                        val payload = JSONObject().apply {
+                            put("realtimeInput", JSONObject().apply {
+                                put("text", text)
+                            })
+                        }.toString()
 
-                    val sent = webSocket?.send(payload) ?: false
-                    if (!sent) {
-                        Timber.tag("TTS_CLOUD_DIAG").e("Failed to send text payload over WS")
-                        return@trySend
-                    }
+                        val sent = webSocket?.send(payload) ?: false
+                        if (!sent) {
+                            Timber.tag("TTS_CLOUD_DIAG").e("Failed to send text payload over WS")
+                            return@launch
+                        }
 
-                    var receivedAudioBytes = 0
-                    kotlinx.coroutines.withTimeout(30000L) {
-                        for (event in audioChannel) {
-                            when (event) {
-                                is GeminiWsEvent.Audio -> {
-                                    if (firstByteTime == -1L) {
-                                        firstByteTime = System.currentTimeMillis()
-                                        Timber.tag("TTS_CLOUD_DIAG").i("TTFB: ${firstByteTime - chunkGenStartTime}ms")
+                        var receivedAudioBytes = 0
+                        kotlinx.coroutines.withTimeout(30000L) {
+                            for (event in audioChannel) {
+                                when (event) {
+                                    is GeminiWsEvent.Audio -> {
+                                        if (firstByteTime == -1L) {
+                                            firstByteTime = System.currentTimeMillis()
+                                            Timber.tag("TTS_CLOUD_DIAG").i("TTFB: ${firstByteTime - chunkGenStartTime}ms")
+                                        }
+                                        concurrentStream.write(event.bytes)
+                                        fileOutputStream?.write(event.bytes)
+                                        receivedAudioBytes += event.bytes.size
                                     }
-                                    concurrentStream.write(event.bytes)
-                                    fileOutputStream?.write(event.bytes) // Tee to disk
-                                    receivedAudioBytes += event.bytes.size
-                                }
-                                is GeminiWsEvent.TurnComplete -> {
-                                    Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes")
-                                    StreamRegistry.markFinished(streamId, receivedAudioBytes.toLong() + 44)
+                                    is GeminiWsEvent.TurnComplete -> {
+                                        Timber.tag("TTS_CLOUD_DIAG").i("Chunk generation complete. Bytes: $receivedAudioBytes")
+                                        StreamRegistry.markFinished(streamId, receivedAudioBytes.toLong() + 44)
 
-                                    // Finalize Cache file
-                                    fileOutputStream?.close()
-                                    fileOutputStream = null
-                                    if (tempFile != null && cacheFile != null && receivedAudioBytes > 0) {
-                                        patchWavHeader(tempFile, receivedAudioBytes)
-                                        tempFile.renameTo(cacheFile)
-                                        Timber.tag("TTS_CLOUD_DIAG").d("Successfully cached chunk to ${cacheFile.name}")
+                                        fileOutputStream?.close()
+                                        fileOutputStream = null
+                                        if (tempFile != null && cacheFile != null && receivedAudioBytes > 0) {
+                                            patchWavHeader(tempFile, receivedAudioBytes)
+                                            tempFile.renameTo(cacheFile)
+                                            Timber.tag("TTS_CLOUD_DIAG").d("Successfully cached chunk to ${cacheFile.name}")
+                                        }
+                                        break
                                     }
-                                    break
-                                }
-                                is GeminiWsEvent.Error -> {
-                                    Timber.tag("TTS_CLOUD_DIAG").e("WS Error received: ${event.message}")
-                                    break
+                                    is GeminiWsEvent.Error -> {
+                                        Timber.tag("TTS_CLOUD_DIAG").e("WS Error received: ${event.message}")
+                                        break
+                                    }
                                 }
                             }
                         }
-                    }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Timber.tag("TTS_CLOUD_DIAG").e(e, "Timeout waiting for audio/TurnComplete")
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    Timber.tag("TTS_CLOUD_DIAG").i(e, "Streaming job cancelled due to user skip/flush")
-                } catch (e: Exception) {
-                    Timber.tag("TTS_CLOUD_DIAG").e(e, "Exception piping audio")
-                } finally {
-                    Timber.tag("TTS_CLOUD_DIAG").d("Closing stream for ${text.take(15)}")
-                    concurrentStream.close()
-                    fileOutputStream?.close()
-                    if (cacheFile != null && !cacheFile.exists()) {
-                        tempFile?.delete()
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Timber.tag("TTS_CLOUD_DIAG").e(e, "Timeout waiting for audio/TurnComplete")
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        Timber.tag("TTS_CLOUD_DIAG").i(e, "Streaming job cancelled due to user skip/flush")
+                    } catch (e: Exception) {
+                        Timber.tag("TTS_CLOUD_DIAG").e(e, "Exception piping audio")
+                    } finally {
+                        Timber.tag("TTS_CLOUD_DIAG").d("Closing stream for ${text.take(15)}")
+                        concurrentStream.close()
+                        fileOutputStream?.close()
+                        if (cacheFile != null && !cacheFile.exists()) {
+                            tempFile?.delete()
+                        }
                     }
                 }
             }
@@ -518,11 +513,9 @@ class TtsService : MediaSessionService() {
             clientScope.cancel()
             clientScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-            generationTaskQueue = Channel(Channel.UNLIMITED)
-            queueWorker = null
-
             webSocket?.close(1000, "Context Reset")
             webSocket = null
+            connectedSpeaker = null
             setupDeferred = CompletableDeferred<Boolean>().apply { complete(false) }
             StreamRegistry.clear()
         }
@@ -534,8 +527,9 @@ class TtsService : MediaSessionService() {
             TtsAudioData(file, text, null)
         }
 
-    val audioGenerator: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
-        { bookTitle, chapterTitle, chunkIndex, text, speaker, mode, authToken ->
+    val audioGenerator: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
+        { bookTitle, chapterTitle, chunkIndex, totalChunks, text, speaker, mode, authToken ->
+            cacheManager.saveTotalChunks(bookTitle, chapterTitle, totalChunks)
             when (mode) {
                 TtsMode.CLOUD -> {
                     val cachedFile = cacheManager.getCacheFile(bookTitle, chapterTitle, chunkIndex, text, speaker, mode)

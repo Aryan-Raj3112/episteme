@@ -464,6 +464,7 @@ fun EpubReaderTopBar(
                             if (!hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                    enabled = !isTtsActive,
                                     onClick = {
                                         showMoreMenu = false
                                         onOpenTtsSettings()
@@ -1411,16 +1412,19 @@ fun TtsOverlayControls(
     var isDraggingRate by remember { mutableStateOf(false) }
     var isDraggingPitch by remember { mutableStateOf(false) }
 
-    var showOverlayModeDropdown by remember { mutableStateOf(false) }
-    var showOverlayVoiceDropdown by remember { mutableStateOf(false) }
+    val activeMode = try { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode) } catch(_: Exception) { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD }
 
-    val backgroundAlpha = 0.6f
-
-    val saveAndSlice = {
+    val saveAndApply = {
         saveTtsSpeechRate(context, rate)
         saveTtsPitch(context, pitch)
-        ttsController.sliceAndRetainPosition()
+        if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+            ttsController.setPlaybackParameters(rate, pitch)
+        } else {
+            ttsController.sliceAndRetainPosition()
+        }
     }
+
+    val backgroundAlpha = 0.6f
 
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -1445,11 +1449,7 @@ fun TtsOverlayControls(
                         onClick = { onCollapseChange(false) },
                         modifier = Modifier.size(36.dp)
                     ) {
-                        Icon(
-                            Icons.Default.ChevronLeft,
-                            "Expand",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Icon(Icons.Default.ChevronLeft, "Expand", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                         FilledIconButton(
@@ -1467,9 +1467,7 @@ fun TtsOverlayControls(
                             )
                         }
                         if (ttsState.isLoading) CircularProgressIndicator(
-                            modifier = Modifier.size(
-                                36.dp
-                            ),
+                            modifier = Modifier.size(36.dp),
                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
                             strokeWidth = 2.dp
                         )
@@ -1477,145 +1475,57 @@ fun TtsOverlayControls(
                 }
             } else {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Top Row: Voice & Mode Dropdowns
+                    // Top Row: Info Pills and Close button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box {
-                                Surface(
-                                    onClick = { showOverlayModeDropdown = true },
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 8.dp,
-                                            vertical = 4.dp
-                                        )
-                                    ) {
-                                        Text(
-                                            if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) "✨ Cloud" else "📱 Device",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                    }
-                                }
-                                DropdownMenu(
-                                    expanded = showOverlayModeDropdown,
-                                    onDismissRequest = { showOverlayModeDropdown = false }) {
-                                    DropdownMenuItem(text = { Text("✨ Cloud TTS") }, onClick = {
-                                        showOverlayModeDropdown = false
-                                        if (currentTtsMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            ttsController.pause()
-                                            ttsController.changeTtsMode(com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD.name)
-                                            ttsController.sliceAndRetainPosition()
-                                        }
-                                    })
-                                    DropdownMenuItem(text = { Text("📱 Device TTS") }, onClick = {
-                                        showOverlayModeDropdown = false
-                                        if (currentTtsMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.BASE) {
-                                            ttsController.pause()
-                                            ttsController.changeTtsMode(com.aryan.reader.tts.TtsPlaybackManager.TtsMode.BASE.name)
-                                            ttsController.sliceAndRetainPosition()
-                                        }
-                                    })
-                                }
+                            // Mode Pill (Read Only)
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) "✨ Cloud" else "📱 Device",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
                             }
-                            Box {
-                                Surface(
-                                    onClick = { showOverlayVoiceDropdown = true },
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    val voiceName =
-                                        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            GEMINI_TTS_SPEAKERS.find { it.id == ttsState.speakerId }?.name
-                                                ?: ttsState.speakerId
-                                        } else loadNativeVoice(context)?.split("-")?.lastOrNull()
-                                            ?: "Default"
 
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 8.dp,
-                                            vertical = 4.dp
-                                        )
-                                    ) {
-                                        Text(
-                                            voiceName,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.widthIn(max = 80.dp)
-                                        )
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                }
-                                DropdownMenu(
-                                    expanded = showOverlayVoiceDropdown,
-                                    onDismissRequest = { showOverlayVoiceDropdown = false },
-                                    modifier = Modifier.heightIn(max = 300.dp)
-                                ) {
-                                    if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                        GEMINI_TTS_SPEAKERS.forEach { voice ->
-                                            DropdownMenuItem(
-                                                text = { Text(voice.name) },
-                                                onClick = {
-                                                    showOverlayVoiceDropdown = false
-                                                    if (ttsState.speakerId != voice.id) {
-                                                        ttsController.pause()
-                                                        ttsController.changeSpeaker(voice.id)
-                                                        ttsController.sliceAndRetainPosition()
-                                                    }
-                                                })
-                                        }
-                                    } else {
-                                        DropdownMenuItem(
-                                            text = { Text("More voices in Settings...") },
-                                            onClick = {
-                                                showOverlayVoiceDropdown =
-                                                    false; onOpenTtsSettings()
-                                            })
-                                    }
-                                }
+                            // Voice Pill (Read Only)
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                val voiceName = if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                    GEMINI_TTS_SPEAKERS.find { it.id == ttsState.speakerId }?.name ?: ttsState.speakerId
+                                } else loadNativeVoice(context)?.split("-")?.lastOrNull() ?: "Default"
+
+                                Text(
+                                    voiceName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).widthIn(max = 100.dp)
+                                )
                             }
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            IconButton(
-                                onClick = { onCollapseChange(true) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.ChevronRight,
-                                    "Collapse",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                IconButton(onClick = onOpenCacheManager, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Cloud, "Cache", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.ChevronRight, "Collapse", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    "Stop TTS",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Default.Close, "Stop TTS", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -1627,6 +1537,7 @@ fun TtsOverlayControls(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Giant Play/Pause
                         Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
                             FilledIconButton(
                                 onClick = { if (ttsState.isPlaying) ttsController.pause() else ttsController.resume() },
@@ -1643,9 +1554,7 @@ fun TtsOverlayControls(
                                 )
                             }
                             if (ttsState.isLoading) CircularProgressIndicator(
-                                modifier = Modifier.size(
-                                    56.dp
-                                ),
+                                modifier = Modifier.size(56.dp),
                                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                                 strokeWidth = 3.dp
                             )
@@ -1653,120 +1562,44 @@ fun TtsOverlayControls(
 
                         Spacer(Modifier.width(16.dp))
 
-                        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Pacing Managed by AI",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    "Speed and pitch adjust naturally.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Speed: %.1fx".format(rate),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.width(68.dp)
-                                    )
-                                    Slider(
-                                        value = rate,
-                                        onValueChange = {
-                                            rate = it; if (!isDraggingRate) {
-                                            isDraggingRate = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = {
-                                            isDraggingRate = false; saveAndSlice()
-                                        },
-                                        valueRange = 0.5f..3.0f,
-                                        steps = 24,
-                                        modifier = Modifier.weight(1f).height(24.dp)
-                                    )
-                                    IconButton(
-                                        onClick = { rate = 1.0f; saveAndSlice() },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Refresh,
-                                            "Reset Speed",
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                        // Unified Sliders Block
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Spd: %.1fx".format(rate), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
+                                Slider(
+                                    value = rate,
+                                    onValueChange = {
+                                        rate = it; if (!isDraggingRate && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                        isDraggingRate = true; ttsController.pause()
                                     }
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Pitch: %.1fx".format(pitch),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.width(68.dp)
-                                    )
-                                    Slider(
-                                        value = pitch,
-                                        onValueChange = {
-                                            pitch = it; if (!isDraggingPitch) {
-                                            isDraggingPitch = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = {
-                                            isDraggingPitch = false; saveAndSlice()
-                                        },
-                                        valueRange = 0.5f..2.0f,
-                                        steps = 14,
-                                        modifier = Modifier.weight(1f).height(24.dp)
-                                    )
-                                    IconButton(
-                                        onClick = { pitch = 1.0f; saveAndSlice() },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Refresh,
-                                            "Reset Pitch",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
+                                    },
+                                    onValueChangeFinished = { isDraggingRate = false; saveAndApply() },
+                                    valueRange = 0.5f..3.0f,
+                                    steps = 24,
+                                    modifier = Modifier.weight(1f).height(24.dp)
+                                )
+                                IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Refresh, "Reset Speed", modifier = Modifier.size(16.dp))
                                 }
                             }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        androidx.compose.material3.FilterChip(
-                            selected = false,
-                            onClick = onOpenTtsSettings,
-                            label = { Text("Advanced") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.GraphicEq,
-                                    null,
-                                    modifier = Modifier.size(16.dp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Ptch: %.1fx".format(pitch), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
+                                Slider(
+                                    value = pitch,
+                                    onValueChange = {
+                                        pitch = it; if (!isDraggingPitch && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                        isDraggingPitch = true; ttsController.pause()
+                                    }
+                                    },
+                                    onValueChangeFinished = { isDraggingPitch = false; saveAndApply() },
+                                    valueRange = 0.5f..2.0f,
+                                    steps = 14,
+                                    modifier = Modifier.weight(1f).height(24.dp)
                                 )
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                            androidx.compose.material3.FilterChip(
-                                selected = false,
-                                onClick = onOpenCacheManager,
-                                label = { Text("Cache") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.Cloud,
-                                        null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
+                                IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Refresh, "Reset Pitch", modifier = Modifier.size(16.dp))
+                                }
+                            }
                         }
                     }
                 }

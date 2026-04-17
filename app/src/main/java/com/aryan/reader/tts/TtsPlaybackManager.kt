@@ -56,6 +56,7 @@ val FLUSH_PREFETCH_COMMAND = SessionCommand("com.aryan.reader.tts.FLUSH_PREFETCH
 private val STATE_UPDATE_COMMAND = SessionCommand("com.aryan.reader.tts.STATE_UPDATE", Bundle.EMPTY)
 val CHANGE_TTS_MODE_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_MODE", Bundle.EMPTY)
 val SLICE_CURRENT_AND_RELOAD_COMMAND = SessionCommand("com.aryan.reader.tts.SLICE_AND_RELOAD", Bundle.EMPTY)
+val SET_PLAYBACK_PARAMS_COMMAND = SessionCommand("com.aryan.reader.tts.SET_PLAYBACK_PARAMS", Bundle.EMPTY)
 
 const val KEY_TEXT_CHUNKS = "KEY_TEXT_CHUNKS"
 const val KEY_SOURCE_CFIS = "KEY_SOURCE_CFIS"
@@ -75,7 +76,7 @@ private const val PREFETCH_LOOKAHEAD = 2
 @UnstableApi
 class TtsPlaybackManager(
     private val player: Player,
-    private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
+    private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit
 ) : MediaSession.Callback, Player.Listener {
 
@@ -107,7 +108,8 @@ class TtsPlaybackManager(
         val currentWordSourceCfi: String? = null,
         val currentWordStartOffset: Int = -1,
         val sessionFinished: Boolean = false,
-        val playbackSource: String? = null
+        val playbackSource: String? = null,
+        val ttsMode: String = TtsMode.CLOUD.name
     )
 
     private val _ttsState = MutableStateFlow(TtsState())
@@ -148,6 +150,7 @@ class TtsPlaybackManager(
             .add(CHANGE_TTS_MODE_COMMAND)
             .add(FLUSH_PREFETCH_COMMAND)
             .add(SLICE_CURRENT_AND_RELOAD_COMMAND)
+            .add(SET_PLAYBACK_PARAMS_COMMAND)
             .build()
         val availablePlayerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
             .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
@@ -201,7 +204,7 @@ class TtsPlaybackManager(
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
                 Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
-                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource, authToken)
+                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource, args)
             }
             STOP_TTS_COMMAND -> {
                 Timber.d("Received STOP command.")
@@ -257,6 +260,15 @@ class TtsPlaybackManager(
             }
             SLICE_CURRENT_AND_RELOAD_COMMAND -> {
                 handleSliceAndReload()
+            }
+            SET_PLAYBACK_PARAMS_COMMAND -> {
+                val speed = args.getFloat("speed", 1f)
+                val pitch = args.getFloat("pitch", 1f)
+                if (currentTtsMode == TtsMode.CLOUD) {
+                    scope.launch(Dispatchers.Main) {
+                        player.playbackParameters = androidx.media3.common.PlaybackParameters(speed, pitch)
+                    }
+                }
             }
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -315,6 +327,7 @@ class TtsPlaybackManager(
     private fun handleChangeTtsMode(newMode: TtsMode) {
         if (currentTtsMode == newMode) return
         currentTtsMode = newMode
+        _ttsState.value = _ttsState.value.copy(ttsMode = newMode.name)
         Timber.d("TTS Mode changed to $newMode (pending next start)")
     }
 
@@ -326,12 +339,28 @@ class TtsPlaybackManager(
         coverImageUri: String?,
         ttsMode: TtsMode,
         playbackSource: String?,
-        authToken: String?
+        args: Bundle // Added this parameter
     ) {
         if (chunks.isEmpty()) {
             _ttsState.value = _ttsState.value.copy(errorMessage = "No text to read.")
             return
         }
+
+        // --- YOUR SNIPPET START ---
+        val authToken = args.getString(KEY_AUTH_TOKEN)
+        val speed = args.getFloat("playback_speed", 1f)
+        val pitch = args.getFloat("playback_pitch", 1f)
+
+        scope.launch(Dispatchers.Main) {
+            if (ttsMode == TtsMode.CLOUD) {
+                player.playbackParameters = androidx.media3.common.PlaybackParameters(speed, pitch)
+            } else {
+                player.playbackParameters = androidx.media3.common.PlaybackParameters(1f, 1f)
+            }
+        }
+
+        Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
+
         handleStopTts(clearState = false)
         textChunks = chunks
         currentSpeakerId = speakerId
@@ -339,10 +368,18 @@ class TtsPlaybackManager(
         this.bookTitle = bookTitle
         this.chapterTitle = chapterTitle
         this.coverImageUri = coverImageUri
+
         onResetContext()
         loadedChunks.clear()
         lastPrefetchIndex = -1
-        _ttsState.value = TtsState(isLoading = true, speakerId = speakerId, playbackSource = playbackSource)
+
+        _ttsState.value = TtsState(
+            isLoading = true,
+            speakerId = speakerId,
+            playbackSource = playbackSource,
+            ttsMode = ttsMode.name
+        )
+
         currentAuthToken = authToken
         preparationJob = scope.launch {
             prepareAndPlayFirstChunk()
@@ -366,7 +403,7 @@ class TtsPlaybackManager(
         val chunkStartTime = System.currentTimeMillis()
         Timber.tag("TTS_CLOUD_DIAG").i("Starting audio generation for first chunk (index=$startAtIndex).")
 
-        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, textChunks.size, firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
         Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
@@ -600,7 +637,7 @@ class TtsPlaybackManager(
                         val prefetchStartTime = System.currentTimeMillis()
                         Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
 
-                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, textChunks.size, nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
 
                         Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 
@@ -807,6 +844,7 @@ class TtsPlaybackManager(
             putInt("currentWordStartOffset", state.currentWordStartOffset)
             putBoolean("sessionFinished", state.sessionFinished)
             putString("playbackSource", state.playbackSource)
+            putString("ttsMode", state.ttsMode)
         }
         return CommandButton.Builder()
             .setSessionCommand(STATE_UPDATE_COMMAND)

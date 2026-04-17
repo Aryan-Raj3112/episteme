@@ -32,7 +32,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.rememberScrollState
 import android.graphics.Bitmap
 import android.graphics.RectF
@@ -1327,10 +1326,21 @@ fun PdfViewerScreen(
     var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
-    var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
-    var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var showTtsControlsSheet by remember { mutableStateOf(false) }
     var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
+    val ttsController = rememberTtsController()
+    val ttsState by ttsController.ttsState.collectAsState()
+    ttsState.currentText
+    val currentTtsMode by remember(ttsState.ttsMode) {
+        derivedStateOf {
+            try {
+                TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode)
+            } catch (_: Exception) {
+                TtsPlaybackManager.TtsMode.CLOUD
+            }
+        }
+    }
+    var showTtsSettingsSheet by remember { mutableStateOf(false) }
 
     DisposableEffect(isKeepScreenOn) {
         view.keepScreenOn = isKeepScreenOn
@@ -1587,10 +1597,6 @@ fun PdfViewerScreen(
             savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
         }
     }
-
-    val ttsController = rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
-    ttsState.currentText
 
     LaunchedEffect(ttsState.errorMessage) {
         ttsState.errorMessage?.let { message ->
@@ -5869,6 +5875,7 @@ fun PdfViewerScreen(
                                             if (!hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)) {
                                                 DropdownMenuItem(
                                                     text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                                    enabled = !isTtsSessionActive,
                                                     onClick = {
                                                         showMoreMenu = false
                                                         showTtsSettingsSheet = true
@@ -7458,7 +7465,6 @@ fun PdfViewerScreen(
                         onDismiss = { showTtsSettingsSheet = false },
                         currentMode = currentTtsMode,
                         onModeChange = { newMode ->
-                            currentTtsMode = newMode
                             saveTtsMode(context, newMode)
                             ttsController.changeTtsMode(newMode.name)
                         },

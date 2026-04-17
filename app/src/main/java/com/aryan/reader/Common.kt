@@ -1354,8 +1354,7 @@ fun TtsSettingsSheet(
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Tab State: 0 = AI, 1 = Device, 2 = Cache Options
-    var selectedTabIndex by remember { mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD) 0 else 1) }
+    var selectedTabIndex by remember(currentMode) { mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD) 0 else 1) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1417,12 +1416,21 @@ fun TtsSettingsSheet(
 @Composable
 fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isTtsActive: Boolean, samplePlayer: SpeakerSamplePlayer) {
     val context = LocalContext.current
-    Text("Select Gemini High-Quality Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 8.dp))
+
+    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text("Select Gemini High-Quality Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        if (samplePlayer.cachedSpeakers.isNotEmpty()) {
+            TextButton(onClick = { samplePlayer.clearSamples() }, modifier = Modifier.heightIn(min = 24.dp)) {
+                Text("Clear Samples", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))) {
         items(GEMINI_TTS_SPEAKERS.size) { index ->
             val voice = GEMINI_TTS_SPEAKERS[index]
             val isSelected = currentSpeakerId == voice.id
-            val isCached = remember(voice.id) { File(context.cacheDir, "sample_${voice.id}.wav").exists() }
+            val isCached = samplePlayer.cachedSpeakers.contains(voice.id)
 
             ListItem(
                 headlineContent = { Text(voice.name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
@@ -1552,7 +1560,6 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
     }
 }
 
-// In Common.kt, find `fun TtsCacheManagerSheet` and replace it with:
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TtsCacheManagerSheet(bookTitle: String, context: Context, onDismiss: () -> Unit) {
@@ -1614,8 +1621,11 @@ fun TtsCacheManagerSheet(bookTitle: String, context: Context, onDismiss: () -> U
                     items(chapters.size) { index ->
                         val chapter = chapters[index]
                         ListItem(
-                            headlineContent = { Text(chapter.chapterTitle, fontWeight = FontWeight.Medium) },
-                            supportingContent = { Text("${chapter.chunkCount} chunks • ${formatBytes(chapter.sizeBytes)}") },
+                            headlineContent = {
+                                val totalText = if (chapter.totalChunks != null) "/${chapter.totalChunks}" else ""
+                                Text("${chapter.chapterTitle} (${chapter.chunkCount}$totalText chunks)", fontWeight = FontWeight.Medium)
+                            },
+                            supportingContent = { Text(formatBytes(chapter.sizeBytes)) },
                             trailingContent = {
                                 IconButton(onClick = {
                                     cacheManager.deleteSpecificFiles(chapter.matchingFiles, chapter.directory)

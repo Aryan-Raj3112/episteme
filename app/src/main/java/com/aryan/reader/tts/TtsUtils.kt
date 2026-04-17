@@ -80,6 +80,7 @@ val GEMINI_TTS_SPEAKERS = listOf(
 data class TtsChapterCacheInfo(
     val chapterTitle: String,
     val chunkCount: Int,
+    val totalChunks: Int?,
     val sizeBytes: Long,
     val directory: File,
     val matchingFiles: List<File> = emptyList()
@@ -98,6 +99,15 @@ class TtsCacheManager(private val context: Context) {
     private fun hash(input: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
         return bytes.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
+    fun saveTotalChunks(bookTitle: String, chapterTitle: String?, totalChunks: Int) {
+        val baseDir = File(context.filesDir, "TTS_Cache")
+        val bookDir = File(baseDir, sanitize(bookTitle.take(50)))
+        val chapterDir = File(bookDir, sanitize((chapterTitle ?: "Unknown_Chapter").take(50)))
+        if (!chapterDir.exists()) chapterDir.mkdirs()
+        val metaFile = File(chapterDir, "total_chunks.txt")
+        metaFile.writeText(totalChunks.toString())
     }
 
     @OptIn(UnstableApi::class)
@@ -143,9 +153,13 @@ class TtsCacheManager(private val context: Context) {
             if (files.isEmpty()) null
             else {
                 val size = files.sumOf { it.length() }
+                val metaFile = File(chapterDir, "total_chunks.txt")
+                val total = if (metaFile.exists()) metaFile.readText().toIntOrNull() else null
+
                 TtsChapterCacheInfo(
                     chapterTitle = chapterDir.name,
                     chunkCount = files.size,
+                    totalChunks = total,
                     sizeBytes = size,
                     directory = chapterDir,
                     matchingFiles = files
@@ -229,11 +243,23 @@ class SpeakerSamplePlayer(
     private val sampleMediaPlayer = MediaPlayer()
     var loadingSpeakerId by mutableStateOf<String?>(null)
     var playingSpeakerId by mutableStateOf<String?>(null)
+
+    val cachedSpeakers = androidx.compose.runtime.mutableStateListOf<String>()
+
     private val httpClient = okhttp3.OkHttpClient()
     @OptIn(UnstableApi::class)
     private val liveClient = TtsService.GeminiLiveClient(httpClient)
 
     init {
+        // Read initially existing files
+        scope.launch(Dispatchers.IO) {
+            val files = context.cacheDir.listFiles { _, name -> name.startsWith("sample_") && name.endsWith(".wav") }
+            val ids = files?.map { it.name.removePrefix("sample_").removeSuffix(".wav") } ?: emptyList()
+            withContext(Dispatchers.Main) {
+                cachedSpeakers.addAll(ids)
+            }
+        }
+
         sampleMediaPlayer.setOnErrorListener { mp, what, extra ->
             Timber.e("MediaPlayer error: what=$what, extra=$extra. Resetting.")
             playingSpeakerId = null
@@ -245,14 +271,19 @@ class SpeakerSamplePlayer(
 
     fun playOrStop(speakerId: String) {
         scope.launch {
+            liveClient.close()
             when {
                 playingSpeakerId == speakerId -> {
                     sampleMediaPlayer.stop()
                     sampleMediaPlayer.reset()
                     playingSpeakerId = null
                 }
-                loadingSpeakerId == speakerId -> loadingSpeakerId = null
-                else -> playSample(speakerId)
+                loadingSpeakerId == speakerId -> {
+                    loadingSpeakerId = null
+                }
+                else -> {
+                    playSample(speakerId)
+                }
             }
         }
     }
@@ -290,6 +321,7 @@ class SpeakerSamplePlayer(
 
                 if (cacheFile.exists()) {
                     withContext(Dispatchers.Main) {
+                        if (!cachedSpeakers.contains(speakerId)) cachedSpeakers.add(speakerId)
                         if (loadingSpeakerId != speakerId) return@withContext
                         sampleMediaPlayer.setDataSource(cacheFile.absolutePath)
                         sampleMediaPlayer.setOnPreparedListener { mp ->
@@ -310,6 +342,16 @@ class SpeakerSamplePlayer(
             } catch (e: Exception) {
                 Timber.e(e, "Exception playing sample for $speakerId")
                 withContext(Dispatchers.Main) { if (loadingSpeakerId == speakerId) loadingSpeakerId = null }
+            }
+        }
+    }
+
+    fun clearSamples() {
+        scope.launch(Dispatchers.IO) {
+            val files = context.cacheDir.listFiles { _, name -> name.startsWith("sample_") && name.endsWith(".wav") }
+            files?.forEach { it.delete() }
+            withContext(Dispatchers.Main) {
+                cachedSpeakers.clear()
             }
         }
     }
