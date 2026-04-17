@@ -257,16 +257,11 @@ class BookPaginator(
     private fun getAllTextBlocks(blocks: List<ContentBlock>): List<TextContentBlock> {
         return blocks.flatMap { block ->
             when (block) {
-                is WrappingContentBlock -> {
-                    Timber.d("PAGINATOR: Found WrappingContentBlock with ${block.paragraphsToWrap.size} paragraphs.")
-                    getAllTextBlocks(block.paragraphsToWrap)
-                }
+                is WrappingContentBlock -> getAllTextBlocks(block.paragraphsToWrap)
                 is FlexContainerBlock -> getAllTextBlocks(block.children)
+                is TableBlock -> block.rows.flatten().flatMap { getAllTextBlocks(it.content) }
                 is TextContentBlock -> listOf(block)
-                else -> {
-                    Timber.d("PAGINATOR: Skipping non-text block of type ${block::class.simpleName}")
-                    emptyList()
-                }
+                else -> emptyList()
             }
         }
     }
@@ -833,7 +828,17 @@ class BookPaginator(
 
     override fun getPlainTextForChapter(chapterIndex: Int): String? {
         val chapter = chapters.getOrNull(chapterIndex) ?: return null
-        return Jsoup.parse(chapter.htmlContent).body().text()
+        Timber.tag("POS_DIAG").d("getPlainTextForChapter: chapterIndex=$chapterIndex, chapterTitle='${chapter.title}', hasInMemoryContent=${chapter.htmlContent.isNotEmpty()}")
+        val htmlToParse = chapter.htmlContent.ifEmpty {
+            try {
+                val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+                if (file.exists()) file.readText() else ""
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        if (htmlToParse.isBlank()) return null
+        return Jsoup.parse(htmlToParse).body().text()
     }
 
     private fun calculateAccurateStartIndex(targetChapterIndex: Int): Int {
@@ -1080,6 +1085,8 @@ class BookPaginator(
         val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
         val chapterStartPage = chapterStartPageIndices[targetChapterIndex] ?: 0
 
+        Timber.tag("POS_DIAG").d("findPageForLocator: targetChapterIndex=$targetChapterIndex, chapterStartPage=$chapterStartPage, chapterPages.size=${chapterPages?.size}")
+
         if (chapterPages.isNullOrEmpty()) {
             Timber.e("Locator navigation failed: Could not paginate target chapter $targetChapterIndex.")
             return null
@@ -1088,34 +1095,44 @@ class BookPaginator(
         var fallbackPageInChapter = -1
 
         for ((pageIndex, page) in chapterPages.withIndex()) {
-            for (block in page.content) {
-                if (block.blockIndex == locator.blockIndex) {
-                    Timber.tag("ThemeReconfig").d("Block Index Match: Found block ${locator.blockIndex} on page $pageIndex of Chapter $targetChapterIndex")
-
+            val allTextBlocks = getAllTextBlocks(page.content)
+            if (allTextBlocks.any { it.blockIndex == locator.blockIndex }) {
+                Timber.tag("POS_DIAG").d("findPageForLocator: Found target blockIndex ${locator.blockIndex} on PageInChapter $pageIndex (Abs ${chapterStartPage + pageIndex})")
+            }
+            for (textBlock in allTextBlocks) {
+                if (textBlock.blockIndex == locator.blockIndex) {
                     if (fallbackPageInChapter == -1) {
                         fallbackPageInChapter = pageIndex
                     }
+                    val startOffsetOnPage = textBlock.startCharOffsetInSource
+                    val endOffsetOnPage = startOffsetOnPage + textBlock.content.length
 
-                    val textBlock = block as? TextContentBlock
-                    if (textBlock != null) {
-                        val startOffsetOnPage = textBlock.startCharOffsetInSource
-                        val endOffsetOnPage = startOffsetOnPage + textBlock.content.length
+                    Timber.tag("POS_DIAG").d(" -> Block Match: page=$pageIndex, targetOffset=${locator.charOffset}, blockRange=[$startOffsetOnPage, $endOffsetOnPage]")
 
-                        val isInside = locator.charOffset in startOffsetOnPage..<endOffsetOnPage
-                        Timber.tag("ThemeReconfig").d("Offset Check: Target ${locator.charOffset} vs Range [$startOffsetOnPage, $endOffsetOnPage]. Inside: $isInside")
+                    val isInside = locator.charOffset in startOffsetOnPage..<endOffsetOnPage
+                    if (isInside) {
+                        val finalPageIndex = chapterStartPage + pageIndex
+                        Timber.tag("POS_DIAG").i("findPageForLocator: FOUND match on absolute page $finalPageIndex")
+                        return finalPageIndex
+                    }
 
-                        if (isInside) {
-                            val finalPageIndex = chapterStartPage + pageIndex
-                            Timber.tag("POS_DIAG").i("findPageForLocator: FOUND match on absolute page $finalPageIndex")
-                            return finalPageIndex
-                        }
-                    } else {
-                        return chapterStartPage + pageIndex
+                    if (textBlock.content.isEmpty() && locator.charOffset == startOffsetOnPage) {
+                        val finalPageIndex = chapterStartPage + pageIndex
+                        Timber.tag("POS_DIAG").i("findPageForLocator: FOUND empty block match on absolute page $finalPageIndex")
+                        return finalPageIndex
+                    }
+                }
+            }
+
+            if (fallbackPageInChapter == -1) {
+                for (block in page.content) {
+                    if (block.blockIndex == locator.blockIndex) {
+                        fallbackPageInChapter = pageIndex
+                        break
                     }
                 }
             }
         }
-        Timber.tag("ThemeReconfig").e("Block Index NOT FOUND: Could not find block ${locator.blockIndex} in any page of Chapter $targetChapterIndex")
 
         if (fallbackPageInChapter != -1) {
             val finalPageIndex = chapterStartPage + fallbackPageInChapter
@@ -1129,19 +1146,36 @@ class BookPaginator(
 
     fun getLocatorForPage(pageIndex: Int): Locator? {
         val chapterIndex = findChapterIndexForPage(pageIndex) ?: return null
+        val chStart = chapterStartPageIndices[chapterIndex] ?: 0
+
+        Timber.tag("POS_DIAG").d("getLocatorForPage: Request pageIndex=$pageIndex. Resolved chapterIndex=$chapterIndex (starts at $chStart). PageInChapter=${pageIndex - chStart}")
         val pageContent = getPageContent(pageIndex) ?: return null
 
-        val firstTextBlock = pageContent.content.firstOrNull { it is TextContentBlock } as? TextContentBlock
-        val targetBlock = firstTextBlock ?: pageContent.content.firstOrNull() ?: return null
-        val charOffset = (targetBlock as? TextContentBlock)?.startCharOffsetInSource ?: 0
+        Timber.tag("POS_DIAG").d("getLocatorForPage: Inspecting page $pageIndex (chapter=$chapterIndex). Total top-level blocks=${pageContent.content.size}")
 
-        val locator = Locator(
-            chapterIndex = chapterIndex,
-            blockIndex = targetBlock.blockIndex,
-            charOffset = charOffset
-        )
-        Timber.tag("POS_DIAG").d("getLocatorForPage: Generated $locator for absolute page $pageIndex")
-        return locator
+        val allTextBlocks = getAllTextBlocks(pageContent.content)
+        val firstTextBlock = allTextBlocks.firstOrNull { it.content.text.isNotBlank() } ?: allTextBlocks.firstOrNull()
+
+        Timber.tag("POS_DIAG").d("getLocatorForPage: allTextBlocks count=${allTextBlocks.size}. Selected blockIndex=${firstTextBlock?.blockIndex}, charOffset=${firstTextBlock?.startCharOffsetInSource}, text snippet='${firstTextBlock?.content?.text?.take(20)?.replace("\n", " ")}'")
+
+        if (firstTextBlock != null) {
+            val locator = Locator(
+                chapterIndex = chapterIndex,
+                blockIndex = firstTextBlock.blockIndex,
+                charOffset = firstTextBlock.startCharOffsetInSource
+            )
+            Timber.tag("POS_DIAG").d("getLocatorForPage: Generated $locator for absolute page $pageIndex")
+            return locator
+        } else {
+            val firstBlock = pageContent.content.firstOrNull() ?: return null
+            val locator = Locator(
+                chapterIndex = chapterIndex,
+                blockIndex = firstBlock.blockIndex,
+                charOffset = 0
+            )
+            Timber.tag("POS_DIAG").d("getLocatorForPage: Generated fallback $locator for absolute page $pageIndex")
+            return locator
+        }
     }
 
     override fun findPageForCfi(chapterIndex: Int, cfi: String, onResult: (pageIndex: Int) -> Unit) {

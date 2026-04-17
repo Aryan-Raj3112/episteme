@@ -2115,6 +2115,9 @@ fun EpubReaderHost(
                         val currentPage = paginatedPagerState.currentPage
                         val token = viewModel.getAuthToken()
                         val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(currentPage)
+
+                        Timber.tag("POS_DIAG").d("handleGenerateSummary (Paginated): currentPage=$currentPage -> resolved chapterIndex=$chapterIndex")
+
                         if (chapterIndex != null) {
                             val cached = if (!force) summaryCacheManager.getSummary(epubBook.title, chapterIndex) else null
                             if (cached != null) {
