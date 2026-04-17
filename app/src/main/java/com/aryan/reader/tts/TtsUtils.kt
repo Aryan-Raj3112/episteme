@@ -38,6 +38,8 @@ import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import kotlin.math.ln
+import kotlin.math.pow
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
@@ -52,6 +54,20 @@ val GEMINI_TTS_SPEAKERS = listOf(
     "Kore" to "Kore",
     "Puck" to "Puck"
 )
+
+data class TtsChapterCacheInfo(
+    val chapterTitle: String,
+    val chunkCount: Int,
+    val sizeBytes: Long,
+    val directory: File
+)
+
+fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val exp = (ln(bytes.toDouble()) / ln(1024.0)).toInt()
+    val pre = "KMGTPE"[exp - 1]
+    return String.format("%.1f %cB", bytes / 1024.0.pow(exp.toDouble()), pre)
+}
 
 class TtsCacheManager(private val context: Context) {
     private fun sanitize(name: String): String = name.replace(Regex("[^a-zA-Z0-9.-]"), "_")
@@ -81,15 +97,42 @@ class TtsCacheManager(private val context: Context) {
         val hashParams = hash(text + speakerId + mode.name)
         return File(chapterDir, "cached_chunk_${chunkIndex}_$hashParams.wav")
     }
+
+    fun getBookCacheDir(bookTitle: String): File {
+        val baseDir = File(context.filesDir, "TTS_Cache")
+        return File(baseDir, sanitize(bookTitle.take(50)))
+    }
+
+    fun getChapterCaches(bookTitle: String): List<TtsChapterCacheInfo> {
+        val bookDir = getBookCacheDir(bookTitle)
+        if (!bookDir.exists()) return emptyList()
+
+        return bookDir.listFiles()?.filter { it.isDirectory }?.map { chapterDir ->
+            val files = chapterDir.listFiles()?.filter { it.isFile && it.name.endsWith(".wav") } ?: emptyList()
+            val size = files.sumOf { it.length() }
+            TtsChapterCacheInfo(
+                chapterTitle = chapterDir.name,
+                chunkCount = files.size,
+                sizeBytes = size,
+                directory = chapterDir
+            )
+        }?.filter { it.chunkCount > 0 }?.sortedBy { it.chapterTitle } ?: emptyList()
+    }
+
+    fun deleteChapterCache(chapterDir: File) {
+        chapterDir.deleteRecursively()
+    }
+
+    fun clearBookCache(bookTitle: String) {
+        getBookCacheDir(bookTitle).deleteRecursively()
+    }
 }
 
 fun patchWavHeader(file: File, pcmDataLength: Int) {
     try {
         RandomAccessFile(file, "rw").use { raf ->
-            // ChunkSize (pos 4) = 36 + data length
             raf.seek(4)
             raf.writeInt(Integer.reverseBytes(36 + pcmDataLength))
-            // Subchunk2Size (pos 40) = data length
             raf.seek(40)
             raf.writeInt(Integer.reverseBytes(pcmDataLength))
         }

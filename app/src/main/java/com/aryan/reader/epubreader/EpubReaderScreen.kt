@@ -155,6 +155,7 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
+import com.aryan.reader.TtsCacheManagerSheet
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
@@ -549,6 +550,8 @@ fun EpubReaderHost(
     }
 
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+    var isTtsCollapsed by remember { mutableStateOf(false) }
+    var showTtsCacheManagerSheet by remember { mutableStateOf(false) }
 
     val bookId = remember(epubBook.title, epubBook.fileName) {
         if (epubBook.fileName.length > 20) epubBook.fileName else getBookIdForPrefs(epubBook.title)
@@ -3677,6 +3680,40 @@ fun EpubReaderHost(
                     label = "AutoScrollAlignAnimation"
                 )
 
+                val ttsOverlayPadding by animateDpAsState(
+                    targetValue = if (showBars) (bottomPadding + 45.dp + 16.dp) else 32.dp,
+                    label = "TtsOverlayPadding"
+                )
+
+                val ttsAlignmentBias by animateFloatAsState(
+                    targetValue = if (isTtsCollapsed) 1f else 0f,
+                    label = "TtsAlignAnimation"
+                )
+
+                AnimatedVisibility(
+                    visible = isTtsSessionActive && showBars,
+                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+                    modifier = Modifier
+                        .align(BiasAlignment(ttsAlignmentBias, 1f))
+                        .padding(bottom = ttsOverlayPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    TtsOverlayControls(
+                        ttsController = ttsController,
+                        ttsState = ttsState,
+                        currentTtsMode = currentTtsMode,
+                        isCollapsed = isTtsCollapsed,
+                        onCollapseChange = { isTtsCollapsed = it },
+                        onOpenTtsSettings = { showTtsSettingsSheet = true },
+                        onOpenCacheManager = { showTtsCacheManagerSheet = true },
+                        onClose = {
+                            userStoppedTts = true
+                            ttsController.stop()
+                        }
+                    )
+                }
+
                 val isAutoScrollControlsVisible = isAutoScrollModeActive
 
                 AnimatedVisibility(
@@ -3782,7 +3819,6 @@ fun EpubReaderHost(
                     isProUser = isProUser,
                     hiddenTools = hiddenTools,
                     currentTtsMode = currentTtsMode,
-                    onOpenTtsControls = { showTtsControlsSheet = true },
                     onOpenSlider = {
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
@@ -3955,9 +3991,6 @@ fun EpubReaderHost(
                                 }
                             }
                         }
-                    },
-                    onPlayPauseTts = {
-                        if (ttsState.isPlaying) ttsController.pause() else ttsController.resume()
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -4266,11 +4299,11 @@ fun EpubReaderHost(
             )
         }
 
-        if (showTtsControlsSheet) {
-            TtsControlsSheet(
-                onDismiss = { showTtsControlsSheet = false },
-                onOpenTtsSettings = { showTtsSettingsSheet = true },
-                ttsController = ttsController
+        if (showTtsCacheManagerSheet) {
+            TtsCacheManagerSheet(
+                bookTitle = epubBook.title,
+                context = context,
+                onDismiss = { showTtsCacheManagerSheet = false }
             )
         }
 

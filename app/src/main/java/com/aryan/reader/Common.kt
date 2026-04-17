@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
@@ -77,8 +78,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.RichTooltip
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -125,7 +124,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.imageResource
@@ -158,7 +156,9 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsCacheManager
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.formatBytes
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
@@ -1437,12 +1437,15 @@ fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isT
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
     var savedVoiceName by remember { mutableStateOf(loadNativeVoice(context)) }
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
     var isTtsLoading by remember { mutableStateOf(true) }
+
+    var selectedLanguage by remember { mutableStateOf("All") }
 
     DisposableEffect(Unit) {
         val tts = TextToSpeech(context) { status ->
@@ -1460,6 +1463,15 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
         return
     }
 
+    val languages = remember(allVoices) {
+        listOf("All") + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+
+    val filteredVoices = remember(allVoices, selectedLanguage) {
+        if (selectedLanguage == "All") allVoices
+        else allVoices.filter { it.locale.displayLanguage == selectedLanguage }
+    }
+
     Surface(color = if (savedVoiceName == null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable(enabled = !isTtsActive) { savedVoiceName = null; saveNativeVoice(context, null) }) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Smartphone, null, tint = if (savedVoiceName == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1472,9 +1484,24 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
         }
     }
 
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(languages.size) { index ->
+            val lang = languages[index]
+            androidx.compose.material3.FilterChip(
+                selected = selectedLanguage == lang,
+                onClick = { selectedLanguage = lang },
+                label = { Text(lang) },
+                enabled = !isTtsActive
+            )
+        }
+    }
+
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))) {
-        items(allVoices.size) { index ->
-            val voice = allVoices[index]
+        items(filteredVoices.size) { index ->
+            val voice = filteredVoices[index]
             val isSelected = voice.name == savedVoiceName
             ListItem(
                 headlineContent = { Text(voice.locale.displayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
@@ -1484,6 +1511,95 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent)
             )
             HorizontalDivider()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TtsCacheManagerSheet(
+    bookTitle: String,
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    val cacheManager = remember { TtsCacheManager(context) }
+    var chapters by remember { mutableStateOf(cacheManager.getChapterCaches(bookTitle)) }
+    val totalSize = remember(chapters) { chapters.sumOf { it.sizeBytes } }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Cloud TTS Cache",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = formatBytes(totalSize),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = "Manage downloaded audio chunks for this book.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+            )
+
+            if (chapters.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                    Text("No audio cached for this book.", style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
+                    items(chapters.size) { index ->
+                        val chapter = chapters[index]
+                        ListItem(
+                            headlineContent = { Text(chapter.chapterTitle, fontWeight = FontWeight.Medium) },
+                            supportingContent = { Text("${chapter.chunkCount} chunks • ${formatBytes(chapter.sizeBytes)}") },
+                            trailingContent = {
+                                IconButton(onClick = {
+                                    cacheManager.deleteChapterCache(chapter.directory)
+                                    chapters = cacheManager.getChapterCaches(bookTitle)
+                                }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Chapter Cache", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        )
+                        HorizontalDivider()
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        cacheManager.clearBookCache(bookTitle)
+                        chapters = emptyList()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Clear All Audio for Book")
+                }
+            }
         }
     }
 }
@@ -2342,28 +2458,6 @@ fun ThemeColorPickerDialog(
                 }
             }
         }
-    }
-}
-
-@Composable
-fun TextureOption(name: String, resId: Int?, isSelected: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick)) {
-        Box(modifier = Modifier.size(48.dp).clip(CircleShape).border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape).run {
-            if (resId != null) {
-                val bmp = ImageBitmap.imageResource(LocalResources.current, resId)
-                this.drawBehind { drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated))) }
-            } else this.background(MaterialTheme.colorScheme.surfaceVariant)
-        })
-        Text(name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-    }
-}
-
-@Composable
-fun ColorSlider(color: Color, onColorChanged: (Color) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Slider(value = color.red, onValueChange = { onColorChanged(color.copy(red = it)) }, colors = SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red), modifier = Modifier.weight(1f))
-        Slider(value = color.green, onValueChange = { onColorChanged(color.copy(green = it)) }, colors = SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green), modifier = Modifier.weight(1f))
-        Slider(value = color.blue, onValueChange = { onColorChanged(color.copy(blue = it)) }, colors = SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue), modifier = Modifier.weight(1f))
     }
 }
 

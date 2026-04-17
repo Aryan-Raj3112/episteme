@@ -281,11 +281,12 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.TooltipIconButton
+import com.aryan.reader.TtsCacheManagerSheet
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
-import com.aryan.reader.epubreader.TtsControlsSheet
+import com.aryan.reader.epubreader.TtsOverlayControls
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -1297,6 +1298,7 @@ fun PdfViewerScreen(
     }
     var currentBookId by remember { mutableStateOf<String?>(null) }
     val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
+    var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
     val view = LocalView.current
     var isDockDragging by remember { mutableStateOf(false) }
     var initialScrollDone by remember { mutableStateOf(false) }
@@ -1319,6 +1321,8 @@ fun PdfViewerScreen(
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+    var isTtsCollapsed by remember { mutableStateOf(false) }
+    var showTtsCacheManagerSheet by remember { mutableStateOf(false) }
 
     var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
@@ -3299,6 +3303,7 @@ fun PdfViewerScreen(
         isLoadingDocument = true
         isDocumentReady = false
         errorMessage = null
+        documentMetadataTitle = null
 
         if (showPasswordDialog) isPasswordError = false
 
@@ -3366,6 +3371,7 @@ fun PdfViewerScreen(
                 }
 
                 pdfDocument = doc
+                documentMetadataTitle = (doc as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
                 pfdState = currentPfdOpened
                 val pagesCount = doc.getPageCount()
 
@@ -6523,72 +6529,25 @@ fun PdfViewerScreen(
 
                             // TTS
                             if (!hiddenTools.contains(PdfReaderTool.TTS_CONTROLS.name)) {
-                                Box {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        TooltipIconButton(
-                                            text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
-                                            else stringResource(R.string.tooltip_tts_start),
-                                            description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
-                                            else stringResource(R.string.tooltip_tts_start_desc),
-                                            onClick = {
-                                                if (isTtsSessionActive) {
-                                                    Timber.d("TTS button clicked: Stopping TTS")
-                                                    ttsController.stop()
-                                                } else {
-                                                    startTtsWithPermissionCheck(null, null)
-                                                }
-                                            }) {
-                                            Icon(
-                                                painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
-                                                else painterResource(
-                                                    id = R.drawable.text_to_speech
-                                                ),
-                                                contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts)
-                                            )
-                                        }
-
+                                TooltipIconButton(
+                                    text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
+                                    else stringResource(R.string.tooltip_tts_start),
+                                    description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
+                                    else stringResource(R.string.tooltip_tts_start_desc),
+                                    onClick = {
                                         if (isTtsSessionActive) {
-                                            TooltipIconButton(
-                                                text = if (ttsState.isPlaying)
-                                                    stringResource(R.string.tooltip_tts_pause)
-                                                else
-                                                    stringResource(R.string.tooltip_tts_resume),
-                                                description = if (ttsState.isPlaying)
-                                                    stringResource(R.string.tooltip_tts_pause_desc)
-                                                else
-                                                    stringResource(R.string.tooltip_tts_resume_desc),
-                                                onClick = {
-                                                    if (ttsState.isPlaying) {
-                                                        ttsController.pause()
-                                                    } else {
-                                                        ttsController.resume()
-                                                    }
-                                                }, enabled = !ttsState.isLoading
-                                            ) {
-                                                Icon(
-                                                    painter = painterResource(
-                                                        id = if (ttsState.isPlaying) R.drawable.pause
-                                                        else R.drawable.play
-                                                    ), contentDescription = if (ttsState.isPlaying) stringResource(R.string.content_desc_pause_tts)
-                                                    else stringResource(R.string.content_desc_resume_tts)
-                                                )
-                                            }
-
-                                            // Tune button for BASE mode
-                                            if (currentTtsMode == TtsPlaybackManager.TtsMode.BASE) {
-                                                TooltipIconButton(
-                                                    text = stringResource(R.string.tts_voice_adjustments),
-                                                    description = "Adjust voice speed and pitch",
-                                                    onClick = { showTtsControlsSheet = true }
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Tune,
-                                                        contentDescription = stringResource(R.string.tts_voice_adjustments)
-                                                    )
-                                                }
-                                            }
+                                            Timber.d("TTS button clicked: Stopping TTS")
+                                            ttsController.stop()
+                                        } else {
+                                            startTtsWithPermissionCheck(null, null)
                                         }
-                                    }
+                                    }) {
+                                    Icon(
+                                        painter = if (isTtsSessionActive) painterResource(id = R.drawable.close)
+                                        else painterResource(id = R.drawable.text_to_speech),
+                                        contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS",
+                                        tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
 
@@ -7512,11 +7471,13 @@ fun PdfViewerScreen(
                     )
                 }
 
-                if (showTtsControlsSheet) {
-                    TtsControlsSheet(
-                        onDismiss = { showTtsControlsSheet = false },
-                        onOpenTtsSettings = { showTtsSettingsSheet = true },
-                        ttsController = ttsController
+                if (showTtsCacheManagerSheet) {
+                    val bookTitle = documentMetadataTitle ?: originalFileName
+
+                    TtsCacheManagerSheet(
+                        bookTitle = bookTitle,
+                        context = context,
+                        onDismiss = { showTtsCacheManagerSheet = false }
                     )
                 }
 
@@ -7809,6 +7770,39 @@ fun PdfViewerScreen(
                     targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
                     label = "AutoScrollPadding"
                 )
+
+                val ttsOverlayPadding by animateDpAsState(
+                    targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
+                    label = "TtsOverlayPadding"
+                )
+
+                val ttsAlignmentBias by animateFloatAsState(
+                    targetValue = if (isTtsCollapsed) 1f else 0f,
+                    label = "TtsAlignAnimation"
+                )
+
+                AnimatedVisibility(
+                    visible = isTtsSessionActive && showBars,
+                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+                    modifier = Modifier
+                        .align(BiasAlignment(ttsAlignmentBias, 1f))
+                        .padding(bottom = ttsOverlayPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    TtsOverlayControls(
+                        ttsController = ttsController,
+                        ttsState = ttsState,
+                        currentTtsMode = currentTtsMode,
+                        isCollapsed = isTtsCollapsed,
+                        onCollapseChange = { isTtsCollapsed = it },
+                        onOpenTtsSettings = { showTtsSettingsSheet = true },
+                        onOpenCacheManager = { showTtsCacheManagerSheet = true },
+                        onClose = {
+                            ttsController.stop()
+                        }
+                    )
+                }
 
                 val isAutoScrollControlsVisible = isAutoScrollModeActive
 
