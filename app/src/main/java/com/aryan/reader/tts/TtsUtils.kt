@@ -115,7 +115,6 @@ class TtsCacheManager(private val context: Context) {
     fun getCacheFile(
         bookTitle: String,
         chapterTitle: String?,
-        chunkIndex: Int,
         text: String,
         speakerId: String,
         mode: TtsPlaybackManager.TtsMode
@@ -129,7 +128,8 @@ class TtsCacheManager(private val context: Context) {
 
         val hashParams = hash(text + speakerId + mode.name)
         val safeSpeaker = sanitize(speakerId)
-        return File(chapterDir, "cached_chunk_${chunkIndex}_${safeSpeaker}_$hashParams.wav")
+
+        return File(chapterDir, "cached_chunk_${safeSpeaker}_$hashParams.wav")
     }
 
     fun getBookCacheDir(bookTitle: String): File {
@@ -147,7 +147,13 @@ class TtsCacheManager(private val context: Context) {
                 if (speakerFilter == null || speakerFilter == "All") return@filter true
 
                 val parts = file.name.split("_")
-                val speakerInName = if (parts.size >= 5) parts[3] else null
+
+                val speakerInName = if (parts.size >= 5 && parts[2].all { it.isDigit() }) {
+                    parts[3]
+                } else if (parts.size >= 4) {
+                    parts[2]
+                } else null
+
                 speakerInName == speakerFilter
             } ?: emptyList()
 

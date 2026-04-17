@@ -545,7 +545,7 @@ class TtsService : MediaSessionService() {
             cacheManager.saveTotalChunks(bookTitle, chapterTitle, totalChunks)
             when (mode) {
                 TtsMode.CLOUD -> {
-                    val cachedFile = cacheManager.getCacheFile(bookTitle, chapterTitle, chunkIndex, text, speaker, mode)
+                    val cachedFile = cacheManager.getCacheFile(bookTitle, chapterTitle, text, speaker, mode)
 
                     if (cachedFile.exists() && cachedFile.length() > 44) {
                         Timber.tag("TTS_CLOUD_DIAG").i("Using cached audio for chunk $chunkIndex")
