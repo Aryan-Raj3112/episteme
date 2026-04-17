@@ -268,6 +268,7 @@ import androidx.paging.compose.itemKey
 import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
@@ -277,8 +278,8 @@ import com.aryan.reader.ReaderTheme
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchTopBar
-import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
+import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.epubreader.AutoScrollControls
@@ -1225,6 +1226,7 @@ fun PdfViewerScreen(
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
     val documentCache = remember { DocumentCache(3) }
+    val summaryCacheManager = remember(context) { SummaryCacheManager(context) }
     val tabStateMap = remember { mutableStateMapOf<String, Int>() }
     var showInsufficientCreditsDialog by remember { mutableStateOf(false) }
 
@@ -2669,7 +2671,7 @@ fun PdfViewerScreen(
 
     var ocrUsedForCurrentPageTts by remember { mutableStateOf(false) }
 
-    var showSummarizationPopup by remember { mutableStateOf(false) }
+    var showAiHubSheet by remember { mutableStateOf(false) }
     var summarizationResult by remember { mutableStateOf<SummarizationResult?>(null) }
     var isSummarizationLoading by remember { mutableStateOf(false) }
 
@@ -2937,19 +2939,33 @@ fun PdfViewerScreen(
                 if (responseCode == HttpURLConnection.HTTP_OK) {
                     val fullText = StringBuilder()
                     var lastResult: SummarizationResult? = null
+                    var currentCost: Double? = null
+                    var currentFreeRemaining: Int? = null
+
                     connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                         var line: String?
                         while (reader.readLine().also { line = it } != null) {
                             try {
                                 val jsonResponse = JSONObject(line!!)
+
+                                val cost = if (jsonResponse.has("cost_deducted")) jsonResponse.optDouble("cost_deducted", -1.0) else -1.0
+                                val freeRemaining = jsonResponse.optInt("free_summaries_remaining", -1)
+
+                                if (cost > -1.0 || freeRemaining > -1) {
+                                    if (cost > -1.0) currentCost = cost
+                                    if (freeRemaining > -1) currentFreeRemaining = freeRemaining
+                                    lastResult = SummarizationResult(summary = fullText.toString(), cost = currentCost, freeRemaining = currentFreeRemaining)
+                                    onUpdate(lastResult!!)
+                                }
+
                                 jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
                                     fullText.append(it)
-                                    lastResult = SummarizationResult(summary = fullText.toString())
-                                    @Suppress("UNNECESSARY_NOT_NULL_ASSERTION") onUpdate(lastResult!!)
+                                    lastResult = SummarizationResult(summary = fullText.toString(), cost = currentCost, freeRemaining = currentFreeRemaining)
+                                    onUpdate(lastResult!!)
                                 }
                                 jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                    lastResult = SummarizationResult(error = it)
-                                    onUpdate(lastResult)
+                                    lastResult = SummarizationResult(error = it, cost = currentCost, freeRemaining = currentFreeRemaining)
+                                    onUpdate(lastResult!!)
                                 }
                             } catch (e: Exception) {
                                 Timber.w(e, "Could not parse stream line: $line")
@@ -3564,6 +3580,7 @@ fun PdfViewerScreen(
             }
         }
         previousPage = currentPage
+        summarizationResult = null
     }
 
     LaunchedEffect(pagerState.currentPage) {
@@ -3901,7 +3918,7 @@ fun PdfViewerScreen(
                 showBars = true
             }
 
-            showSummarizationPopup -> showSummarizationPopup = false
+            showAiHubSheet -> showAiHubSheet = false
             showPermissionRationaleDialog -> showPermissionRationaleDialog = false
             showSummarizationUpsellDialog -> showSummarizationUpsellDialog = false
             showAiDefinitionPopup -> showAiDefinitionPopup = false
@@ -6500,48 +6517,15 @@ fun PdfViewerScreen(
 
                             // AI feat
                             if (BuildConfig.FLAVOR != "oss" && !hiddenTools.contains(PdfReaderTool.AI_FEATURES.name)) {
-                                Box {
-                                    var showAiFeaturesMenu by remember { mutableStateOf(false) }
-                                    TooltipIconButton(
-                                        text = stringResource(R.string.tooltip_ai),
-                                        description = stringResource(R.string.tooltip_ai_desc),
-                                        onClick = { showAiFeaturesMenu = true }
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ai),
-                                            contentDescription = stringResource(R.string.tooltip_ai)
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = showAiFeaturesMenu,
-                                        onDismissRequest = { showAiFeaturesMenu = false }) {
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(stringResource(R.string.action_summarize_page))
-                                            }, onClick = {
-                                                showAiFeaturesMenu = false
-                                                showSummarizationPopup = true
-                                                coroutineScope.launch {
-                                                    isSummarizationLoading = true
-                                                    summarizationResult = null
-                                                    val token = viewModel.getAuthToken()
-                                                    summarizeCurrentPage(
-                                                        authToken = token,
-                                                        onUpdate = { result ->
-                                                            if (result.error == "INSUFFICIENT_CREDITS") {
-                                                                showInsufficientCreditsDialog = true
-                                                                showSummarizationPopup = false
-                                                            } else {
-                                                                summarizationResult = result
-                                                            }
-                                                        }, onFinish = {
-                                                            isSummarizationLoading = false
-                                                        }
-                                                    )
-                                                }
-                                            }, enabled = !isSummarizationLoading && pdfDocument != null
-                                        )
-                                    }
+                                TooltipIconButton(
+                                    text = stringResource(R.string.tooltip_ai),
+                                    description = stringResource(R.string.tooltip_ai_desc),
+                                    onClick = { showAiHubSheet = true }
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ai),
+                                        contentDescription = stringResource(R.string.tooltip_ai)
+                                    )
                                 }
                             }
 
@@ -7219,16 +7203,64 @@ fun PdfViewerScreen(
                     }
                 }
 
-                if (showSummarizationPopup) {
-                    SummarizationPopup(
-                        title = "Page Summary",
-                        result = summarizationResult,
-                        isLoading = isSummarizationLoading,
-                        onDismiss = { showSummarizationPopup = false },
+                if (showAiHubSheet) {
+                    val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
+                        pagerState.currentPage
+                    } else {
+                        verticalReaderState.currentPage
+                    }
+                    val bookTitle = documentMetadataTitle ?: originalFileName
+
+                    AiHubBottomSheet(
+                        bookTitle = bookTitle,
+                        currentChapterIndex = currentPageForDisplay,
+                        chapterTitle = "Page ${currentPageForDisplay + 1}",
+                        summaryCacheManager = summaryCacheManager,
+                        summarizationResult = summarizationResult,
+                        isSummarizationLoading = isSummarizationLoading,
+                        onClearSummary = { summarizationResult = null },
+                        onGenerateSummary = { force ->
+                            coroutineScope.launch {
+                                isSummarizationLoading = true
+                                summarizationResult = null
+
+                                val cached = if (!force) summaryCacheManager.getSummary(bookTitle, currentPageForDisplay) else null
+                                if (cached != null) {
+                                    summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
+                                    isSummarizationLoading = false
+                                    return@launch
+                                }
+
+                                val token = viewModel.getAuthToken()
+                                summarizeCurrentPage(
+                                    authToken = token,
+                                    onUpdate = { result ->
+                                        if (result.error == "INSUFFICIENT_CREDITS") {
+                                            showInsufficientCreditsDialog = true
+                                            showAiHubSheet = false
+                                            isSummarizationLoading = false
+                                        } else {
+                                            summarizationResult = result
+                                        }
+                                    }, onFinish = {
+                                        isSummarizationLoading = false
+                                        val finalSummary = summarizationResult?.summary
+                                        if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
+                                            summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
+                                        }
+                                    }
+                                )
+                            }
+                        },
+                        recapResult = null,
+                        isRecapLoading = false,
+                        onGenerateRecap = null,
+                        onDismiss = { showAiHubSheet = false },
                         isMainTtsActive = isTtsSessionActive,
                         getAuthToken = { viewModel.getAuthToken() }
                     )
                 }
+
                 if (showPermissionRationaleDialog) {
                     AlertDialog(
                         onDismissRequest = { showPermissionRationaleDialog = false },

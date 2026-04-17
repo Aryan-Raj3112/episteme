@@ -33,8 +33,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.R
-import com.aryan.reader.SummarizationPopup
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.epub.EpubBook
@@ -56,7 +56,7 @@ import java.net.URL
 suspend fun summarizeBookContent(
     content: String,
     authToken: String?,
-    onUsageReceived: (cost: Int, freeRemaining: Int?) -> Unit = { _, _ -> },
+    onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit = { _, _ -> },
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit,
     onFinish: () -> Unit
@@ -108,10 +108,10 @@ suspend fun summarizeBookContent(
                         try {
                             val jsonResponse = JSONObject(line!!)
 
-                            val cost = jsonResponse.optInt("cost_deducted", -1)
+                            val cost = if (jsonResponse.has("cost_deducted")) jsonResponse.optDouble("cost_deducted", -1.0) else -1.0
                             val freeRemaining = jsonResponse.optInt("free_summaries_remaining", -1)
-                            if (cost > -1 || freeRemaining > -1) {
-                                val finalCost = if (cost > -1) cost else 0
+                            if (cost > -1.0 || freeRemaining > -1) {
+                                val finalCost = if (cost > -1.0) cost else null
                                 val finalRemaining = if (freeRemaining > -1) freeRemaining else null
                                 onUsageReceived(finalCost, finalRemaining)
                             }
@@ -164,7 +164,7 @@ suspend fun executeRecapLogic(
     context: Context,
     onProgressUpdate: (String) -> Unit,
     onResultUpdate: (String) -> Unit,
-    onCostReceived: (Int) -> Unit = {},
+    onCostReceived: (Double?) -> Unit = {},
     onError: (String) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -277,17 +277,20 @@ suspend fun executeRecapLogic(
 @Composable
 fun EpubReaderAiOverlays(
     bookTitle: String,
+    currentChapterIndex: Int,
+    chapterTitle: String,
     summaryCacheManager: SummaryCacheManager,
-    showSummarizationPopup: Boolean,
+    showAiHubSheet: Boolean,
     summarizationResult: SummarizationResult?,
     isSummarizationLoading: Boolean,
-    onDismissSummarization: () -> Unit,
-    showSummarizationUpsellDialog: Boolean,
-    onDismissSummarizationUpsell: () -> Unit,
-    showRecapPopup: Boolean,
+    onGenerateSummary: (Boolean) -> Unit,
     recapResult: SummarizationResult?,
     isRecapLoading: Boolean,
-    onDismissRecap: () -> Unit,
+    onGenerateRecap: () -> Unit,
+    onDismissAiHub: () -> Unit,
+    onClearSummary: () -> Unit = {},
+    showSummarizationUpsellDialog: Boolean,
+    onDismissSummarizationUpsell: () -> Unit,
     showAiDefinitionPopup: Boolean,
     selectedTextForAi: String?,
     aiDefinitionResult: AiDefinitionResult?,
@@ -300,29 +303,20 @@ fun EpubReaderAiOverlays(
     onOpenExternalDictionary: (String) -> Unit,
     getAuthToken: suspend () -> String?
 ) {
-    if (showSummarizationPopup) {
-        SummarizationPopup(
-            title = stringResource(R.string.ai_chapter_summary),
+    if (showAiHubSheet) {
+        AiHubBottomSheet(
             bookTitle = bookTitle,
+            currentChapterIndex = currentChapterIndex,
+            chapterTitle = chapterTitle,
             summaryCacheManager = summaryCacheManager,
-            showCacheManager = true,
-            result = summarizationResult,
-            isLoading = isSummarizationLoading,
-            onDismiss = onDismissSummarization,
-            isMainTtsActive = isTtsSessionActive,
-            getAuthToken = getAuthToken
-        )
-    }
-
-    if (showRecapPopup) {
-        SummarizationPopup(
-            title = stringResource(R.string.ai_story_recap_beta),
-            bookTitle = bookTitle,
-            summaryCacheManager = summaryCacheManager,
-            showCacheManager = false,
-            result = recapResult,
-            isLoading = isRecapLoading,
-            onDismiss = onDismissRecap,
+            summarizationResult = summarizationResult,
+            isSummarizationLoading = isSummarizationLoading,
+            onGenerateSummary = onGenerateSummary,
+            recapResult = recapResult,
+            isRecapLoading = isRecapLoading,
+            onGenerateRecap = onGenerateRecap,
+            onDismiss = onDismissAiHub,
+            onClearSummary = onClearSummary,
             isMainTtsActive = isTtsSessionActive,
             getAuthToken = getAuthToken
         )

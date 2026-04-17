@@ -512,7 +512,7 @@
     <string name="search_in_book">Search in book…</string>
     <string name="search_no_results_simple">No results found.</string>
 
-    <!-- Common.kt: SummarizationPopup — AI feature, not translated. -->
+    <!-- Common.kt: — AI feature, not translated. -->
     <string name="generating_summary" translatable="false">Generating summary…</string>
     <string name="action_stop">Stop</string>
     <string name="action_read_aloud">Read aloud</string>

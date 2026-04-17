@@ -216,7 +216,7 @@ data class AiDefinitionResult(
 data class SummarizationResult(
     val summary: String? = null,
     val error: String? = null,
-    val cost: Int? = null,
+    val cost: Double? = null,
     val freeRemaining: Int? = null,
     val isCacheHit: Boolean = false
 )
@@ -380,7 +380,7 @@ fun TooltipIconButton(
     content: @Composable () -> Unit
 ) {
     val tooltipState = rememberTooltipState(isPersistent = true)
-    val scope = rememberCoroutineScope()
+    rememberCoroutineScope()
 
     LaunchedEffect(tooltipState.isVisible) {
         if (tooltipState.isVisible) {
@@ -586,269 +586,6 @@ fun SearchNavigationControls(
                 enabled = searchState.currentSearchResultIndex < searchState.searchResultsCount - 1
             ) {
                 Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.tooltip_next_result))
-            }
-        }
-    }
-}
-
-@androidx.annotation.OptIn(UnstableApi::class)
-@Composable
-fun SummarizationPopup(
-    title: String,
-    bookTitle: String = "", // ADDED
-    summaryCacheManager: SummaryCacheManager? = null, // ADDED
-    showCacheManager: Boolean = false, // ADDED
-    result: SummarizationResult?,
-    isLoading: Boolean,
-    onDismiss: () -> Unit,
-    isMainTtsActive: Boolean = false,
-    getAuthToken: suspend () -> String?
-) {
-    val ttsController = rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
-    val context = LocalContext.current
-    @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
-    var selectedTabIndex by remember { mutableIntStateOf(0) } // ADDED
-
-    DisposableEffect(Unit) {
-        onDispose {
-            if (ttsState.playbackSource == "POPUP" && (ttsState.isPlaying || ttsState.isLoading)) {
-                ttsController.stop()
-            }
-        }
-    }
-
-    Popup(
-        alignment = Alignment.Center,
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true)
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(horizontal = 16.dp, vertical = 5.dp)
-                .heightIn(min = 150.dp, max = 500.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-        ) {
-            Column(modifier = Modifier.padding(all = 20.dp)) {
-
-                if (showCacheManager) {
-                    TabRow(selectedTabIndex = selectedTabIndex, modifier = Modifier.padding(bottom = 8.dp)) {
-                        Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }) {
-                            Text("Summary", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.titleSmall)
-                        }
-                        Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }) {
-                            Text("Cache", modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.titleSmall)
-                        }
-                    }
-                } else {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-
-                if (selectedTabIndex == 0) {
-                    // ADDED CACHE / COST PILL
-                    if (result != null && (!result.summary.isNullOrBlank() || isLoading)) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.End) {
-                            Surface(
-                                color = if (result.isCacheHit || (result.cost == 0 && result.freeRemaining != null)) Color(0xFF4CAF50).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(
-                                    text = if (result.isCacheHit) {
-                                        "⚡ Cache Hit • Free"
-                                    } else if (result.cost != null) {
-                                        if (result.cost == 0 && result.freeRemaining != null) {
-                                            "✨ Generated • Free (${result.freeRemaining}/10 left)"
-                                        } else {
-                                            "✨ Generated • Cost: ${result.cost} credits"
-                                        }
-                                    } else {
-                                        "✨ Generating... • Cost: Calculating"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (result.isCacheHit || (result.cost == 0 && result.freeRemaining != null)) Color(0xFF388E3C) else MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (isLoading && (result?.summary.isNullOrBlank() && result?.error.isNullOrBlank())) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator()
-                            Text(stringResource(R.string.generating_summary), modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
-                        }
-                    } else if (result != null) {
-                        val summaryText = result.summary
-                        val errorText = result.error
-
-                        val styledContent = remember(summaryText, errorText) {
-                            if (!summaryText.isNullOrBlank()) {
-                                MarkdownParser.parse(summaryText)
-                            } else {
-                                AnnotatedString(errorText ?: "")
-                            }
-                        }
-                        val textToUse = styledContent.text
-
-                        if (textToUse.isNotBlank()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val isTtsSessionActive = ttsState.currentText != null || ttsState.isLoading
-
-                                IconButton(
-                                    onClick = {
-                                        if (isTtsSessionActive) {
-                                            ttsController.stop()
-                                        } else {
-                                            val chunks = splitTextIntoChunks(textToUse).map { TtsChunk(it, "", -1) }
-                                            if (chunks.isNotEmpty()) {
-                                                scope.launch {
-                                                    val token = getAuthToken()
-                                                    ttsController.start(
-                                                        chunks = chunks,
-                                                        bookTitle = title,
-                                                        chapterTitle = "Summary",
-                                                        coverImageUri = null,
-                                                        ttsMode = loadTtsMode(context),
-                                                        playbackSource = "POPUP",
-                                                        authToken = token
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    },
-                                    enabled = !isMainTtsActive || (ttsState.playbackSource == "POPUP")
-                                ) {
-                                    Icon(
-                                        imageVector = if (isTtsSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                        contentDescription = stringResource(if (isTtsSessionActive) R.string.action_stop else R.string.action_read_aloud)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                IconButton(onClick = {
-                                    clipboardManager.setText(AnnotatedString(textToUse))
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Default.ContentCopy,
-                                        contentDescription = stringResource(R.string.action_copy)
-                                    )
-                                }
-                            }
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        if (errorText != null && summaryText.isNullOrBlank()) {
-                            Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
-                        } else if (textToUse.isNotBlank()) {
-                            val scrollState = rememberScrollState()
-                            var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-
-                            LaunchedEffect(ttsState.currentText, textLayoutResult) {
-                                val currentChunk = ttsState.currentText
-                                val layoutResult = textLayoutResult
-                                if (!currentChunk.isNullOrBlank() && layoutResult != null) {
-                                    val startIndex = textToUse.indexOf(currentChunk)
-                                    if (startIndex != -1) {
-                                        val line = layoutResult.getLineForOffset(startIndex)
-                                        val lineTop = layoutResult.getLineTop(line)
-                                        val viewportHeight = scrollState.viewportSize
-                                        val targetScroll = (lineTop - viewportHeight / 2).coerceAtLeast(0f)
-                                        scope.launch {
-                                            scrollState.animateScrollTo(targetScroll.toInt())
-                                        }
-                                    }
-                                }
-                            }
-
-                            val annotatedText = buildAnnotatedString {
-                                append(styledContent)
-                                val currentChunk = ttsState.currentText
-                                if (!currentChunk.isNullOrBlank()) {
-                                    val startIndex = textToUse.indexOf(currentChunk)
-                                    if (startIndex != -1) {
-                                        addStyle(
-                                            style = SpanStyle(background = MaterialTheme.colorScheme.primaryContainer),
-                                            start = startIndex,
-                                            end = startIndex + currentChunk.length
-                                        )
-                                    }
-                                }
-                            }
-                            Text(
-                                text = annotatedText,
-                                modifier = Modifier.verticalScroll(scrollState),
-                                onTextLayout = { textLayoutResult = it }
-                            )
-                        } else {
-                            Text(stringResource(R.string.no_summary_generated), style = MaterialTheme.typography.bodyLarge)
-                        }
-                    }
-                } else if (selectedTabIndex == 1 && summaryCacheManager != null) {
-                    var cachedItems by remember { mutableStateOf(summaryCacheManager.getAllSummaries(bookTitle)) }
-
-                    if (cachedItems.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                            Text("No cached summaries for this book.", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    } else {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            LazyColumn(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
-                                items(cachedItems.size) { index ->
-                                    val item = cachedItems[index]
-                                    ListItem(
-                                        headlineContent = {
-                                            Text(
-                                                text = item.chapterTitle,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        },
-                                        trailingContent = {
-                                            IconButton(onClick = {
-                                                summaryCacheManager.deleteSummary(bookTitle, item.chapterIndex)
-                                                cachedItems = summaryCacheManager.getAllSummaries(bookTitle)
-                                            }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Delete,
-                                                    contentDescription = "Delete",
-                                                    tint = MaterialTheme.colorScheme.error
-                                                )
-                                            }
-                                        }
-                                    )
-                                    HorizontalDivider()
-                                }
-                            }
-                            TextButton(
-                                onClick = {
-                                    summaryCacheManager.clearBookCache(bookTitle)
-                                    cachedItems = emptyList()
-                                },
-                                modifier = Modifier.align(Alignment.End)
-                            ) {
-                                Text("Clear All", color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -1259,7 +996,7 @@ suspend fun fetchRecap(
     context: Context,
     authToken: String?,
     onUpdate: (String) -> Unit,
-    onCostReceived: (Int) -> Unit = {},
+    onCostReceived: (Double) -> Unit = {},
     onError: (String) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -1308,7 +1045,7 @@ suspend fun fetchRecap(
                         try {
                             val jsonResponse = JSONObject(line!!)
 
-                            jsonResponse.optInt("cost_deducted", -1).takeIf { it > -1 }?.let { onCostReceived(it) }
+                            jsonResponse.optDouble("cost_deducted", -1.0).takeIf { it > -1.0 }?.let { onCostReceived(it) }
 
                             jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
                                 onUpdate(it)
@@ -1432,7 +1169,7 @@ fun AiVoicesTab(
     samplePlayer: SpeakerSamplePlayer,
     currentMode: TtsPlaybackManager.TtsMode
 ) {
-    val context = LocalContext.current
+    LocalContext.current
     val isCloudMode = currentMode == TtsPlaybackManager.TtsMode.CLOUD
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -2797,6 +2534,393 @@ fun HighlightColorPickerDialog(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AiHubBottomSheet(
+    bookTitle: String,
+    currentChapterIndex: Int,
+    chapterTitle: String,
+    summaryCacheManager: SummaryCacheManager? = null,
+    summarizationResult: SummarizationResult?,
+    isSummarizationLoading: Boolean,
+    onGenerateSummary: (Boolean) -> Unit,
+    onClearSummary: () -> Unit = {},
+    recapResult: SummarizationResult? = null,
+    isRecapLoading: Boolean = false,
+    onGenerateRecap: (() -> Unit)? = null,
+    onDismiss: () -> Unit,
+    isMainTtsActive: Boolean,
+    getAuthToken: suspend () -> String?
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val ttsController = rememberTtsController()
+    val ttsState by ttsController.ttsState.collectAsState()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (ttsState.playbackSource == "POPUP" && (ttsState.isPlaying || ttsState.isLoading)) {
+                ttsController.stop()
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 300.dp, max = 600.dp)
+        ) {
+            Text(
+                text = "AI Features",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            )
+
+            val tabs = mutableListOf("Summary")
+            if (onGenerateRecap != null) tabs.add("Recap")
+            if (summaryCacheManager != null) tabs.add("Cache")
+
+            TabRow(selectedTabIndex = selectedTabIndex, modifier = Modifier.padding(bottom = 16.dp)) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(selected = selectedTabIndex == index, onClick = { selectedTabIndex = index }) {
+                        Text(title, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+            }
+
+            val activeTab = tabs.getOrNull(selectedTabIndex) ?: "Summary"
+            var cacheRefreshTrigger by remember { mutableIntStateOf(0) }
+
+            when (activeTab) {
+                "Summary" -> {
+                    val cachedSummary = remember(currentChapterIndex, cacheRefreshTrigger) { summaryCacheManager?.getSummary(bookTitle, currentChapterIndex) } // ADD cacheRefreshTrigger HERE
+                    val effectiveResult = summarizationResult ?: if (cachedSummary != null) SummarizationResult(summary = cachedSummary, isCacheHit = true) else null
+
+                    if (effectiveResult == null && !isSummarizationLoading) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(painterResource(R.drawable.summarize), contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(16.dp))
+                                Text("No summary for ${chapterTitle.lowercase()} yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(16.dp))
+                                Button(
+                                    onClick = { onGenerateSummary(false) },
+                                    modifier = Modifier.fillMaxWidth(0.8f).padding(vertical = 8.dp)
+                                ) {
+                                    Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Generate Summary for $chapterTitle")
+                                }
+                            }
+                        }
+                    } else {
+                        AiResultContentView(
+                            title = chapterTitle,
+                            result = effectiveResult,
+                            isLoading = isSummarizationLoading,
+                            isMainTtsActive = isMainTtsActive,
+                            ttsController = ttsController,
+                            ttsState = ttsState,
+                            getAuthToken = getAuthToken,
+                            onRegenerate = { onGenerateSummary(true) }
+                        )
+                    }
+                }
+                "Recap" -> {
+                    // Recap Tab
+                    if (recapResult == null && !isRecapLoading) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(16.dp))
+                                Text("Get a recap of the story up to your current position.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                Spacer(Modifier.height(16.dp))
+                                Button(
+                                    onClick = { onGenerateRecap?.invoke() },
+                                    modifier = Modifier.fillMaxWidth(0.8f).padding(vertical = 8.dp)
+                                ) {
+                                    Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Generate Story Recap")
+                                }
+                            }
+                        }
+                    } else {
+                        AiResultContentView(
+                            title = "Story Recap",
+                            result = recapResult,
+                            isLoading = isRecapLoading,
+                            isMainTtsActive = isMainTtsActive,
+                            ttsController = ttsController,
+                            ttsState = ttsState,
+                            getAuthToken = getAuthToken,
+                            onRegenerate = { onGenerateRecap?.invoke() }
+                        )
+                    }
+                }
+                "Cache" -> {
+                    if (summaryCacheManager != null) {
+                        ManageCacheTab(bookTitle, summaryCacheManager, onCacheChanged = {
+                            cacheRefreshTrigger++
+                            onClearSummary()
+                        })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+fun AiResultContentView(
+    title: String,
+    result: SummarizationResult?,
+    isLoading: Boolean,
+    isMainTtsActive: Boolean,
+    ttsController: com.aryan.reader.tts.TtsController,
+    ttsState: TtsPlaybackManager.TtsState,
+    getAuthToken: suspend () -> String?,
+    onRegenerate: (() -> Unit)? = null
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
+            )
+
+            if (result != null && (!result.summary.isNullOrBlank() || isLoading)) {
+                Surface(
+                    color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
+                        0xFF4CAF50
+                    ).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = if (result.isCacheHit) {
+                            "⚡ Cache Hit • Free"
+                        } else if (result.cost != null) {
+                            if (result.cost == 0.0 && result.freeRemaining != null) {
+                                "✨ Generated • Free (${result.freeRemaining}/10 left)"
+                            } else {
+                                "✨ Generated • Cost: ${result.cost} credits"
+                            }
+                        } else {
+                            "✨ Generating... • Cost: Calculating"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
+                            0xFF388E3C
+                        ) else MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
+        if (isLoading && (result?.summary.isNullOrBlank() && result?.error.isNullOrBlank())) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator()
+                    Text("Thinking...", modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        } else if (result != null) {
+            val summaryText = result.summary
+            val errorText = result.error
+
+            val styledContent = remember(summaryText, errorText) {
+                if (!summaryText.isNullOrBlank()) {
+                    MarkdownParser.parse(summaryText)
+                } else {
+                    AnnotatedString(errorText ?: "")
+                }
+            }
+            val textToUse = styledContent.text
+
+            if (textToUse.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isTtsSessionActive = ttsState.currentText != null || ttsState.isLoading
+
+                    if (onRegenerate != null) {
+                        TextButton(onClick = onRegenerate) {
+                            Text("Regenerate")
+                        }
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (isTtsSessionActive) {
+                                ttsController.stop()
+                            } else {
+                                val chunks = splitTextIntoChunks(textToUse).map { TtsChunk(it, "", -1) }
+                                if (chunks.isNotEmpty()) {
+                                    scope.launch {
+                                        val token = getAuthToken()
+                                        ttsController.start(
+                                            chunks = chunks,
+                                            bookTitle = title,
+                                            chapterTitle = "AI Output",
+                                            coverImageUri = null,
+                                            ttsMode = loadTtsMode(context),
+                                            playbackSource = "POPUP",
+                                            authToken = token
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isMainTtsActive || (ttsState.playbackSource == "POPUP")
+                    ) {
+                        Icon(
+                            imageVector = if (isTtsSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = "Read Aloud"
+                        )
+                    }
+                    IconButton(onClick = {
+                        clipboardManager.setText(AnnotatedString(textToUse))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy"
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            if (errorText != null && summaryText.isNullOrBlank()) {
+                Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+            } else if (textToUse.isNotBlank()) {
+                val scrollState = rememberScrollState()
+                var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+                LaunchedEffect(ttsState.currentText, textLayoutResult) {
+                    val currentChunk = ttsState.currentText
+                    val layoutResult = textLayoutResult
+                    if (!currentChunk.isNullOrBlank() && layoutResult != null) {
+                        val startIndex = textToUse.indexOf(currentChunk)
+                        if (startIndex != -1) {
+                            val line = layoutResult.getLineForOffset(startIndex)
+                            val lineTop = layoutResult.getLineTop(line)
+                            val viewportHeight = scrollState.viewportSize
+                            val targetScroll = (lineTop - viewportHeight / 2).coerceAtLeast(0f)
+                            scope.launch {
+                                scrollState.animateScrollTo(targetScroll.toInt())
+                            }
+                        }
+                    }
+                }
+
+                val annotatedText = buildAnnotatedString {
+                    append(styledContent)
+                    val currentChunk = ttsState.currentText
+                    if (!currentChunk.isNullOrBlank()) {
+                        val startIndex = textToUse.indexOf(currentChunk)
+                        if (startIndex != -1) {
+                            addStyle(
+                                style = SpanStyle(background = MaterialTheme.colorScheme.primaryContainer),
+                                start = startIndex,
+                                end = startIndex + currentChunk.length
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = annotatedText,
+                    modifier = Modifier.verticalScroll(scrollState).weight(1f, fill = false),
+                    onTextLayout = { textLayoutResult = it }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ManageCacheTab(bookTitle: String, summaryCacheManager: SummaryCacheManager, onCacheChanged: () -> Unit = {}) {
+    var cachedItems by androidx.compose.runtime.remember { mutableStateOf(summaryCacheManager.getAllSummaries(bookTitle)) }
+
+    if (cachedItems.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text("No cached summaries for this book.", style = MaterialTheme.typography.bodyMedium)
+        }
+    } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                items(cachedItems.size) { index ->
+                    val item = cachedItems[index]
+                    var expanded by androidx.compose.runtime.remember { mutableStateOf(false) }
+
+                    Column(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    text = item.chapterTitle,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
+                            trailingContent = {
+                                IconButton(onClick = {
+                                    summaryCacheManager.deleteSummary(bookTitle, item.chapterIndex)
+                                    cachedItems = summaryCacheManager.getAllSummaries(bookTitle)
+                                    onCacheChanged()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        )
+                        AnimatedVisibility(visible = expanded) {
+                            Text(
+                                text = item.summary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+            TextButton(
+                onClick = {
+                    summaryCacheManager.clearBookCache(bookTitle)
+                    cachedItems = emptyList()
+                    onCacheChanged()
+                },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("Clear All", color = MaterialTheme.colorScheme.error)
             }
         }
     }

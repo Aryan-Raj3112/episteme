@@ -497,8 +497,7 @@ fun EpubReaderBottomBar(
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
     onToggleSearch: () -> Unit,
-    onSummarize: () -> Unit,
-    onRecap: () -> Unit,
+    onOpenAiHub: () -> Unit,
     onToggleTts: () -> Unit,
     hiddenTools: Set<String>,
     modifier: Modifier = Modifier
@@ -577,35 +576,15 @@ fun EpubReaderBottomBar(
                         "KotlinConstantConditions",
                         "SimplifyBooleanWithConstants"
                     ) if (BuildConfig.FLAVOR != "oss") {
-                        Box {
-                            var showAiFeaturesMenu by remember { mutableStateOf(false) }
-                            TooltipIconButton(
-                                text = stringResource(R.string.tooltip_ai),
-                                description = stringResource(R.string.tooltip_ai_desc),
-                                onClick = { showAiFeaturesMenu = true }) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ai),
-                                    contentDescription = "AI Features"
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = showAiFeaturesMenu,
-                                onDismissRequest = { showAiFeaturesMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_chapter_summarization)) },
-                                    onClick = {
-                                        showAiFeaturesMenu = false
-                                        onSummarize()
-                                    })
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_recap_beta)) },
-                                    onClick = {
-                                        showAiFeaturesMenu = false
-                                        onRecap()
-                                    }
-                                )
-                            }
+                        TooltipIconButton(
+                            text = stringResource(R.string.tooltip_ai),
+                            description = stringResource(R.string.tooltip_ai_desc),
+                            onClick = onOpenAiHub
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ai),
+                                contentDescription = "AI Features"
+                            )
                         }
                     }
                 }
