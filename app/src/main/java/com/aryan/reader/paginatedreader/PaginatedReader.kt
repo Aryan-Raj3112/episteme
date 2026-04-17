@@ -1207,8 +1207,206 @@ private fun TextWithEmphasis(
     var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val scope = rememberCoroutineScope()
     var pressedHighlightCfi by remember { mutableStateOf<String?>(null) }
+    val density = LocalDensity.current
+
+    data class EmphasisMarkInfo(val center: Offset, val radius: Float, val color: Color)
+    data class UnderlineDrawInfo(val path: Path?, val effect: PathEffect?, val minX: Float, val maxX: Float, val y: Float, val decoStyle: String, val decoColor: Color)
+
+    // --- CACHING DECORATIONS FOR PERFORMANCE ---
+    val cachedHighlights = remember(block, userHighlights, textLayoutResult, pressedHighlightCfi) {
+        val startTime = System.currentTimeMillis()
+        val paths = mutableListOf<Pair<Path, Color>>()
+        val layout = textLayoutResult
+        if (layout != null && block.cfi != null && userHighlights.isNotEmpty()) {
+            userHighlights.forEach { highlight ->
+                val range = getHighlightOffsetsInBlock(block, highlight)
+                if (range != null) {
+                    try {
+                        val path = layout.getPathForRange(range.first, range.last + 1)
+                        paths.add(path to highlight.color.color.copy(alpha = 0.4f))
+                        if (highlight.cfi == pressedHighlightCfi) {
+                            paths.add(path to Color.Black.copy(alpha = 0.1f))
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
+                    }
+                }
+            }
+        }
+        val duration = System.currentTimeMillis() - startTime
+        if (duration > 5) {
+            Timber.tag("DecorationsDiag").w("Calculated highlight paths for block ${block.blockIndex} in ${duration}ms")
+        }
+        paths
+    }
+
+    val cachedEmphasisMarks = remember(textLayoutResult, text, style.color, density) {
+        val startTime = System.currentTimeMillis()
+        val marks = mutableListOf<EmphasisMarkInfo>()
+        val layout = textLayoutResult
+        if (layout != null) {
+            val emphasisAnnotations = text.getStringAnnotations("TextEmphasis", 0, text.length)
+            if (emphasisAnnotations.isNotEmpty()) {
+                with(density) { // Provides the scope for .toPx()
+                    emphasisAnnotations.forEach { annotation ->
+                        val emphasis = parseEmphasisAnnotation(annotation.item, style.color)
+                        val markColor = if (emphasis.color.isSpecified) emphasis.color else style.color
+                        val markSize = layout.layoutInput.style.fontSize.toPx() * 0.3f
+                        for (offset in annotation.start until annotation.end) {
+                            if (offset >= text.text.length || text.text[offset].isWhitespace()) continue
+                            try {
+                                val boundingBox = layout.getBoundingBox(offset)
+                                val center = Offset(
+                                    boundingBox.center.x,
+                                    if (emphasis.position == "under") boundingBox.bottom + markSize * 0.1f
+                                    else boundingBox.top - markSize * 0.1f
+                                )
+                                marks.add(EmphasisMarkInfo(center, markSize / 2, markColor))
+                            } catch (e: Exception) {
+                                Timber.tag("DecorationsDiag").e(e, "Emphasis mark out of bounds")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val duration = System.currentTimeMillis() - startTime
+        if (duration > 5) {
+            Timber.tag("DecorationsDiag").w("Calculated emphasis marks for block ${block.blockIndex} in ${duration}ms")
+        }
+        marks
+    }
+
+    val cachedUnderlines = remember(textLayoutResult, text, style.color, density) {
+        val startTime = System.currentTimeMillis()
+        val lines = mutableListOf<UnderlineDrawInfo>()
+        val layout = textLayoutResult
+        if (layout != null) {
+            val customUnderlines = text.getStringAnnotations("CustomUnderline", 0, text.length)
+            if (customUnderlines.isNotEmpty()) {
+                val maxIdx = maxOf(0, text.length - 1)
+                val groupedUnderlines = customUnderlines.groupBy { it.item }
+                val mergedUnderlines = mutableListOf<AnnotatedString.Range<String>>()
+
+                groupedUnderlines.forEach { (item, annotations) ->
+                    val sorted = annotations.sortedBy { it.start }
+                    var currentStart = -1
+                    var currentEnd = -1
+
+                    for (ann in sorted) {
+                        if (currentStart == -1) {
+                            currentStart = ann.start
+                            currentEnd = ann.end
+                        } else if (ann.start <= currentEnd) {
+                            currentEnd = maxOf(currentEnd, ann.end)
+                        } else {
+                            mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
+                            currentStart = ann.start
+                            currentEnd = ann.end
+                        }
+                    }
+                    if (currentStart != -1) {
+                        mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
+                    }
+                }
+
+                with(density) {
+                    mergedUnderlines.forEach { annotation ->
+                        val parts = annotation.item.split('|')
+                        val decoStyle = parts.getOrNull(0) ?: "solid"
+                        val colorStr = parts.getOrNull(1) ?: "Unspecified"
+                        val decoColor = if (colorStr != "Unspecified") Color(colorStr.toULong()) else style.color
+
+                        val safeStart = annotation.start.coerceIn(0, text.length)
+                        val safeEnd = annotation.end.coerceIn(0, text.length)
+                        if (safeStart < safeEnd) {
+                            val startLine = layout.getLineForOffset(safeStart.coerceIn(0, maxIdx))
+                            val endLine = layout.getLineForOffset((safeEnd - 1).coerceIn(0, maxIdx))
+
+                            for (line in startLine..endLine) {
+                                val lineStart = layout.getLineStart(line)
+                                val lineEnd = layout.getLineEnd(line, visibleEnd = true)
+
+                                val intersectionStart = maxOf(safeStart, lineStart)
+                                val intersectionEnd = minOf(safeEnd, lineEnd)
+
+                                var actualStart = intersectionStart
+                                while (actualStart < intersectionEnd && text[actualStart].isWhitespace()) {
+                                    actualStart++
+                                }
+
+                                var actualEnd = intersectionEnd
+                                while (actualEnd > actualStart && text[actualEnd - 1].isWhitespace()) {
+                                    actualEnd--
+                                }
+
+                                if (actualStart < actualEnd) {
+                                    var minX = Float.POSITIVE_INFINITY
+                                    var maxX = Float.NEGATIVE_INFINITY
+                                    for (i in actualStart until actualEnd) {
+                                        try {
+                                            val box = layout.getBoundingBox(i)
+                                            minX = minOf(minX, box.left, box.right)
+                                            maxX = maxOf(maxX, box.left, box.right)
+                                        } catch (e: Exception) {
+                                            Timber.tag("DecorationsDiag").e(e, "Underline box out of bounds")
+                                        }
+                                    }
+
+                                    if (minX < maxX && !minX.isInfinite() && !maxX.isInfinite()) {
+                                        val baseline = layout.getLineBaseline(line)
+                                        val defaultOffset = layout.layoutInput.style.fontSize.toPx() * 0.1f
+                                        val requestedOffset = parts.getOrNull(2)?.toFloatOrNull()?.dp?.toPx()
+                                        val y = baseline + (requestedOffset ?: defaultOffset)
+
+                                        var underlinePath: Path? = null
+                                        var effect: PathEffect? = null
+
+                                        when (decoStyle) {
+                                            "wavy" -> {
+                                                underlinePath = Path()
+                                                underlinePath.moveTo(minX, y)
+                                                val waveLength = 4.dp.toPx()
+                                                val amplitude = 1.dp.toPx()
+                                                var currentX = minX
+                                                var isUp = true
+
+                                                while (currentX < maxX) {
+                                                    val nextX = minOf(currentX + waveLength / 2f, maxX)
+                                                    val midX = currentX + (nextX - currentX) / 2f
+                                                    val cpY = if (isUp) y - amplitude else y + amplitude
+                                                    underlinePath.quadraticTo(midX, cpY, nextX, y)
+                                                    currentX = nextX
+                                                    isUp = !isUp
+                                                }
+                                            }
+                                            "dashed" -> {
+                                                effect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
+                                            }
+                                            "dotted" -> {
+                                                effect = PathEffect.dashPathEffect(floatArrayOf(1f, 4.dp.toPx()))
+                                            }
+                                        }
+
+                                        lines.add(UnderlineDrawInfo(underlinePath, effect, minX, maxX, y, decoStyle, decoColor))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val duration = System.currentTimeMillis() - startTime
+        if (duration > 5) {
+            Timber.tag("DecorationsDiag").w("Calculated custom underlines for block ${block.blockIndex} in ${duration}ms")
+        }
+        lines
+    }
 
     val customDrawer = Modifier.drawBehind {
+        val drawStartTime = System.currentTimeMillis()
+
         textLayoutResult?.let { layoutResult ->
             if (activeSelection != null) {
                 // ADD absolute offset helper:
@@ -1240,190 +1438,59 @@ private fun TextWithEmphasis(
                             val path = layoutResult.getPathForRange(sOffset, eOffset)
                             drawPath(path, Color(0xFF1976D2).copy(alpha = 0.3f))
                         } catch (e: Exception) {
-                            Timber.e(e, "Highlight path out of bounds")
+                            Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
                         }
                     }
                 }
             }
 
-            if (block.cfi != null && userHighlights.isNotEmpty()) {
-                userHighlights.forEach { highlight ->
-                    val range = getHighlightOffsetsInBlock(block, highlight)
-                    if (range != null) {
-                        try {
-                            val path = layoutResult.getPathForRange(range.first, range.last + 1)
-                            drawPath(path, highlight.color.color.copy(alpha = 0.4f), blendMode = BlendMode.SrcOver)
-                            if (highlight.cfi == pressedHighlightCfi) {
-                                drawPath(path, Color.Black.copy(alpha = 0.1f), blendMode = BlendMode.SrcOver)
-                            }
-                        } catch (_: Exception) { }
-                    }
-                }
+            cachedHighlights.forEach { (path, color) ->
+                drawPath(path, color, blendMode = BlendMode.SrcOver)
             }
 
-            val emphasisAnnotations = text.getStringAnnotations("TextEmphasis", 0, text.length)
-            if (emphasisAnnotations.isNotEmpty()) {
-                emphasisAnnotations.forEach { annotation ->
-                    val emphasis = parseEmphasisAnnotation(annotation.item, style.color)
-                    val markColor = if (emphasis.color.isSpecified) emphasis.color else style.color
-                    val markSize = layoutResult.layoutInput.style.fontSize.toPx() * 0.3f
-                    for (offset in annotation.start until annotation.end) {
-                        if (offset >= text.text.length || text.text[offset].isWhitespace()) continue
-                        try {
-                            val boundingBox = layoutResult.getBoundingBox(offset)
-                            val center = Offset(
-                                boundingBox.center.x,
-                                if (emphasis.position == "under") boundingBox.bottom + markSize * 0.1f
-                                else boundingBox.top - markSize * 0.1f
+            cachedEmphasisMarks.forEach { mark ->
+                drawCircle(mark.color, mark.radius, mark.center, style = Stroke(1f))
+            }
+
+            cachedUnderlines.forEach { line ->
+                when (line.decoStyle) {
+                    "wavy" -> {
+                        line.path?.let { p ->
+                            drawPath(p, color = line.decoColor, style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                        }
+                    }
+                    "dashed", "dotted" -> {
+                        drawLine(
+                            color = line.decoColor,
+                            start = Offset(line.minX, line.y),
+                            end = Offset(line.maxX, line.y),
+                            strokeWidth = if (line.decoStyle == "dotted") 2.dp.toPx() else 1.dp.toPx(),
+                            cap = if (line.decoStyle == "dotted") StrokeCap.Round else StrokeCap.Butt,
+                            pathEffect = line.effect
+                        )
+                    }
+                    else -> { // Solid or Double
+                        drawLine(
+                            color = line.decoColor,
+                            start = Offset(line.minX, line.y),
+                            end = Offset(line.maxX, line.y),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                        if (line.decoStyle == "double") {
+                            drawLine(
+                                color = line.decoColor,
+                                start = Offset(line.minX, line.y + 2.dp.toPx()),
+                                end = Offset(line.maxX, line.y + 2.dp.toPx()),
+                                strokeWidth = 1.dp.toPx()
                             )
-                            drawCircle(markColor, markSize / 2, center, style = Stroke(1f))
-                        } catch (_: Exception) { }
-                    }
-                }
-            }
-
-            val customUnderlines = text.getStringAnnotations("CustomUnderline", 0, text.length)
-            if (customUnderlines.isNotEmpty()) {
-                val maxIdx = maxOf(0, text.length - 1)
-
-                // Deduplicate and merge overlapping annotations of the same style
-                val groupedUnderlines = customUnderlines.groupBy { it.item }
-                val mergedUnderlines = mutableListOf<AnnotatedString.Range<String>>()
-
-                groupedUnderlines.forEach { (item, annotations) ->
-                    val sorted = annotations.sortedBy { it.start }
-                    var currentStart = -1
-                    var currentEnd = -1
-
-                    for (ann in sorted) {
-                        if (currentStart == -1) {
-                            currentStart = ann.start
-                            currentEnd = ann.end
-                        } else if (ann.start <= currentEnd) {
-                            // Overlap or adjacent, extend current
-                            currentEnd = maxOf(currentEnd, ann.end)
-                        } else {
-                            // Gap, save current and start new
-                            mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
-                            currentStart = ann.start
-                            currentEnd = ann.end
-                        }
-                    }
-                    if (currentStart != -1) {
-                        mergedUnderlines.add(AnnotatedString.Range(item, currentStart, currentEnd))
-                    }
-                }
-
-                mergedUnderlines.forEach { annotation ->
-                    val parts = annotation.item.split('|')
-                    val decoStyle = parts.getOrNull(0) ?: "solid"
-                    val colorStr = parts.getOrNull(1) ?: "Unspecified"
-                    val decoColor = if (colorStr != "Unspecified") Color(colorStr.toULong()) else style.color
-
-                    val safeStart = annotation.start.coerceIn(0, text.length)
-                    val safeEnd = annotation.end.coerceIn(0, text.length)
-                    if (safeStart >= safeEnd) return@forEach
-
-                    val startLine = layoutResult.getLineForOffset(safeStart.coerceIn(0, maxIdx))
-                    val endLine = layoutResult.getLineForOffset((safeEnd - 1).coerceIn(0, maxIdx))
-
-                    for (line in startLine..endLine) {
-                        val lineStart = layoutResult.getLineStart(line)
-                        val lineEnd = layoutResult.getLineEnd(line, visibleEnd = true)
-
-                        val intersectionStart = maxOf(safeStart, lineStart)
-                        val intersectionEnd = minOf(safeEnd, lineEnd)
-
-                        var actualStart = intersectionStart
-                        // Trim leading whitespace for the line segment
-                        while (actualStart < intersectionEnd && text[actualStart].isWhitespace()) {
-                            actualStart++
-                        }
-
-                        var actualEnd = intersectionEnd
-                        // Trim trailing whitespace for the line segment
-                        while (actualEnd > actualStart && text[actualEnd - 1].isWhitespace()) {
-                            actualEnd--
-                        }
-
-                        if (actualStart >= actualEnd) continue
-
-                        // Calculate bounds explicitly to prevent getPathForRange spanning artifacts
-                        var minX = Float.POSITIVE_INFINITY
-                        var maxX = Float.NEGATIVE_INFINITY
-                        for (i in actualStart until actualEnd) {
-                            val box = layoutResult.getBoundingBox(i)
-                            minX = minOf(minX, box.left, box.right)
-                            maxX = maxOf(maxX, box.left, box.right)
-                        }
-
-                        if (minX >= maxX || minX.isInfinite() || maxX.isInfinite()) {
-                            continue
-                        }
-
-                        val baseline = layoutResult.getLineBaseline(line)
-                        val defaultOffset = layoutResult.layoutInput.style.fontSize.toPx() * 0.1f
-                        val requestedOffset = parts.getOrNull(2)?.toFloatOrNull()?.dp?.toPx()
-                        val y = baseline + (requestedOffset ?: defaultOffset)
-
-                        when (decoStyle) {
-                            "wavy" -> {
-                                val path = Path()
-                                path.moveTo(minX, y)
-                                val waveLength = 4.dp.toPx()
-                                val amplitude = 1.dp.toPx()
-                                var currentX = minX
-                                var isUp = true
-
-                                while (currentX < maxX) {
-                                    val nextX = minOf(currentX + waveLength / 2f, maxX)
-                                    val midX = currentX + (nextX - currentX) / 2f
-                                    val cpY = if (isUp) y - amplitude else y + amplitude
-                                    path.quadraticBezierTo(midX, cpY, nextX, y)
-                                    currentX = nextX
-                                    isUp = !isUp
-                                }
-                                drawPath(path, color = decoColor, style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                            }
-                            "dashed" -> {
-                                drawLine(
-                                    color = decoColor,
-                                    start = Offset(minX, y),
-                                    end = Offset(maxX, y),
-                                    strokeWidth = 1.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
-                                )
-                            }
-                            "dotted" -> {
-                                drawLine(
-                                    color = decoColor,
-                                    start = Offset(minX, y),
-                                    end = Offset(maxX, y),
-                                    strokeWidth = 2.dp.toPx(),
-                                    cap = StrokeCap.Round,
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(1f, 4.dp.toPx()))
-                                )
-                            }
-                            else -> { // Solid or Double
-                                drawLine(
-                                    color = decoColor,
-                                    start = Offset(minX, y),
-                                    end = Offset(maxX, y),
-                                    strokeWidth = 1.dp.toPx()
-                                )
-                                if (decoStyle == "double") {
-                                    drawLine(
-                                        color = decoColor,
-                                        start = Offset(minX, y + 2.dp.toPx()),
-                                        end = Offset(maxX, y + 2.dp.toPx()),
-                                        strokeWidth = 1.dp.toPx()
-                                    )
-                                }
-                            }
                         }
                     }
                 }
             }
+        }
+        val drawDuration = System.currentTimeMillis() - drawStartTime
+        if (drawDuration > 5) {
+            Timber.tag("DecorationsDiag").w("Modifier.drawBehind took ${drawDuration}ms for block ${block.blockIndex}")
         }
     }
 
