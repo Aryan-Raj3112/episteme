@@ -22,7 +22,6 @@ package com.aryan.reader.tts
 import android.content.Context
 import android.media.MediaPlayer
 import androidx.annotation.OptIn
-import timber.log.Timber
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -32,11 +31,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import timber.log.Timber
 import java.io.File
 import java.io.RandomAccessFile
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import kotlin.math.ln
 import kotlin.math.pow
@@ -47,19 +44,45 @@ const val TTS_SAMPLE_TEXT = "The greater danger for most of us lies not in setti
 const val TTS_CHUNK_MAX_LENGTH = 250
 const val DEFAULT_SPEAKER_ID = "Aoede"
 
+data class GeminiVoice(val id: String, val name: String, val description: String)
+
 val GEMINI_TTS_SPEAKERS = listOf(
-    "Aoede" to "Aoede",
-    "Charon" to "Charon",
-    "Fenrir" to "Fenrir",
-    "Kore" to "Kore",
-    "Puck" to "Puck"
+    GeminiVoice("Zephyr", "Zephyr", "Bright, Higher pitch"),
+    GeminiVoice("Puck", "Puck", "Upbeat, Middle pitch"),
+    GeminiVoice("Charon", "Charon", "Informative, Lower pitch"),
+    GeminiVoice("Kore", "Kore", "Firm, Middle pitch"),
+    GeminiVoice("Fenrir", "Fenrir", "Excitable, Lower middle pitch"),
+    GeminiVoice("Leda", "Leda", "Youthful, Higher pitch"),
+    GeminiVoice("Orus", "Orus", "Firm, Lower middle pitch"),
+    GeminiVoice("Aoede", "Aoede", "Breezy, Middle pitch"),
+    GeminiVoice("Callirrhoe", "Callirrhoe", "Easy-going, Middle pitch"),
+    GeminiVoice("Autonoe", "Autonoe", "Bright, Middle pitch"),
+    GeminiVoice("Enceladus", "Enceladus", "Breathy, Lower pitch"),
+    GeminiVoice("Iapetus", "Iapetus", "Clear, Lower middle pitch"),
+    GeminiVoice("Umbriel", "Umbriel", "Easy-going, Lower middle pitch"),
+    GeminiVoice("Algieba", "Algieba", "Smooth, Lower pitch"),
+    GeminiVoice("Despina", "Despina", "Smooth, Middle pitch"),
+    GeminiVoice("Erinome", "Erinome", "Clear, Middle pitch"),
+    GeminiVoice("Algenib", "Algenib", "Gravelly, Lower pitch"),
+    GeminiVoice("Rasalgethi", "Rasalgethi", "Informative, Middle pitch"),
+    GeminiVoice("Laomedeia", "Laomedeia", "Upbeat, Higher pitch"),
+    GeminiVoice("Achernar", "Achernar", "Soft, Higher pitch"),
+    GeminiVoice("Alnilam", "Alnilam", "Firm, Lower middle pitch"),
+    GeminiVoice("Schedar", "Schedar", "Even, Lower middle pitch"),
+    GeminiVoice("Gacrux", "Gacrux", "Mature, Middle pitch"),
+    GeminiVoice("Pulcherrima", "Pulcherrima", "Forward, Middle pitch"),
+    GeminiVoice("Achird", "Achird", "Friendly, Lower middle pitch"),
+    GeminiVoice("Zubenelgenubi", "Zubenelgenubi", "Casual, Lower middle pitch"),
+    GeminiVoice("Vindemiatrix", "Vindemiatrix", "Gentle, Middle pitch"),
+    GeminiVoice("Sadachbia", "Sadachbia", "Lively, Lower pitch")
 )
 
 data class TtsChapterCacheInfo(
     val chapterTitle: String,
     val chunkCount: Int,
     val sizeBytes: Long,
-    val directory: File
+    val directory: File,
+    val matchingFiles: List<File> = emptyList()
 )
 
 fun formatBytes(bytes: Long): String {
@@ -93,9 +116,9 @@ class TtsCacheManager(private val context: Context) {
             chapterDir.mkdirs()
         }
 
-        // Hash combines the text, speaker, and mode so changes to settings force a re-fetch
         val hashParams = hash(text + speakerId + mode.name)
-        return File(chapterDir, "cached_chunk_${chunkIndex}_$hashParams.wav")
+        val safeSpeaker = sanitize(speakerId)
+        return File(chapterDir, "cached_chunk_${chunkIndex}_${safeSpeaker}_$hashParams.wav")
     }
 
     fun getBookCacheDir(bookTitle: String): File {
@@ -103,24 +126,43 @@ class TtsCacheManager(private val context: Context) {
         return File(baseDir, sanitize(bookTitle.take(50)))
     }
 
-    fun getChapterCaches(bookTitle: String): List<TtsChapterCacheInfo> {
+    fun getChapterCaches(bookTitle: String, speakerFilter: String? = null): List<TtsChapterCacheInfo> {
         val bookDir = getBookCacheDir(bookTitle)
         if (!bookDir.exists()) return emptyList()
 
-        return bookDir.listFiles()?.filter { it.isDirectory }?.map { chapterDir ->
-            val files = chapterDir.listFiles()?.filter { it.isFile && it.name.endsWith(".wav") } ?: emptyList()
-            val size = files.sumOf { it.length() }
-            TtsChapterCacheInfo(
-                chapterTitle = chapterDir.name,
-                chunkCount = files.size,
-                sizeBytes = size,
-                directory = chapterDir
-            )
-        }?.filter { it.chunkCount > 0 }?.sortedBy { it.chapterTitle } ?: emptyList()
+        return bookDir.listFiles()?.filter { it.isDirectory }?.mapNotNull { chapterDir ->
+            val files = chapterDir.listFiles()?.filter { file ->
+                if (!file.isFile || !file.name.endsWith(".wav")) return@filter false
+                if (speakerFilter == null || speakerFilter == "All") return@filter true
+
+                val parts = file.name.split("_")
+                val speakerInName = if (parts.size >= 5) parts[3] else null
+                speakerInName == speakerFilter
+            } ?: emptyList()
+
+            if (files.isEmpty()) null
+            else {
+                val size = files.sumOf { it.length() }
+                TtsChapterCacheInfo(
+                    chapterTitle = chapterDir.name,
+                    chunkCount = files.size,
+                    sizeBytes = size,
+                    directory = chapterDir,
+                    matchingFiles = files
+                )
+            }
+        }?.sortedBy { it.chapterTitle } ?: emptyList()
     }
 
     fun deleteChapterCache(chapterDir: File) {
         chapterDir.deleteRecursively()
+    }
+
+    fun deleteSpecificFiles(files: List<File>, chapterDir: File) {
+        files.forEach { it.delete() }
+        if (chapterDir.listFiles()?.isEmpty() == true) {
+            chapterDir.deleteRecursively()
+        }
     }
 
     fun clearBookCache(bookTitle: String) {
@@ -178,6 +220,7 @@ fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LEN
     return chunks
 }
 
+@UnstableApi
 class SpeakerSamplePlayer(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -186,22 +229,20 @@ class SpeakerSamplePlayer(
     private val sampleMediaPlayer = MediaPlayer()
     var loadingSpeakerId by mutableStateOf<String?>(null)
     var playingSpeakerId by mutableStateOf<String?>(null)
+    private val httpClient = okhttp3.OkHttpClient()
+    @OptIn(UnstableApi::class)
+    private val liveClient = TtsService.GeminiLiveClient(httpClient)
 
     init {
         sampleMediaPlayer.setOnErrorListener { mp, what, extra ->
             Timber.e("MediaPlayer error: what=$what, extra=$extra. Resetting.")
             playingSpeakerId = null
             loadingSpeakerId = null
-            try {
-                mp.reset()
-            } catch (e: IllegalStateException) {
-                Timber.e("Error resetting MediaPlayer: ${e.message}")
-            }
+            try { mp.reset() } catch (_: Exception) {}
             true
         }
     }
 
-    @Suppress("unused")
     fun playOrStop(speakerId: String) {
         scope.launch {
             when {
@@ -210,77 +251,47 @@ class SpeakerSamplePlayer(
                     sampleMediaPlayer.reset()
                     playingSpeakerId = null
                 }
-                loadingSpeakerId == speakerId -> {
-                    loadingSpeakerId = null
-                }
+                loadingSpeakerId == speakerId -> loadingSpeakerId = null
                 else -> playSample(speakerId)
             }
         }
     }
 
+    @OptIn(UnstableApi::class)
     private suspend fun playSample(speakerId: String) {
-        if (sampleMediaPlayer.isPlaying) {
-            sampleMediaPlayer.stop()
-        }
+        if (sampleMediaPlayer.isPlaying) sampleMediaPlayer.stop()
         sampleMediaPlayer.reset()
         loadingSpeakerId = speakerId
         playingSpeakerId = null
 
         withContext(Dispatchers.IO) {
-            val authToken = getAuthToken()
-            Timber.tag("TTS_CLOUD_DIAG").d("SpeakerSamplePlayer: playSample for speaker=$speakerId. AuthToken present: ${!authToken.isNullOrBlank()}")
+            val cacheFile = File(context.cacheDir, "sample_$speakerId.wav")
             try {
-                val url = URL(googleCloudWorkerTtsUrl)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                connection.setRequestProperty("Accept", "application/json")
+                if (!cacheFile.exists()) {
+                    val authToken = getAuthToken()
+                    liveClient.ensureConnected(googleCloudWorkerTtsUrl, speakerId, authToken)
+                    val audioData = liveClient.generateChunk(TTS_SAMPLE_TEXT, cacheFile)
 
-                if (authToken != null) {
-                    connection.setRequestProperty("Authorization", "Bearer $authToken")
-                }
-
-                connection.connectTimeout = 15000
-                connection.readTimeout = 30000
-                connection.doOutput = true
-                connection.doInput = true
-
-                val jsonPayload = JSONObject().apply {
-                    put("text", TTS_SAMPLE_TEXT)
-                    put("speaker", speakerId)
-                }
-                connection.outputStream.use { os ->
-                    os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
-                }
-
-                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                    val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
-                    val jsonResponse = JSONObject(responseBody)
-                    val audioBase64 = jsonResponse.getString("audio_base64")
-                    val mimeType = jsonResponse.optString("mime_type", "audio/pcm;rate=24000")
-                    var audioBytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT)
-
-                    val isRawPcm = mimeType.contains("audio/pcm", ignoreCase = true) ||
-                            mimeType.contains("audio/l16", ignoreCase = true) ||
-                            mimeType.contains("audio/raw", ignoreCase = true)
-
-                    if (isRawPcm) {
-                        var sampleRate = 24000
-                        val rateRegex = Regex("rate=(\\d+)")
-                        val match = rateRegex.find(mimeType)
-                        if (match != null) {
-                            sampleRate = match.groupValues[1].toInt()
-                        }
-                        audioBytes = addWavHeader(audioBytes, sampleRate)
+                    val streamId = audioData.streamUri?.substringAfter("ttsstream://")
+                    val stream = streamId?.let { StreamRegistry.get(it) } as? ConcurrentInputStream
+                    if (stream != null) {
+                        val buffer = ByteArray(4096)
+                        while (stream.read(buffer, 0, buffer.size) != -1) { }
+                        stream.close()
+                        StreamRegistry.remove(streamId)
                     }
 
-                    val tempFile = java.io.File.createTempFile("tts_sample_", ".wav", context.cacheDir).apply {
-                        writeBytes(audioBytes)
+                    var retries = 0
+                    while (!cacheFile.exists() && retries < 30) {
+                        kotlinx.coroutines.delay(100)
+                        retries++
                     }
+                }
 
+                if (cacheFile.exists()) {
                     withContext(Dispatchers.Main) {
                         if (loadingSpeakerId != speakerId) return@withContext
-                        sampleMediaPlayer.setDataSource(tempFile.absolutePath)
+                        sampleMediaPlayer.setDataSource(cacheFile.absolutePath)
                         sampleMediaPlayer.setOnPreparedListener { mp ->
                             if (loadingSpeakerId == speakerId) {
                                 mp.start()
@@ -294,51 +305,20 @@ class SpeakerSamplePlayer(
                         sampleMediaPlayer.prepareAsync()
                     }
                 } else {
-                    val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "Could not read error stream" }
-                    Timber.tag("TTS_CLOUD_DIAG").e("Failed to fetch sample for $speakerId. Code: ${connection.responseCode}, Body: $errorBody")
-                    withContext(Dispatchers.Main) { if (loadingSpeakerId == speakerId) loadingSpeakerId = null }
+                    throw Exception("Failed to cache sample")
                 }
             } catch (e: Exception) {
-                Timber.e(e, "Exception playing sample for $speakerId: ${e.message}")
+                Timber.e(e, "Exception playing sample for $speakerId")
                 withContext(Dispatchers.Main) { if (loadingSpeakerId == speakerId) loadingSpeakerId = null }
             }
         }
     }
 
+    @OptIn(UnstableApi::class)
     fun release() {
         sampleMediaPlayer.release()
+        liveClient.close()
     }
-}
-
-fun addWavHeader(pcmData: ByteArray, sampleRate: Int): ByteArray {
-    val numChannels = 1
-    val bitsPerSample = 16
-    val byteRate = sampleRate * numChannels * bitsPerSample / 8
-    val blockAlign = numChannels * bitsPerSample / 8
-    val dataLength = pcmData.size
-
-    val header = java.nio.ByteBuffer.allocate(44)
-    header.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-
-    header.put("RIFF".toByteArray(Charsets.US_ASCII))
-    header.putInt(36 + dataLength)
-    header.put("WAVE".toByteArray(Charsets.US_ASCII))
-    header.put("fmt ".toByteArray(Charsets.US_ASCII))
-    header.putInt(16) // Subchunk1Size
-    header.putShort(1.toShort()) // AudioFormat (PCM)
-    header.putShort(numChannels.toShort())
-    header.putInt(sampleRate)
-    header.putInt(byteRate)
-    header.putShort(blockAlign.toShort())
-    header.putShort(bitsPerSample.toShort())
-    header.put("data".toByteArray(Charsets.US_ASCII))
-    header.putInt(dataLength)
-
-    val combined = ByteArray(44 + dataLength)
-    System.arraycopy(header.array(), 0, combined, 0, 44)
-    System.arraycopy(pcmData, 0, combined, 44, dataLength)
-
-    return combined
 }
 
 fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray {

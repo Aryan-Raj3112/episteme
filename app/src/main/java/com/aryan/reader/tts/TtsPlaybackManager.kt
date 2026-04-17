@@ -266,6 +266,9 @@ class TtsPlaybackManager(
         val currentIdx = player.currentMediaItemIndex
         if (currentIdx == C.INDEX_UNSET) return
 
+        player.pause()
+        _ttsState.value = _ttsState.value.copy(isLoading = true)
+
         onResetContext()
 
         val offset = _ttsState.value.currentWordStartOffset

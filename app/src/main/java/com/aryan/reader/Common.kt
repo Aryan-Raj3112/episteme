@@ -8,8 +8,6 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Tab
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,10 +35,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +56,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -67,6 +64,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -79,6 +78,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.RichTooltip
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -1412,24 +1413,39 @@ fun TtsSettingsSheet(
     }
 }
 
+@UnstableApi
 @Composable
 fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isTtsActive: Boolean, samplePlayer: SpeakerSamplePlayer) {
+    val context = LocalContext.current
     Text("Select Gemini High-Quality Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 8.dp))
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))) {
-        items(GEMINI_TTS_SPEAKERS) { (name, id) ->
-            val isSelected = currentSpeakerId == id
+        items(GEMINI_TTS_SPEAKERS.size) { index ->
+            val voice = GEMINI_TTS_SPEAKERS[index]
+            val isSelected = currentSpeakerId == voice.id
+            val isCached = remember(voice.id) { File(context.cacheDir, "sample_${voice.id}.wav").exists() }
+
             ListItem(
-                headlineContent = { Text(name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                headlineContent = { Text(voice.name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                supportingContent = { Text(voice.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 leadingContent = { if (isSelected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) else Icon(Icons.Default.Cloud, null, tint = Color.Gray) },
                 trailingContent = {
                     if (!isTtsActive) {
-                        IconButton(onClick = { samplePlayer.playOrStop(id) }) {
-                            if (samplePlayer.loadingSpeakerId == id) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            else Icon(if (samplePlayer.playingSpeakerId == id) Icons.Default.Stop else Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { samplePlayer.playOrStop(voice.id) }) {
+                            if (samplePlayer.loadingSpeakerId == voice.id) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(
+                                    if (samplePlayer.playingSpeakerId == voice.id) Icons.Default.Stop
+                                    else if (isCached) Icons.Default.PlayCircle
+                                    else Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 },
-                modifier = Modifier.clickable(enabled = !isTtsActive) { onSpeakerChange(id) },
+                modifier = Modifier.clickable(enabled = !isTtsActive) { onSpeakerChange(voice.id) },
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent)
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1446,6 +1462,7 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
     var isTtsLoading by remember { mutableStateOf(true) }
 
     var selectedLanguage by remember { mutableStateOf("All") }
+    var languageMenuExpanded by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val tts = TextToSpeech(context) { status ->
@@ -1484,18 +1501,25 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
         }
     }
 
-    LazyRow(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(languages.size) { index ->
-            val lang = languages[index]
-            androidx.compose.material3.FilterChip(
-                selected = selectedLanguage == lang,
-                onClick = { selectedLanguage = lang },
-                label = { Text(lang) },
-                enabled = !isTtsActive
-            )
+    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Surface(
+            onClick = { if (!isTtsActive) languageMenuExpanded = true },
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) {
+            Row(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Language: $selectedLanguage", style = MaterialTheme.typography.labelLarge)
+                Icon(Icons.Default.ArrowDropDown, null)
+            }
+        }
+        DropdownMenu(expanded = languageMenuExpanded, onDismissRequest = { languageMenuExpanded = false }) {
+            languages.forEach { lang ->
+                DropdownMenuItem(text = { Text(lang) }, onClick = {
+                    selectedLanguage = lang
+                    languageMenuExpanded = false
+                })
+            }
         }
     }
 
@@ -1508,62 +1532,85 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
                 supportingContent = { Text(if (voice.isNetworkConnectionRequired) "Online" else "Offline") },
                 leadingContent = { if (isSelected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) else Spacer(Modifier.size(24.dp)) },
                 modifier = Modifier.clickable(enabled = !isTtsActive) { savedVoiceName = voice.name; saveNativeVoice(context, voice.name) },
-                colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent)
+                colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent),
+                trailingContent = {
+                    IconButton(
+                        enabled = !isTtsActive,
+                        onClick = {
+                            ttsEngine?.apply {
+                                language = voice.locale
+                                speak("This is a voice sample.", TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Play Sample", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
             )
             HorizontalDivider()
         }
     }
 }
 
+// In Common.kt, find `fun TtsCacheManagerSheet` and replace it with:
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TtsCacheManagerSheet(
-    bookTitle: String,
-    context: Context,
-    onDismiss: () -> Unit
-) {
+fun TtsCacheManagerSheet(bookTitle: String, context: Context, onDismiss: () -> Unit) {
     val cacheManager = remember { TtsCacheManager(context) }
-    var chapters by remember { mutableStateOf(cacheManager.getChapterCaches(bookTitle)) }
+    var selectedSpeakerFilter by remember { mutableStateOf("All") }
+    var filterMenuExpanded by remember { mutableStateOf(false) }
+
+    val allSpeakers = remember(bookTitle) {
+        cacheManager.getBookCacheDir(bookTitle).listFiles()?.flatMap { ch ->
+            ch.listFiles()?.mapNotNull { file ->
+                val parts = file.name.split("_")
+                if (parts.size >= 5) parts[3] else null
+            } ?: emptyList()
+        }?.distinct()?.sorted() ?: emptyList()
+    }
+
+    var chapters by remember(selectedSpeakerFilter) { mutableStateOf(cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)) }
     val totalSize = remember(chapters) { chapters.sumOf { it.sizeBytes } }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
+    ModalBottomSheet(onDismissRequest = onDismiss, contentWindowInsets = { WindowInsets.navigationBars }) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "Cloud TTS Cache",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = formatBytes(totalSize),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                Text("Cloud TTS Cache", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp)) {
+                    Text(formatBytes(totalSize), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
             }
 
-            Text(
-                text = "Manage downloaded audio chunks for this book.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
-            )
+            Text("Manage downloaded audio chunks for this book.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+
+            if (allSpeakers.isNotEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    Surface(
+                        onClick = { filterMenuExpanded = true },
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(40.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Voice Filter: $selectedSpeakerFilter", style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Default.ArrowDropDown, null)
+                        }
+                    }
+                    DropdownMenu(expanded = filterMenuExpanded, onDismissRequest = { filterMenuExpanded = false }) {
+                        DropdownMenuItem(text = { Text("All") }, onClick = { selectedSpeakerFilter = "All"; filterMenuExpanded = false })
+                        allSpeakers.forEach { spkr ->
+                            DropdownMenuItem(text = { Text(spkr) }, onClick = { selectedSpeakerFilter = spkr; filterMenuExpanded = false })
+                        }
+                    }
+                }
+            }
 
             if (chapters.isEmpty()) {
                 Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                    Text("No audio cached for this book.", style = MaterialTheme.typography.bodyMedium)
+                    Text("No audio cached for this filter.", style = MaterialTheme.typography.bodyMedium)
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
                     items(chapters.size) { index ->
                         val chapter = chapters[index]
                         ListItem(
@@ -1571,10 +1618,10 @@ fun TtsCacheManagerSheet(
                             supportingContent = { Text("${chapter.chunkCount} chunks • ${formatBytes(chapter.sizeBytes)}") },
                             trailingContent = {
                                 IconButton(onClick = {
-                                    cacheManager.deleteChapterCache(chapter.directory)
-                                    chapters = cacheManager.getChapterCaches(bookTitle)
+                                    cacheManager.deleteSpecificFiles(chapter.matchingFiles, chapter.directory)
+                                    chapters = cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)
                                 }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete Chapter Cache", tint = MaterialTheme.colorScheme.error)
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                                 }
                             }
                         )
@@ -1586,18 +1633,15 @@ fun TtsCacheManagerSheet(
 
                 Button(
                     onClick = {
-                        cacheManager.clearBookCache(bookTitle)
+                        chapters.forEach { cacheManager.deleteSpecificFiles(it.matchingFiles, it.directory) }
                         chapters = emptyList()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Clear All Audio for Book")
+                    Text(if (selectedSpeakerFilter == "All") "Clear All Audio for Book" else "Clear All for $selectedSpeakerFilter")
                 }
             }
         }
