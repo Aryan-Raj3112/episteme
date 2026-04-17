@@ -1614,6 +1614,7 @@ internal fun PdfVerticalReader(
                                     selectedTool = selectedTool,
                                     richTextController = richTextController,
                                     isStylusOnlyMode = isStylusOnlyMode,
+                                    isAutoScrollPlaying = isAutoScrollPlaying,
                                     textBoxes = textBoxes.filter { it.pageIndex == page.index },
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,

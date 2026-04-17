@@ -4762,6 +4762,7 @@ fun PdfViewerScreen(
                                                 },
                                                 richTextController = richTextController,
                                                 isStylusOnlyMode = isStylusOnlyMode,
+                                                isAutoScrollPlaying = isAutoScrollPlaying,
                                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                                 isEditMode = isDrawingActive,
                                                 textBoxes = textBoxes.filter { it.pageIndex == pageIndex },

@@ -439,6 +439,7 @@ internal fun PdfPageComposable(
     isVisible: Boolean = true,
     isActivePage: Boolean = true,
     isStylusOnlyMode: Boolean = false,
+    isAutoScrollPlaying: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
@@ -1073,6 +1074,7 @@ internal fun PdfPageComposable(
         canvasHeightPx.floatValue,
         isVerticalScroll,
         isScrolling,
+        isAutoScrollPlaying,
         virtualPage,
         isActivePage
     ) {
@@ -1109,7 +1111,17 @@ internal fun PdfPageComposable(
         try {
             page = withContext(Dispatchers.IO) { pdfDocumentItem.openPage(pdfPageIndex) }
 
-            snapshotFlow { visibleScreenRect() }.conflate().collectLatest { currentVisibleRect ->
+            snapshotFlow {
+                val rect = visibleScreenRect()
+                if (rect == null) null
+                else {
+                    val qTop = rect.top / (tileSizePx / 2)
+                    val qLeft = rect.left / (tileSizePx / 2)
+                    val qBottom = rect.bottom / (tileSizePx / 2)
+                    val qRight = rect.right / (tileSizePx / 2)
+                    listOf(qTop, qLeft, qBottom, qRight)
+                }
+            }.conflate().collectLatest { _ ->
 
                 delay(150)
 
@@ -1119,6 +1131,8 @@ internal fun PdfPageComposable(
                 if (isScrolling && effectiveScale > 1f) {
                     return@collectLatest
                 }
+
+                val currentVisibleRect = visibleScreenRect()
 
                 val pxTl: Float
                 val pxBr: Float
