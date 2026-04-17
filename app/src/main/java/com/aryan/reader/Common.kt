@@ -1416,7 +1416,7 @@ fun TtsSettingsSheet(
 
             when (selectedTabIndex) {
                 0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer)
-                1 -> DeviceVoicesTab(isTtsActive, context)
+                1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
                 2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
             }
         }
@@ -1472,9 +1472,14 @@ fun AiVoicesTab(currentSpeakerId: String, onSpeakerChange: (String) -> Unit, isT
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
+fun DeviceVoicesTab(
+    isTtsActive: Boolean,
+    context: Context,
+    currentMode: TtsPlaybackManager.TtsMode
+) {
     var savedVoiceName by remember { mutableStateOf(loadNativeVoice(context)) }
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
@@ -1500,7 +1505,9 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
     }
 
     val languages = remember(allVoices) {
-        listOf("All") + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+        val list = listOf("All") + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+        Timber.tag("TTS_DIAGNOSE").d("Languages list updated: size=${list.size}, items=$list")
+        list
     }
 
     val filteredVoices = remember(allVoices, selectedLanguage) {
@@ -1508,15 +1515,31 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
         else allVoices.filter { it.locale.displayLanguage == selectedLanguage }
     }
 
-    Surface(color = if (savedVoiceName == null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable(enabled = !isTtsActive) { savedVoiceName = null; saveNativeVoice(context, null) }) {
+    val isBaseMode = currentMode == TtsPlaybackManager.TtsMode.BASE
+
+    Surface(
+        color = if (isBaseMode && savedVoiceName == null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 16.dp)
+            .clickable(enabled = !isTtsActive && isBaseMode) {
+                savedVoiceName = null
+                saveNativeVoice(context, null)
+            }
+    ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Smartphone, null, tint = if (savedVoiceName == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                Icons.Default.Smartphone,
+                null,
+                tint = if (isBaseMode && savedVoiceName == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("System Default Voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("Uses device settings", style = MaterialTheme.typography.bodySmall)
             }
-            if (savedVoiceName == null) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+            if (isBaseMode && savedVoiceName == null) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
         }
     }
 
@@ -1540,10 +1563,17 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
             onDismissRequest = { languageMenuExpanded = false }
         ) {
             languages.forEach { lang ->
-                DropdownMenuItem(text = { Text(lang) }, onClick = {
-                    selectedLanguage = lang
-                    languageMenuExpanded = false
-                })
+                Timber.tag("TTS_DIAGNOSE").d("Rendering Language DropdownMenuItem: '$lang'")
+                DropdownMenuItem(
+                    text = {
+                        Text(text = lang)
+                    },
+                    onClick = {
+                        selectedLanguage = lang
+                        languageMenuExpanded = false
+                        Timber.tag("TTS_DIAGNOSE").d("Language selected: $lang")
+                    }
+                )
             }
         }
     }
@@ -1551,12 +1581,22 @@ fun DeviceVoicesTab(isTtsActive: Boolean, context: Context) {
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))) {
         items(filteredVoices.size) { index ->
             val voice = filteredVoices[index]
-            val isSelected = voice.name == savedVoiceName
+            val isSelected = isBaseMode && voice.name == savedVoiceName
+
             ListItem(
                 headlineContent = { Text(voice.locale.displayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                 supportingContent = { Text(if (voice.isNetworkConnectionRequired) "Online" else "Offline") },
-                leadingContent = { if (isSelected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) else Spacer(Modifier.size(24.dp)) },
-                modifier = Modifier.clickable(enabled = !isTtsActive) { savedVoiceName = voice.name; saveNativeVoice(context, voice.name) },
+                leadingContent = {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Spacer(Modifier.size(24.dp))
+                    }
+                },
+                modifier = Modifier.clickable(enabled = !isTtsActive && isBaseMode) {
+                    savedVoiceName = voice.name
+                    saveNativeVoice(context, voice.name)
+                },
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent),
                 trailingContent = {
                     IconButton(
@@ -1591,7 +1631,9 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                 if (parts.size >= 5) parts[3] else null
             } ?: emptyList()
         }?.distinct()?.sorted() ?: emptyList()
-        (listOf(currentSpeakerId) + fromCache).distinct()
+        val list = (listOf(currentSpeakerId) + fromCache).distinct()
+        Timber.tag("TTS_DIAGNOSE").d("AllSpeakers list updated: size=${list.size}, items=$list")
+        list
     }
 
     var chapters by remember(selectedSpeakerFilter) { mutableStateOf(cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)) }
@@ -1625,7 +1667,17 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                     onDismissRequest = { filterMenuExpanded = false }
                 ) {
                     allSpeakers.forEach { spkr ->
-                        DropdownMenuItem(text = { Text(spkr) }, onClick = { selectedSpeakerFilter = spkr; filterMenuExpanded = false })
+                        Timber.tag("TTS_DIAGNOSE").d("Rendering Voice DropdownMenuItem: '$spkr'")
+                        DropdownMenuItem(
+                            text = {
+                                Text(text = spkr)
+                            },
+                            onClick = {
+                                selectedSpeakerFilter = spkr
+                                filterMenuExpanded = false
+                                Timber.tag("TTS_DIAGNOSE").d("Voice filter selected: $spkr")
+                            }
+                        )
                     }
                 }
             }
@@ -1641,8 +1693,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                     val chapter = chapters[index]
                     ListItem(
                         headlineContent = {
-                            val totalText = if (chapter.totalChunks != null) "/${chapter.totalChunks}" else ""
-                            Text("${chapter.chapterTitle} (${chapter.chunkCount}$totalText chunks)", fontWeight = FontWeight.Medium)
+                            Text("${chapter.chapterTitle} (${chapter.chunkCount} chunks)", fontWeight = FontWeight.Medium)
                         },
                         supportingContent = { Text(formatBytes(chapter.sizeBytes)) },
                         trailingContent = {
