@@ -114,7 +114,8 @@ fun TtsSessionObserver(
     onToggleTtsStartOnLoad: (Boolean) -> Unit,
     userStoppedTts: Boolean,
     scope: CoroutineScope,
-    currentTtsMode: TtsMode
+    currentTtsMode: TtsMode,
+    getAuthToken: suspend () -> String?
 ) {
     val prevTtsState = remember { mutableStateOf(ttsState) }
 
@@ -154,7 +155,8 @@ fun TtsSessionObserver(
                         coverImagePath = coverImagePath,
                         onUpdateTtsChapter = onTtsChapterIndexChange,
                         scope = scope,
-                        ttsMode = currentTtsMode
+                        ttsMode = currentTtsMode,
+                        getAuthToken = getAuthToken
                     )
                 }
             } else if (wasPlaying && !isPlaying && !sessionFinished) {
@@ -262,7 +264,8 @@ private fun handlePaginatedAutoAdvance(
     coverImagePath: String?,
     onUpdateTtsChapter: (Int?) -> Unit,
     scope: CoroutineScope,
-    ttsMode: TtsMode
+    ttsMode: TtsMode,
+    getAuthToken: suspend () -> String?
 ) {
     if (currentTtsChapterIndex != null && currentTtsChapterIndex < chapters.size - 1) {
         Timber.d("Paginated: Searching for next TTS content...")
@@ -293,12 +296,16 @@ private fun handlePaginatedAutoAdvance(
                     val chapterTitle = chapters.getOrNull(chapterToTry)?.title
                     val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
 
+                    val token = getAuthToken()
+
                     ttsController.start(
                         chunks = nextChapterChunks,
                         bookTitle = epubBookTitle,
                         chapterTitle = chapterTitle,
                         coverImageUri = coverUriString,
-                        ttsMode = ttsMode
+                        ttsMode = ttsMode,
+                        playbackSource = "READER",
+                        authToken = token
                     )
                     foundContent = true
                     break

@@ -1254,7 +1254,8 @@ fun EpubReaderHost(
         onToggleTtsStartOnLoad = { shouldStart -> ttsShouldStartOnChapterLoad = shouldStart },
         userStoppedTts = userStoppedTts,
         scope = scope,
-        currentTtsMode = currentTtsMode
+        currentTtsMode = currentTtsMode,
+        getAuthToken = { viewModel.getAuthToken() }
     )
 
     TtsHighlightHandler(
