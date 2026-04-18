@@ -41,7 +41,7 @@
         <item quantity="other">حذف الـ %1$d ملف نهائياً</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
-        <item quantity="zero">لا توجد ملفات مختارة</item>
+        <item quantity="zero">لا توجد ملفات مختارة.</item>
         <item quantity="one">هل تريد حذف الملف المختار نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
         <item quantity="two">هل تريد حذف الملفين المختارين نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
         <item quantity="few">هل تريد حذف الـ %1$d ملفات المختارة نهائياً من جهازك؟ لا يمكن التراجع عن هذا الإجراء.</item>
