@@ -4168,6 +4168,8 @@ fun EpubReaderHost(
                     onGenerateSummary = handleGenerateSummary,
                     onGenerateRecap = handleGenerateRecap,
                     onDismissAiHub = { showAiHubSheet = false },
+                    onClearSummary = { summarizationResult = null },
+                    onClearRecap = { recapResult = null }
                 )
 
                 if (isNavigatingToPosition) {

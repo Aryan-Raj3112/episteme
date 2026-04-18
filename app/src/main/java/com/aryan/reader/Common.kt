@@ -2560,6 +2560,7 @@ fun AiHubBottomSheet(
     recapResult: SummarizationResult? = null,
     isRecapLoading: Boolean = false,
     onGenerateRecap: (() -> Unit)? = null,
+    onClearRecap: () -> Unit = {},
     onDismiss: () -> Unit,
     isMainTtsActive: Boolean,
     getAuthToken: suspend () -> String?,
@@ -2570,6 +2571,10 @@ fun AiHubBottomSheet(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
+
+    LaunchedEffect(currentChapterIndex) {
+        onClearSummary()
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -2635,7 +2640,7 @@ fun AiHubBottomSheet(
 
             when (activeTab) {
                 "Summary" -> {
-                    val cachedSummary = remember(currentChapterIndex, cacheRefreshTrigger) { summaryCacheManager?.getSummary(bookTitle, currentChapterIndex) } // ADD cacheRefreshTrigger HERE
+                    val cachedSummary = remember(currentChapterIndex, cacheRefreshTrigger) { summaryCacheManager?.getSummary(bookTitle, currentChapterIndex) }
                     val effectiveResult = summarizationResult ?: if (cachedSummary != null) SummarizationResult(summary = cachedSummary, isCacheHit = true) else null
 
                     if (effectiveResult == null && !isSummarizationLoading) {
@@ -2696,7 +2701,8 @@ fun AiHubBottomSheet(
                             ttsController = ttsController,
                             ttsState = ttsState,
                             getAuthToken = getAuthToken,
-                            onRegenerate = { onGenerateRecap?.invoke() }
+                            onRegenerate = { onGenerateRecap?.invoke() },
+                            onClear = onClearRecap
                         )
                     }
                 }
@@ -2723,7 +2729,8 @@ fun AiResultContentView(
     ttsController: com.aryan.reader.tts.TtsController,
     ttsState: TtsPlaybackManager.TtsState,
     getAuthToken: suspend () -> String?,
-    onRegenerate: (() -> Unit)? = null
+    onRegenerate: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -2796,6 +2803,17 @@ fun AiResultContentView(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isTtsSessionActive = ttsState.currentText != null || ttsState.isLoading
+
+                    if (onClear != null && !isLoading) {
+                        IconButton(onClick = onClear) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Clear",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
 
                     if (onRegenerate != null) {
                         TextButton(onClick = onRegenerate) {
