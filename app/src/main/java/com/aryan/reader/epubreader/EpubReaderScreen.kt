@@ -182,6 +182,7 @@ import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
@@ -523,7 +524,13 @@ fun EpubReaderHost(
         mutableStateOf(loadPageTurnAnimationSetting(context))
     }
 
-    var currentTtsMode by remember { mutableStateOf(loadTtsMode(context)) }
+    var currentTtsMode by remember {
+        mutableStateOf(
+            loadTtsMode(context).let {
+                if (BuildConfig.FLAVOR == "oss") TtsPlaybackManager.TtsMode.BASE else it
+            }
+        )
+    }
 
     val locatorConverter = remember(context) {
         LocatorConverter(

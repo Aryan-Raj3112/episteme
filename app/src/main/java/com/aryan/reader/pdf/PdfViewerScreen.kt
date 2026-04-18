@@ -1096,7 +1096,7 @@ private fun PdfTocTreeItem(
 @OptIn(UnstableApi::class)
 @Suppress("unused")
 private fun saveTtsMode(context: Context, mode: TtsPlaybackManager.TtsMode) {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     prefs.edit { putString(TTS_MODE_KEY, mode.name) }
 }
 
@@ -1330,14 +1330,12 @@ fun PdfViewerScreen(
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
     ttsState.currentText
-    val currentTtsMode by remember(ttsState.ttsMode) {
-        derivedStateOf {
-            try {
-                TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode)
-            } catch (_: Exception) {
-                TtsPlaybackManager.TtsMode.CLOUD
+    var currentTtsMode by remember {
+        mutableStateOf(
+            com.aryan.reader.tts.loadTtsMode(context).let {
+                if (BuildConfig.FLAVOR == "oss") TtsPlaybackManager.TtsMode.BASE else it
             }
-        }
+        )
     }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
 
@@ -7560,6 +7558,7 @@ fun PdfViewerScreen(
                         onDismiss = { showTtsSettingsSheet = false },
                         currentMode = currentTtsMode,
                         onModeChange = { newMode ->
+                            currentTtsMode = newMode
                             saveTtsMode(context, newMode)
                             ttsController.changeTtsMode(newMode.name)
                         },
