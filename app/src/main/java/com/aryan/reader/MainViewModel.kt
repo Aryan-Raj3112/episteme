@@ -271,7 +271,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val cloudflareRepository = CloudflareRepository()
     private val remoteConfigRepository = RemoteConfigRepository()
     private var userProfileListener: Any? = null
-    private val migrationAttempted = MutableStateFlow(false)
     private val _prefsUpdateFlow = MutableStateFlow(0L)
     private val prefsListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val feedbackRepository = FeedbackRepository(appContext)
@@ -826,7 +825,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                         }
                 } else {
-                    _internalState.update { it.copy(isProUser = false, hasUnreadFeedback = false) }
+                    _internalState.update { it.copy(isProUser = false, credits = 0, isSyncEnabled = false, hasUnreadFeedback = false) }
                 }
             }
         }
@@ -4505,7 +4504,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_ADD_BOOKS_SOURCE = "add_books_source"
         private const val KEY_SYNC_ENABLED = "sync_enabled"
         private const val KEY_LAST_SYNC_TIMESTAMP = "last_sync_timestamp"
-        private const val KEY_MIGRATION_CHECKED_UIDS = "migration_checked_uids"
         private const val KEY_INSTALLATION_ID = "installation_id"
         private const val KEY_APP_OPEN_COUNT = "app_open_count"
         internal const val KEY_SYNCED_FOLDER_URI = "synced_folder_uri"

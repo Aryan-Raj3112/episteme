@@ -301,7 +301,9 @@ fun EpubReaderAiOverlays(
     onNavigateToPro: () -> Unit,
     isTtsSessionActive: Boolean,
     onOpenExternalDictionary: (String) -> Unit,
-    getAuthToken: suspend () -> String?
+    getAuthToken: suspend () -> String?,
+    credits: Int,
+    isProUser: Boolean
 ) {
     if (showAiHubSheet) {
         AiHubBottomSheet(
@@ -318,7 +320,9 @@ fun EpubReaderAiOverlays(
             onDismiss = onDismissAiHub,
             onClearSummary = onClearSummary,
             isMainTtsActive = isTtsSessionActive,
-            getAuthToken = getAuthToken
+            getAuthToken = getAuthToken,
+            credits = credits,
+            isProUser = isProUser
         )
     }
 

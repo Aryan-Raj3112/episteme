@@ -1380,7 +1380,8 @@ fun TtsOverlayControls(
     onCollapseChange: (Boolean) -> Unit,
     onOpenTtsSettings: () -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    credits: Int
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
@@ -1451,14 +1452,12 @@ fun TtsOverlayControls(
                 }
             } else {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Top Row: Info Pills and Close button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // Mode Pill (Read Only)
                             Surface(
                                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
                                 shape = RoundedCornerShape(8.dp)
@@ -1471,7 +1470,6 @@ fun TtsOverlayControls(
                                 )
                             }
 
-                            // Voice Pill (Read Only)
                             Surface(
                                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
                                 shape = RoundedCornerShape(8.dp)
@@ -1488,6 +1486,20 @@ fun TtsOverlayControls(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).widthIn(max = 100.dp)
                                 )
+                            }
+
+                            if (BuildConfig.FLAVOR != "oss" && activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        "⭐ $credits",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
                         }
 

@@ -2747,39 +2747,43 @@ fun PdfViewerScreen(
         }
     }
 
-    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser) {
         { text: String ->
             executeWithOcrCheck {
                 val isOss = BuildConfig.FLAVOR == "oss"
                 val effectiveUseOnline = !isOss && useOnlineDictionary
 
                 if (effectiveUseOnline) {
-                    selectedTextForAi = text
-                    showAiDefinitionPopup = true
-                    coroutineScope.launch {
-                        isAiDefinitionLoading = true
-                        aiDefinitionResult = null
-                        val token = viewModel.getAuthToken()
-                        fetchAiDefinition(
-                            text = text,
-                            authToken = token,
-                            onUpdate = { chunk ->
-                                val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                aiDefinitionResult = AiDefinitionResult(
-                                    definition = currentDefinition + chunk
-                                )
-                            }, onError = { error ->
-                                if (error == "INSUFFICIENT_CREDITS") {
-                                    showInsufficientCreditsDialog = true
-                                    showAiDefinitionPopup = false
-                                    isAiDefinitionLoading = false
-                                } else {
-                                    aiDefinitionResult = AiDefinitionResult(error = error)
-                                }
-                            }, onFinish = {
-                                isAiDefinitionLoading = false
-                            }, context = context
-                        )
+                    val wordCount = com.aryan.reader.countWords(text)
+                    if (wordCount > 1 && !isProUser) {
+                        showDictionaryUpsellDialog = true
+                    } else {
+                        selectedTextForAi = text
+                        showAiDefinitionPopup = true
+                        coroutineScope.launch {
+                            val token = viewModel.getAuthToken()
+                            isAiDefinitionLoading = true
+                            aiDefinitionResult = null
+                            fetchAiDefinition(
+                                text = text,
+                                authToken = token,
+                                onUpdate = { chunk ->
+                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                    aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
+                                },
+                                onError = { error ->
+                                    if (error == "INSUFFICIENT_CREDITS") {
+                                        showInsufficientCreditsDialog = true
+                                        showAiDefinitionPopup = false
+                                        isAiDefinitionLoading = false
+                                    } else {
+                                        aiDefinitionResult = AiDefinitionResult(error = error)
+                                    }
+                                },
+                                onFinish = { isAiDefinitionLoading = false },
+                                context = context
+                            )
+                        }
                     }
                 } else {
                     if (!selectedDictPackage.isNullOrEmpty()) {
@@ -2955,7 +2959,7 @@ fun PdfViewerScreen(
                                     if (cost > -1.0) currentCost = cost
                                     if (freeRemaining > -1) currentFreeRemaining = freeRemaining
                                     lastResult = SummarizationResult(summary = fullText.toString(), cost = currentCost, freeRemaining = currentFreeRemaining)
-                                    onUpdate(lastResult!!)
+                                    onUpdate(lastResult)
                                 }
 
                                 jsonResponse.optString("chunk").takeIf { it.isNotEmpty() }?.let {
@@ -2965,7 +2969,7 @@ fun PdfViewerScreen(
                                 }
                                 jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
                                     lastResult = SummarizationResult(error = it, cost = currentCost, freeRemaining = currentFreeRemaining)
-                                    onUpdate(lastResult!!)
+                                    onUpdate(lastResult)
                                 }
                             } catch (e: Exception) {
                                 Timber.w(e, "Could not parse stream line: $line")
@@ -3083,6 +3087,11 @@ fun PdfViewerScreen(
     }
 
     fun startTts(pageToReadOverride: Int? = null, startCharIndex: Int? = null) {
+        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
+            showInsufficientCreditsDialog = true
+            return
+        }
+
         Timber.d("TTS button clicked: Starting TTS for current page/selection")
         if (pdfDocument == null || totalPages == 0) {
             return
@@ -7220,36 +7229,41 @@ fun PdfViewerScreen(
                         isSummarizationLoading = isSummarizationLoading,
                         onClearSummary = { summarizationResult = null },
                         onGenerateSummary = { force ->
-                            coroutineScope.launch {
-                                isSummarizationLoading = true
-                                summarizationResult = null
+                            if (!isProUser && uiState.credits <= 0) {
+                                showInsufficientCreditsDialog = true
+                                showAiHubSheet = false
+                            } else {
+                                coroutineScope.launch {
+                                    isSummarizationLoading = true
+                                    summarizationResult = null
 
-                                val cached = if (!force) summaryCacheManager.getSummary(bookTitle, currentPageForDisplay) else null
-                                if (cached != null) {
-                                    summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
-                                    isSummarizationLoading = false
-                                    return@launch
-                                }
-
-                                val token = viewModel.getAuthToken()
-                                summarizeCurrentPage(
-                                    authToken = token,
-                                    onUpdate = { result ->
-                                        if (result.error == "INSUFFICIENT_CREDITS") {
-                                            showInsufficientCreditsDialog = true
-                                            showAiHubSheet = false
-                                            isSummarizationLoading = false
-                                        } else {
-                                            summarizationResult = result
-                                        }
-                                    }, onFinish = {
+                                    val cached = if (!force) summaryCacheManager.getSummary(bookTitle, currentPageForDisplay) else null
+                                    if (cached != null) {
+                                        summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
                                         isSummarizationLoading = false
-                                        val finalSummary = summarizationResult?.summary
-                                        if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
-                                            summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
-                                        }
+                                        return@launch
                                     }
-                                )
+
+                                    val token = viewModel.getAuthToken()
+                                    summarizeCurrentPage(
+                                        authToken = token,
+                                        onUpdate = { result ->
+                                            if (result.error == "INSUFFICIENT_CREDITS") {
+                                                showInsufficientCreditsDialog = true
+                                                showAiHubSheet = false
+                                                isSummarizationLoading = false
+                                            } else {
+                                                summarizationResult = result
+                                            }
+                                        }, onFinish = {
+                                            isSummarizationLoading = false
+                                            val finalSummary = summarizationResult?.summary
+                                            if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
+                                                summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         },
                         recapResult = null,
@@ -7257,7 +7271,9 @@ fun PdfViewerScreen(
                         onGenerateRecap = null,
                         onDismiss = { showAiHubSheet = false },
                         isMainTtsActive = isTtsSessionActive,
-                        getAuthToken = { viewModel.getAuthToken() }
+                        getAuthToken = { viewModel.getAuthToken() },
+                        credits = uiState.credits,
+                        isProUser = isProUser
                     )
                 }
 
@@ -7875,7 +7891,8 @@ fun PdfViewerScreen(
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
                         onClose = {
                             ttsController.stop()
-                        }
+                        },
+                        credits = uiState.credits
                     )
                 }
 

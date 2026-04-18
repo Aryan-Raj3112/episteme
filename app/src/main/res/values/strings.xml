@@ -245,8 +245,8 @@
     <string name="feature_dict">Basic Dictionary</string>
     <string name="feature_dict_desc">Look up single words quickly</string>
     <string name="current_plan">Current Plan</string>
-    <!-- Promotional badge displayed on the Pro plan card. %% is a literal percent sign. -->
-    <string name="pro_sale_off" translatable="false">50%% OFF</string>
+    <!-- Promotional badge displayed on the Pro plan card. % is a literal percent sign. -->
+    <string name="pro_sale_off" translatable="false">50% OFF</string>
     <string name="loading_price">Loading price…</string>
     <string name="one_time_payment">One-time payment</string>
     <string name="lifetime_access">Lifetime Access</string>

@@ -1,5 +1,5 @@
 // Common.kt
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class) @file:Suppress("KotlinConstantConditions")
 
 package com.aryan.reader
 
@@ -1091,7 +1091,8 @@ fun TtsSettingsSheet(
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var selectedTabIndex by remember(currentMode) { mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD) 0 else 1) }
+    val isOss = BuildConfig.FLAVOR == "oss"
+    var selectedTabIndex by remember(currentMode) { mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD && !isOss) 0 else 1) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1120,41 +1121,46 @@ fun TtsSettingsSheet(
                 }
             }
 
-            Text("Active TTS Engine", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(4.dp)) {
-                val modes = listOf(TtsPlaybackManager.TtsMode.CLOUD to "Cloud AI", TtsPlaybackManager.TtsMode.BASE to "Device Native")
-                modes.forEach { (mode, title) ->
-                    val isSelected = currentMode == mode
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(20.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable(enabled = !isTtsActive) {
-                                onModeChange(mode)
-                                if (mode == TtsPlaybackManager.TtsMode.CLOUD && selectedTabIndex == 1) selectedTabIndex = 0
-                                if (mode == TtsPlaybackManager.TtsMode.BASE && selectedTabIndex != 1) selectedTabIndex = 1
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(title, color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            if (isOss) {
+                Spacer(Modifier.height(16.dp))
+                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE)
+            } else {
+                Text("Active TTS Engine", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(4.dp)) {
+                    val modes = listOf(TtsPlaybackManager.TtsMode.CLOUD to "Cloud AI", TtsPlaybackManager.TtsMode.BASE to "Device Native")
+                    modes.forEach { (mode, title) ->
+                        val isSelected = currentMode == mode
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(20.dp))
+                                .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                .clickable(enabled = !isTtsActive) {
+                                    onModeChange(mode)
+                                    if (mode == TtsPlaybackManager.TtsMode.CLOUD && selectedTabIndex == 1) selectedTabIndex = 0
+                                    if (mode == TtsPlaybackManager.TtsMode.BASE && selectedTabIndex != 1) selectedTabIndex = 1
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(title, color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
-            TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
-                Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("Cloud Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
-                Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("Device Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
-                Tab(selected = selectedTabIndex == 2, onClick = { selectedTabIndex = 2 }, text = { Text("Cloud Cache", maxLines = 1, overflow = TextOverflow.Ellipsis) })
-            }
+                TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
+                    Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("Cloud Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("Device Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    Tab(selected = selectedTabIndex == 2, onClick = { selectedTabIndex = 2 }, text = { Text("Cloud Cache", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
-            when (selectedTabIndex) {
-                0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode)
-                1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
-                2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
+                when (selectedTabIndex) {
+                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode)
+                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
+                    2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
+                }
             }
         }
     }
@@ -2556,7 +2562,9 @@ fun AiHubBottomSheet(
     onGenerateRecap: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     isMainTtsActive: Boolean,
-    getAuthToken: suspend () -> String?
+    getAuthToken: suspend () -> String?,
+    credits: Int,
+    isProUser: Boolean
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -2580,13 +2588,35 @@ fun AiHubBottomSheet(
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 300.dp, max = 600.dp)
         ) {
-            Text(
-                text = "AI Features",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f))
+                Text(
+                    text = "AI Features",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(2f)
+                )
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    if (BuildConfig.FLAVOR != "oss") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "⭐ $credits",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             val tabs = mutableListOf("Summary")
             if (onGenerateRecap != null) tabs.add("Recap")

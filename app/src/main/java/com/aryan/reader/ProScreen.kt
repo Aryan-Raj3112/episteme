@@ -77,7 +77,6 @@ fun ProScreen(
     val proUpgradeState by viewModel.proUpgradeState.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
     var showExistingPurchaseDialog by remember { mutableStateOf(false) }
-    var showEarlyAccessInfoDialog by remember { mutableStateOf(false) }
     var showSignInRequiredDialog by remember { mutableStateOf(false) }
 
     // Removed Free Tab, so tabCount is max 2
@@ -112,10 +111,6 @@ fun ProScreen(
 
     if (showExistingPurchaseDialog) {
         ExistingPurchaseDialog(onDismiss = { showExistingPurchaseDialog = false })
-    }
-
-    if (showEarlyAccessInfoDialog) {
-        EarlyAccessInfoDialog(onDismiss = { showEarlyAccessInfoDialog = false })
     }
 
     if (showSignInRequiredDialog) {
@@ -246,7 +241,6 @@ fun ProScreen(
                                 }
                             },
                             onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
-                            onShowEarlyAccessInfo = { showEarlyAccessInfoDialog = true },
                             onSignInRequiredClick = { showSignInRequiredDialog = true })
                     }
 
@@ -276,7 +270,6 @@ private fun ProTierCard(
     proUpgradeState: ProUpgradeState,
     onUpgradeClick: () -> Unit,
     onShowExistingPurchaseDialog: () -> Unit,
-    onShowEarlyAccessInfo: () -> Unit,
     onSignInRequiredClick: () -> Unit
 ) {
     val productDetails = proUpgradeState.productDetails
@@ -374,27 +367,6 @@ private fun ProTierCard(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedButton(
-                    onClick = onShowEarlyAccessInfo,
-                    modifier = Modifier
-                        .height(40.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ),
-                    shape = MaterialTheme.shapes.small,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Info",
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.early_access_sale), style = MaterialTheme.typography.labelLarge)
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -619,19 +591,6 @@ fun ExistingPurchaseDialog(onDismiss: () -> Unit) {
         text = { Text(stringResource(R.string.dialog_existing_purchase_desc)) },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_ok)) }
-        }
-    )
-}
-
-@Composable
-fun EarlyAccessInfoDialog(onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Info, contentDescription = null) },
-        title = { Text(stringResource(R.string.early_access_sale)) },
-        text = { Text(stringResource(R.string.dialog_early_access_desc)) },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_got_it)) }
         }
     )
 }
