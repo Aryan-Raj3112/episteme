@@ -708,7 +708,7 @@ private fun CreditTierCard(
             CostBreakdownItem(
                 iconRes = R.drawable.text_to_speech,
                 title = "Cloud TTS",
-                description = "Cost: ~3-4 credits per minute of audio generated."
+                description = "Cost: ~3-4 credits per minute of audio generated.\nTo enable: Reader Screen > More > TTS Voice Settings."
             )
             CostBreakdownItem(
                 iconRes = R.drawable.summarize,

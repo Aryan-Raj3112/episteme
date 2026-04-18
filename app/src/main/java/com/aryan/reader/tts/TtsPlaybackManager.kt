@@ -82,14 +82,14 @@ class TtsPlaybackManager(
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var mediaSession: MediaSession? = null
-    private val prefetchingJobs = mutableMapOf<Int, Job>()
+    private val prefetchingJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
     private var wordTrackingJob: Job? = null
     private var preparationJob: Job? = null
     private var prefetchLoopJob: Job? = null
     private var lastPrefetchIndex = -1
     private var currentAuthToken: String? = null
-    private var loadedChunks: MutableSet<Int> = mutableSetOf()
-    private val chunkStreamIds: MutableMap<Int, String> = mutableMapOf()
+    private val loadedChunks: MutableSet<Int> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+    private val chunkStreamIds = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
     enum class TtsMode {
         CLOUD, BASE
@@ -115,7 +115,7 @@ class TtsPlaybackManager(
     private val _ttsState = MutableStateFlow(TtsState())
 
     private var textChunks: List<TtsChunk> = emptyList()
-    private var audioFiles: MutableMap<Int, File> = mutableMapOf()
+    private val audioFiles = java.util.concurrent.ConcurrentHashMap<Int, File>()
     private var currentSpeakerId = DEFAULT_SPEAKER_ID
     private var bookTitle: String? = null
     private var chapterTitle: String? = null

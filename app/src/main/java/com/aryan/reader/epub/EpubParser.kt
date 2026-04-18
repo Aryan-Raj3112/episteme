@@ -220,7 +220,9 @@ class EpubParser(private val context: Context) {
                     }
                 }
 
-                val data = if (isEssential) outputFile.readBytes() else ByteArray(0)
+                val lowerName = entry.name.lowercase()
+                val isContainerOrOpf = lowerName.endsWith("container.xml") || lowerName.endsWith(".opf")
+                val data = if (isContainerOrOpf) outputFile.readBytes() else ByteArray(0)
                 filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
             }
         }
@@ -309,7 +311,7 @@ class EpubParser(private val context: Context) {
         }
 
         val chaptersFromSpine = if (parseContent) {
-            parseUsingSpine(document.spine, manifestItems, filesContentMap, ncxMetadataMap)
+            parseUsingSpine(document.spine, manifestItems, filesContentMap, ncxMetadataMap, extractionRoot)
         } else {
             emptyList()
         }
@@ -476,7 +478,8 @@ class EpubParser(private val context: Context) {
         spine: Node,
         manifestItems: Map<String, EpubManifestItem>,
         filesContentMap: Map<String, EpubFile>,
-        ncxMetadataMap: Map<String, NcxMetadata>
+        ncxMetadataMap: Map<String, NcxMetadata>,
+        extractionRoot: File
     ): List<EpubChapter> = withContext(Dispatchers.Default) {
         val parsingSemaphore = Semaphore(6)
 
@@ -489,7 +492,9 @@ class EpubParser(private val context: Context) {
                     val idRef = itemRef.getAttribute("idref")
                     val item = manifestItems[idRef] ?: return@withPermit null
 
-                    val fileBytes = filesContentMap[item.absPath]?.data ?: return@withPermit null
+                    val fileBytes = filesContentMap[item.absPath]?.data?.takeIf { it.isNotEmpty() }
+                        ?: File(extractionRoot, item.absPath).takeIf { it.exists() }?.readBytes()
+                        ?: return@withPermit null
 
                     val mediaType = item.mediaType
                     val absPath = item.absPath

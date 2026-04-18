@@ -239,18 +239,7 @@ class SingleFileImporter(private val context: Context) {
                 val fileName = "page_$pageNum.html"
                 val file = File(extractionDir, fileName)
 
-                val fullHtml = """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>$chapterTitle</title>
-                        <style>$style</style>
-                    </head>
-                    <body>
-                    $htmlBody
-                    </body>
-                    </html>
-                """.trimIndent()
+                val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$style</style>\n</head>\n<body>\n$htmlBody\n</body>\n</html>"
 
                 file.writeText(fullHtml)
 
@@ -355,18 +344,7 @@ class SingleFileImporter(private val context: Context) {
             val file = File(extractionDir, fileName)
             val chapterTitle = "Part $chapterCounter"
 
-            val fullHtml = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>$chapterTitle</title>
-                    <style>$cssStyle</style>
-                </head>
-                <body>
-                $currentChapterContent
-                </body>
-                </html>
-            """.trimIndent()
+            val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$cssStyle</style>\n</head>\n<body>\n$currentChapterContent\n</body>\n</html>"
 
             FileOutputStream(file).use { it.write(fullHtml.toByteArray()) }
 
@@ -692,20 +670,23 @@ class SingleFileImporter(private val context: Context) {
 
         Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
-        val fullHtml = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>${originalBookNameHint.substringBeforeLast(".")}</title>
-            </head>
-            <body>
-            $htmlContent
-            </body>
-            </html>
-        """.trimIndent()
+        val tempFile = File(context.cacheDir, "temp_docx_${UUID.randomUUID()}.html")
+        try {
+            FileOutputStream(tempFile).bufferedWriter().use { writer ->
+                val title = originalBookNameHint.substringBeforeLast(".")
+                writer.write("<!DOCTYPE html>\n<html>\n<head>\n<title>$title</title>\n</head>\n<body>\n")
+                writer.write(htmlContent)
+                writer.write("\n</body>\n</html>")
+            }
 
-        // 4. Delegate to the already built HTML caching and chunking mechanisms!
-        return@withContext parseHtml(fullHtml.byteInputStream(), originalBookNameHint, bookId, parseContent)
+            tempFile.inputStream().use { tempStream ->
+                return@withContext parseHtml(tempStream, originalBookNameHint, bookId, parseContent)
+            }
+        } finally {
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
+        }
     }
 
     private fun writeHtmlChapter(
@@ -720,18 +701,7 @@ class SingleFileImporter(private val context: Context) {
         val fileName = "page_$pageNum.html"
         val file = File(extractionDir, fileName)
 
-        val fullHtml = """
-            <!DOCTYPE html>
-            <html xmlns="http://www.w3.org/1999/xhtml">
-            <head>
-                <title>${title.replace("\"", "&quot;")}</title>
-                <style>${cssStyle}</style>
-            </head>
-            <body>
-                ${bodyContent.trim()}
-            </body>
-            </html>
-        """.trimIndent()
+        val fullHtml = "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<title>${title.replace("\"", "&quot;")}</title>\n<style>${cssStyle}</style>\n</head>\n<body>\n${bodyContent.trim()}\n</body>\n</html>"
 
         file.writeText(fullHtml)
 
