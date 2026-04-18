@@ -17,7 +17,7 @@ data class VerificationResponse(
 )
 
 class CloudflareRepository {
-    suspend fun verifyPurchase(purchaseToken: String): Result<VerificationResponse> {
+    suspend fun verifyPurchase(purchaseToken: String, productId: String): Result<VerificationResponse> {
         return Result.failure(Exception("Not available in OSS version"))
     }
 }
