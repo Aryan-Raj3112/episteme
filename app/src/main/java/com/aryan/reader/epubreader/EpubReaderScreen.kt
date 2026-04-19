@@ -3246,6 +3246,9 @@ fun EpubReaderHost(
                                         pendingNoteForNewHighlight = true
                                     }
                                 },
+                                onFootnoteRequested = { html ->
+                                    activeFootnoteHtml = html
+                                },
                                 onHighlightDeleted = { cfi ->
                                     val toRemove = userHighlights.find { it.cfi == cfi }
                                     if (toRemove != null) {

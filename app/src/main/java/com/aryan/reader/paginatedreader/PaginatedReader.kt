@@ -55,9 +55,11 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -65,8 +67,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.BlendMode
@@ -74,10 +79,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -127,6 +138,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import coil.ImageLoader
@@ -144,6 +156,7 @@ import com.aryan.reader.epubreader.ReaderTextAlign
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -151,12 +164,17 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
+import org.jsoup.Jsoup
 import timber.log.Timber
 import java.io.File
+import java.net.URI
+import java.net.URLDecoder
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 data class PaginatedSelection(
     val startBlockIndex: Int,
@@ -173,7 +191,7 @@ data class PaginatedSelection(
 )
 
 class ReactiveBlockMap(
-    private val delegate: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>> = androidx.compose.runtime.mutableStateMapOf()
+    private val delegate: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>> = mutableStateMapOf()
 ) : MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>> by delegate {
     var tick by mutableIntStateOf(0)
 
@@ -522,6 +540,7 @@ fun PaginatedReaderScreen(
     onSearch: (String) -> Unit,
     onStartTtsFromSelection: (String, Int) -> Unit,
     onNoteRequested: (String?) -> Unit,
+    onFootnoteRequested: (String) -> Unit,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -540,15 +559,15 @@ fun PaginatedReaderScreen(
     val textureBitmap = remember(activeTextureId) {
         activeTextureId?.let { id ->
             ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
-                androidx.compose.ui.graphics.ImageBitmap.imageResource(context.resources, resId)
+                ImageBitmap.imageResource(context.resources, resId)
             }
         }
     }
 
     val textureModifier = if (textureBitmap != null) {
         Modifier.drawBehind {
-            val brush = androidx.compose.ui.graphics.ShaderBrush(
-                androidx.compose.ui.graphics.ImageShader(textureBitmap, androidx.compose.ui.graphics.TileMode.Repeated, androidx.compose.ui.graphics.TileMode.Repeated)
+            val brush = ShaderBrush(
+                ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)
             )
             drawRect(brush = brush, blendMode = BlendMode.Multiply, alpha = 0.6f)
         }
@@ -849,7 +868,8 @@ fun PaginatedReaderScreen(
                 val result = paginator.getPageContent(pageIndex)
                 val duration = System.currentTimeMillis() - startTime
                 if (duration > 16) {
-                    Timber.tag("PageTurnDiag").w("HEAVY TASK: paginator.getPageContent($pageIndex) took ${duration}ms on Thread ${Thread.currentThread().name}")
+                    Timber.tag("PageTurnDiag")
+                        .w("HEAVY TASK: paginator.getPageContent($pageIndex) took ${duration}ms on Thread ${Thread.currentThread().name}")
                 }
                 result
             },
@@ -866,7 +886,96 @@ fun PaginatedReaderScreen(
                 }
             },
             onLinkClick = { currentChapterPath, href, onNavComplete ->
-                paginator.navigateToHref(currentChapterPath, href, onNavComplete)
+                coroutineScope.launch(Dispatchers.IO) {
+                    var isFootnote = false
+                    var footnoteHtml: String? = null
+
+                    val sourceChapter =
+                        book.chaptersForPagination.find { it.absPath == currentChapterPath }
+                    if (sourceChapter != null) {
+                        val sourceHtml = sourceChapter.htmlContent.ifEmpty {
+                            try {
+                                File(book.extractionBasePath, sourceChapter.htmlFilePath)
+                                    .readText()
+                            } catch (_: Exception) {
+                                ""
+                            }
+                        }
+                        if (sourceHtml.isNotEmpty()) {
+                            val doc = Jsoup.parse(sourceHtml)
+                            val safeHref = href.replace("\"", "\\\"")
+                            val aTag = doc.select("a[href=\"$safeHref\"]").first()
+
+                            if (aTag?.attr("epub:type") == "noteref" || href.startsWith("#")) {
+                                isFootnote = true
+                            }
+                        } else if (href.startsWith("#")) {
+                            isFootnote = true
+                        }
+                    } else if (href.startsWith("#")) {
+                        isFootnote = true
+                    }
+
+                    if (isFootnote) {
+                        val decodedHref = try {
+                            URLDecoder.decode(href, "UTF-8")
+                        } catch (_: Exception) {
+                            href
+                        }
+                        val parts = decodedHref.split('#', limit = 2)
+                        val pathPart = parts[0]
+                        val anchor = if (parts.size > 1) parts[1] else null
+
+                        if (anchor != null) {
+                            val targetPath = if (pathPart.isBlank()) currentChapterPath else {
+                                try {
+                                    URI(currentChapterPath).resolve(pathPart)
+                                        .normalize().path
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+
+                            if (targetPath != null) {
+                                val targetChapter = book.chaptersForPagination.find {
+                                    try {
+                                        URI(it.absPath).normalize().path == targetPath
+                                    } catch (_: Exception) {
+                                        false
+                                    }
+                                }
+
+                                if (targetChapter != null) {
+                                    val targetHtml = targetChapter.htmlContent.ifEmpty {
+                                        try {
+                                            File(
+                                                book.extractionBasePath,
+                                                targetChapter.htmlFilePath
+                                            ).readText()
+                                        } catch (_: Exception) {
+                                            ""
+                                        }
+                                    }
+                                    if (targetHtml.isNotEmpty()) {
+                                        val doc = Jsoup.parse(targetHtml)
+                                        val noteEl = doc.getElementById(anchor)
+                                        if (noteEl != null) {
+                                            footnoteHtml = noteEl.html()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        if (!footnoteHtml.isNullOrBlank()) {
+                            onFootnoteRequested(footnoteHtml)
+                        } else {
+                            paginator.navigateToHref(currentChapterPath, href, onNavComplete)
+                        }
+                    }
+                }
             },
             onTap = onTap,
             isProUser = isProUser,
@@ -1772,7 +1881,7 @@ internal fun PaginatedReaderContent(
         if (uiState.totalPageCount > 0) {
             uiState.generation
 
-            var rootCoords by androidx.compose.runtime.remember { mutableStateOf<LayoutCoordinates?>(null) }
+            var rootCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
             var magnifierCenter by remember { mutableStateOf(Offset.Unspecified) }
 
             val magnifierModifier = if (magnifierCenter.isSpecified) {
@@ -3108,7 +3217,7 @@ internal fun PaginatedReaderContent(
                                 density
                             ) { SmartPopupPositionProvider(menuAnchorRect, density) },
                             onDismissRequest = { activeSelection = null },
-                            properties = androidx.compose.ui.window.PopupProperties(
+                            properties = PopupProperties(
                                 dismissOnClickOutside = false
                             )
                         ) {
@@ -3354,7 +3463,7 @@ internal fun PaginatedReaderContent(
                             activeDragHandle
                         }
 
-                    val latestUpdateSelection by androidx.compose.runtime.rememberUpdatedState(updateSelection)
+                    val latestUpdateSelection by rememberUpdatedState(updateSelection)
 
                     listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
                         val isStart = handleType == SelectionHandle.START
@@ -3455,7 +3564,7 @@ internal fun PaginatedReaderContent(
                                 contentDescription = if (isStart) "Start handle" else "End handle",
                                 modifier = Modifier.size(36.dp).graphicsLayer {
                                     rotationZ = if (isStart) 30f else -30f
-                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                                    transformOrigin = TransformOrigin(0.5f, 0f)
                                 },
                                 tint = Color(0xFF1976D2)
                             )
@@ -3867,7 +3976,7 @@ private fun Modifier.realisticBookPage(
 
             if (pageOffset != 0f) {
                 shadowElevation = 10f
-                shape = androidx.compose.ui.graphics.RectangleShape
+                shape = RectangleShape
                 clip = false
             }
         }
@@ -3897,7 +4006,7 @@ private fun Modifier.realisticBookPage(
 
                 val dx = w - dragX
                 val dy = cornerY - dragY
-                val nLen = kotlin.math.sqrt(dx * dx + dy * dy)
+                val nLen = sqrt(dx * dx + dy * dy)
 
                 // CRITICAL GEOMETRY LOG
                 if (progress > 0.8f) { // Focus logs on the "end" of the turn where the stall happens
@@ -4035,12 +4144,12 @@ fun Modifier.drawCssBorders(
     if (blockStyle.backgroundColor.isSpecified && blockStyle.backgroundColor != Color.Transparent) {
         val bgPath = Path().apply {
             addRoundRect(
-                androidx.compose.ui.geometry.RoundRect(
+                RoundRect(
                     rect = size.toRect(),
-                    topLeft = androidx.compose.ui.geometry.CornerRadius(tlRadius, tlRadius),
-                    topRight = androidx.compose.ui.geometry.CornerRadius(trRadius, trRadius),
-                    bottomRight = androidx.compose.ui.geometry.CornerRadius(brRadius, brRadius),
-                    bottomLeft = androidx.compose.ui.geometry.CornerRadius(blRadius, blRadius)
+                    topLeft = CornerRadius(tlRadius, tlRadius),
+                    topRight = CornerRadius(trRadius, trRadius),
+                    bottomRight = CornerRadius(brRadius, brRadius),
+                    bottomLeft = CornerRadius(blRadius, blRadius)
                 )
             )
         }
@@ -4134,7 +4243,7 @@ fun Modifier.drawCssBorders(
             startAngle = 180f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(leftWidth/2f, topWidth/2f),
-            size = androidx.compose.ui.geometry.Size(tlRadius * 2 - leftWidth, tlRadius * 2 - topWidth),
+            size = Size(tlRadius * 2 - leftWidth, tlRadius * 2 - topWidth),
             style = Stroke(width = topWidth)
         )
     }
@@ -4145,7 +4254,7 @@ fun Modifier.drawCssBorders(
             startAngle = 270f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(size.width - (trRadius * 2) + (rightWidth/2f), topWidth/2f),
-            size = androidx.compose.ui.geometry.Size(trRadius * 2 - rightWidth, trRadius * 2 - topWidth),
+            size = Size(trRadius * 2 - rightWidth, trRadius * 2 - topWidth),
             style = Stroke(width = topWidth)
         )
     }
@@ -4156,7 +4265,7 @@ fun Modifier.drawCssBorders(
             startAngle = 0f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(size.width - (brRadius * 2) + (rightWidth/2f), size.height - (brRadius * 2) + (bottomWidth/2f)),
-            size = androidx.compose.ui.geometry.Size(brRadius * 2 - rightWidth, brRadius * 2 - bottomWidth),
+            size = Size(brRadius * 2 - rightWidth, brRadius * 2 - bottomWidth),
             style = Stroke(width = bottomWidth)
         )
     }
@@ -4167,7 +4276,7 @@ fun Modifier.drawCssBorders(
             startAngle = 90f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(leftWidth/2f, size.height - (blRadius * 2) + (bottomWidth/2f)),
-            size = androidx.compose.ui.geometry.Size(blRadius * 2 - leftWidth, blRadius * 2 - bottomWidth),
+            size = Size(blRadius * 2 - leftWidth, blRadius * 2 - bottomWidth),
             style = Stroke(width = bottomWidth)
         )
     }
