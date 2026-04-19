@@ -28,9 +28,9 @@ import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.RenderMode
@@ -101,11 +101,9 @@ fun TtsSessionObserver(
     chapters: List<EpubChapter>,
     epubBookTitle: String,
     coverImagePath: String?,
-    // Vertical Mode Dependencies
     webViewRef: WebView?,
     loadedChunkCount: Int,
     totalChunksInChapter: Int,
-    // Paginated Mode Dependencies
     paginator: IPaginator?,
     pagerState: PagerState,
     ttsChapterIndex: Int?,
@@ -115,59 +113,94 @@ fun TtsSessionObserver(
     userStoppedTts: Boolean,
     scope: CoroutineScope,
     currentTtsMode: TtsMode,
-    getAuthToken: suspend () -> String?
+    getAuthToken: suspend () -> String?,
+    locatorConverter: com.aryan.reader.paginatedreader.LocatorConverter, // NEW
+    epubBook: com.aryan.reader.epub.EpubBook // NEW
 ) {
-    val prevTtsState = remember { mutableStateOf(ttsState) }
+    val currentRenderModeState = rememberUpdatedState(currentRenderMode)
+    val loadedChunkCountState = rememberUpdatedState(loadedChunkCount)
+    val totalChunksInChapterState = rememberUpdatedState(totalChunksInChapter)
+    val ttsChapterIndexState = rememberUpdatedState(ttsChapterIndex)
+    val userStoppedTtsState = rememberUpdatedState(userStoppedTts)
+    val chaptersState = rememberUpdatedState(chapters)
+    val webViewRefState = rememberUpdatedState(webViewRef)
+    val paginatorState = rememberUpdatedState(paginator)
+    val pagerStateState = rememberUpdatedState(pagerState)
+    val onToggleTtsStartOnLoadState = rememberUpdatedState(onToggleTtsStartOnLoad)
+    val onNavigateToChapterState = rememberUpdatedState(onNavigateToChapter)
+    val onTtsChapterIndexChangeState = rememberUpdatedState(onTtsChapterIndexChange)
+    val locatorConverterState = rememberUpdatedState(locatorConverter) // NEW
+    val epubBookState = rememberUpdatedState(epubBook) // NEW
 
-    LaunchedEffect(ttsState) {
-        val wasPlaying = prevTtsState.value.isPlaying
-        val isPlaying = ttsState.isPlaying
-        val sessionFinished = ttsState.sessionFinished
-        val wasSessionFinished = prevTtsState.value.sessionFinished
-        val sessionEndedByStop = ttsState.sessionEndedByStop
-        val isReaderSource = ttsState.playbackSource == "READER"
+    DisposableEffect(ttsController) {
+        val job = scope.launch {
+            var wasPlaying = false
+            var wasSessionFinished = false
 
-        if (isReaderSource) {
-            if (sessionFinished && !wasSessionFinished) {
-                Timber.d("TTS finished naturally. Checking for next content.")
+            ttsController.ttsState.collect { currentState ->
+                val isPlaying = currentState.isPlaying
+                val sessionFinished = currentState.sessionFinished
+                val sessionEndedByStop = currentState.sessionEndedByStop
+                val isReaderSource = currentState.playbackSource == "READER"
 
-                if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
-                    handleVerticalAutoAdvance(
-                        webViewRef = webViewRef,
-                        loadedChunkCount = loadedChunkCount,
-                        totalChunksInChapter = totalChunksInChapter,
-                        currentTtsChapterIndex = ttsChapterIndex,
-                        totalChapters = chapters.size,
-                        onNavigateToNextChapter = { nextIndex ->
-                            onToggleTtsStartOnLoad(true)
-                            onNavigateToChapter(nextIndex)
-                        },
-                        onStopTts = { onTtsChapterIndexChange(null) }
-                    )
-                } else if (currentRenderMode == RenderMode.PAGINATED) {
-                    handlePaginatedAutoAdvance(
-                        ttsController = ttsController,
-                        paginator = paginator,
-                        pagerState = pagerState,
-                        chapters = chapters,
-                        currentTtsChapterIndex = ttsChapterIndex,
-                        epubBookTitle = epubBookTitle,
-                        coverImagePath = coverImagePath,
-                        onUpdateTtsChapter = onTtsChapterIndexChange,
-                        scope = scope,
-                        ttsMode = currentTtsMode,
-                        getAuthToken = getAuthToken
-                    )
+                if (isReaderSource) {
+                    if (sessionFinished && !wasSessionFinished) {
+                        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("TTS finished naturally. Checking for next content.")
+
+                        if (currentRenderModeState.value == RenderMode.VERTICAL_SCROLL) {
+                            handleVerticalAutoAdvance(
+                                webViewRef = webViewRefState.value,
+                                loadedChunkCount = loadedChunkCountState.value,
+                                totalChunksInChapter = totalChunksInChapterState.value,
+                                currentTtsChapterIndex = ttsChapterIndexState.value,
+                                totalChapters = chaptersState.value.size,
+                                onNavigateToNextChapter = { nextIndex ->
+                                    onToggleTtsStartOnLoadState.value(false)
+                                    onNavigateToChapterState.value(nextIndex)
+                                },
+                                onUpdateTtsChapter = onTtsChapterIndexChangeState.value,
+                                onStopTts = { onTtsChapterIndexChangeState.value(null) },
+                                chapters = chaptersState.value,
+                                currentTtsMode = currentTtsMode,
+                                epubBookTitle = epubBookTitle,
+                                coverImagePath = coverImagePath,
+                                getAuthToken = getAuthToken,
+                                ttsController = ttsController,
+                                scope = this,
+                                locatorConverter = locatorConverterState.value,
+                                epubBook = epubBookState.value
+                            )
+                        } else if (currentRenderModeState.value == RenderMode.PAGINATED) {
+                            handlePaginatedAutoAdvance(
+                                ttsController = ttsController,
+                                paginator = paginatorState.value,
+                                pagerState = pagerStateState.value,
+                                chapters = chaptersState.value,
+                                currentTtsChapterIndex = ttsChapterIndexState.value,
+                                epubBookTitle = epubBookTitle,
+                                coverImagePath = coverImagePath,
+                                onUpdateTtsChapter = onTtsChapterIndexChangeState.value,
+                                scope = this,
+                                ttsMode = currentTtsMode,
+                                getAuthToken = getAuthToken
+                            )
+                        }
+                    } else if (wasPlaying && !isPlaying && !sessionFinished) {
+                        if (userStoppedTtsState.value || sessionEndedByStop) {
+                            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("TTS stopped by user/stop command.")
+                            onTtsChapterIndexChangeState.value(null)
+                        }
+                    }
                 }
-            } else if (wasPlaying && !isPlaying && !sessionFinished) {
-                // Playback stopped/paused
-                if (userStoppedTts || sessionEndedByStop) {
-                    Timber.d("TTS stopped by user/stop command.")
-                    onTtsChapterIndexChange(null)
-                }
+
+                wasPlaying = isPlaying
+                wasSessionFinished = sessionFinished
             }
         }
-        prevTtsState.value = ttsState
+
+        onDispose {
+            job.cancel()
+        }
     }
 }
 
@@ -186,7 +219,6 @@ fun TtsHighlightHandler(
     ttsChapterIndex: Int?,
     scope: CoroutineScope
 ) {
-    // 1. Vertical & General Highlighting (WebView)
     LaunchedEffect(ttsState.currentText, ttsState.sourceCfi, ttsState.startOffsetInSource, webViewRef) {
         val text = ttsState.currentText
         val cfi = ttsState.sourceCfi
@@ -195,7 +227,6 @@ fun TtsHighlightHandler(
         if (!text.isNullOrBlank() && !cfi.isNullOrBlank() && offset != -1) {
             val escapedText = escapeJsString(text)
             val escapedCfi = escapeJsString(cfi)
-            // Use window.highlightFromCfi defined in epub_reader.js
             val jsCommand = "javascript:window.highlightFromCfi('$escapedCfi', '$escapedText', $offset);"
             webViewRef?.evaluateJavascript(jsCommand, null)
         } else {
@@ -205,7 +236,6 @@ fun TtsHighlightHandler(
         }
     }
 
-    // 2. Paginated Page Turning (Sentence/Fragment level)
     LaunchedEffect(ttsState.sourceCfi, ttsState.startOffsetInSource, paginator, ttsChapterIndex) {
         if (currentRenderMode != RenderMode.PAGINATED) return@LaunchedEffect
 
@@ -218,7 +248,7 @@ fun TtsHighlightHandler(
 
         if (targetPage != null && targetPage != pagerState.currentPage) {
             scope.launch {
-                pagerState.animateScrollToPage(targetPage)
+                pagerState.scrollToPage(targetPage)
             }
         }
     }
@@ -226,6 +256,7 @@ fun TtsHighlightHandler(
 
 // --- Internal Helper Functions ---
 
+@OptIn(UnstableApi::class)
 private fun handleVerticalAutoAdvance(
     webViewRef: WebView?,
     loadedChunkCount: Int,
@@ -233,20 +264,88 @@ private fun handleVerticalAutoAdvance(
     currentTtsChapterIndex: Int?,
     totalChapters: Int,
     onNavigateToNextChapter: (Int) -> Unit,
-    onStopTts: () -> Unit
+    onUpdateTtsChapter: (Int?) -> Unit,
+    onStopTts: () -> Unit,
+    chapters: List<EpubChapter>,
+    currentTtsMode: TtsMode,
+    epubBookTitle: String,
+    coverImagePath: String?,
+    getAuthToken: suspend () -> String?,
+    ttsController: TtsController,
+    scope: CoroutineScope,
+    locatorConverter: com.aryan.reader.paginatedreader.LocatorConverter,
+    epubBook: com.aryan.reader.epub.EpubBook
 ) {
-    if (loadedChunkCount < totalChunksInChapter) {
-        Timber.d("Vertical: Loading next chunk for TTS.")
-        webViewRef?.evaluateJavascript("javascript:window.virtualization.loadNextChunk();", null)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            webViewRef?.evaluateJavascript("javascript:TtsBridgeHelper.extractAndRelayText();", null)
-        }, 500)
-    } else {
-        if (currentTtsChapterIndex != null && currentTtsChapterIndex < totalChapters - 1) {
-            Timber.d("Vertical: Chapter finished, moving to next.")
-            onNavigateToNextChapter(currentTtsChapterIndex + 1)
-        } else {
-            Timber.d("Vertical: End of book.")
+    if (currentTtsChapterIndex == null) return
+
+    scope.launch {
+        val currentState = ttsController.ttsState.value
+        val lastReadCfi = currentState.sourceCfi
+
+        if (loadedChunkCount < totalChunksInChapter) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Vertical: Loading remaining text of current chapter natively.")
+            val nativeChunks = locatorConverter.getTtsChunksForChapter(epubBook, currentTtsChapterIndex)
+
+            if (!nativeChunks.isNullOrEmpty() && lastReadCfi != null) {
+                val lastCfiPath = lastReadCfi.split(":")[0]
+                val resumeIdx = nativeChunks.indexOfLast { it.sourceCfi.split(":")[0] == lastCfiPath }
+
+                if (resumeIdx != -1 && resumeIdx + 1 < nativeChunks.size) {
+                    val remainingChunks = nativeChunks.subList(resumeIdx + 1, nativeChunks.size)
+                    val token = getAuthToken()
+                    ttsController.start(
+                        chunks = remainingChunks,
+                        bookTitle = epubBookTitle,
+                        chapterTitle = chapters.getOrNull(currentTtsChapterIndex)?.title,
+                        coverImageUri = coverImagePath?.let { android.net.Uri.fromFile(File(it)).toString() },
+                        ttsMode = currentTtsMode,
+                        playbackSource = "READER",
+                        authToken = token
+                    )
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        webViewRef?.evaluateJavascript("javascript:if(window.virtualization && window.virtualization.loadNextChunk) window.virtualization.loadNextChunk();", null)
+                    }
+                    return@launch
+                }
+            }
+        }
+
+        var nextIdx = currentTtsChapterIndex + 1
+        var foundContent = false
+
+        while (nextIdx < totalChapters) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Vertical: Trying chapter $nextIdx natively.")
+            val nativeChunks = locatorConverter.getTtsChunksForChapter(epubBook, nextIdx)
+
+            if (!nativeChunks.isNullOrEmpty()) {
+                val token = getAuthToken()
+
+                onUpdateTtsChapter(nextIdx)
+
+                ttsController.start(
+                    chunks = nativeChunks,
+                    bookTitle = epubBookTitle,
+                    chapterTitle = chapters.getOrNull(nextIdx)?.title,
+                    coverImageUri = coverImagePath?.let { Uri.fromFile(File(it)).toString() },
+                    ttsMode = currentTtsMode,
+                    playbackSource = "READER",
+                    authToken = token
+                )
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    onNavigateToNextChapter(nextIdx)
+                }
+
+                foundContent = true
+                break
+            } else {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Vertical: Chapter $nextIdx is empty natively. Skipping to next.")
+                nextIdx++
+            }
+        }
+
+        if (!foundContent) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Vertical: Reached end of book or no more valid content.")
             onStopTts()
         }
     }
@@ -268,7 +367,7 @@ private fun handlePaginatedAutoAdvance(
     getAuthToken: suspend () -> String?
 ) {
     if (currentTtsChapterIndex != null && currentTtsChapterIndex < chapters.size - 1) {
-        Timber.d("Paginated: Searching for next TTS content...")
+        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: Searching for next TTS content...")
 
         scope.launch {
             var chapterToTry = currentTtsChapterIndex + 1
@@ -283,19 +382,18 @@ private fun handlePaginatedAutoAdvance(
             while (chapterToTry < chapters.size) {
                 val targetPage = bookPaginator.chapterStartPageIndices[chapterToTry]
                 if (targetPage != null && pagerState.currentPage != targetPage) {
-                    pagerState.animateScrollToPage(targetPage)
-                    delay(300)
+                    // CHANGED: Fire-and-forget scroll without frame blocking!
+                    launch { pagerState.scrollToPage(targetPage) }
                 }
 
                 val nextChapterChunks = bookPaginator.getTtsChunksForChapter(chapterToTry)
 
                 if (!nextChapterChunks.isNullOrEmpty()) {
-                    Timber.d("Paginated: Found content in chapter $chapterToTry. Starting.")
+                    Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: Found content in chapter $chapterToTry. Starting.")
                     onUpdateTtsChapter(chapterToTry)
 
                     val chapterTitle = chapters.getOrNull(chapterToTry)?.title
                     val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
-
                     val token = getAuthToken()
 
                     ttsController.start(
@@ -310,20 +408,13 @@ private fun handlePaginatedAutoAdvance(
                     foundContent = true
                     break
                 } else {
-                    Timber.d("Paginated: Chapter $chapterToTry is empty. Skipping.")
-                    val pageCount = bookPaginator.chapterPageCounts[chapterToTry] ?: 0
-                    if (pageCount > 1) {
-                        for (i in 1 until pageCount) {
-                            pagerState.animateScrollToPage(targetPage!! + i)
-                            delay(400)
-                        }
-                    }
+                    Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: Chapter $chapterToTry is empty. Skipping.")
                     chapterToTry++
                 }
             }
 
             if (!foundContent) {
-                Timber.d("Paginated: No more content found.")
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: No more content found.")
                 onUpdateTtsChapter(null)
             }
         }

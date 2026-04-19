@@ -126,7 +126,7 @@ class AutoScrollJsBridge(
     }
 }
 
-@Suppress("unused") // function used by JavaScript
+@Suppress("unused")
 class TtsJsBridge(
     private val scope: CoroutineScope,
     private val ttsStructuredTextHandler: suspend (String) -> Unit
@@ -135,12 +135,12 @@ class TtsJsBridge(
     fun onStructuredTextExtracted(json: String) {
         Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("JS Bridge received JSON. Length: ${json.length}")
         if (json.isNotBlank() && json != "[]") {
-            scope.launch {
+            scope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 ttsStructuredTextHandler(json)
             }
         } else {
             Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("JS Bridge received empty or blank JSON. This may trigger a chapter skip.")
-            scope.launch {
+            scope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 ttsStructuredTextHandler("[]")
             }
         }

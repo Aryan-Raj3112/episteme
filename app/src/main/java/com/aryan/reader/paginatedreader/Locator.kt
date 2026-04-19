@@ -224,6 +224,61 @@ class LocatorConverter(
         return bestMatch
     }
 
+    suspend fun getTtsChunksForChapter(book: EpubBook, chapterIndex: Int): List<TtsChunk>? = withContext(Dispatchers.IO) {
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = chapterIndex)
+
+        var allBlocks: List<SemanticBlock>? = null
+        if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
+            allBlocks = try {
+                proto.decodeFromByteArray<List<SemanticBlock>>(processedChapter.contentBlocksProto)
+            } catch (_: Exception) { null }
+        }
+
+        if (allBlocks.isNullOrEmpty()) {
+            allBlocks = processAndCacheChapter(book, chapterIndex)
+        }
+
+        if (allBlocks.isNullOrEmpty()) return@withContext null
+
+        val chunks = mutableListOf<TtsChunk>()
+
+        fun traverse(blocks: List<SemanticBlock>) {
+            for (block in blocks) {
+                if (block is SemanticTextBlock && block.cfi != null && block.text.isNotBlank()) {
+                    val subChunks = com.aryan.reader.tts.splitTextIntoChunks(block.text)
+                    var currentSearchIndex = 0
+                    for (chunkText in subChunks) {
+                        val firstWord = chunkText.trim().substringBefore(' ')
+                        val relativeOffset = if (firstWord.isNotEmpty()) {
+                            val idx = block.text.indexOf(firstWord, currentSearchIndex)
+                            if (idx != -1) idx else currentSearchIndex
+                        } else {
+                            currentSearchIndex
+                        }
+                        chunks.add(
+                            TtsChunk(
+                                text = chunkText,
+                                sourceCfi = block.cfi!!,
+                                startOffsetInSource = block.startCharOffsetInSource + relativeOffset
+                            )
+                        )
+                        currentSearchIndex = relativeOffset + chunkText.length
+                    }
+                }
+                when (block) {
+                    is SemanticFlexContainer -> traverse(block.children)
+                    is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> traverse(cell.content) } }
+                    is SemanticList -> traverse(block.items)
+                    is SemanticWrappingBlock -> traverse(block.paragraphsToWrap)
+                    else -> Unit
+                }
+            }
+        }
+
+        traverse(allBlocks)
+        chunks
+    }
+
     suspend fun getCfiFromLocator(book: EpubBook, locator: Locator): String? = withContext(Dispatchers.IO) {
         Timber.tag("POS_DIAG").d("getCfiFromLocator: Input $locator")
         val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)

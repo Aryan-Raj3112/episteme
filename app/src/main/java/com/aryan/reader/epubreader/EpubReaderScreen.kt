@@ -809,7 +809,6 @@ fun EpubReaderHost(
 
     var ttsShouldStartOnChapterLoad by remember { mutableStateOf(false) }
     var userStoppedTts by remember { mutableStateOf(false) }
-    var skipChapterRequest by remember { mutableStateOf(false) }
     var ttsChapterIndex by remember { mutableStateOf<Int?>(null) }
 
     var searchHighlightTarget by remember { mutableStateOf<SearchResult?>(null) }
@@ -1000,38 +999,6 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(ttsState.sessionFinished) {
-        if (ttsState.sessionFinished) {
-            val hasMoreChapters = currentChapterIndex < chapters.size - 1
-            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("UI received sessionFinished. currentChapterIndex: $currentChapterIndex, hasMoreChapters: $hasMoreChapters, userStoppedTts: $userStoppedTts")
-
-            if (!userStoppedTts && hasMoreChapters) {
-                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Automatically triggering skipChapterRequest.")
-                ttsShouldStartOnChapterLoad = true
-                skipChapterRequest = true
-            } else {
-                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("Will not auto-skip. userStopped: $userStoppedTts, lastChapter: ${!hasMoreChapters}")
-            }
-        }
-    }
-
-    LaunchedEffect(skipChapterRequest) {
-        if (skipChapterRequest) {
-            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Processing skipChapterRequest. current: $currentChapterIndex, startOnLoad: $ttsShouldStartOnChapterLoad")
-            skipChapterRequest = false
-            if (ttsShouldStartOnChapterLoad && currentChapterIndex < chapters.size - 1) {
-                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("Executing navigation to index: ${currentChapterIndex + 1}")
-                initialScrollTargetForChapter = ChapterScrollPosition.START
-                currentScrollYPosition = 0
-                currentScrollHeightValue = 0
-                currentChapterIndex++
-            } else {
-                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("Skip request ignored: end of book or ttsShouldStartOnChapterLoad is false.")
-                ttsShouldStartOnChapterLoad = false
-            }
-        }
-    }
-
     val searchState = rememberSearchState(scope = scope, searcher = epubSearcher)
     val speakerPlayer = remember(context, scope) {
         SpeakerSamplePlayer(context, scope, getAuthToken = { viewModel.getAuthToken() })
@@ -1153,7 +1120,7 @@ fun EpubReaderHost(
     }
 
     fun startTts() {
-        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -1211,7 +1178,7 @@ fun EpubReaderHost(
     )
 
     fun startTtsFromSelectionPaginated(baseCfi: String, startOffset: Int) {
-        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -1307,7 +1274,9 @@ fun EpubReaderHost(
         userStoppedTts = userStoppedTts,
         scope = scope,
         currentTtsMode = currentTtsMode,
-        getAuthToken = { viewModel.getAuthToken() }
+        getAuthToken = { viewModel.getAuthToken() },
+        locatorConverter = locatorConverter,
+        epubBook = epubBook
     )
 
     TtsHighlightHandler(
@@ -2860,8 +2829,14 @@ fun EpubReaderHost(
                                                     } else {
                                                         Timber.w("No TTS chunks were created from JSON, not starting TTS.")
                                                         if (ttsShouldStartOnChapterLoad) {
-                                                            Timber.d("Empty chapter detected during continuous TTS. Requesting skip.")
-                                                            skipChapterRequest = true
+                                                            Timber.d("Empty chapter detected during start. Advancing UI to next chapter.")
+                                                            val nextIdx = targetChapterIndex + 1
+                                                            if (nextIdx < chapters.size) {
+                                                                initialScrollTargetForChapter = ChapterScrollPosition.START
+                                                                currentScrollYPosition = 0
+                                                                currentScrollHeightValue = 0
+                                                                currentChapterIndex = nextIdx
+                                                            }
                                                         }
                                                     }
                                                 }
