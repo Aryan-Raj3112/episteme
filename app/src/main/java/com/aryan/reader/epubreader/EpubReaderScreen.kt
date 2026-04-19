@@ -498,6 +498,7 @@ fun EpubReaderHost(
 
     var pendingNoteForNewHighlight by remember { mutableStateOf(false) }
     var highlightToNoteCfi by remember { mutableStateOf<String?>(null) }
+    var activeFootnoteHtml by remember { mutableStateOf<String?>(null) }
 
     var showJustifyWarningDialog by remember { mutableStateOf(false) }
     var isNavigatingByToc by remember { mutableStateOf(false) }
@@ -2900,6 +2901,9 @@ fun EpubReaderHost(
                                                     )
                                                 }
                                             },
+                                            onFootnoteRequested = { html ->
+                                                activeFootnoteHtml = html
+                                            },
                                             isProUser = isProUser,
                                             isOss = BuildConfig.FLAVOR == "oss",
                                             onShowDictionaryUpsellDialog = {
@@ -4316,6 +4320,15 @@ fun EpubReaderHost(
                             }
                         )
                     }
+                }
+
+                if (activeFootnoteHtml != null) {
+                    FootnoteBottomSheet(
+                        htmlContent = activeFootnoteHtml!!,
+                        effectiveBg = effectiveBg,
+                        effectiveText = effectiveText,
+                        onDismiss = { activeFootnoteHtml = null }
+                    )
                 }
 
                 CustomTopBanner(bannerMessage = bannerMessage)

@@ -442,14 +442,70 @@
         return false;
     }
 
+    function getFootnoteContent(targetId) {
+        console.log("FootnoteDiag: Searching for footnote content with id: '" + targetId + "'");
+
+        var el = document.getElementById(targetId);
+        if (el) {
+            console.log("FootnoteDiag: Found element directly in DOM.");
+            return el.innerHTML;
+        }
+
+        console.log("FootnoteDiag: Element not in DOM, checking virtualized chunks.");
+        if (window.virtualization && window.virtualization.chunksData) {
+            for (var i = 0; i < window.virtualization.chunksData.length; i++) {
+                var chunkHtml = window.virtualization.chunksData[i];
+                if (chunkHtml && chunkHtml.indexOf('id="' + targetId + '"') !== -1) {
+                    console.log("FootnoteDiag: Found potential id match in chunk " + i);
+                    var tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = chunkHtml;
+                    var found = tempDiv.querySelector('#' + targetId);
+                    if (found) {
+                        console.log("FootnoteDiag: Successfully extracted note from chunk " + i + ".");
+                        return found.innerHTML;
+                    }
+                }
+            }
+        }
+        console.log("FootnoteDiag: Footnote content not found anywhere.");
+        return null;
+    }
+
     // 1. Handle Taps (Click)
-    document.addEventListener(
-        "click",
-        function (e) {
-            handleHighlightInteraction(e);
-        },
-        true
-    );
+    document.addEventListener("click", function (e) {
+        if (handleHighlightInteraction(e)) return;
+
+        var target = e.target;
+        var anchor = target.closest('a');
+
+        if (anchor) {
+            var href = anchor.getAttribute('href');
+            var epubType = anchor.getAttribute('epub:type');
+
+            console.log("FootnoteDiag: Link clicked. href: '" + href + "', epub:type: '" + epubType + "'");
+
+            if ((href && href.startsWith('#')) || epubType === 'noteref') {
+                var targetId = href ? href.substring(1) : null;
+                console.log("FootnoteDiag: Extracted targetId: '" + targetId + "'");
+
+                if (targetId) {
+                    var content = getFootnoteContent(targetId);
+                    if (content && window.FootnoteBridge) {
+                        console.log("FootnoteDiag: Content extracted, sending to Kotlin Bridge.");
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        window.FootnoteBridge.onFootnoteRequested(content);
+                        return;
+                    } else if (!content) {
+                        console.log("FootnoteDiag: Failed to get content. Link might just be a regular anchor.");
+                    } else if (!window.FootnoteBridge) {
+                        console.log("FootnoteDiag: window.FootnoteBridge is undefined!");
+                    }
+                }
+            }
+        }
+    }, true);
 
     window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap) {
         var logTag = "ReaderFontDiagnosis";

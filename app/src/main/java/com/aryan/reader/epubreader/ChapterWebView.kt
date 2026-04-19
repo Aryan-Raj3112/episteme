@@ -302,6 +302,17 @@ class AiJsBridge(
     }
 }
 
+@Suppress("unused")
+class FootnoteJsBridge(
+    private val onFootnoteRequestCallback: (String) -> Unit
+) {
+    @JavascriptInterface
+    fun onFootnoteRequested(htmlContent: String) {
+        Timber.tag("FootnoteDiag").d("Kotlin Bridge received footnote content. Length: ${htmlContent.length}")
+        onFootnoteRequestCallback(htmlContent)
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ChapterWebView(
@@ -351,6 +362,7 @@ fun ChapterWebView(
     onSearch: (String) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onContentReadyForSummarization: suspend (String) -> Unit,
+    onFootnoteRequested: (String) -> Unit,
     currentFontFamily: ReaderFont,
     customFontPath: String? = null,
     currentTextAlign: ReaderTextAlign,
@@ -538,6 +550,11 @@ fun ChapterWebView(
                             consoleMessage?.let {
                                 val message = it.message()
                                 when {
+                                    message.startsWith("FootnoteDiag:") -> {
+                                        Timber.tag("FootnoteDiag")
+                                            .d("JS -> ${message.substringAfter("FootnoteDiag: ")}")
+                                    }
+
                                     message.startsWith("TTS_CHAPTER_CHANGE_DIAG:") -> {
                                         Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("JS -> ${message.substringAfter("TTS_CHAPTER_CHANGE_DIAG: ")}")
                                     }
@@ -628,6 +645,12 @@ fun ChapterWebView(
                     addJavascriptInterface(TtsJsBridge(ttsScope, onTtsTextReady), "TtsBridge")
                     addJavascriptInterface(
                         AiJsBridge(ttsScope, onContentReadyForSummarization), "AiBridge"
+                    )
+
+                    addJavascriptInterface(
+                        FootnoteJsBridge { html ->
+                            this.post { onFootnoteRequested(html) }
+                        }, "FootnoteBridge"
                     )
 
                     webViewClient = object : WebViewClient() {

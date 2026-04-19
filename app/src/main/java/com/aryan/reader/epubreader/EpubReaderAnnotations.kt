@@ -20,6 +20,7 @@
 package com.aryan.reader.epubreader
 
 import android.content.Context
+import android.widget.TextView
 import timber.log.Timber
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -54,15 +55,19 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
+import androidx.core.text.HtmlCompat
 import com.aryan.reader.R
 import com.aryan.reader.epub.EpubChapter
 import org.json.JSONArray
@@ -901,6 +906,89 @@ fun PaginatedTextSelectionMenu(
                             Spacer(modifier = Modifier.width(64.dp))
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FootnoteBottomSheet(
+    htmlContent: String,
+    effectiveBg: Color,
+    effectiveText: Color,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val maxSheetHeight = configuration.screenHeightDp.dp * 0.5f
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = effectiveBg,
+        contentColor = effectiveText,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxSheetHeight)
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.label_note),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Surface(
+                color = effectiveText.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, effectiveText.copy(alpha = 0.1f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+                    AndroidView(
+                        factory = { context ->
+                            TextView(context).apply {
+                                setTextColor(effectiveText.toArgb())
+                                textSize = 16f
+                                setLineSpacing(0f, 1.4f)
+
+                                isVerticalScrollBarEnabled = false
+                                movementMethod = null
+                            }
+                        },
+                        update = { textView ->
+                            textView.text = HtmlCompat.fromHtml(
+                                htmlContent,
+                                HtmlCompat.FROM_HTML_MODE_COMPACT
+                            ).trimEnd()
+                        }
+                    )
                 }
             }
         }
