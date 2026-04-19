@@ -37,10 +37,13 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
-import com.aryan.reader.data.PlatformFeaturesRepository // Import the new repo
+import com.aryan.reader.data.PlatformFeaturesRepository
 import com.aryan.reader.ui.theme.AppTheme
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class MainActivity : ComponentActivity() {
 
@@ -78,7 +81,19 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            AppTheme {
+            val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+            val darkTheme = when (uiState.appThemeMode) {
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            AppTheme(
+                darkTheme = darkTheme,
+                dynamicColor = uiState.appSeedColor == null,
+                seedColor = uiState.appSeedColor
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

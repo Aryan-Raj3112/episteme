@@ -31,6 +31,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,7 +57,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
@@ -116,6 +120,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -125,6 +131,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
@@ -151,6 +158,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val customTabUriHandler = remember { CustomTabUriHandler(context) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
+    var showAppThemePanel by remember { mutableStateOf(false) }
 
     CompositionLocalProvider(LocalUriHandler provides customTabUriHandler) {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -326,7 +334,8 @@ fun HomeScreen(
                                     } else {
                                         showStrictFilterDialog = true
                                     }
-                                }
+                                },
+                                onAppThemeClick = { showAppThemePanel = true }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -497,6 +506,17 @@ fun HomeScreen(
                                 showStrictFilterDialog = false
                             },
                             onDismiss = { showStrictFilterDialog = false }
+                        )
+                    }
+
+                    if (showAppThemePanel) {
+                        AppThemeBottomSheet(
+                            uiState = uiState,
+                            onThemeModeChanged = viewModel::setAppThemeMode,
+                            onSeedColorChanged = viewModel::setAppSeedColor,
+                            onCustomThemeAdded = viewModel::addCustomAppTheme,
+                            onCustomThemeDeleted = viewModel::deleteCustomAppTheme,
+                            onDismiss = { showAppThemePanel = false }
                         )
                     }
                 }
@@ -879,7 +899,8 @@ fun DefaultTopAppBar(
     onRecentFilesLimitChange: (Int) -> Unit,
     onTabsToggle: (Boolean) -> Unit,
     onExternalFileBehaviorClick: () -> Unit,
-    onStrictFilterToggleClick: () -> Unit
+    onStrictFilterToggleClick: () -> Unit,
+    onAppThemeClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -896,6 +917,11 @@ fun DefaultTopAppBar(
             }
         }
     }, actions = {
+        Box {
+            IconButton(onClick = onAppThemeClick) {
+                Icon(painterResource(id = R.drawable.palette), contentDescription = "App Theme")
+            }
+        }
         // Recent Files Limit Menu
         Box {
             IconButton(onClick = { showLimitMenu = true }) {
@@ -1537,4 +1563,309 @@ fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
         confirmButton = { TextButton(onClick = onConfirm) { Text("Enable") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppThemeBottomSheet(
+    uiState: ReaderScreenState,
+    onThemeModeChanged: (AppThemeMode) -> Unit,
+    onSeedColorChanged: (Color?) -> Unit,
+    onCustomThemeAdded: (CustomAppTheme) -> Unit,
+    onCustomThemeDeleted: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showCreateDialog by remember { mutableStateOf(false) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Text(
+                text = "App Theme",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Text("Appearance", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
+                AppThemeMode.entries.forEach { mode ->
+                    val isSelected = uiState.appThemeMode == mode
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                            .clickable { onThemeModeChanged(mode) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(mode.displayName, color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Text("Color Scheme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    ThemeSwatch(
+                        color = MaterialTheme.colorScheme.primary,
+                        isSelected = uiState.appSeedColor == null,
+                        label = "Dynamic",
+                        onClick = { onSeedColorChanged(null) }
+                    )
+                }
+                val presets = listOf(
+                    "Default" to Color(0xFF6750A4),
+                    "Ocean" to Color(0xFF00668B),
+                    "Mint" to Color(0xFF006C4C),
+                    "Rose" to Color(0xFF9C4146)
+                )
+                items(presets.size) { i ->
+                    val (label, color) = presets[i]
+                    ThemeSwatch(
+                        color = color,
+                        isSelected = uiState.appSeedColor == color,
+                        label = label,
+                        onClick = { onSeedColorChanged(color) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("My Themes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                IconButton(onClick = { showCreateDialog = true }, modifier = Modifier.size(24.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Custom Theme", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            if (uiState.customAppThemes.isEmpty()) {
+                Text("No custom themes yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(uiState.customAppThemes) { theme ->
+                        ThemeSwatch(
+                            color = theme.seedColor,
+                            isSelected = uiState.appSeedColor == theme.seedColor,
+                            label = theme.name,
+                            onClick = { onSeedColorChanged(theme.seedColor) },
+                            onDelete = { onCustomThemeDeleted(theme.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateDialog) {
+        CreateAppThemeDialog(
+            onDismiss = { showCreateDialog = false },
+            onSave = { name, color ->
+                onCustomThemeAdded(CustomAppTheme(id = System.currentTimeMillis().toString(), name = name, seedColor = color))
+                showCreateDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun ThemeSwatch(
+    color: Color,
+    isSelected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .background(color, CircleShape)
+                .border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            if (isSelected) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = if (color.luminance() > 0.5f) Color.Black else Color.White)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 64.dp))
+            if (onDelete != null) {
+                Icon(Icons.Default.Close, contentDescription = "Delete", modifier = Modifier.size(16.dp).clickable { onDelete() }, tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+fun CreateAppThemeDialog(
+    initialColor: Color = Color(0xFF6750A4),
+    onDismiss: () -> Unit,
+    onSave: (String, Color) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+
+    val initialHsv = remember(initialColor) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
+        hsv
+    }
+
+    var hue by androidx.compose.runtime.mutableFloatStateOf(initialHsv[0])
+    var saturation by androidx.compose.runtime.mutableFloatStateOf(initialHsv[1])
+    var value by androidx.compose.runtime.mutableFloatStateOf(initialHsv[2])
+
+    val currentColor by remember {
+        androidx.compose.runtime.derivedStateOf {
+            val hsv = floatArrayOf(hue, saturation, value)
+            Color(android.graphics.Color.HSVToColor(255, hsv))
+        }
+    }
+
+    fun updateFromColor(color: Color) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        hue = hsv[0]
+        saturation = hsv[1]
+        value = hsv[2]
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            color = Color(0xFF2C2C2C),
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Create App Theme",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                androidx.compose.material3.OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Theme Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = currentColor,
+                        focusedLabelColor = currentColor,
+                    )
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                SpectrumBox(
+                    hue = hue,
+                    saturation = saturation,
+                    currentColor = currentColor,
+                    onHueSatChanged = { h, s -> hue = h; saturation = s },
+                    modifier = Modifier.fillMaxWidth().height(220.dp)
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                BrightnessSlider(
+                    hue = hue,
+                    saturation = saturation,
+                    value = value,
+                    onValueChanged = { value = it },
+                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ColorComparePill(
+                        oldColor = initialColor,
+                        newColor = currentColor,
+                        modifier = Modifier.width(64.dp).height(36.dp)
+                    )
+
+                    Column(
+                        modifier = Modifier.weight(1.6f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("HEX", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Spacer(Modifier.height(4.dp))
+                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(2.4f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RgbInputColumn(label = "R", value = currentColor.red,
+                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(label = "G", value = currentColor.green,
+                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RgbInputColumn(label = "B", value = currentColor.blue,
+                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = Color.Gray)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.material3.Button(
+                        onClick = { onSave(name.ifBlank { "Custom Theme" }, currentColor) },
+                        colors = ButtonDefaults.buttonColors(containerColor = currentColor)
+                    ) {
+                        Text("Save", color = if (currentColor.luminance() > 0.5f) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
 }
