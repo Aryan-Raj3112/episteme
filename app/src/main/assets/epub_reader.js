@@ -1094,12 +1094,13 @@
     };
 
     window.extractTextWithCfiFromTop = function () {
+        console.log("TTS_CHAPTER_CHANGE_DIAG: Starting extractTextWithCfiFromTop");
         try {
             const ttsNodeSelector = "p, h1, h2, h3, h4, h5, h6, li, blockquote";
             const allContentNodesRaw = Array.from(document.body.querySelectorAll(ttsNodeSelector));
-
-            // FIX: Filter out parents that contain matching children to prevent duplicates
             const allContentNodes = allContentNodesRaw.filter(node => node.querySelector(ttsNodeSelector) === null);
+
+            console.log("TTS_CHAPTER_CHANGE_DIAG: Total nodes found: " + allContentNodes.length);
 
             let startBlock = null;
             let startIndex = -1;
@@ -1116,8 +1117,11 @@
             }
 
             if (!startBlock) {
+                console.log("TTS_CHAPTER_CHANGE_DIAG: No visible start block found in viewport.");
                 return window.extractTextWithCfi();
             }
+
+            console.log("TTS_CHAPTER_CHANGE_DIAG: Starting extraction from node index: " + startIndex);
 
             const nodesToProcess = allContentNodes.slice(startIndex);
             const results =[];
@@ -1136,6 +1140,7 @@
 
             return JSON.stringify(results);
         } catch (e) {
+            console.log("TTS_CHAPTER_CHANGE_DIAG: Error in extractTextWithCfiFromTop: " + e.message);
             return window.extractTextWithCfi();
         }
     };
@@ -1240,13 +1245,20 @@
 
     window.TtsBridgeHelper = {
         extractAndRelayText: function () {
+            const traceId = Date.now();
+            console.log("TTS_CHAPTER_CHANGE_DIAG: [" + traceId + "] extractAndRelayText invoked.");
             try {
                 const structuredTextJson = window.extractTextWithCfiFromTop();
+                const len = structuredTextJson ? structuredTextJson.length : 0;
+                console.log("TTS_CHAPTER_CHANGE_DIAG: [" + traceId + "] Relay text JSON length: " + len);
 
                 if (typeof TtsBridge !== "undefined" && TtsBridge.onStructuredTextExtracted) {
                     TtsBridge.onStructuredTextExtracted(structuredTextJson);
+                } else {
+                    console.log("TTS_CHAPTER_CHANGE_DIAG: [" + traceId + "] Bridge missing!");
                 }
             } catch (e) {
+                console.log("TTS_CHAPTER_CHANGE_DIAG: [" + traceId + "] Error: " + e.message);
                 if (typeof TtsBridge !== "undefined" && TtsBridge.onStructuredTextExtracted) {
                     TtsBridge.onStructuredTextExtracted("[]");
                 }

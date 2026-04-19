@@ -133,12 +133,13 @@ class TtsJsBridge(
 ) {
     @JavascriptInterface
     fun onStructuredTextExtracted(json: String) {
-        Timber.tag("TTS_LIST_DIAG").d("Bridge received JSON: $json")
+        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("JS Bridge received JSON. Length: ${json.length}")
         if (json.isNotBlank() && json != "[]") {
             scope.launch {
                 ttsStructuredTextHandler(json)
             }
         } else {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("JS Bridge received empty or blank JSON. This may trigger a chapter skip.")
             scope.launch {
                 ttsStructuredTextHandler("[]")
             }
@@ -537,6 +538,10 @@ fun ChapterWebView(
                             consoleMessage?.let {
                                 val message = it.message()
                                 when {
+                                    message.startsWith("TTS_CHAPTER_CHANGE_DIAG:") -> {
+                                        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("JS -> ${message.substringAfter("TTS_CHAPTER_CHANGE_DIAG: ")}")
+                                    }
+
                                     message.startsWith("BookmarkDiagnosis") -> {
                                         Timber.tag("BookmarkDiagnosis")
                                             .d("JS -> ${message.substringAfter("BookmarkDiagnosis: ")}")

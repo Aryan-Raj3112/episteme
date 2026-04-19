@@ -1000,15 +1000,33 @@ fun EpubReaderHost(
         }
     }
 
+    LaunchedEffect(ttsState.sessionFinished) {
+        if (ttsState.sessionFinished) {
+            val hasMoreChapters = currentChapterIndex < chapters.size - 1
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("UI received sessionFinished. currentChapterIndex: $currentChapterIndex, hasMoreChapters: $hasMoreChapters, userStoppedTts: $userStoppedTts")
+
+            if (!userStoppedTts && hasMoreChapters) {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Automatically triggering skipChapterRequest.")
+                ttsShouldStartOnChapterLoad = true
+                skipChapterRequest = true
+            } else {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("Will not auto-skip. userStopped: $userStoppedTts, lastChapter: ${!hasMoreChapters}")
+            }
+        }
+    }
+
     LaunchedEffect(skipChapterRequest) {
         if (skipChapterRequest) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Processing skipChapterRequest. current: $currentChapterIndex, startOnLoad: $ttsShouldStartOnChapterLoad")
             skipChapterRequest = false
             if (ttsShouldStartOnChapterLoad && currentChapterIndex < chapters.size - 1) {
-                Timber.d("Executing skip chapter request for continuous TTS.")
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("Executing navigation to index: ${currentChapterIndex + 1}")
+                initialScrollTargetForChapter = ChapterScrollPosition.START
                 currentScrollYPosition = 0
                 currentScrollHeightValue = 0
                 currentChapterIndex++
             } else {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").w("Skip request ignored: end of book or ttsShouldStartOnChapterLoad is false.")
                 ttsShouldStartOnChapterLoad = false
             }
         }
@@ -1275,13 +1293,17 @@ fun EpubReaderHost(
         ttsChapterIndex = ttsChapterIndex,
         onTtsChapterIndexChange = { newIndex -> ttsChapterIndex = newIndex },
         onNavigateToChapter = { nextIndex ->
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("TtsSessionObserver triggered onNavigateToChapter to: $nextIndex")
             initialScrollTargetForChapter = ChapterScrollPosition.START
             cfiToLoad = null
             currentScrollYPosition = 0
             currentScrollHeightValue = 0
             currentChapterIndex = nextIndex
         },
-        onToggleTtsStartOnLoad = { shouldStart -> ttsShouldStartOnChapterLoad = shouldStart },
+        onToggleTtsStartOnLoad = { shouldStart ->
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("ttsShouldStartOnChapterLoad set to: $shouldStart")
+            ttsShouldStartOnChapterLoad = shouldStart
+        },
         userStoppedTts = userStoppedTts,
         scope = scope,
         currentTtsMode = currentTtsMode,
@@ -2411,6 +2433,8 @@ fun EpubReaderHost(
                                             CircularProgressIndicator()
                                         }
                                     } else if (chapterChunks.isNotEmpty()) {
+                                        var hasRequestedExtractionForThisChapter by remember(targetChapterIndex) { mutableStateOf(false) }
+
                                         val initialContentToLoad = remember(loadUpToChunkIndex, chapterChunks) {
                                             val targetIdx = loadUpToChunkIndex
                                             val startIdx = 0
@@ -2569,8 +2593,9 @@ fun EpubReaderHost(
                                                     Timber.d("Auto-save enabled immediately.")
                                                 }
 
-                                                if (ttsShouldStartOnChapterLoad) {
+                                                if (ttsShouldStartOnChapterLoad && !hasRequestedExtractionForThisChapter) {
                                                     Timber.d("Auto-starting TTS for new chapter ($targetChapterIndex).")
+                                                    hasRequestedExtractionForThisChapter = true
                                                     scope.launch {
                                                         delay(200)
                                                         webViewRefForTts?.evaluateJavascript(
@@ -2773,7 +2798,7 @@ fun EpubReaderHost(
                                             onTtsTextReady = { jsonString ->
                                                 scope.launch {
                                                     val token = viewModel.getAuthToken()
-                                                    Timber.tag("TTS_LIST_DIAG").d("Vertical: Processing received JSON. Length: ${jsonString.length}") // Add this
+                                                    Timber.tag("TTS_LIST_DIAG").d("Vertical: Processing received JSON. Length: ${jsonString.length}")
                                                     val ttsChunks = mutableListOf<TtsChunk>()
                                                     try {
                                                         val jsonArray = JSONArray(jsonString)
@@ -2808,18 +2833,21 @@ fun EpubReaderHost(
                                                     Timber.d("Vertical: Final compiled TTS chunks size: ${ttsChunks.size}")
 
                                                     if (ttsChunks.isNotEmpty()) {
-                                                        if (currentTtsMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+                                                        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
                                                             showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
                                                             return@launch
                                                         }
 
                                                         ttsShouldStartOnChapterLoad = false
-                                                        val chapterTitle = chapters.getOrNull(currentChapterIndex)?.title
+                                                        userStoppedTts = false
+
+                                                        val chapterTitle = chapters.getOrNull(targetChapterIndex)?.title
                                                         val coverUriString = coverImagePath?.let {
                                                             Uri.fromFile(File(it)).toString()
                                                         }
-                                                        ttsChapterIndex = currentChapterIndex
+                                                        ttsChapterIndex = targetChapterIndex
+
                                                         ttsController.start(
                                                             chunks = ttsChunks,
                                                             bookTitle = epubBook.title,
@@ -2830,11 +2858,9 @@ fun EpubReaderHost(
                                                             authToken = token
                                                         )
                                                     } else {
-                                                        Timber.w("No TTS chunks were created from JSON, not starting TTS."
-                                                        )
+                                                        Timber.w("No TTS chunks were created from JSON, not starting TTS.")
                                                         if (ttsShouldStartOnChapterLoad) {
-                                                            Timber.d("Empty chapter detected during continuous TTS. Requesting skip."
-                                                            )
+                                                            Timber.d("Empty chapter detected during continuous TTS. Requesting skip.")
                                                             skipChapterRequest = true
                                                         }
                                                     }

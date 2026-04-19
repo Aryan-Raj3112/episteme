@@ -596,7 +596,9 @@ class TtsPlaybackManager(
             val isLastChunkInSession = textChunks.isNotEmpty() && currentChunkIndex == textChunks.size - 1
 
             if (player.playbackState == Player.STATE_ENDED) {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("ExoPlayer STATE_ENDED. currentChunkIndex: $currentChunkIndex, isLastChunk: $isLastChunkInSession, totalChunks: ${textChunks.size}")
                 if (isLastChunkInSession || textChunks.isEmpty()) {
+                    Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("Setting sessionFinished = true")
                     nextState = nextState.copy(sessionFinished = true)
                 } else {
                     val nextIdx = currentChunkIndex + 1
