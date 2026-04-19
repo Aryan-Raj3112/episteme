@@ -126,12 +126,16 @@ class InteractiveWebView(
                 }
 
                 if (currentDragOperation != DragOperation.NONE && oldDragOperation == DragOperation.NONE) {
-                    Timber.d("Drag operation started ($currentDragOperation), disabling text selection."
-                    )
+                    Timber.d("Drag operation started ($currentDragOperation), disabling text selection.")
                     evaluateJavascript(
                         "javascript:if(window.setTextSelectionEnabled) window.setTextSelectionEnabled(false);",
                         null
                     )
+
+                    val cancelEvent = MotionEvent.obtain(event)
+                    cancelEvent.action = MotionEvent.ACTION_CANCEL
+                    super.onTouchEvent(cancelEvent)
+                    cancelEvent.recycle()
                 }
             }
 

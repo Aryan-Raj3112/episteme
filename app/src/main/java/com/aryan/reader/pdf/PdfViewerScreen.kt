@@ -34,6 +34,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.rememberScrollState
 import android.graphics.Bitmap
+import com.aryan.reader.epubreader.SystemUiMode
+import com.aryan.reader.epubreader.loadSystemUiMode
+import com.aryan.reader.epubreader.saveSystemUiMode
+import com.aryan.reader.epubreader.OptionSegmentedControl
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
@@ -127,8 +131,6 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -384,6 +386,7 @@ enum class PdfReaderTool(val title: String, val category: String) {
     DICTIONARY("External Apps", "Top Bar"),
     THEME("Theme Settings", "Top Bar"),
     LOCK_PANNING("Lock Panning", "Top Bar"),
+    VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
     FULL_SCREEN("Full Screen", "Top Bar"),
     SLIDER("Navigation Slider", "Bottom Bar"),
     TOC("Sidebar", "Bottom Bar"),
@@ -518,16 +521,6 @@ private fun savePdfScrollLocked(context: Context, bookId: String, isLocked: Bool
 private fun loadPdfScrollLocked(context: Context, bookId: String): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PDF_SCROLL_LOCKED_PREFIX + bookId, false)
-}
-
-private fun savePdfFullScreen(context: Context, bookId: String, isFull: Boolean) {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PDF_FULL_SCREEN_PREFIX + bookId, isFull) }
-}
-
-private fun loadPdfFullScreen(context: Context, bookId: String): Boolean {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getBoolean(PDF_FULL_SCREEN_PREFIX + bookId, false)
 }
 
 private fun savePdfAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
@@ -1238,6 +1231,8 @@ fun PdfViewerScreen(
     val isPdfDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
     var showBars by rememberSaveable { mutableStateOf(true) }
+    var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
+    var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
@@ -1311,7 +1306,6 @@ fun PdfViewerScreen(
 
     LaunchedEffect(bookId) {
         isScrollLocked = loadPdfScrollLocked(context, bookId)
-        isFullScreen = loadPdfFullScreen(context, bookId)
         lockedState = loadPdfLockedState(context, bookId)
     }
 
@@ -1529,41 +1523,83 @@ fun PdfViewerScreen(
     }
 
     val window = (view.context as? Activity)?.window
-    LaunchedEffect(isFullScreen) {
+    LaunchedEffect(systemUiMode, showBars) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            if (isFullScreen) {
-                showBars = false
-                insetsController.hide(WindowInsetsCompat.Type.systemBars())
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            } else {
-                showBars = true
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            when (systemUiMode) {
+                SystemUiMode.DEFAULT -> {
+                    insetsController.show(WindowInsetsCompat.Type.systemBars())
+                }
+                SystemUiMode.SYNC -> {
+                    if (showBars) {
+                        insetsController.show(WindowInsetsCompat.Type.systemBars())
+                    } else {
+                        insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                        insetsController.systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    }
+                }
+                SystemUiMode.HIDDEN -> {
+                    insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                    insetsController.systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
             }
         }
     }
 
     val dockHeight = 64.dp
     val dockHeightPx = with(LocalDensity.current) { dockHeight.toPx() }
+    val density = LocalDensity.current
 
-    val verticalHeaderHeight by remember(
+    val statusBarHeightDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+    val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
+    val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
+
+    val showStandardBars = showBars && !isEditMode
+    val snackbarPadding by animateDpAsState(
+        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp else 0.dp,
+        label = "SnackbarPadding"
+    )
+
+    val targetVerticalHeaderHeight = remember(
         dockLocation,
         snapPreviewLocation,
         isEditMode,
-        isDockDragging
+        isDockDragging,
+        showStandardBars,
+        systemUiMode,
+        showBars,
+        statusBarHeightDp
     ) {
-        derivedStateOf {
-            if (!isEditMode) {
-                0.dp
-            } else {
-                val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
-                val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
-
-                if (isStickyTop || isPreviewingTop) dockHeight else 0.dp
+        if (!isEditMode) {
+            var h = 0.dp
+            if (showStandardBars) {
+                h += 56.dp
             }
+
+            val isStatusBarVisible = when (systemUiMode) {
+                SystemUiMode.DEFAULT -> true
+                SystemUiMode.SYNC -> showBars
+                SystemUiMode.HIDDEN -> false
+            }
+
+            if (isStatusBarVisible) {
+                h += statusBarHeightDp
+            }
+            h
+        } else {
+            val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
+            val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
+            if (isStickyTop || isPreviewingTop) dockHeight else 0.dp
         }
     }
+
+    val verticalHeaderHeight by animateDpAsState(
+        targetValue = targetVerticalHeaderHeight,
+        animationSpec = tween(durationMillis = 200),
+        label = "verticalHeaderHeight"
+    )
 
     val verticalFooterHeight by remember(
         dockLocation,
@@ -2266,7 +2302,7 @@ fun PdfViewerScreen(
                 }
                 selectedTextBoxId = null
             } else {
-                if (!isFullScreen && !(isMusicianMode && isAutoScrollModeActive))  {
+                if (!(isMusicianMode && isAutoScrollModeActive))  {
                     showBars = !showBars
                     Timber.d("Vertical Reader Clicked. showBars now: $showBars")
                 }
@@ -3702,14 +3738,9 @@ fun PdfViewerScreen(
 
     var activeQuery by remember { mutableStateOf("") }
 
-    val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
-
-    val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
-
     var smartSearchResult by remember { mutableStateOf<SmartSearchResult?>(null) }
     var currentPdfSearchResult by remember { mutableStateOf<SearchResult?>(null) }
 
-    val density = LocalDensity.current
     val navBarHeight = WindowInsets.systemBars.getBottom(density)
     val imeHeight = WindowInsets.ime.getBottom(density)
 
@@ -3733,16 +3764,7 @@ fun PdfViewerScreen(
         }
     }
 
-    val statusBarHeight = WindowInsets.statusBars.getTop(density)
-    val topBarHeightPx = with(density) { 56.dp.toPx() }
-
-    val topScrollLimitPx = remember(showBars, statusBarHeight) {
-        if (showBars) {
-            statusBarHeight + topBarHeightPx
-        } else {
-            0f
-        }
-    }
+    val topScrollLimitPx = with(density) { verticalHeaderHeight.toPx() }
 
     LaunchedEffect(searchState.searchQuery, currentBookId) {
         val query = searchState.searchQuery
@@ -3902,10 +3924,7 @@ fun PdfViewerScreen(
                 onNavigateBack()
             }
 
-            isFullScreen -> {
-                isFullScreen = false
-                savePdfFullScreen(context, bookId, false)
-            }
+            showVisualOptionsSheet -> showVisualOptionsSheet = false
 
             showReindexDialog != null -> showReindexDialog = null
 
@@ -3949,12 +3968,6 @@ fun PdfViewerScreen(
             }
         }
     }
-
-    val showStandardBars = showBars && !isEditMode
-    val snackbarPadding by animateDpAsState(
-        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp else 0.dp,
-        label = "SnackbarPadding"
-    )
 
     ModalNavigationDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
@@ -4487,10 +4500,8 @@ fun PdfViewerScreen(
                 )
             }
         ) { paddingValues ->
-            BoxWithConstraints(modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)) {
-                IntSize(constraints.maxWidth, constraints.maxHeight)
+            BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(bottom = paddingValues.calculateBottomPadding())) {
+            IntSize(constraints.maxWidth, constraints.maxHeight)
                 val boxConstraints = constraints
                 val boxMaxWidthFloat = boxConstraints.maxWidth.toFloat()
                 val boxMaxHeightFloat = boxConstraints.maxHeight.toFloat()
@@ -5755,22 +5766,6 @@ fun PdfViewerScreen(
                                         }
                                     }
 
-                                    if (!hiddenTools.contains(PdfReaderTool.FULL_SCREEN.name)) {
-                                        TooltipIconButton(
-                                            text = stringResource(R.string.tooltip_fullscreen),
-                                            description = stringResource(R.string.tooltip_fullscreen_desc),
-                                            onClick = {
-                                                isFullScreen = true
-                                                savePdfFullScreen(context, bookId, true)
-                                            }) {
-                                            Icon(
-                                                imageVector = Icons.Default.Fullscreen,
-                                                contentDescription = "Enter Full Screen",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-
                                     if (!hiddenTools.contains(PdfReaderTool.DICTIONARY.name)) {
                                         TooltipIconButton(
                                             text = stringResource(R.string.tooltip_dictionary),
@@ -5874,6 +5869,24 @@ fun PdfViewerScreen(
                                                         hasSelectedOcrLanguage = true
                                                         showOcrLanguageDialog = true
                                                     })
+                                                HorizontalDivider()
+                                            }
+
+                                            if (!hiddenTools.contains(PdfReaderTool.VISUAL_OPTIONS.name)) {
+                                                DropdownMenuItem(
+                                                    text = { Text(stringResource(R.string.menu_visual_options)) },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        showVisualOptionsSheet = true
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Visibility,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                )
                                                 HorizontalDivider()
                                             }
 
@@ -6608,42 +6621,6 @@ fun PdfViewerScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                        }
-                    }
-                }
-
-                // Full Screen Exit Button
-                AnimatedVisibility(
-                    visible = isFullScreen,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(24.dp)
-                ) {
-                    val isBackgroundDark = displayMode == DisplayMode.PAGINATION || isPdfDarkMode
-
-                    val fabContainerColor = if (isBackgroundDark) Color.White.copy(alpha = 0.25f)
-                    else Color.Black.copy(alpha = 0.25f)
-                    val fabContentColor = if (isBackgroundDark) Color.White else Color.Black
-
-                    Surface(
-                        onClick = {
-                            isFullScreen = false
-                            savePdfFullScreen(context, bookId, false)
-                        },
-                        color = fabContainerColor,
-                        contentColor = fabContentColor,
-                        shape = CircleShape,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp
-                    ) {
-                        Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.FullscreenExit,
-                                contentDescription = "Exit Full Screen",
-                                modifier = Modifier.size(26.dp)
-                            )
                         }
                     }
                 }
@@ -7994,6 +7971,16 @@ fun PdfViewerScreen(
                         }
                     )
                 }
+                if (showVisualOptionsSheet) {
+                    PdfVisualOptionsSheet(
+                        systemUiMode = systemUiMode,
+                        onSystemUiModeChange = { mode ->
+                            systemUiMode = mode
+                            saveSystemUiMode(context, mode)
+                        },
+                        onDismiss = { showVisualOptionsSheet = false }
+                    )
+                }
                 if (showCustomizeToolsSheet) {
                     PdfCustomizeToolsSheet(
                         hiddenTools = hiddenTools,
@@ -8713,6 +8700,52 @@ fun PdfCustomizeToolsSheet(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfVisualOptionsSheet(
+    systemUiMode: SystemUiMode,
+    onSystemUiModeChange: (SystemUiMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.menu_visual_options), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(stringResource(R.string.visual_options_system_ui), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.visual_options_system_ui_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OptionSegmentedControl(
+                options = SystemUiMode.entries,
+                selectedOption = systemUiMode,
+                onOptionSelected = onSystemUiModeChange,
+                getLabel = { it.title }
+            )
         }
     }
 }
