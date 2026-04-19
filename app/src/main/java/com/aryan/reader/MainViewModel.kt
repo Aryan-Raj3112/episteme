@@ -113,6 +113,7 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
+import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 private const val KEY_RENDER_MODE = "render_mode"
@@ -2631,6 +2632,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             title = displayName
 
             if (type == FileType.PDF) {
+                try {
+                    val pdfiumCore = PdfiumCore(appContext)
+                    appContext.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val pdfDocument = pdfiumCore.newDocument(pfd)
+                        val meta = pdfiumCore.getDocumentMeta(pdfDocument)
+
+                        val extractedTitle = meta.title
+                        if (!extractedTitle.isNullOrBlank()) {
+                            title = extractedTitle
+                        }
+
+                        val extractedAuthor = meta.author
+                        if (!extractedAuthor.isNullOrBlank()) {
+                            author = extractedAuthor
+                        }
+
+                        pdfiumCore.closeDocument(pdfDocument)
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to extract PDF title using PdfiumCore")
+                }
+
                 val pdfCoverGenerator = PdfCoverGenerator(appContext)
                 val coverBitmap = pdfCoverGenerator.generateCover(uri)
                 if (coverBitmap != null) {

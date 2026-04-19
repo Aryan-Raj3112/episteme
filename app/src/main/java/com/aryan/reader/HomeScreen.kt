@@ -840,11 +840,7 @@ fun RecentFileCard(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = item.customName ?: if ((item.type == FileType.EPUB || item.type == FileType.MOBI || item.type == FileType.FB2) && !item.title.isNullOrBlank()) {
-                        item.title
-                    } else {
-                        item.displayName
-                    },
+                    text = item.customName ?: item.title?.takeIf { it.isNotBlank() } ?: item.displayName,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,

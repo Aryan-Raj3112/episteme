@@ -9,6 +9,7 @@ import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.pdf.PdfCoverGenerator
+import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -109,6 +110,28 @@ class MetadataExtractionWorker(
                                     coverPath = recentFilesRepository.saveCoverToCache(it, uri)
                                 }
                                 title = item.displayName
+
+                                try {
+                                    val pdfiumCore = PdfiumCore(appContext)
+                                    appContext.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                                        val pdfDocument = pdfiumCore.newDocument(pfd)
+                                        val meta = pdfiumCore.getDocumentMeta(pdfDocument)
+
+                                        val extractedTitle = meta.title
+                                        if (!extractedTitle.isNullOrBlank()) {
+                                            title = extractedTitle
+                                        }
+
+                                        val extractedAuthor = meta.author
+                                        if (!extractedAuthor.isNullOrBlank()) {
+                                            author = extractedAuthor
+                                        }
+
+                                        pdfiumCore.closeDocument(pdfDocument)
+                                    }
+                                } catch (e: Exception) {
+                                    Timber.tag("MetadataWorker").e(e, "Failed to extract PDF metadata using PdfiumCore")
+                                }
                             }
                             FileType.ODT, FileType.FODT -> {
                                 val book = odtParser.createOdtBook(
