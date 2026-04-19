@@ -92,7 +92,9 @@ class MainActivity : ComponentActivity() {
             AppTheme(
                 darkTheme = darkTheme,
                 dynamicColor = uiState.appSeedColor == null,
-                seedColor = uiState.appSeedColor
+                seedColor = uiState.appSeedColor,
+                contrastLevel = uiState.appContrastOption.value,
+                textDimFactor = uiState.appTextDimFactor
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

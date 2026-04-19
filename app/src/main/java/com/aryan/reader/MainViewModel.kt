@@ -144,6 +144,12 @@ enum class AppThemeMode(val displayName: String) {
     DARK("Dark")
 }
 
+enum class AppContrastOption(val displayName: String, val value: Double) {
+    STANDARD("Standard", 0.0),
+    MEDIUM("Medium", 0.5),
+    HIGH("High", 1.0)
+}
+
 data class CustomAppTheme(
     val id: String,
     val name: String,
@@ -260,6 +266,8 @@ data class ReaderScreenState(
     val externalFileBehavior: String = "ASK",
     val useStrictFileFilter: Boolean = false,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
+    val appTextDimFactor: Float = 1.0f,
     val appSeedColor: androidx.compose.ui.graphics.Color? = null,
     val customAppThemes: List<CustomAppTheme> = emptyList()
 )
@@ -376,6 +384,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             appThemeMode = try {
                 AppThemeMode.valueOf(prefs.getString(KEY_APP_THEME_MODE, AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name)
             } catch (_: Exception) { AppThemeMode.SYSTEM },
+            appContrastOption = try {
+                AppContrastOption.valueOf(prefs.getString(KEY_APP_CONTRAST_OPTION, AppContrastOption.STANDARD.name) ?: AppContrastOption.STANDARD.name)
+            } catch (_: Exception) { AppContrastOption.STANDARD },
+            appTextDimFactor = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f),
             appSeedColor = if (prefs.contains(KEY_APP_SEED_COLOR)) androidx.compose.ui.graphics.Color(prefs.getInt(KEY_APP_SEED_COLOR, 0)) else null,
             customAppThemes = loadCustomAppThemes(prefs)
         )
@@ -4561,6 +4573,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.edit { putString(KEY_APP_THEME_MODE, mode.name) }
     }
 
+    fun setAppContrastOption(option: AppContrastOption) {
+        _internalState.update { it.copy(appContrastOption = option) }
+        prefs.edit { putString(KEY_APP_CONTRAST_OPTION, option.name) }
+    }
+
+    fun setAppTextDimFactor(factor: Float) {
+        _internalState.update { it.copy(appTextDimFactor = factor) }
+        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR, factor) }
+    }
+
     fun setAppSeedColor(color: androidx.compose.ui.graphics.Color?) {
         _internalState.update { it.copy(appSeedColor = color) }
         prefs.edit {
@@ -4629,7 +4651,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
         private const val KEY_APP_THEME_MODE = "app_theme_mode"
+        private const val KEY_APP_CONTRAST_OPTION = "app_contrast_option"
         private const val KEY_APP_SEED_COLOR = "app_seed_color"
+        private const val KEY_APP_TEXT_DIM_FACTOR = "app_text_dim_factor"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
 
         val SUPPORTED_MIME_TYPES = arrayOf(

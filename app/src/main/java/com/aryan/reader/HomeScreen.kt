@@ -513,6 +513,8 @@ fun HomeScreen(
                         AppThemeBottomSheet(
                             uiState = uiState,
                             onThemeModeChanged = viewModel::setAppThemeMode,
+                            onContrastOptionChanged = viewModel::setAppContrastOption,
+                            onTextDimFactorChanged = viewModel::setAppTextDimFactor,
                             onSeedColorChanged = viewModel::setAppSeedColor,
                             onCustomThemeAdded = viewModel::addCustomAppTheme,
                             onCustomThemeDeleted = viewModel::deleteCustomAppTheme,
@@ -1570,6 +1572,8 @@ fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
 fun AppThemeBottomSheet(
     uiState: ReaderScreenState,
     onThemeModeChanged: (AppThemeMode) -> Unit,
+    onContrastOptionChanged: (AppContrastOption) -> Unit,
+    onTextDimFactorChanged: (Float) -> Unit,
     onSeedColorChanged: (Color?) -> Unit,
     onCustomThemeAdded: (CustomAppTheme) -> Unit,
     onCustomThemeDeleted: (String) -> Unit,
@@ -1615,6 +1619,46 @@ fun AppThemeBottomSheet(
 
             Spacer(Modifier.height(24.dp))
 
+            Text("Contrast", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
+                AppContrastOption.entries.forEach { option ->
+                    val isSelected = uiState.appContrastOption == option
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                            .clickable { onContrastOptionChanged(option) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(option.displayName, color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Text("Text Brightness", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                androidx.compose.material3.Slider(
+                    value = uiState.appTextDimFactor,
+                    onValueChange = onTextDimFactorChanged,
+                    valueRange = 0.3f..1.0f,
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
+                )
+                Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
+            }
+
+            Spacer(Modifier.height(24.dp))
+
             Text("Color Scheme", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1627,10 +1671,13 @@ fun AppThemeBottomSheet(
                     )
                 }
                 val presets = listOf(
-                    "Default" to Color(0xFF6750A4),
                     "Ocean" to Color(0xFF00668B),
                     "Mint" to Color(0xFF006C4C),
-                    "Rose" to Color(0xFF9C4146)
+                    "Rose" to Color(0xFF9C4146),
+                    "Sepia" to Color(0xFF705D49),
+                    "Amethyst" to Color(0xFF9B59B6),
+                    "Amber" to Color(0xFFFFC107),
+                    "Sapphire" to Color(0xFF0F52BA)
                 )
                 items(presets.size) { i ->
                     val (label, color) = presets[i]
