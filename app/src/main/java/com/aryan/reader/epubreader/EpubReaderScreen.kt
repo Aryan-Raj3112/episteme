@@ -510,6 +510,7 @@ fun EpubReaderHost(
     var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
     var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
+    var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var removeEdgePadding by remember { mutableStateOf(loadRemoveEdgePadding(context)) }
 
@@ -878,7 +879,7 @@ fun EpubReaderHost(
     var activeFragmentId by remember { mutableStateOf<String?>(null) }
 
     val density = LocalDensity.current
-    val dragThresholdPx = with(density) { DRAG_TO_CHANGE_CHAPTER_THRESHOLD_DP.toPx() }
+    val dragThresholdPx = with(density) { DRAG_TO_CHANGE_CHAPTER_THRESHOLD_DP.toPx() * pullToTurnMultiplier }
 
     var currentScrollYPosition by rememberSaveable(epubBook.title) {
         mutableIntStateOf(0)
@@ -4468,6 +4469,11 @@ fun EpubReaderHost(
                 onRemoveEdgePaddingChange = {
                     removeEdgePadding = it
                     saveRemoveEdgePadding(context, it)
+                },
+                pullToTurnMultiplier = pullToTurnMultiplier,
+                onPullToTurnMultiplierChange = {
+                    pullToTurnMultiplier = it
+                    savePullToTurnMultiplier(context, it)
                 },
                 onDismiss = { showVisualOptionsSheet = false }
             )

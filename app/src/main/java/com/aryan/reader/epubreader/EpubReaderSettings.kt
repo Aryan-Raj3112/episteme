@@ -248,6 +248,18 @@ fun loadPullToTurn(context: Context): Boolean {
     return prefs.getBoolean(PULL_TO_TURN_ENABLED_KEY, true)
 }
 
+private const val PULL_TO_TURN_MULTIPLIER_KEY = "reader_pull_to_turn_multiplier"
+
+fun savePullToTurnMultiplier(context: Context, multiplier: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PULL_TO_TURN_MULTIPLIER_KEY, multiplier) }
+}
+
+fun loadPullToTurnMultiplier(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(PULL_TO_TURN_MULTIPLIER_KEY, 1.0f)
+}
+
 fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): FormatSettings {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -751,6 +763,8 @@ fun VisualOptionsSheet(
     onPullToTurnChange: (Boolean) -> Unit,
     removeEdgePadding: Boolean,
     onRemoveEdgePaddingChange: (Boolean) -> Unit,
+    pullToTurnMultiplier: Float,
+    onPullToTurnMultiplierChange: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -807,21 +821,42 @@ fun VisualOptionsSheet(
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onPullToTurnChange(!pullToTurnEnabled) }
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.visual_options_seamless_chapter), style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.visual_options_seamless_chapter_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPullToTurnChange(!pullToTurnEnabled) }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.visual_options_seamless_chapter), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.visual_options_seamless_chapter_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })
                     }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })
+
+                    AnimatedVisibility(visible = pullToTurnEnabled) {
+                        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                            HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+                            Text("Pull Distance to Change Chapter", style = MaterialTheme.typography.titleSmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Short", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Slider(
+                                    value = pullToTurnMultiplier,
+                                    onValueChange = onPullToTurnMultiplierChange,
+                                    valueRange = 0.5f..2.0f,
+                                    steps = 14,
+                                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                                )
+                                Text("Long", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             }
 
