@@ -29,7 +29,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.database.Cursor
 import android.graphics.Bitmap
-import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -312,6 +311,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     val navigationEvent = _navigationEvent.receiveAsFlow()
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
     private var externalOpenedBookId: String? = null
+
+    private var panelDetector: com.aryan.reader.ml.ComicPanelDetector? = null
+    private val detectorMutex = Mutex()
+
+    private fun getOrInitDetector(context: Context): com.aryan.reader.ml.ComicPanelDetector? {
+        if (panelDetector == null) {
+            val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
+            if (modelFile.exists()) {
+                panelDetector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
+            } else {
+                Timber.e("Model file best_float16.tflite not found in external files dir")
+            }
+        }
+        return panelDetector
+    }
 
     data class PageModificationResult(
         val layout: List<VirtualPage>,
@@ -4412,6 +4426,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         super.onCleared()
         prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         firestoreRepository.removeListener(feedbackListener)
+        panelDetector?.close()
+        panelDetector = null
         Timber.d("ViewModel instance cleared (onCleared).")
     }
 
@@ -4651,6 +4667,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 var cacheFile: File? = null
                 try {
+                    val detector = getOrInitDetector(context) ?: run {
+                        withContext(Dispatchers.Main) { showBanner("Model could not be loaded", isError = true) }
+                        return@launch
+                    }
                     cacheFile = File(context.cacheDir, "temp_test_batch.cbz")
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         cacheFile.outputStream().use { output -> input.copyTo(output) }
@@ -4658,7 +4678,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                     // 1. Initialize Model Once
                     val initStartTime = System.currentTimeMillis()
-                    val detector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
                     val initDuration = System.currentTimeMillis() - initStartTime
                     Timber.d(">>> [BATCH] Model Initialization: ${initDuration}ms")
 
@@ -4696,8 +4715,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             page.close()
                         }
                     }
-
-                    detector.close()
                     archiveDoc.close()
 
                     withContext(Dispatchers.Main) {
@@ -4715,20 +4732,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     suspend fun detectComicPanels(bitmap: Bitmap, context: Context): List<android.graphics.RectF> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
-                if (!modelFile.exists()) {
-                    Timber.e("Model file not found for panel detection")
-                    return@withContext emptyList()
+        return detectorMutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    val detector = getOrInitDetector(context)
+                    detector?.detectPanels(bitmap) ?: emptyList()
+                } catch (e: Exception) {
+                    Timber.e(e, "Error during panel detection")
+                    emptyList()
                 }
-                val detector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
-                val panels = detector.detectPanels(bitmap)
-                detector.close()
-                panels
-            } catch (e: Exception) {
-                Timber.e(e, "Error during panel detection")
-                emptyList()
             }
         }
     }

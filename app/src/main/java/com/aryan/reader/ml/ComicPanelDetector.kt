@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.RectF
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
 import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
@@ -12,6 +14,7 @@ import timber.log.Timber
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -24,6 +27,13 @@ class ComicPanelDetector(modelFile: File) {
 
     private var interpreter: Interpreter? = null
     private val inputSize = 640
+    private var gpuDelegate: GpuDelegate? = null
+
+    private var isTransposed: Boolean = false
+    private var numBoxes: Int = 0
+    private var numElementsPerBox: Int = 0
+    private var outputBuffer: ByteBuffer? = null
+    private var flatOutput: FloatArray? = null
 
     private val imageProcessor = ImageProcessor.Builder()
         .add(ResizeOp(inputSize, inputSize, ResizeOp.ResizeMethod.BILINEAR))
@@ -32,54 +42,63 @@ class ComicPanelDetector(modelFile: File) {
 
     init {
         try {
+            val compatList = CompatibilityList()
             val options = Interpreter.Options().apply {
-                numThreads = 4
+                if (compatList.isDelegateSupportedOnThisDevice) {
+                    val delegateOptions = compatList.bestOptionsForThisDevice
+                    gpuDelegate = GpuDelegate(delegateOptions)
+                    addDelegate(gpuDelegate)
+                    Timber.i("GPU Delegate added successfully.")
+                } else {
+                    numThreads = 4
+                    Timber.i("GPU not supported on this device. Falling back to 4 CPU threads.")
+                }
             }
             interpreter = Interpreter(modelFile, options)
-            Timber.i("TFLite Model loaded successfully from ${modelFile.absolutePath}")
+
+            val outputTensor = interpreter!!.getOutputTensor(0)
+            val shape = outputTensor.shape()
+            Timber.d("Model Output Tensor Shape: ${shape.contentToString()}")
+
+            isTransposed = shape.size == 3 && shape[1] > shape[2]
+            numBoxes = if (isTransposed) shape[1] else shape[2]
+            numElementsPerBox = if (isTransposed) shape[2] else shape[1]
+
+            val outputBytes = numBoxes * numElementsPerBox * 4
+            outputBuffer = ByteBuffer.allocateDirect(outputBytes).order(ByteOrder.nativeOrder())
+            flatOutput = FloatArray(numBoxes * numElementsPerBox)
+
+            Timber.i("TFLite Model loaded and buffers allocated successfully from ${modelFile.absolutePath}")
         } catch (e: Exception) {
-            Timber.e(e, "Error loading TFLite model")
+            Timber.e(e, "Error loading TFLite model or allocating buffers")
         }
     }
 
     fun detectPanels(bitmap: Bitmap, confidenceThreshold: Float = 0.25f, iouThreshold: Float = 0.45f): List<RectF> {
-        val tflite = interpreter ?: run {
-            Timber.e("Interpreter is null.")
+        val tflite = interpreter ?: return emptyList()
+        val buffer = outputBuffer ?: return emptyList()
+        val flatOut = flatOutput ?: return emptyList()
+
+        if (numBoxes <= 0) {
+            Timber.w("Detector not initialized correctly: numBoxes is 0")
             return emptyList()
         }
 
-        // 1. Prepare Input Image
         var tensorImage = TensorImage(DataType.FLOAT32)
         tensorImage.load(bitmap)
         tensorImage = imageProcessor.process(tensorImage)
 
-        // 2. Dynamically analyze Output Tensor Shape
-        val outputTensor = tflite.getOutputTensor(0)
-        val shape = outputTensor.shape()
-        // shape is usually [1, 5, 8400] or[1, 8400, 5]
-        Timber.d("Model Output Tensor Shape: ${shape.contentToString()}")
-
-        val isTransposed = shape.size == 3 && shape[1] > shape[2] // true if[1, 8400, 5]
-        val numBoxes = if (isTransposed) shape[1] else shape[2]
-        val numElementsPerBox = if (isTransposed) shape[2] else shape[1]
-
-        // Allocate a flat ByteBuffer to prevent multidimensional array mismatch crashes
-        val outputBytes = numBoxes * numElementsPerBox * 4 // 4 bytes per float
-        val outputBuffer = ByteBuffer.allocateDirect(outputBytes).order(ByteOrder.nativeOrder())
-
-        // 3. Run Inference
+        buffer.rewind()
         val startTime = System.currentTimeMillis()
-        tflite.run(tensorImage.buffer, outputBuffer)
+        tflite.run(tensorImage.buffer, buffer)
         Timber.d("Inference took ${System.currentTimeMillis() - startTime}ms")
 
-        outputBuffer.rewind()
-        val flatOutput = FloatArray(numBoxes * numElementsPerBox)
-        outputBuffer.asFloatBuffer().get(flatOutput)
+        buffer.rewind()
+        buffer.asFloatBuffer().get(flatOut)
 
-        // 4. Determine if coordinates are normalized (0.0-1.0) or absolute (0-640)
         var maxCoord = 0f
         for (i in 0 until min(100, numBoxes)) {
-            val cx = if (isTransposed) flatOutput[i * numElementsPerBox + 0] else flatOutput[0 * numBoxes + i]
+            val cx = if (isTransposed) flatOutput!![i * numElementsPerBox + 0] else flatOutput!![0 * numBoxes + i]
             if (cx > maxCoord) maxCoord = cx
         }
         val isNormalized = maxCoord <= 1.5f
@@ -88,17 +107,16 @@ class ComicPanelDetector(modelFile: File) {
         val scaleX = if (isNormalized) bitmap.width.toFloat() else bitmap.width.toFloat() / inputSize
         val scaleY = if (isNormalized) bitmap.height.toFloat() else bitmap.height.toFloat() / inputSize
 
-        // 5. Parse Boxes
         val parsedResults = mutableListOf<PanelResult>()
 
         for (i in 0 until numBoxes) {
-            val confidence = if (isTransposed) flatOutput[i * numElementsPerBox + 4] else flatOutput[4 * numBoxes + i]
+            val confidence = if (isTransposed) flatOutput!![i * numElementsPerBox + 4] else flatOutput!![4 * numBoxes + i]
 
             if (confidence > confidenceThreshold) {
-                val cx = if (isTransposed) flatOutput[i * numElementsPerBox + 0] else flatOutput[0 * numBoxes + i]
-                val cy = if (isTransposed) flatOutput[i * numElementsPerBox + 1] else flatOutput[1 * numBoxes + i]
-                val w = if (isTransposed) flatOutput[i * numElementsPerBox + 2] else flatOutput[2 * numBoxes + i]
-                val h = if (isTransposed) flatOutput[i * numElementsPerBox + 3] else flatOutput[3 * numBoxes + i]
+                val cx = if (isTransposed) flatOutput!![i * numElementsPerBox + 0] else flatOutput!![0 * numBoxes + i]
+                val cy = if (isTransposed) flatOutput!![i * numElementsPerBox + 1] else flatOutput!![1 * numBoxes + i]
+                val w = if (isTransposed) flatOutput!![i * numElementsPerBox + 2] else flatOutput!![2 * numBoxes + i]
+                val h = if (isTransposed) flatOutput!![i * numElementsPerBox + 3] else flatOutput!![3 * numBoxes + i]
 
                 val scaledCx = cx * scaleX
                 val scaledCy = cy * scaleY
@@ -119,12 +137,10 @@ class ComicPanelDetector(modelFile: File) {
             }
         }
 
-        // 6. Apply NMS
         val finalPanels = applyNMS(parsedResults, iouThreshold)
 
-        // 7. Sort Top-to-Bottom, Right-to-Left
         return finalPanels.map { it.rect }.sortedWith { r1, r2 ->
-            if (Math.abs(r1.top - r2.top) < (bitmap.height * 0.05f)) { // 5% height tolerance for horizontal rows
+            if (abs(r1.top - r2.top) < (bitmap.height * 0.05f)) {
                 r2.right.compareTo(r1.right)
             } else {
                 r1.top.compareTo(r2.top)
@@ -164,5 +180,11 @@ class ComicPanelDetector(modelFile: File) {
     fun close() {
         interpreter?.close()
         interpreter = null
+
+        gpuDelegate?.close()
+        gpuDelegate = null
+
+        outputBuffer = null
+        flatOutput = null
     }
 }
