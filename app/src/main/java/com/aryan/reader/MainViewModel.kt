@@ -116,7 +116,9 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
 import io.legere.pdfiumandroid.PdfiumCore
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.distinctUntilChanged
+import java.util.concurrent.Executors.newSingleThreadExecutor
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
@@ -313,7 +315,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var externalOpenedBookId: String? = null
 
     private var panelDetector: com.aryan.reader.ml.ComicPanelDetector? = null
-    private val detectorMutex = Mutex()
+
+    private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
 
     private fun getOrInitDetector(context: Context): com.aryan.reader.ml.ComicPanelDetector? {
         if (panelDetector == null) {
@@ -4646,7 +4649,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun testPanelDetection(context: Context) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(mlDispatcher) {
             try {
                 val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
                 if (!modelFile.exists()) {
@@ -4707,10 +4710,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 val pageDuration = System.currentTimeMillis() - pageStartTime
 
                                 val logLine = "Page $i: ${pageDuration}ms (Found ${panels.size} panels)"
-                                Timber.d(">>> [BATCH] $logLine")
+                                Timber.d(">>>[BATCH] $logLine")
                                 resultsLog.append("$logLine\n")
-
                                 bitmap.recycle()
+                                delay(20)
                             }
                             page.close()
                         }
@@ -4732,15 +4735,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     suspend fun detectComicPanels(bitmap: Bitmap, context: Context): List<android.graphics.RectF> {
-        return detectorMutex.withLock {
-            withContext(Dispatchers.IO) {
-                try {
-                    val detector = getOrInitDetector(context)
-                    detector?.detectPanels(bitmap) ?: emptyList()
-                } catch (e: Exception) {
-                    Timber.e(e, "Error during panel detection")
-                    emptyList()
-                }
+        return withContext(mlDispatcher) {
+            try {
+                val detector = getOrInitDetector(context)
+                detector?.detectPanels(bitmap) ?: emptyList()
+            } catch (e: Exception) {
+                Timber.e(e, "Error during panel detection")
+                emptyList()
             }
         }
     }

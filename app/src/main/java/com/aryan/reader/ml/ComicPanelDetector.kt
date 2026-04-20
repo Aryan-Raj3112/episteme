@@ -33,7 +33,10 @@ class ComicPanelDetector(modelFile: File) {
     private var numBoxes: Int = 0
     private var numElementsPerBox: Int = 0
     private var outputBuffer: ByteBuffer? = null
+    private var floatOutputBuffer: java.nio.FloatBuffer? = null
     private var flatOutput: FloatArray? = null
+
+    private val preAllocatedTensorImage = TensorImage(DataType.FLOAT32)
 
     private val imageProcessor = ImageProcessor.Builder()
         .add(ResizeOp(inputSize, inputSize, ResizeOp.ResizeMethod.BILINEAR))
@@ -44,13 +47,20 @@ class ComicPanelDetector(modelFile: File) {
         try {
             val compatList = CompatibilityList()
             val options = Interpreter.Options().apply {
+                numThreads = 4
+
                 if (compatList.isDelegateSupportedOnThisDevice) {
-                    val delegateOptions = compatList.bestOptionsForThisDevice
+                    val delegateOptions = compatList.bestOptionsForThisDevice.apply {
+                        isPrecisionLossAllowed = true
+
+                        val cacheDir = File(modelFile.parentFile, "gpu_cache")
+                        if (!cacheDir.exists()) cacheDir.mkdirs()
+                        setSerializationParams(cacheDir.absolutePath, "${modelFile.name}_${modelFile.length()}")
+                    }
                     gpuDelegate = GpuDelegate(delegateOptions)
                     addDelegate(gpuDelegate)
-                    Timber.i("GPU Delegate added successfully.")
+                    Timber.i("GPU Delegate added successfully with serialization caching.")
                 } else {
-                    numThreads = 4
                     Timber.i("GPU not supported on this device. Falling back to 4 CPU threads.")
                 }
             }
@@ -66,6 +76,7 @@ class ComicPanelDetector(modelFile: File) {
 
             val outputBytes = numBoxes * numElementsPerBox * 4
             outputBuffer = ByteBuffer.allocateDirect(outputBytes).order(ByteOrder.nativeOrder())
+            floatOutputBuffer = outputBuffer!!.asFloatBuffer()
             flatOutput = FloatArray(numBoxes * numElementsPerBox)
 
             Timber.i("TFLite Model loaded and buffers allocated successfully from ${modelFile.absolutePath}")
@@ -77,6 +88,7 @@ class ComicPanelDetector(modelFile: File) {
     fun detectPanels(bitmap: Bitmap, confidenceThreshold: Float = 0.25f, iouThreshold: Float = 0.45f): List<RectF> {
         val tflite = interpreter ?: return emptyList()
         val buffer = outputBuffer ?: return emptyList()
+        val floatBuf = floatOutputBuffer ?: return emptyList()
         val flatOut = flatOutput ?: return emptyList()
 
         if (numBoxes <= 0) {
@@ -84,17 +96,16 @@ class ComicPanelDetector(modelFile: File) {
             return emptyList()
         }
 
-        var tensorImage = TensorImage(DataType.FLOAT32)
-        tensorImage.load(bitmap)
-        tensorImage = imageProcessor.process(tensorImage)
+        preAllocatedTensorImage.load(bitmap)
+        val processedImage = imageProcessor.process(preAllocatedTensorImage)
 
         buffer.rewind()
         val startTime = System.currentTimeMillis()
-        tflite.run(tensorImage.buffer, buffer)
+        tflite.run(processedImage.buffer, buffer)
         Timber.d("Inference took ${System.currentTimeMillis() - startTime}ms")
 
-        buffer.rewind()
-        buffer.asFloatBuffer().get(flatOut)
+        floatBuf.rewind()
+        floatBuf.get(flatOut)
 
         var maxCoord = 0f
         for (i in 0 until min(100, numBoxes)) {
@@ -185,6 +196,7 @@ class ComicPanelDetector(modelFile: File) {
         gpuDelegate = null
 
         outputBuffer = null
+        floatOutputBuffer = null
         flatOutput = null
     }
 }
