@@ -25,7 +25,7 @@ jobs:
           path-to-signatures: 'signatures.json'
           path-to-document: 'https://github.com/Aryan-Raj3112/episteme/blob/main/CLA.md'
           branch: 'cla-signatures'
-          allowlist: 'bot*,dependabot*'
+          allowlist: 'bot*,dependabot*,weblate'
 
           # Custom messages
           custom-notsigned-prcomment: |
