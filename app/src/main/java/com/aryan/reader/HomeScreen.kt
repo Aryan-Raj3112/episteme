@@ -22,6 +22,7 @@
 
 package com.aryan.reader
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -335,7 +336,8 @@ fun HomeScreen(
                                         showStrictFilterDialog = true
                                     }
                                 },
-                                onAppThemeClick = { showAppThemePanel = true }
+                                onAppThemeClick = { showAppThemePanel = true },
+                                onTestPanelDetectionClick = { viewModel.testPanelDetection(context) }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -902,7 +904,8 @@ fun DefaultTopAppBar(
     onTabsToggle: (Boolean) -> Unit,
     onExternalFileBehaviorClick: () -> Unit,
     onStrictFilterToggleClick: () -> Unit,
-    onAppThemeClick: () -> Unit
+    onAppThemeClick: () -> Unit,
+    onTestPanelDetectionClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -992,6 +995,12 @@ fun DefaultTopAppBar(
                 })
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_reflow_cache)) }, onClick = {
                     onClearReflowCache()
+                    showOptionsMenu = false
+                })
+
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("Test Panel ML Detection") }, onClick = {
+                    onTestPanelDetectionClick()
                     showOptionsMenu = false
                 })
 
@@ -1760,6 +1769,7 @@ fun ThemeSwatch(
     }
 }
 
+@SuppressLint("UnrememberedMutableState")
 @Composable
 fun CreateAppThemeDialog(
     initialColor: Color = Color(0xFF6750A4),

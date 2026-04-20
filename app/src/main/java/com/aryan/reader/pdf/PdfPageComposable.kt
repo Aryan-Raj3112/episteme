@@ -451,7 +451,9 @@ internal fun PdfPageComposable(
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
-    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null
+    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
+    onDetectPanels: suspend (Bitmap) -> List<android.graphics.RectF> = { emptyList() },
+    onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
     var bitmapState by remember { mutableStateOf(PdfThumbnailCache.get(pageIndex)) }
@@ -2627,7 +2629,42 @@ internal fun PdfPageComposable(
                         coroutineScope.launch {
                             val startScale = scale
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
-                            Timber.tag("PdfZoomDebug").i("DoubleTap Triggered: CurrentScale=$startScale, Target=$targetScale")
+
+                            // --- NEW PANEL DETECTION & POPUP LOGIC ---
+                            if (startScale <= 1.1f && bitmapState != null) {
+                                val tapInContentCoords = screenToContentCoordinates(tapOffset)
+
+                                // Map tap coordinates to the actual bitmap dimensions used by ML
+                                val ratioX = bitmapState!!.width.toFloat() / actualBitmapWidthPx.toFloat()
+                                val ratioY = bitmapState!!.height.toFloat() / actualBitmapHeightPx.toFloat()
+                                val tapXInBitmap = tapInContentCoords.x * ratioX
+                                val tapYInBitmap = tapInContentCoords.y * ratioY
+
+                                val panels = onDetectPanels(bitmapState!!)
+
+                                val tappedPanel = panels.firstOrNull {
+                                    it.contains(tapXInBitmap, tapYInBitmap)
+                                }
+
+                                if (tappedPanel != null) {
+                                    Timber.d("Popup: Cropping panel $tappedPanel")
+                                    // Clamp bounds to prevent out-of-bounds crashes (like L: -0.9)
+                                    val left = tappedPanel.left.coerceAtLeast(0f).toInt()
+                                    val top = tappedPanel.top.coerceAtLeast(0f).toInt()
+                                    val right = tappedPanel.right.coerceAtMost(bitmapState!!.width.toFloat()).toInt()
+                                    val bottom = tappedPanel.bottom.coerceAtMost(bitmapState!!.height.toFloat()).toInt()
+                                    val width = right - left
+                                    val height = bottom - top
+
+                                    if (width > 0 && height > 0) {
+                                        val cropped = android.graphics.Bitmap.createBitmap(bitmapState!!, left, top, width, height)
+                                        onShowPanelPopup(cropped)
+                                        return@launch // Stop here, don't do the standard zoom!
+                                    }
+                                }
+                            }
+                            // --- END NEW LOGIC ---
+
                             val startOffset = offset
                             val targetOffsetUnbounded = if (targetScale <= 1.1f) {
                                 Offset.Zero
@@ -2658,10 +2695,10 @@ internal fun PdfPageComposable(
                                 )
                             ) {
                                 val progress = value
-                                scale = lerp(
+                                scale = androidx.compose.ui.util.lerp(
                                     startScale, targetScale, progress
                                 )
-                                offset = lerp(
+                                offset = androidx.compose.ui.geometry.lerp(
                                     startOffset, targetOffset, progress
                                 )
                                 onScaleChanged(scale)

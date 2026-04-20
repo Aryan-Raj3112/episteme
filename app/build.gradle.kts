@@ -227,6 +227,9 @@ dependencies {
     implementation("org.zwobble.mammoth:mammoth:1.4.2")
 
     implementation("com.materialkolor:material-kolor:5.0.0-alpha07")
+
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.5.0")
 }
 
 spotless {

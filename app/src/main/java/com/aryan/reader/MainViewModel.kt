@@ -28,6 +28,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -4625,6 +4627,110 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     suspend fun getAuthToken(): String? {
         return authRepository.getIdToken()
+    }
+
+    fun testPanelDetection(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
+                if (!modelFile.exists()) {
+                    withContext(Dispatchers.Main) { showBanner("Model not found", isError = true) }
+                    return@launch
+                }
+
+                val cbzItem = uiState.value.contextualActionItems.firstOrNull { it.type == FileType.CBZ }
+                    ?: uiState.value.allRecentFiles.firstOrNull { it.type == FileType.CBZ }
+
+                if (cbzItem == null) {
+                    withContext(Dispatchers.Main) { showBanner("No CBZ found in Library.", isError = true) }
+                    return@launch
+                }
+
+                val uri = cbzItem.getUri() ?: return@launch
+                Timber.d("BATCH TEST START: ${cbzItem.displayName}")
+
+                var cacheFile: File? = null
+                try {
+                    cacheFile = File(context.cacheDir, "temp_test_batch.cbz")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        cacheFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+
+                    // 1. Initialize Model Once
+                    val initStartTime = System.currentTimeMillis()
+                    val detector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
+                    val initDuration = System.currentTimeMillis() - initStartTime
+                    Timber.d(">>> [BATCH] Model Initialization: ${initDuration}ms")
+
+                    val archiveDoc = com.aryan.reader.pdf.ArchiveDocumentWrapper(cacheFile)
+                    val totalPages = archiveDoc.getPageCount()
+
+                    val startIndex = 3
+                    val numPagesToTest = 10
+                    val endIndex = minOf(startIndex + numPagesToTest - 1, totalPages - 1)
+
+                    val resultsLog = StringBuilder()
+                    resultsLog.append("Batch Results:\n")
+
+                    // 2. Loop through pages
+                    for (i in startIndex..endIndex) {
+                        val page = archiveDoc.openPage(i)
+                        if (page != null) {
+                            val w = page.getPageWidthPoint()
+                            val h = page.getPageHeightPoint()
+                            if (w > 0 && h > 0) {
+                                val bitmap = androidx.core.graphics.createBitmap(w, h)
+                                page.renderPageBitmap(bitmap, 0, 0, w, h, false)
+
+                                // Measure precise inference time
+                                val pageStartTime = System.currentTimeMillis()
+                                val panels = detector.detectPanels(bitmap)
+                                val pageDuration = System.currentTimeMillis() - pageStartTime
+
+                                val logLine = "Page $i: ${pageDuration}ms (Found ${panels.size} panels)"
+                                Timber.d(">>> [BATCH] $logLine")
+                                resultsLog.append("$logLine\n")
+
+                                bitmap.recycle()
+                            }
+                            page.close()
+                        }
+                    }
+
+                    detector.close()
+                    archiveDoc.close()
+
+                    withContext(Dispatchers.Main) {
+                        Timber.i(resultsLog.toString())
+                        showBanner("Batch test complete! Check logs for page-by-page timings.")
+                    }
+
+                } finally {
+                    cacheFile?.delete()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Batch test failed")
+            }
+        }
+    }
+
+    suspend fun detectComicPanels(bitmap: Bitmap, context: Context): List<android.graphics.RectF> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
+                if (!modelFile.exists()) {
+                    Timber.e("Model file not found for panel detection")
+                    return@withContext emptyList()
+                }
+                val detector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
+                val panels = detector.detectPanels(bitmap)
+                detector.close()
+                panels
+            } catch (e: Exception) {
+                Timber.e(e, "Error during panel detection")
+                emptyList()
+            }
+        }
     }
 
     companion object {

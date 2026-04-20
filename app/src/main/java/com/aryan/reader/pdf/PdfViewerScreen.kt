@@ -1187,7 +1187,7 @@ private class DocumentCache(val maxSize: Int = 3) {
 }
 
 @Suppress("KotlinConstantConditions")
-@SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt")
+@SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
@@ -1222,6 +1222,7 @@ fun PdfViewerScreen(
     val summaryCacheManager = remember(context) { SummaryCacheManager(context) }
     val tabStateMap = remember { mutableStateMapOf<String, Int>() }
     var showInsufficientCreditsDialog by remember { mutableStateOf(false) }
+    var poppedUpPanelBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         PdfBuiltInThemes.find { it.id == currentThemeId }
@@ -4832,6 +4833,13 @@ fun PdfViewerScreen(
                                                         currentActiveOffset = newOffset
                                                     }
                                                 },
+                                                onDetectPanels = { bitmap ->
+                                                    Toast.makeText(context, "Scanning for panels...", Toast.LENGTH_SHORT).show()
+                                                    viewModel.detectComicPanels(bitmap, context)
+                                                },
+                                                onShowPanelPopup = { croppedBitmap ->
+                                                    poppedUpPanelBitmap = croppedBitmap
+                                                },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
                                                         val targetPage =
@@ -7326,6 +7334,51 @@ fun PdfViewerScreen(
                         }
                     )
                 }
+
+                // --- PANEL POPUP ---
+                if (poppedUpPanelBitmap != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.85f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                poppedUpPanelBitmap?.recycle()
+                                poppedUpPanelBitmap = null
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
+                            contentDescription = "Zoomed Panel",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Fit
+                        )
+
+                        IconButton(
+                            onClick = {
+                                poppedUpPanelBitmap?.recycle()
+                                poppedUpPanelBitmap = null
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(24.dp)
+                                .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Panel",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+                // --- END PANEL POPUP ---
 
                 if (showPasswordDialog) {
                     PasswordDialog(
