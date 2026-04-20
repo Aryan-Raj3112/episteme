@@ -503,7 +503,7 @@
     <string name="toast_select_offline_dict_first">Önce çevrim dışı bir sözlük seçin.</string>
     <string name="banner_book_not_paginated">Kitap henüz numaralandırılmamış.</string>
     <string name="banner_wait_for_load">Kitabın tamamen yüklenmesini bekleyin.</string>
-    <string name="pull_further_percent">Daha da çek… (%%%1$d)</string>
+    <string name="pull_further_percent">Daha da çek... (%%%1$d)</string>
     <string name="chapter">Bölüm</string>
     <string name="error_could_not_get_chapter_content">Bölüm içeriği getirilemedi.</string>
     <string name="error_could_not_determine_chapter">Şu anki bölüm belirlenemedi.</string>
