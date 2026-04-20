@@ -487,7 +487,7 @@
     <string name="banner_wait_for_load">يرجى الانتظار حتى يتم تحميل الكتاب بالكامل.</string>
     <string name="release_for_previous_chapter">أفلِت للانتقال إلى الفصل السابق</string>
     <string name="release_for_next_chapter">أفلِت للانتقال إلى الفصل التالي</string>
-    <string name="pull_further_percent">اسحب للمتابعة... (‎%1$d%%‎)</string>
+    <string name="pull_further_percent">اسحب للمتابعة… (‎%1$d%%‎)</string>
     <string name="chapter">الفصل</string>
     <string name="error_could_not_get_chapter_content">تعذر الحصول على محتوى الفصل.</string>
     <string name="error_could_not_determine_chapter">تعذر تحديد الفصل الحالي.</string>
@@ -588,14 +588,14 @@
     <string name="menu_ocr_language">لغة التعرّف الضوئي</string>
     <string name="menu_insert_blank_page">إدراج صفحة فارغة</string>
     <string name="menu_delete_page">حذف الصفحة</string>
-    <string name="generating_reflow_progress">جاري الإنشاء... ‎%1$d%%‎</string>
+    <string name="generating_reflow_progress">جاري الإنشاء… ‎%1$d%%‎</string>
     <string name="action_open_text_view">فتح عرض النص</string>
     <string name="action_generate_text_view">إنشاء عرض النص</string>
     <string name="action_share">مشاركة</string>
     <string name="action_save_copy_to_device">حفظ نسخة على الجهاز</string>
     <string name="action_print">طباعة</string>
     <string name="generating_text_view">جاري إنشاء عرض النص…</string>
-    <string name="msg_indexing_pages_progress">جاري فهرسة الصفحات... اكتملت بنسبة %1$d%%. ستُحدث نتائج البحث تلقائياً.</string>
+    <string name="msg_indexing_pages_progress">جاري فهرسة الصفحات… اكتملت بنسبة %1$d%%. ستُحدث نتائج البحث تلقائياً.</string>
     <string name="msg_results_found_pages">عُثر على نتائج في أكثر من %1$d صفحة</string>
     <string name="msg_search_result_index">النتيجة %1$d / %2$d</string>
     <string name="msg_search_pages_count">%1$d+ صفحة</string>

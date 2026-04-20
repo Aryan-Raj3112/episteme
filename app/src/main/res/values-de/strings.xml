@@ -488,7 +488,7 @@
     <string name="banner_wait_for_load">Bitte warten sie, bis das Buch vollständig geladen ist.</string>
     <string name="release_for_previous_chapter">Freigabe für vorheriges Kapitel</string>
     <string name="release_for_next_chapter">Freigabe für nächstes Kapitel</string>
-    <string name="pull_further_percent">Weiter ziehen... (%1$d%%)</string>
+    <string name="pull_further_percent">Weiter ziehen… (%1$d%%)</string>
     <string name="chapter">Kapitel</string>
     <string name="error_could_not_get_chapter_content">Kapitelinhalt konnte nicht geladen werden.</string>
     <string name="error_could_not_determine_chapter">Aktuelles Kapitel konnte nicht bestimmt werden.</string>
@@ -525,7 +525,7 @@
     <string name="about_privacy_desc">Wie wir Ihre Daten verarbeiten.</string>
     <string name="about_terms_desc">Nutzungsbedingungen.</string>
     <string name="about_licenses_desc">Benutzte quelloffene Bibliotheken.</string>
-    <string name="banner_importing_multiple">Importiere %1$d Bücher... Sie werden in Kürze in Ihrer Bibliothek erscheinen.</string>
+    <string name="banner_importing_multiple">Importiere %1$d Bücher… Sie werden in Kürze in Ihrer Bibliothek erscheinen.</string>
     <string name="dialog_external_link_title">Externer Link</string>
     <string name="dialog_external_link_desc">Sie haben auf einen externen Link geklickt:\n\n%1$s\n\nWas möchten Sie tun?</string>
     <string name="action_open">Öffnen</string>
@@ -589,14 +589,14 @@
     <string name="menu_ocr_language">OCR-Sprache</string>
     <string name="menu_insert_blank_page">Leere Seite einfügen</string>
     <string name="menu_delete_page">Seite löschen</string>
-    <string name="generating_reflow_progress">Generieren... %1$d%%</string>
+    <string name="generating_reflow_progress">Generieren… %1$d%%</string>
     <string name="action_open_text_view">Textansicht öffnen</string>
     <string name="action_generate_text_view">Textansicht generieren</string>
     <string name="action_share">Teilen</string>
     <string name="action_save_copy_to_device">Kopie auf Gerät speichern</string>
     <string name="action_print">Drucken</string>
     <string name="generating_text_view">Textansicht wird generiert…</string>
-    <string name="msg_indexing_pages_progress">Seiten werden indiziert... %1$d%% fertig. Suchergebnisse werden automatisch aktualisiert.</string>
+    <string name="msg_indexing_pages_progress">Seiten werden indiziert … %1$d%% fertig. Suchergebnisse werden automatisch aktualisiert.</string>
     <string name="msg_results_found_pages">Ergebnisse auf %1$d+ Seiten gefunden</string>
     <string name="msg_search_result_index">Ergebnis %1$d / %2$d</string>
     <string name="msg_search_pages_count">%1$d+ Seiten</string>
@@ -604,7 +604,7 @@
     <string name="msg_downloading_language_pack">Sprachpaket %1$s wird heruntergeladen…</string>
     <string name="title_select_ocr_language">OCR-Sprache auswählen</string>
     <string name="desc_select_ocr_language">Wählen Sie die primäre Sprache/Schrift dieses Dokuments für bessere Texterkennungsergebnisse.</string>
-    <string name="desc_ocr_language_change_later">Sie können dies später unter Weitere Optionen &gt; OCR-Sprache ändern.</string>
+    <string name="desc_ocr_language_change_later">Sie können dies später unter weitere Optionen &gt; OCR-Sprache ändern.</string>
     <string name="title_reindex_document">Dokument neu indizieren?</string>
     <string name="desc_reindex_document_warning">Sie ändern die OCR-Schrift auf %1$s.\n\nUm die Suchgenauigkeit zu gewährleisten, müssen wir den vorhandenen Index löschen und Seiten, die OCR mit dieser neuen Schrift benötigen, neu scannen.\n\nDas wird im Hintergrund geschehen.</string>
     <string name="action_reindex">Neu indizieren</string>
