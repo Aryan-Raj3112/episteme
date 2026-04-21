@@ -448,7 +448,7 @@ fun EpubReaderScreen(
 }
 
 @Suppress("ControlFlowWithEmptyBody")
-@SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt")
+@SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @androidx.annotation.OptIn(UnstableApi::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -481,6 +481,13 @@ fun EpubReaderHost(
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     var bannerMessage by remember { mutableStateOf<BannerMessage?>(null) }
+    DisposableEffect(window, view) {
+        onDispose {
+            window?.let {
+                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }
     val containerFocusRequester = remember { FocusRequester() }

@@ -35,14 +35,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -118,7 +115,6 @@ import com.aryan.reader.R
 import com.aryan.reader.data.CustomFontEntity
 import timber.log.Timber
 import java.io.File
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 private enum class ColorMenuMode {
@@ -176,18 +172,6 @@ fun TextAnnotationDock(
     val fontSizes = listOf(12.sp, 14.sp, 16.sp, 18.sp, 20.sp, 24.sp, 30.sp)
     val focusManager = LocalFocusManager.current
 
-    val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    val navBottom = WindowInsets.navigationBars.getBottom(density)
-    val spacerHeightPx = max(0, imeBottom - navBottom)
-    val spacerHeightDp = with(density) { spacerHeightPx.toDp() }
-
-    val effectiveSpacerHeight = if (spacerHeightDp > 0.dp) {
-        spacerHeightDp
-    } else {
-        bottomDockPadding
-    }
-
     LaunchedEffect(activePopup) {
         if (activePopup == ActivePopup.NONE) {
             activeMenuMode = ColorMenuMode.PALETTE
@@ -200,7 +184,7 @@ fun TextAnnotationDock(
 
             val dockBarHeight = 48.dp
             val margin = 8.dp
-            val finalOffsetY = -(effectiveSpacerHeight + dockBarHeight + margin)
+            val finalOffsetY = -(bottomDockPadding + dockBarHeight + margin)
 
             val isFocusable = activeMenuMode == ColorMenuMode.SPECTRUM || activePopup == ActivePopup.FONT_FAMILY
 
@@ -724,7 +708,7 @@ fun TextAnnotationDock(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(effectiveSpacerHeight))
+            Spacer(modifier = Modifier.height(bottomDockPadding))
         }
     }
 }

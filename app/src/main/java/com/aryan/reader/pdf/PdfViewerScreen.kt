@@ -28,6 +28,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
+import androidx.compose.foundation.layout.union
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.material3.Switch
@@ -35,8 +36,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.rememberScrollState
 import android.graphics.Bitmap
 import com.aryan.reader.epubreader.SystemUiMode
-import com.aryan.reader.epubreader.loadSystemUiMode
-import com.aryan.reader.epubreader.saveSystemUiMode
 import com.aryan.reader.epubreader.OptionSegmentedControl
 import android.graphics.RectF
 import android.net.Uri
@@ -224,6 +223,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -372,6 +372,8 @@ private const val PDF_THEME_KEY = "pdf_reader_theme"
 private const val PDF_KEEP_SCREEN_ON_KEY = "pdf_keep_screen_on_enabled"
 private const val PDF_HIDDEN_TOOLS_KEY = "pdf_hidden_tools"
 
+private const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
+
 private fun loadPdfHiddenTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
@@ -434,6 +436,19 @@ private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
 private fun loadKeepScreenOn(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PDF_KEEP_SCREEN_ON_KEY, false)
+}
+
+private const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
+
+private fun savePdfSystemUiMode(context: Context, mode: SystemUiMode) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putInt(PDF_SYSTEM_UI_MODE_KEY, mode.id) }
+}
+
+private fun loadPdfSystemUiMode(context: Context): SystemUiMode {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val id = prefs.getInt(PDF_SYSTEM_UI_MODE_KEY, SystemUiMode.SYNC.id)
+    return SystemUiMode.entries.find { it.id == id } ?: SystemUiMode.SYNC
 }
 
 private fun savePdfThemeId(context: Context, themeId: String) {
@@ -1232,7 +1247,7 @@ fun PdfViewerScreen(
     val isPdfDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
     var showBars by rememberSaveable { mutableStateOf(true) }
-    var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
+    var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1524,7 +1539,17 @@ fun PdfViewerScreen(
     }
 
     val window = (view.context as? Activity)?.window
-    LaunchedEffect(systemUiMode, showBars) {
+    val showStandardBars = showBars && !isEditMode
+
+    DisposableEffect(window, view) {
+        onDispose {
+            window?.let {
+                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    LaunchedEffect(systemUiMode, showStandardBars) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
             when (systemUiMode) {
@@ -1532,7 +1557,7 @@ fun PdfViewerScreen(
                     insetsController.show(WindowInsetsCompat.Type.systemBars())
                 }
                 SystemUiMode.SYNC -> {
-                    if (showBars) {
+                    if (showStandardBars) {
                         insetsController.show(WindowInsetsCompat.Type.systemBars())
                     } else {
                         insetsController.hide(WindowInsetsCompat.Type.systemBars())
@@ -1556,10 +1581,11 @@ fun PdfViewerScreen(
     val statusBarHeightDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
     val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
     val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
+    val navBarHeight = WindowInsets.systemBars.getBottom(density)
 
-    val showStandardBars = showBars && !isEditMode
+    val effectiveNavBarForSnackbar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
     val snackbarPadding by animateDpAsState(
-        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp else 0.dp,
+        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp + effectiveNavBarForSnackbar else effectiveNavBarForSnackbar,
         label = "SnackbarPadding"
     )
 
@@ -1570,7 +1596,6 @@ fun PdfViewerScreen(
         isDockDragging,
         showStandardBars,
         systemUiMode,
-        showBars,
         statusBarHeightDp
     ) {
         if (!isEditMode) {
@@ -1579,11 +1604,7 @@ fun PdfViewerScreen(
                 h += 56.dp
             }
 
-            val isStatusBarVisible = when (systemUiMode) {
-                SystemUiMode.DEFAULT -> true
-                SystemUiMode.SYNC -> showBars
-                SystemUiMode.HIDDEN -> false
-            }
+            val isStatusBarVisible = systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)
 
             if (isStatusBarVisible) {
                 h += statusBarHeightDp
@@ -1592,7 +1613,9 @@ fun PdfViewerScreen(
         } else {
             val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
             val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
-            if (isStickyTop || isPreviewingTop) dockHeight else 0.dp
+            if (isStickyTop || isPreviewingTop) {
+                dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+            } else 0.dp
         }
     }
 
@@ -1606,7 +1629,10 @@ fun PdfViewerScreen(
         dockLocation,
         snapPreviewLocation,
         isEditMode,
-        isDockDragging
+        isDockDragging,
+        systemUiMode,
+        navBarHeight,
+        density
     ) {
         derivedStateOf {
             if (!isEditMode) {
@@ -1615,7 +1641,9 @@ fun PdfViewerScreen(
                 val isStickyBottom = dockLocation == DockLocation.BOTTOM && !isDockDragging
                 val isPreviewingBottom = snapPreviewLocation == DockLocation.BOTTOM
 
-                if (isStickyBottom || isPreviewingBottom) dockHeight else 0.dp
+                if (isStickyBottom || isPreviewingBottom) {
+                    dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
+                } else 0.dp
             }
         }
     }
@@ -3742,30 +3770,42 @@ fun PdfViewerScreen(
     var smartSearchResult by remember { mutableStateOf<SmartSearchResult?>(null) }
     var currentPdfSearchResult by remember { mutableStateOf<SearchResult?>(null) }
 
-    val navBarHeight = WindowInsets.systemBars.getBottom(density)
     val imeHeight = WindowInsets.ime.getBottom(density)
 
-    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized) {
+    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars) {
+        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
         if (isEditMode) {
             if (imeHeight > 0) {
                 imeHeight.toFloat()
             } else {
                 if (dockLocation == DockLocation.BOTTOM && !isDockMinimized) {
-                    with(density) { 100.dp.toPx() }
+                    with(density) { 64.dp.toPx() } + effectiveNavBar
                 } else {
-                    with(density) { 16.dp.toPx() } + navBarHeight
+                    with(density) { 16.dp.toPx() } + effectiveNavBar
                 }
             }
         } else {
-            if (showBars) {
-                with(density) { 56.dp.toPx() } + navBarHeight
+            if (showStandardBars) {
+                with(density) { 56.dp.toPx() } + effectiveNavBar
             } else {
-                navBarHeight.toFloat()
+                effectiveNavBar.toFloat()
             }
         }
     }
 
     val topScrollLimitPx = with(density) { verticalHeaderHeight.toPx() }
+
+    LaunchedEffect(imeHeight, navBarHeight, systemUiMode, showStandardBars, isEditMode, bottomScrollLimitPx) {
+        Timber.tag(PDF_LAYOUT_DEBUG_TAG).d("""
+            [Global Metrics]
+            - IME Height: ${imeHeight}px (${with(density) { imeHeight.toDp() }})
+            - Nav Bar Height: ${navBarHeight}px (${with(density) { navBarHeight.toDp() }})
+            - System UI Mode: $systemUiMode
+            - Show Standard Bars: $showStandardBars
+            - Is Edit Mode: $isEditMode
+            - Bottom Scroll Limit: ${bottomScrollLimitPx}px
+        """.trimIndent())
+    }
 
     LaunchedEffect(searchState.searchQuery, currentBookId) {
         val query = searchState.searchQuery
@@ -4493,16 +4533,18 @@ fun PdfViewerScreen(
                 }
             }
         }) {
+        @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
         Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             snackbarHost = {
                 SnackbarHost(
                     hostState = snackbarHostState,
                     modifier = Modifier.padding(bottom = snackbarPadding)
                 )
             }
-        ) { paddingValues ->
-            BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(bottom = paddingValues.calculateBottomPadding())) {
-            IntSize(constraints.maxWidth, constraints.maxHeight)
+        ) { _ ->
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                IntSize(constraints.maxWidth, constraints.maxHeight)
                 val boxConstraints = constraints
                 val boxMaxWidthFloat = boxConstraints.maxWidth.toFloat()
                 val boxMaxHeightFloat = boxConstraints.maxHeight.toFloat()
@@ -5527,12 +5569,13 @@ fun PdfViewerScreen(
                                 .clickable(
                                     indication = null, interactionSource = remember {
                                         MutableInteractionSource()
-                                    }) {}, // Consume clicks
+                                    }) {},
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 32.dp, vertical = 16.dp),
+                                    .padding(horizontal = 32.dp, vertical = 16.dp)
+                                    .padding(bottom = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
@@ -5686,12 +5729,19 @@ fun PdfViewerScreen(
                     exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> -fullHeight } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.TopCenter)
                 ) {
+                    val isStatusBarVisible = when (systemUiMode) {
+                        SystemUiMode.DEFAULT -> true
+                        SystemUiMode.SYNC -> showBars
+                        SystemUiMode.HIDDEN -> false
+                    }
+                    val topBarPadding = if (isStatusBarVisible) statusBarHeightDp else 0.dp
+
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 4.dp
                     ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = topBarPadding)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().height(56.dp)
                                     .padding(horizontal = 4.dp),
@@ -6323,7 +6373,7 @@ fun PdfViewerScreen(
                     exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 24.dp)
+                        .padding(bottom = 24.dp + if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp)
                 ) {
                     val currentResult = currentPdfSearchResult
                     val searchData = smartSearchResult
@@ -6436,10 +6486,11 @@ fun PdfViewerScreen(
                     exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    val isNavBarVisible = systemUiMode != SystemUiMode.HIDDEN
+                    val bottomBarPadding = if (isNavBarVisible) with(density) { navBarHeight.toDp() } else 0.dp
+
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 4.dp
                     ) {
@@ -6447,7 +6498,9 @@ fun PdfViewerScreen(
 
                         Row(
                             modifier = Modifier
-                                .fillMaxSize()
+                                .fillMaxWidth()
+                                .padding(bottom = bottomBarPadding)
+                                .height(56.dp)
                                 .padding(horizontal = 8.dp)
                                 .horizontalScroll(bottomBarScrollState),
                             verticalAlignment = Alignment.CenterVertically,
@@ -6760,9 +6813,13 @@ fun PdfViewerScreen(
                                     )
                                 }
 
+                            val effectiveNavBarForDock = if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
                             val paddingModifier =
                                 if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
-                                    Modifier
+                                    Modifier.padding(
+                                        bottom = if (dockLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
+                                        top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                                    )
                                 } else {
                                     Modifier.padding(vertical = 16.dp)
                                 }
@@ -7051,6 +7108,9 @@ fun PdfViewerScreen(
                     }
 
                     val currentDensity = LocalDensity.current
+                    val isImeVisible = WindowInsets.ime.getBottom(currentDensity) > 0
+
+                    val extraPadding = if (isImeVisible) 8.dp else bottomPadding
 
                     val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
                         derivedStateOf {
@@ -7085,7 +7145,10 @@ fun PdfViewerScreen(
 
                     Box(modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .fillMaxWidth()) {
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                        .padding(bottom = extraPadding)
+                    ) {
                         TextAnnotationDock(
                             currentStyle = effectiveStyle,
                             textColorPalette = penPalette,
@@ -7145,7 +7208,7 @@ fun PdfViewerScreen(
                                 selectedTextBoxId = null
                                 richTextController.clearSelection()
                             },
-                            bottomDockPadding = bottomPadding,
+                            bottomDockPadding = 0.dp,
                             customFonts = customFonts,
                             onImportFont = viewModel::importFont,
                             onFontSelected = { name, path ->
@@ -7155,9 +7218,7 @@ fun PdfViewerScreen(
                                     if (idx != -1) {
                                         val oldBox = textBoxes[idx]
                                         textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
-                                        Timber.tag("PdfTextBoxDebug").d("Updated TextBox ${oldBox.id} font to: $name ($path)")
                                     }
-                                    Timber.tag("PdfFontDebug").d("UI: Updating TextBox $selectedTextBoxId with font path: $path")
                                 } else {
                                     val currentConfig = toolSettings.textStyle
                                     val newConfig = currentConfig.copy(fontPath = path, fontName = name)
@@ -7178,7 +7239,6 @@ fun PdfViewerScreen(
                                             },
                                             fontFamily = PdfFontCache.getFontFamily(path)
                                         )
-                                        Timber.tag("PdfFontDebug").d("UI Action: Manually updating controller with font $path")
                                         controller.updateCurrentStyle(style, path, name)
                                     }
                                 }
@@ -7887,13 +7947,14 @@ fun PdfViewerScreen(
                     }
                 }
 
+                val effectiveNavBarPaddingForOverlays = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
                 val autoScrollPadding by animateDpAsState(
-                    targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
+                    targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
                     label = "AutoScrollPadding"
                 )
 
                 val ttsOverlayPadding by animateDpAsState(
-                    targetValue = if (showBars) (56.dp + 16.dp) else 16.dp,
+                    targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
                     label = "TtsOverlayPadding"
                 )
 
@@ -8029,7 +8090,7 @@ fun PdfViewerScreen(
                         systemUiMode = systemUiMode,
                         onSystemUiModeChange = { mode ->
                             systemUiMode = mode
-                            saveSystemUiMode(context, mode)
+                            savePdfSystemUiMode(context, mode)
                         },
                         onDismiss = { showVisualOptionsSheet = false }
                     )
