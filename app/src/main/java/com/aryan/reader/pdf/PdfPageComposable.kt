@@ -3692,6 +3692,7 @@ internal fun PdfPageComposable(
                             }
                         },
                         scale = scale,
+                        uiScale = effectiveScale,
                         offset = offset,
                         startHandlePos = startHandleContentPosition.value,
                         endHandlePos = endHandleContentPosition.value,
@@ -4604,6 +4605,7 @@ private fun PdfPageRenderer(
     drawingState: PdfDrawingState?,
     onCanvasSizeChanged: (Float, Float) -> Unit,
     scale: Float,
+    uiScale: Float,
     offset: Offset,
     startHandlePos: Offset?,
     endHandlePos: Offset?,
@@ -4730,6 +4732,12 @@ private fun PdfPageRenderer(
                     }
                 }
 
+                if (textBoxes.isNotEmpty()) {
+                    androidx.compose.runtime.SideEffect {
+                        Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer parent graphicsLayer applied | scale=$scale | offset=$offset | Centering: X=${staticData.centeringOffsetX}, Y=${staticData.centeringOffsetY}")
+                    }
+                }
+
                 textBoxes.forEach { box ->
                     val isDraggingThisBox = (box.id == draggingBoxId)
                     val boxAlpha = if (isDraggingThisBox) 0f else 1f
@@ -4740,17 +4748,23 @@ private fun PdfPageRenderer(
                             isSelected = (box.id == selectedTextBoxId),
                             isEditMode = isEditMode,
                             isDarkMode = staticData.isDarkMode,
+                            scale = uiScale,
                             pageWidthPx = staticData.targetWidth.toFloat(),
                             pageHeightPx = staticData.targetHeight.toFloat(),
                             handlePosition = HandlePosition.AUTO,
                             onBoundsChanged = { newBounds ->
+                                Timber.tag("PdfTextBoxDebug").v("PdfPageRenderer onBoundsChanged [ID: ${box.id}] bounds=$newBounds")
                                 onTextBoxChange(box.copy(relativeBounds = newBounds))
                             },
                             onTextChanged = { newText ->
                                 onTextBoxChange(box.copy(text = newText))
                             },
-                            onSelect = { onTextBoxSelect(box.id) },
+                            onSelect = {
+                                Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onSelect propagated[ID: ${box.id}]")
+                                onTextBoxSelect(box.id)
+                            },
                             onDragStart = { touchOffset ->
+                                Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragStart[ID: ${box.id}] isVerticalScroll=$isVerticalScroll | offset=$touchOffset")
                                 if (isVerticalScroll) {
                                     val topLeft = Offset(
                                         box.relativeBounds.left * staticData.targetWidth,
@@ -4762,10 +4776,12 @@ private fun PdfPageRenderer(
                                 }
                             },
                             onDrag = { delta, currentBounds ->
+                                Timber.tag("PdfTextBoxDebug").v("PdfPageRenderer onDrag [ID: ${box.id}] delta=$delta currentBounds=$currentBounds scale=$scale")
                                 if (isVerticalScroll) {
                                     onTextBoxDrag(delta)
                                 } else {
-                                    onTextBoxDrag(delta)
+                                    val scaledDelta = delta * scale
+                                    onTextBoxDrag(scaledDelta)
 
                                     val width = staticData.targetWidth
                                     val edgeThreshold = 60f
@@ -4779,9 +4795,11 @@ private fun PdfPageRenderer(
                                 }
                             },
                             onDragEnd = {
+                                Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragEnd[ID: ${box.id}]")
                                 onTextBoxDragEnd()
                             },
                             onDragCancel = {
+                                Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragCancel [ID: ${box.id}]")
                                 onTextBoxDragEnd()
                             },
                             modifier = Modifier

@@ -3485,6 +3485,7 @@ fun PdfViewerScreen(
                                                 },
                                                 draggingBoxId = paginationDraggingBoxId,
                                                 onTextBoxDragStart = { box, _, _ ->
+                                                    Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragStart [ID: ${box.id}] initialized")
                                                     val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
 
                                                     val containerWidthPx = boxConstraints.maxWidth
@@ -3517,6 +3518,7 @@ fun PdfViewerScreen(
                                                     paginationDragPageHeight = renderedHeight
                                                 },
                                                 onTextBoxDrag = { dragDelta ->
+                                                    Timber.tag("PdfTextBoxDebug").v("Pagination onTextBoxDrag delta=$dragDelta | currentOffset=$paginationDraggingOffset")
                                                     paginationDraggingOffset += dragDelta
 
                                                     val edgeThreshold = 60f
@@ -3540,6 +3542,7 @@ fun PdfViewerScreen(
                                                     }
                                                 },
                                                 onTextBoxDragEnd = {
+                                                    Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragEnd called [ID: $paginationDraggingBoxId] | EndOffset=$paginationDraggingOffset")
                                                     val boxId = paginationDraggingBoxId
                                                     if (boxId != null) {
                                                         coroutineScope.launch {
@@ -3857,6 +3860,7 @@ fun PdfViewerScreen(
                                             bottomContentPaddingPx = bottomScrollLimitPx,
                                             topContentPaddingPx = topScrollLimitPx,
                                             onTextBoxMoved = { boxId, newPageIndex, newBounds ->
+                                                Timber.tag("PdfTextBoxDebug").d("Vertical Reader onTextBoxMoved[ID: $boxId] newPage=$newPageIndex bounds=$newBounds")
                                                 val idx = textBoxes.indexOfFirst { it.id == boxId }
                                                 if (idx != -1) {
                                                     val oldBox = textBoxes[idx]
@@ -5168,6 +5172,19 @@ fun PdfViewerScreen(
                                 annotationSettingsRepo.updateHighlighterPalette(newPalette)
                             },
                             onUpdateStyle = { newStyle ->
+                                val newConfig = TextStyleConfig(
+                                    colorArgb = newStyle.color.toArgb(),
+                                    backgroundColorArgb = newStyle.background.toArgb(),
+                                    fontSize = newStyle.fontSize.value,
+                                    isBold = newStyle.fontWeight == FontWeight.Bold,
+                                    isItalic = newStyle.fontStyle == FontStyle.Italic,
+                                    isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
+                                    isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true,
+                                    fontPath = toolSettings.textStyle.fontPath,
+                                    fontName = toolSettings.textStyle.fontName
+                                )
+                                annotationSettingsRepo.updateTextStyle(newConfig)
+
                                 if (selectedTextBoxId != null) {
                                     val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
                                     if (idx != -1) {
@@ -5190,19 +5207,6 @@ fun PdfViewerScreen(
                                     }
                                 } else {
                                     richTextController.updateCurrentStyle(newStyle)
-
-                                    val newConfig = TextStyleConfig(
-                                        colorArgb = newStyle.color.toArgb(),
-                                        backgroundColorArgb = newStyle.background.toArgb(),
-                                        fontSize = newStyle.fontSize.value,
-                                        isBold = newStyle.fontWeight == FontWeight.Bold,
-                                        isItalic = newStyle.fontStyle == FontStyle.Italic,
-                                        isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
-                                        isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true,
-                                        fontPath = toolSettings.textStyle.fontPath,
-                                        fontName = toolSettings.textStyle.fontName
-                                    )
-                                    annotationSettingsRepo.updateTextStyle(newConfig)
                                 }
                             },
                             onApplyToSelection = {},
@@ -5221,6 +5225,10 @@ fun PdfViewerScreen(
                             onImportFont = viewModel::importFont,
                             onFontSelected = { name, path ->
                                 Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
+                                val currentConfig = toolSettings.textStyle
+                                val newConfig = currentConfig.copy(fontPath = path, fontName = name)
+                                annotationSettingsRepo.updateTextStyle(newConfig)
+
                                 if (selectedTextBoxId != null) {
                                     val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
                                     if (idx != -1) {
@@ -5228,10 +5236,6 @@ fun PdfViewerScreen(
                                         textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
                                     }
                                 } else {
-                                    val currentConfig = toolSettings.textStyle
-                                    val newConfig = currentConfig.copy(fontPath = path, fontName = name)
-                                    annotationSettingsRepo.updateTextStyle(newConfig)
-
                                     richTextController.let { controller ->
                                         val style = SpanStyle(
                                             color = Color(newConfig.colorArgb),

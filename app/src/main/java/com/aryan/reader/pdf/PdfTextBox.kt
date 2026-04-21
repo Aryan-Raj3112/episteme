@@ -21,7 +21,8 @@ package com.aryan.reader.pdf
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,7 +53,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -78,6 +84,49 @@ enum class HandlePosition {
     TOP, BOTTOM, AUTO
 }
 
+// Eagerly consumes pointer events so parent scaled pan/zoom gestures don't intercept it
+suspend fun PointerInputScope.detectEagerDragGestures(
+    onDragStart: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onDrag: (PointerInputChange, Offset) -> Unit
+) {
+    awaitEachGesture {
+        var dragStarted = false
+        try {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            down.consume() // Consume immediately
+            onDragStart(down.position)
+            dragStarted = true
+            val pointerId = down.id
+            var canceled = false
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                if (change == null) {
+                    canceled = true
+                    break
+                }
+                if (change.changedToUp()) {
+                    change.consume()
+                    break
+                }
+                if (change.positionChanged()) {
+                    val dragAmount = change.position - change.previousPosition
+                    change.consume()
+                    onDrag(change, dragAmount)
+                }
+            }
+            if (canceled) onDragCancel() else onDragEnd()
+            dragStarted = false
+        } finally {
+            if (dragStarted) {
+                onDragCancel()
+            }
+        }
+    }
+}
+
 @Composable
 fun ResizableTextBox(
     box: PdfTextBox,
@@ -86,6 +135,7 @@ fun ResizableTextBox(
     isDarkMode: Boolean,
     pageWidthPx: Float,
     pageHeightPx: Float,
+    scale: Float = 1f,
     onBoundsChanged: (Rect) -> Unit,
     onTextChanged: (String) -> Unit,
     onSelect: () -> Unit,
@@ -101,8 +151,9 @@ fun ResizableTextBox(
     val density = LocalDensity.current
     val focusRequester = remember { FocusRequester() }
 
-    val handleSize = 10.dp
-    val handleTouchSize = 40.dp
+    // Counter-scale fixed sizes so they render proportionally regardless of the zoom level
+    val handleSize = (10f / scale).dp
+    val handleTouchSize = (40f / scale).dp
     val handleSizePx = with(density) { handleSize.toPx() }
     val halfHandlePx = handleSizePx / 2f
     val handleTouchSizePx = with(density) { handleTouchSize.toPx() }
@@ -126,7 +177,9 @@ fun ResizableTextBox(
             }
         }
     }
-
+    androidx.compose.runtime.SideEffect {
+        Timber.tag("PdfTextBoxDebug").v("ResizableTextBox Recompose [ID: ${box.id}] | isSelected=$isSelected | scale=$scale | pagePx=${pageWidthPx}x${pageHeightPx} | bounds=${box.relativeBounds}")
+    }
     var currentRectPx by remember {
         mutableStateOf(
             Rect(
@@ -152,6 +205,8 @@ fun ResizableTextBox(
                 right = box.relativeBounds.right * pageWidthPx,
                 bottom = box.relativeBounds.bottom * pageHeightPx
             )
+            Timber.tag("PdfTextBoxDebug").d("LaunchedEffect bounds recalculation [ID: ${box.id}] | currentRectPx=$newPx")
+
             if (kotlin.math.abs(newPx.left - currentRectPx.left) > 1f ||
                 kotlin.math.abs(newPx.top - currentRectPx.top) > 1f ||
                 kotlin.math.abs(newPx.width - currentRectPx.width) > 1f ||
@@ -162,20 +217,19 @@ fun ResizableTextBox(
         }
     }
 
-    val requiredBottomSpacePx = with(density) { 60.dp.toPx() }
+    val requiredBottomSpacePx = with(density) { 60.dp.toPx() } / scale
 
-    val isHandleAtTop by remember(currentRectPx, pageHeightPx, handlePosition) {
-        derivedStateOf {
-            when (handlePosition) {
+    // Freeze handle position while dragging to prevent UI jumping
+    var isHandleAtTop by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentRectPx, pageHeightPx, handlePosition, requiredBottomSpacePx, isDraggingOrResizing) {
+        if (!isDraggingOrResizing) {
+            isHandleAtTop = when (handlePosition) {
                 HandlePosition.TOP -> true
                 HandlePosition.BOTTOM -> false
                 HandlePosition.AUTO -> {
-                    if (pageHeightPx <= 0f) {
-                        false
-                    } else {
-                        val spaceBelow = pageHeightPx - currentRectPx.bottom
-                        spaceBelow < requiredBottomSpacePx
-                    }
+                    if (pageHeightPx <= 0f) false
+                    else (pageHeightPx - currentRectPx.bottom) < requiredBottomSpacePx
                 }
             }
         }
@@ -184,11 +238,9 @@ fun ResizableTextBox(
     Box(
         modifier = modifier
             .zIndex(if (isSelected) 10f else 0f)
-            .offset {
-                IntOffset(
-                    (currentRectPx.left - halfHandlePx).roundToInt(),
-                    (currentRectPx.top - halfHandlePx).roundToInt()
-                )
+            .graphicsLayer {
+                translationX = currentRectPx.left - halfHandlePx
+                translationY = currentRectPx.top - halfHandlePx
             }
             .size(
                 width = with(density) { (currentRectPx.width + handleSizePx).toDp() },
@@ -201,10 +253,13 @@ fun ResizableTextBox(
                 .fillMaxSize()
                 .padding(handleSize / 2)
                 .pointerInput(Unit) {
-                    detectTapGestures { onSelect() }
+                    detectTapGestures {
+                        Timber.tag("PdfTextBoxDebug").d("TextBox Tapped[ID: ${box.id}]")
+                        onSelect()
+                    }
                 }
                 .then(
-                    if (isSelected) Modifier.border(1.5.dp, borderColor) else Modifier
+                    if (isSelected) Modifier.border((1.5f / scale).dp, borderColor) else Modifier
                 )
         ) {
             BasicTextField(
@@ -212,7 +267,7 @@ fun ResizableTextBox(
                 onValueChange = onTextChanged,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(8.dp)
+                    .padding((8f / scale).dp)
                     .verticalScroll(rememberScrollState())
                     .focusRequester(focusRequester),
                 textStyle = TextStyle(
@@ -220,7 +275,7 @@ fun ResizableTextBox(
                     background = box.backgroundColor,
                     fontFamily = fontFamily,
                     fontSize = with(LocalDensity.current) {
-                        (box.fontSize * pageHeightPx).coerceAtLeast(10f).toSp()
+                        (box.fontSize * pageHeightPx).coerceAtLeast(10f / scale).toSp()
                     },
                     fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
@@ -267,8 +322,11 @@ fun ResizableTextBox(
                         }
                         .size(handleTouchSize)
                         .pointerInput(onBoundsChanged) {
-                            detectDragGestures(
-                                onDragStart = { isDraggingOrResizing = true },
+                            detectEagerDragGestures(
+                                onDragStart = {
+                                    Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragStart[ID: ${box.id}] Handle=$handle")
+                                    isDraggingOrResizing = true
+                                },
                                 onDragEnd = {
                                     isDraggingOrResizing = false
                                     val normalized = Rect(
@@ -277,40 +335,42 @@ fun ResizableTextBox(
                                         right = currentRectPx.right / pageWidthPx,
                                         bottom = currentRectPx.bottom / pageHeightPx
                                     )
+                                    Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragEnd [ID: ${box.id}] finalNormalized=$normalized")
                                     onBoundsChanged(normalized)
                                 },
                                 onDragCancel = { isDraggingOrResizing = false }
                             ) { change, dragAmount ->
-                                change.consume()
+                                Timber.tag("PdfTextBoxDebug").v("ResizeHandle Drag [ID: ${box.id}] Handle=$handle | dragAmount=$dragAmount")
+
                                 var l = currentRectPx.left
                                 var t = currentRectPx.top
                                 var r = currentRectPx.right
                                 var b = currentRectPx.bottom
                                 val dx = dragAmount.x
                                 val dy = dragAmount.y
-                                val minSize = 50f
+                                val minSize = 50f / scale
 
                                 when (handle) {
                                     ResizeHandle.TOP_LEFT -> {
-                                        l = (l + dx).coerceIn(0f, r - minSize)
-                                        t = (t + dy).coerceIn(0f, b - minSize)
+                                        l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
+                                        t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
                                     }
-                                    ResizeHandle.TOP_CENTER -> t = (t + dy).coerceIn(0f, b - minSize)
+                                    ResizeHandle.TOP_CENTER -> t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
                                     ResizeHandle.TOP_RIGHT -> {
-                                        r = (r + dx).coerceIn(l + minSize, pageWidthPx)
-                                        t = (t + dy).coerceIn(0f, b - minSize)
+                                        r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
+                                        t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
                                     }
-                                    ResizeHandle.RIGHT_CENTER -> r = (r + dx).coerceIn(l + minSize, pageWidthPx)
+                                    ResizeHandle.RIGHT_CENTER -> r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
                                     ResizeHandle.BOTTOM_RIGHT -> {
-                                        r = (r + dx).coerceIn(l + minSize, pageWidthPx)
-                                        b = (b + dy).coerceIn(t + minSize, pageHeightPx)
+                                        r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
+                                        b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
                                     }
-                                    ResizeHandle.BOTTOM_CENTER -> b = (b + dy).coerceIn(t + minSize, pageHeightPx)
+                                    ResizeHandle.BOTTOM_CENTER -> b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
                                     ResizeHandle.BOTTOM_LEFT -> {
-                                        l = (l + dx).coerceIn(0f, r - minSize)
-                                        b = (b + dy).coerceIn(t + minSize, pageHeightPx)
+                                        l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
+                                        b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
                                     }
-                                    ResizeHandle.LEFT_CENTER -> l = (l + dx).coerceIn(0f, r - minSize)
+                                    ResizeHandle.LEFT_CENTER -> l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
                                     else -> {}
                                 }
                                 currentRectPx = Rect(l, t, r, b)
@@ -328,13 +388,15 @@ fun ResizableTextBox(
 
             DragPill(
                 isDarkMode = isDarkMode,
+                scale = scale,
                 modifier = Modifier
                     .align(if (isHandleAtTop) Alignment.TopCenter else Alignment.BottomCenter)
-                    .offset(y = if (isHandleAtTop) (-32).dp else 32.dp)
+                    .offset(y = if (isHandleAtTop) (-32f / scale).dp else (32f / scale).dp)
                     .zIndex(20f)
                     .pointerInput(pageWidthPx, pageHeightPx, onDragStart, onDragEnd, onDragCancel) {
-                        detectDragGestures(
+                        detectEagerDragGestures(
                             onDragStart = { offset ->
+                                Timber.tag("PdfTextBoxDebug").d("DragPill DragStart [ID: ${box.id}] at offset=$offset")
                                 isDraggingOrResizing = true
                                 onDragStart(offset)
                             },
@@ -346,6 +408,7 @@ fun ResizableTextBox(
                                     right = currentRectPx.right / pageWidthPx,
                                     bottom = currentRectPx.bottom / pageHeightPx
                                 )
+                                Timber.tag("PdfTextBoxDebug").d("DragPill DragEnd[ID: ${box.id}] finalNormalized=$normalized")
                                 onBoundsChanged(normalized)
                                 onDragEnd()
                             },
@@ -354,13 +417,12 @@ fun ResizableTextBox(
                                 onDragCancel()
                             }
                         ) { change, dragAmount ->
-                            change.consume()
                             val w = currentRectPx.width
                             val h = currentRectPx.height
                             val rawLeft = currentRectPx.left + dragAmount.x
                             val rawTop = currentRectPx.top + dragAmount.y
-                            val newLeft = rawLeft.coerceIn(0f, pageWidthPx - w)
-                            val newTop = rawTop.coerceIn(0f, pageHeightPx - h)
+                            val newLeft = rawLeft.coerceIn(0f, maxOf(0f, pageWidthPx - w))
+                            val newTop = rawTop.coerceIn(0f, maxOf(0f, pageHeightPx - h))
                             val newRect = Rect(newLeft, newTop, newLeft + w, newTop + h)
                             currentRectPx = newRect
                             onDrag(dragAmount, newRect)
@@ -374,21 +436,22 @@ fun ResizableTextBox(
 @Composable
 private fun DragPill(
     modifier: Modifier = Modifier,
-    isDarkMode: Boolean
+    isDarkMode: Boolean,
+    scale: Float = 1f
 ) {
     Surface(
         modifier = modifier
-            .size(width = 48.dp, height = 24.dp),
+            .size(width = (48f / scale).dp, height = (24f / scale).dp),
         shape = CircleShape,
         color = if (isDarkMode) Color.White else Color.Black,
         contentColor = if (isDarkMode) Color.Black else Color.White,
-        shadowElevation = 4.dp
+        shadowElevation = (4f / scale).dp
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 painter = painterResource(id = R.drawable.drag_handle),
                 contentDescription = "Drag to move text box",
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size((20f / scale).dp)
             )
         }
     }
