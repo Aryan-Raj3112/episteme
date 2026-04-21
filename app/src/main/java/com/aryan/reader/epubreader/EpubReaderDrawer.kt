@@ -94,6 +94,7 @@ import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -329,29 +330,31 @@ private fun ChaptersList(
         mutableStateOf(allParentIndices)
     }
 
-    val visibleItemInfo = remember(effectiveToc, expandedEntryIndices) {
-        val result = mutableListOf<Pair<Int, EpubTocEntry>>()
-        val visibilityStack = BooleanArray(50) { false }
-        visibilityStack[0] = true
+    val visibleItemInfo by remember(effectiveToc) {
+        derivedStateOf {
+            val result = mutableListOf<Pair<Int, EpubTocEntry>>()
+            val visibilityStack = BooleanArray(50) { false }
+            visibilityStack[0] = true
 
-        for (i in effectiveToc.indices) {
-            val entry = effectiveToc[i]
-            val depth = entry.depth.coerceIn(0, 49)
+            for (i in effectiveToc.indices) {
+                val entry = effectiveToc[i]
+                val depth = entry.depth.coerceIn(0, 49)
 
-            if (visibilityStack[depth]) {
-                result.add(i to entry)
+                if (visibilityStack[depth]) {
+                    result.add(i to entry)
 
-                val isExpanded = expandedEntryIndices.contains(i)
-                if (depth + 1 < visibilityStack.size) {
-                    visibilityStack[depth + 1] = isExpanded
-                }
-            } else {
-                if (depth + 1 < visibilityStack.size) {
-                    visibilityStack[depth + 1] = false
+                    val isExpanded = expandedEntryIndices.contains(i)
+                    if (depth + 1 < visibilityStack.size) {
+                        visibilityStack[depth + 1] = isExpanded
+                    }
+                } else {
+                    if (depth + 1 < visibilityStack.size) {
+                        visibilityStack[depth + 1] = false
+                    }
                 }
             }
+            result
         }
-        result
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -367,23 +370,29 @@ private fun ChaptersList(
             val targetEntry = activeTocEntry ?: return@launch
             val targetOriginalIndex = effectiveToc.indexOf(targetEntry)
             if (targetOriginalIndex != -1) {
-                // Ensure parents are expanded
                 var currentLevel = targetEntry.depth
                 val newExpanded = expandedEntryIndices.toMutableSet()
+
                 for (i in targetOriginalIndex downTo 0) {
                     val entry = effectiveToc[i]
                     if (entry.depth < currentLevel) {
                         newExpanded.add(i)
                         currentLevel = entry.depth
                     }
+                    if (currentLevel == 0) break
                 }
+
                 expandedEntryIndices = newExpanded
 
-                // Delay to allow visibility array to recompose
-                kotlinx.coroutines.delay(100)
-
                 val visibleIdx = visibleItemInfo.indexOfFirst { it.second == targetEntry }
+
                 if (visibleIdx != -1) {
+                    var attempts = 0
+                    while (listState.layoutInfo.totalItemsCount <= visibleIdx && attempts < 10) {
+                        delay(30)
+                        attempts++
+                    }
+
                     listState.animateScrollToItem(visibleIdx)
                 }
             }
