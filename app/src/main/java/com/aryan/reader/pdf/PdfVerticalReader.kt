@@ -284,6 +284,11 @@ internal fun PdfVerticalReader(
         val dividerHeightDp = 8.dp
         val dividerHeightPx = with(density) { dividerHeightDp.toPx() }
 
+        var isFlinging by remember { mutableStateOf(false) }
+        var isFastFlinging by remember { mutableStateOf(false) }
+        var isInteracting by remember { mutableStateOf(false) }
+        var isDragging by remember { mutableStateOf(false) }
+
         val layoutState = remember(ratios, screenWidth, screenHeight, density) {
             data class LayoutResult(val pages: List<PdfPageLayout>, val totalHeight: Float)
 
@@ -373,8 +378,41 @@ internal fun PdfVerticalReader(
         var isInitialLayout by remember { mutableStateOf(true) }
         val currentScaleProvider = remember(zoomAnimatable) { { zoomAnimatable.value } }
 
+        var hasRestoredLockedState by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isScrollLocked, lockedState, totalDocHeight, screenWidth, isInteracting) {
+            if (!hasRestoredLockedState && isScrollLocked && lockedState != null && totalDocHeight > 0f && screenWidth > 0f && !isInteracting) {
+                val (savedScale, savedPanX, savedPanY) = lockedState
+
+                Timber.tag("PdfLockDiagnostic").i("RESTORING: Scale=$savedScale, X=$savedPanX, Y=$savedPanY")
+
+                val zoomedDocWidth = screenWidth * savedScale
+                val minPanX = if (zoomedDocWidth < screenWidth) (screenWidth - zoomedDocWidth) / 2f else -(zoomedDocWidth - screenWidth)
+                val maxPanX = if (zoomedDocWidth < screenWidth) minPanX else 0f
+
+                val zoomedDocHeight = totalDocHeight * savedScale
+                val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+                val maxPanY = headerHeightPx
+
+                zoomAnimatable.stop()
+                panXAnimatable.stop()
+                panYAnimatable.stop()
+
+                panXAnimatable.updateBounds(minPanX, maxPanX)
+                panYAnimatable.updateBounds(minPanY, maxPanY)
+
+                zoomAnimatable.snapTo(savedScale)
+                panXAnimatable.snapTo(savedPanX)
+                panYAnimatable.snapTo(savedPanY.coerceIn(minPanY, maxPanY))
+
+                Timber.tag("PdfLockDiagnostic").d("RESTORE SNAP COMPLETE: Scale=${zoomAnimatable.value}, X=${panXAnimatable.value}, Y=${panYAnimatable.value}")
+
+                hasRestoredLockedState = true
+            }
+        }
+
         LaunchedEffect(layoutState.pages) {
-            if (!isInitialLayout) {
+            if (!isInitialLayout && !isScrollLocked) {
                 val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
                     targetPageDuringResize.intValue
                 } else {
@@ -410,21 +448,13 @@ internal fun PdfVerticalReader(
                         launch { panXAnimatable.snapTo(targetPanX) }
                         launch { panYAnimatable.snapTo(finalPanY) }
                     }
-
-                    panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
-                    state.currentPage = targetPageIdx
-                    if (isFit) onZoomChange(targetZoom)
                 }
+            }
 
+            if (!isInitialLayout) {
                 delay(50)
                 isResizing = false
                 targetPageDuringResize.intValue = -1
-            } else if (isScrollLocked && lockedState != null) {
-                val (savedScale, savedPanX, _) = lockedState
-                coroutineScope {
-                    launch { zoomAnimatable.snapTo(savedScale) }
-                    launch { panXAnimatable.snapTo(savedPanX) }
-                }
             }
             isInitialLayout = false
         }
@@ -461,11 +491,6 @@ internal fun PdfVerticalReader(
             return clampValues(targetZoom, targetPanX, targetPanY)
         }
 
-        var isFlinging by remember { mutableStateOf(false) }
-        var isFastFlinging by remember { mutableStateOf(false) }
-        var isInteracting by remember { mutableStateOf(false) }
-        var isDragging by remember { mutableStateOf(false) }
-
         LaunchedEffect(
             totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, zoomAnimatable.value, isInteracting, isFlinging, isResizing
         ) {
@@ -483,6 +508,9 @@ internal fun PdfVerticalReader(
                 panYAnimatable.snapTo(y)
             }
             if (x != currentPanX) {
+                if (isScrollLocked) {
+                    Timber.tag("PdfLockDiagnostic").d("FORCED SNAP: X=$currentPanX to $x")
+                }
                 panXAnimatable.snapTo(x)
             }
         }
@@ -744,6 +772,9 @@ internal fun PdfVerticalReader(
             }
 
             if (!isAnimating) {
+                if (isScrollLocked) {
+                    Timber.tag("PdfLockDiagnostic").v("CLAMP CHECK: X=${panXAnimatable.value} | Allowed Range=[$minPanX, $maxPanX]")
+                }
                 panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
                 panXAnimatable.updateBounds(lowerBound = minPanX, upperBound = maxPanX)
             } else {

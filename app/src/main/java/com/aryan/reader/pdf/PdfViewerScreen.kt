@@ -715,6 +715,8 @@ fun PdfViewerScreen(
     LaunchedEffect(currentActiveScale, currentActiveOffset, isScrollLocked) {
         if (isScrollLocked) {
             delay(500)
+            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=$currentActiveScale | X=${currentActiveOffset.x} | Y=${currentActiveOffset.y}")
+
             lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
             savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
         }
@@ -1543,16 +1545,12 @@ fun PdfViewerScreen(
                             attempts++
                         }
                         if (verticalReaderState.snapToPageHandler != null) {
-                            Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
-                            verticalReaderState.snapToPage(targetPage)
-
-                            var waitAttempts = 0
-                            while (verticalReaderState.currentPage != targetPage && waitAttempts < 20) {
-                                delay(16)
-                                waitAttempts++
+                            if (!isScrollLocked) {
+                                Timber.tag("PdfPositionDebug").d("UI: Executing Vertical snapToPage($targetPage)")
+                                verticalReaderState.snapToPage(targetPage)
+                            } else {
+                                Timber.tag("PdfLockDiagnostic").d("UI: Skipping snapToPage request because Scroll is Locked.")
                             }
-                        } else {
-                            Timber.tag("PdfPositionDebug").w("UI: snapToPageHandler is null after timeout")
                         }
                     }
                 }
