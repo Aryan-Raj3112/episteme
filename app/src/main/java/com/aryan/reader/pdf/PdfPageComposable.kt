@@ -2630,11 +2630,9 @@ internal fun PdfPageComposable(
                             val startScale = scale
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
 
-                            // --- NEW PANEL DETECTION & POPUP LOGIC ---
                             if (startScale <= 1.1f && bitmapState != null) {
                                 val tapInContentCoords = screenToContentCoordinates(tapOffset)
 
-                                // Map tap coordinates to the actual bitmap dimensions used by ML
                                 val ratioX = bitmapState!!.width.toFloat() / actualBitmapWidthPx.toFloat()
                                 val ratioY = bitmapState!!.height.toFloat() / actualBitmapHeightPx.toFloat()
                                 val tapXInBitmap = tapInContentCoords.x * ratioX
@@ -2648,7 +2646,6 @@ internal fun PdfPageComposable(
 
                                 if (tappedPanel != null) {
                                     Timber.d("Popup: Cropping panel $tappedPanel")
-                                    // Clamp bounds to prevent out-of-bounds crashes (like L: -0.9)
                                     val left = tappedPanel.left.coerceAtLeast(0f).toInt()
                                     val top = tappedPanel.top.coerceAtLeast(0f).toInt()
                                     val right = tappedPanel.right.coerceAtMost(bitmapState!!.width.toFloat()).toInt()
@@ -2659,11 +2656,10 @@ internal fun PdfPageComposable(
                                     if (width > 0 && height > 0) {
                                         val cropped = android.graphics.Bitmap.createBitmap(bitmapState!!, left, top, width, height)
                                         onShowPanelPopup(cropped)
-                                        return@launch // Stop here, don't do the standard zoom!
+                                        return@launch
                                     }
                                 }
                             }
-                            // --- END NEW LOGIC ---
 
                             val startOffset = offset
                             val targetOffsetUnbounded = if (targetScale <= 1.1f) {

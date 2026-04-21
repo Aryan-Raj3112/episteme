@@ -2262,7 +2262,7 @@ fun PdfViewerScreen(
             if (rawPageText.isNullOrBlank()) {
                 Timber.i("TTS: Pdfium text is blank or extraction failed. OCR fallback is temporarily disabled.")
             } else {
-                    Timber.d("TTS: Closed page $pageToRead after successful Pdfium text extraction.")
+                Timber.d("TTS: Closed page $pageToRead after successful Pdfium text extraction.")
             }
 
             if (rawPageText != null && rawPageText!!.isNotBlank()) {
@@ -3136,6 +3136,9 @@ fun PdfViewerScreen(
                             textDecoration = richTextController.currentStyle.textDecoration
                         ),
                         modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                            .padding(start = 16.dp, bottom = 120.dp)
                             .size(1.dp)
                             .alpha(0f)
                             .clearAndSetSemantics { }
@@ -3148,8 +3151,7 @@ fun PdfViewerScreen(
                                 } else {
                                     false
                                 }
-                            }
-                            .align(Alignment.TopStart),
+                            },
                     )
                 }
 
@@ -4062,9 +4064,7 @@ fun PdfViewerScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .padding(
-                            top = if (showBars) 56.dp else 0.dp
-                        ) // Push down if top bar is visible
+                        .padding(top = if (showBars) verticalHeaderHeight else 0.dp)
                         .padding(8.dp)
                 ) {
                     Surface(
@@ -4443,7 +4443,7 @@ fun PdfViewerScreen(
                 ReflowProgressOverlay(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 56.dp)
+                        .padding(top = verticalHeaderHeight)
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp),
                     showStandardBars = showStandardBars,
@@ -4458,7 +4458,7 @@ fun PdfViewerScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 56.dp)
+                            .padding(top = verticalHeaderHeight)
                             .background(MaterialTheme.colorScheme.surface)
                     ) {
                         if (isBackgroundIndexing) {
@@ -5118,7 +5118,7 @@ fun PdfViewerScreen(
                     val currentDensity = LocalDensity.current
                     val isImeVisible = WindowInsets.ime.getBottom(currentDensity) > 0
 
-                    val extraPadding = if (isImeVisible) 8.dp else bottomPadding
+                    val extraPadding = if (isImeVisible) 0.dp else bottomPadding
 
                     val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
                         derivedStateOf {

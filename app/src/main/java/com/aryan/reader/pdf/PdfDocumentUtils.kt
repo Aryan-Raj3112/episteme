@@ -13,8 +13,6 @@ import android.print.PrintDocumentInfo
 import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.core.graphics.createBitmap
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
-import io.legere.pdfiumandroid.suspend.PdfPageKt
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -191,88 +189,6 @@ internal suspend fun renderPageToBitmap(doc: ReaderDocument, pageIndex: Int): Bi
             } catch (e: Exception) {
                 Timber.w(e, "Error closing page in renderPageToBitmap")
             }
-        }
-    }
-}
-
-internal fun debugPdfLinks(
-    context: Context, pdfUri: Uri, pdfiumCore: PdfiumCoreKt, coroutineScope: CoroutineScope
-) {
-    Timber.d("--- Starting PDF Link Analysis ---")
-    Timber.d("URI: $pdfUri")
-
-    coroutineScope.launch(Dispatchers.IO) {
-        var pfd: ParcelFileDescriptor?
-        var doc: PdfDocumentKt? = null
-        var page: PdfPageKt? = null
-        try {
-            pfd = context.contentResolver.openFileDescriptor(pdfUri, "r")
-            if (pfd == null) {
-                Timber.e("Failed to open ParcelFileDescriptor.")
-                return@launch
-            }
-            doc = pdfiumCore.newDocument(pfd)
-            val pageCount = doc.getPageCount()
-            Timber.d("Document loaded. Page count: $pageCount")
-
-            if (pageCount > 0) {
-                val pageIndex = 0 // Testing the first page
-                page = doc.openPage(pageIndex)
-                if (page == null) return@launch
-                Timber.d("Opened page $pageIndex")
-
-                Timber.d(
-                    "Performing a dummy 1x1 render with renderAnnot=true to force annotation parsing..."
-                )
-                val dummyBitmap = createBitmap(1, 1)
-                page.renderPageBitmap(
-                    bitmap = dummyBitmap,
-                    startX = 0,
-                    startY = 0,
-                    drawSizeX = 1,
-                    drawSizeY = 1,
-                    renderAnnot = true // This is the crucial flag
-                )
-                dummyBitmap.recycle() // Clean up immediately
-                Timber.d("Dummy render complete. Now checking for links again.")
-
-                // Method 1: The one that is failing (now should work)
-                val annotationLinks = page.getPageLinks()
-                Timber.d("[METHOD 1] getPageLinks() found ${annotationLinks.size} links.")
-                if (annotationLinks.isNotEmpty()) {
-                    annotationLinks.forEachIndexed { index, link ->
-                        Timber.d("  - Link ${index}: URI='${link.uri}', Bounds='${link.bounds}'")
-                    }
-                }
-
-                // Method 2: The one that is working
-                page.openTextPage().use { textPage ->
-                    textPage.loadWebLink()?.use { webLinks ->
-                        val webLinkCount = webLinks.countWebLinks()
-                        Timber.d("[METHOD 2] loadWebLink() found $webLinkCount links.")
-                        if (webLinkCount > 0) {
-                            for (i in 0 until webLinkCount) {
-                                val url = webLinks.getURL(i, 2048)
-                                Timber.d(
-                                    "  - WebLink ${i}: URL='${url?.substringBefore('\u0000')}'"
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "An error occurred during link debugging.")
-        } finally {
-            try {
-                page?.close()
-            } catch (_: Exception) {
-            }
-            try {
-                doc?.close()
-            } catch (_: Exception) {
-            }
-            Timber.d("--- PDF Link Analysis Finished ---")
         }
     }
 }
