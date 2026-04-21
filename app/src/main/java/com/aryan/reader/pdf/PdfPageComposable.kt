@@ -347,7 +347,9 @@ data class PageStaticData(
     val targetWidth: Int,
     val targetHeight: Int,
     val colorFilter: StableHolder<ColorFilter?>,
-    val isDarkMode: Boolean
+    val isDarkMode: Boolean,
+    val excludeImages: Boolean,
+    val imageRects: StableHolder<List<android.graphics.Rect>>
 )
 
 @Stable
@@ -416,6 +418,7 @@ internal fun PdfPageComposable(
     onTtsHighlightCenterCalculated: ((Float) -> Unit)? = null,
     onSearchHighlightCenterCalculated: ((Float) -> Unit)? = null,
     activeTheme: com.aryan.reader.ReaderTheme = com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    excludeImages: Boolean = false,
     onDoubleTap: ((Offset) -> Unit)? = null,
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
@@ -854,11 +857,13 @@ internal fun PdfPageComposable(
 
     @Suppress("VariableNeverRead") var embeddedAnnotations by remember { mutableStateOf<List<EmbeddedAnnotation>>(emptyList()) }
     var standardAnnotScreenRects by remember { mutableStateOf<List<Pair<EmbeddedAnnotation, Rect>>>(emptyList()) }
+    var imageScreenRects by remember { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
 
     LaunchedEffect(pageIndex, pdfDocumentItem, actualBitmapWidthPx, actualBitmapHeightPx, virtualPage) {
         if (!isPdfPage || actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0) {
             if (pageLinks.isNotEmpty()) pageLinks = emptyList()
             if (standardAnnotScreenRects.isNotEmpty()) standardAnnotScreenRects = emptyList()
+            if (imageScreenRects.isNotEmpty()) imageScreenRects = emptyList()
             return@LaunchedEffect
         }
 
@@ -866,6 +871,7 @@ internal fun PdfPageComposable(
             val allLinks = mutableListOf<PageLink>()
             var finalDisplayList = emptyList<EmbeddedAnnotation>()
             var mappedAnnots = emptyList<Pair<EmbeddedAnnotation, Rect>>()
+            var mappedImageRects = emptyList<android.graphics.Rect>()
             val annotLink = 2
 
             try {
@@ -931,6 +937,39 @@ internal fun PdfPageComposable(
                         }
                     } catch (e: Exception) {
                         Timber.e(e, "Error fetching web links")
+                    }
+
+                    // --- Extract Image Bounds ---
+                    try {
+                        val pagePtr = pageWrapper.getNativePointer()
+                        if (pagePtr != 0L) {
+                            val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
+                            val imgRects = mutableListOf<android.graphics.Rect>()
+                            val outRect = FloatArray(4)
+
+                            for (i in 0 until objCount) {
+                                if (NativePdfiumBridge.getPageObjectType(pagePtr, i) == 3) { // 3 = FPDF_PAGEOBJ_IMAGE
+                                    if (NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, i, outRect)) {
+                                        val pdfRectF = android.graphics.RectF(
+                                            min(outRect[0], outRect[2]),
+                                            max(outRect[1], outRect[3]),
+                                            max(outRect[0], outRect[2]),
+                                            min(outRect[1], outRect[3])
+                                        )
+                                        val deviceRect = pageWrapper.mapRectToDevice(
+                                            0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
+                                            currentPageRotation, pdfRectF
+                                        )
+                                        if (deviceRect.width() > 0 && deviceRect.height() > 0) {
+                                            imgRects.add(android.graphics.Rect(deviceRect.left, deviceRect.top, deviceRect.right, deviceRect.bottom))
+                                        }
+                                    }
+                                }
+                            }
+                            mappedImageRects = imgRects
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag("PdfImageDebug").e(e, "Error extracting image rects")
                     }
 
                     // 3. Extract Embedded Annotations
@@ -1037,6 +1076,7 @@ internal fun PdfPageComposable(
                 pageLinks = allLinks
                 embeddedAnnotations = finalDisplayList
                 standardAnnotScreenRects = mappedAnnots
+                imageScreenRects = mappedImageRects
             }
         }
     }
@@ -2630,7 +2670,7 @@ internal fun PdfPageComposable(
                             val startScale = scale
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
 
-                            if (startScale <= 1.1f && bitmapState != null) {
+                            if (com.aryan.reader.BuildConfig.DEBUG && startScale <= 1.1f && bitmapState != null) {
                                 val tapInContentCoords = screenToContentCoordinates(tapOffset)
 
                                 val ratioX = bitmapState!!.width.toFloat() / actualBitmapWidthPx.toFloat()
@@ -3588,6 +3628,7 @@ internal fun PdfPageComposable(
                     val stableBitmapState = remember(bitmapState) { StableHolder(bitmapState) }
                     val stableTiles = remember(tiles) { StableHolder(tiles) }
                     val stableColorFilter = remember(colorFilter) { StableHolder(colorFilter) }
+                    val stableImageRects = remember(imageScreenRects) { StableHolder(imageScreenRects) }
 
                     val staticData = remember(
                         stableBitmapState,
@@ -3600,7 +3641,9 @@ internal fun PdfPageComposable(
                         actualBitmapWidthPx,
                         actualBitmapHeightPx,
                         stableColorFilter,
-                        isDarkMode
+                        isDarkMode,
+                        excludeImages,
+                        stableImageRects
                     ) {
                         Timber.tag("PdfDrawPerf").v(
                             "STATIC DATA GENERATED: Scale=$effectiveScale, Tiles=${stableTiles.item.size}"
@@ -3616,7 +3659,9 @@ internal fun PdfPageComposable(
                             targetWidth = actualBitmapWidthPx,
                             targetHeight = actualBitmapHeightPx,
                             colorFilter = stableColorFilter,
-                            isDarkMode = isDarkMode
+                            isDarkMode = isDarkMode,
+                            excludeImages = excludeImages,
+                            imageRects = stableImageRects
                         )
                     }
 
@@ -3970,11 +4015,11 @@ private fun PdfBitmapLayer(
     targetWidth: Int,
     targetHeight: Int,
     colorFilter: ColorFilter? = null,
-    isDarkMode: Boolean = false
+    isDarkMode: Boolean = false,
+    excludeImages: Boolean = false,
+    imageRects: List<android.graphics.Rect> = emptyList()
 ) {
-    Canvas(modifier = Modifier
-        .fillMaxSize()
-        .graphicsLayer()) {
+    Canvas(modifier = Modifier.fillMaxSize().graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
             clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
                 if (bitmapState != null && !bitmapState.isRecycled) {
@@ -3993,6 +4038,32 @@ private fun PdfBitmapLayer(
                         filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                     )
 
+                    if (excludeImages && colorFilter != null && imageRects.isNotEmpty()) {
+                        imageRects.forEach { rect ->
+                            val scaleX = bitmapState.width.toFloat() / dstW.toFloat()
+                            val scaleY = bitmapState.height.toFloat() / dstH.toFloat()
+
+                            val srcRectLeft = (rect.left * scaleX).roundToInt().coerceAtLeast(0)
+                            val srcRectTop = (rect.top * scaleY).roundToInt().coerceAtLeast(0)
+                            val srcRectRight = (rect.right * scaleX).roundToInt().coerceAtMost(bitmapState.width)
+                            val srcRectBottom = (rect.bottom * scaleY).roundToInt().coerceAtMost(bitmapState.height)
+
+                            val w = srcRectRight - srcRectLeft
+                            val h = srcRectBottom - srcRectTop
+                            if (w > 0 && h > 0) {
+                                drawImage(
+                                    image = bitmapState.asImageBitmap(),
+                                    srcOffset = IntOffset(srcRectLeft, srcRectTop),
+                                    srcSize = IntSize(w, h),
+                                    dstOffset = IntOffset(rect.left, rect.top),
+                                    dstSize = IntSize(rect.width(), rect.height()),
+                                    colorFilter = null,
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
+                                )
+                            }
+                        }
+                    }
+
                     val needsTiling = effectiveScale > 1f || targetWidth > 3000 || targetHeight > 3000
                     if (needsTiling) {
                         tiles.forEach { tile ->
@@ -4002,12 +4073,52 @@ private fun PdfBitmapLayer(
                                     srcOffset = IntOffset.Zero,
                                     srcSize = IntSize(tile.bitmap.width, tile.bitmap.height),
                                     dstOffset = IntOffset(tile.renderRect.left, tile.renderRect.top),
-                                    dstSize = IntSize(
-                                        tile.renderRect.width(), tile.renderRect.height()
-                                    ),
+                                    dstSize = IntSize(tile.renderRect.width(), tile.renderRect.height()),
                                     colorFilter = colorFilter,
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
+
+                                if (excludeImages && colorFilter != null && imageRects.isNotEmpty()) {
+                                    imageRects.forEach { imgRect ->
+                                        val scaledImgRectLeft = (imgRect.left * effectiveScale).roundToInt()
+                                        val scaledImgRectTop = (imgRect.top * effectiveScale).roundToInt()
+                                        val scaledImgRectRight = (imgRect.right * effectiveScale).roundToInt()
+                                        val scaledImgRectBottom = (imgRect.bottom * effectiveScale).roundToInt()
+
+                                        val intersectLeft = max(scaledImgRectLeft, tile.renderRect.left)
+                                        val intersectTop = max(scaledImgRectTop, tile.renderRect.top)
+                                        val intersectRight = min(scaledImgRectRight, tile.renderRect.right)
+                                        val intersectBottom = min(scaledImgRectBottom, tile.renderRect.bottom)
+
+                                        val iw = intersectRight - intersectLeft
+                                        val ih = intersectBottom - intersectTop
+
+                                        if (iw > 0 && ih > 0) {
+                                            val scaleXBmp = tile.bitmap.width.toFloat() / tile.renderRect.width()
+                                            val scaleYBmp = tile.bitmap.height.toFloat() / tile.renderRect.height()
+
+                                            val srcLeft = ((intersectLeft - tile.renderRect.left) * scaleXBmp).roundToInt()
+                                            val srcTop = ((intersectTop - tile.renderRect.top) * scaleYBmp).roundToInt()
+                                            val srcRight = ((intersectRight - tile.renderRect.left) * scaleXBmp).roundToInt()
+                                            val srcBottom = ((intersectBottom - tile.renderRect.top) * scaleYBmp).roundToInt()
+
+                                            val srcW = srcRight - srcLeft
+                                            val srcH = srcBottom - srcTop
+
+                                            if (srcW > 0 && srcH > 0) {
+                                                drawImage(
+                                                    image = tile.bitmap.asImageBitmap(),
+                                                    srcOffset = IntOffset(srcLeft, srcTop),
+                                                    srcSize = IntSize(srcW, srcH),
+                                                    dstOffset = IntOffset(intersectLeft, intersectTop),
+                                                    dstSize = IntSize(iw, ih),
+                                                    colorFilter = null,
+                                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -4531,7 +4642,9 @@ private fun PdfPageStaticLayer(data: PageStaticData) {
         targetWidth = data.targetWidth,
         targetHeight = data.targetHeight,
         colorFilter = data.colorFilter.item,
-        isDarkMode = data.isDarkMode
+        isDarkMode = data.isDarkMode,
+        excludeImages = data.excludeImages,
+        imageRects = data.imageRects.item
     )
 }
 

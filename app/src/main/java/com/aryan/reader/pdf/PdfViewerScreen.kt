@@ -292,6 +292,7 @@ fun PdfViewerScreen(
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
+    var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
     val documentCache = remember { DocumentCache(3) }
     val summaryCacheManager = remember(context) { SummaryCacheManager(context) }
@@ -3370,6 +3371,7 @@ fun PdfViewerScreen(
                                                 virtualPage = virtualPage,
                                                 totalPages = totalDisplayPages,
                                                 activeTheme = activeTheme,
+                                                excludeImages = excludeImages,
                                                 isScrollLocked = isScrollLocked,
                                                 customHighlightColors = customHighlightColors,
                                                 onPaletteClick = {
@@ -3796,6 +3798,7 @@ fun PdfViewerScreen(
                                             state = verticalReaderState,
                                             pdfDocument = docHolder,
                                             activeTheme = activeTheme,
+                                            excludeImages = excludeImages,
                                             isScrollLocked = isScrollLocked,
                                             customHighlightColors = customHighlightColors,
                                             onPaletteClick = { showHighlightColorPicker = true },
@@ -5809,6 +5812,12 @@ fun PdfViewerScreen(
                     ReaderThemePanel(
                         isVisible = true,
                         currentThemeId = currentThemeId,
+                        excludeImages = excludeImages,
+                        onExcludeImagesChange = {
+                            excludeImages = it
+                            com.aryan.reader.saveExcludeImages(context, it)
+                        },
+                        showExcludeImagesOption = true,
                         builtInThemes = PdfBuiltInThemes,
                         onThemeSelected = {
                             currentThemeId = it

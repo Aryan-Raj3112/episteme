@@ -184,11 +184,12 @@ private data class DividerLayout(val y: Float, val width: Float, val height: Flo
 @OptIn(FlowPreview::class)
 @Composable
 internal fun PdfVerticalReader(
+    modifier: Modifier = Modifier,
     state: VerticalPdfReaderState,
     pdfDocument: StableHolder<ReaderDocument>,
     activeTheme: com.aryan.reader.ReaderTheme,
+    excludeImages: Boolean = false,
     totalPages: Int,
-    modifier: Modifier = Modifier,
     virtualPages: List<VirtualPage> = emptyList(),
     pageAspectRatios: StableHolder<List<Float>>,
     headerHeight: Dp,
@@ -1606,6 +1607,7 @@ internal fun PdfVerticalReader(
                                     virtualPage = virtualPage,
                                     totalPages = totalPages,
                                     activeTheme = activeTheme,
+                                    excludeImages = excludeImages,
                                     externalScale = highResScale,
                                     onScaleChanged = {},
                                     showAllTextHighlights = showAllTextHighlights,

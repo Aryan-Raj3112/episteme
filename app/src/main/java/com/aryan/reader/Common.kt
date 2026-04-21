@@ -1814,6 +1814,18 @@ fun loadReaderThemeId(context: Context): String {
     return prefs.getString(PREF_READER_THEME, "system") ?: "system"
 }
 
+const val PREF_EXCLUDE_IMAGES = "exclude_images"
+
+fun saveExcludeImages(context: Context, excludeImages: Boolean) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PREF_EXCLUDE_IMAGES, excludeImages) }
+}
+
+fun loadExcludeImages(context: Context): Boolean {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getBoolean(PREF_EXCLUDE_IMAGES, false)
+}
+
 fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     val jsonArray = JSONArray()
@@ -1868,6 +1880,9 @@ private fun calculateContrastRatio(color1: Color, color2: Color): Float {
 fun ReaderThemePanel(
     isVisible: Boolean,
     currentThemeId: String,
+    excludeImages: Boolean = false,
+    onExcludeImagesChange: (Boolean) -> Unit = {},
+    showExcludeImagesOption: Boolean = false,
     customThemes: List<ReaderTheme>,
     builtInThemes: List<ReaderTheme> = BuiltInThemes,
     onThemeSelected: (String) -> Unit,
@@ -1919,6 +1934,23 @@ fun ReaderThemePanel(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
+
+                    if (showExcludeImagesOption) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Preserve Image Colors", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                Text("Keep original image colors when theme changes", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            androidx.compose.material3.Switch(
+                                checked = excludeImages,
+                                onCheckedChange = onExcludeImagesChange
+                            )
+                        }
+                    }
 
                     Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
