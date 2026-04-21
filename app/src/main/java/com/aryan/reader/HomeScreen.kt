@@ -29,6 +29,7 @@ import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -133,6 +134,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
@@ -184,6 +186,7 @@ fun HomeScreen(
         var showStrictFilterDialog by remember { mutableStateOf(false) }
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
         var showClearReflowCacheDialog by remember { mutableStateOf(false) }
+        var showLanguageDialog by remember { mutableStateOf(false) }
 
         val feedbackResult =
             navController.currentBackStackEntry?.savedStateHandle?.getLiveData<String>("banner_message")
@@ -337,7 +340,8 @@ fun HomeScreen(
                                     }
                                 },
                                 onAppThemeClick = { showAppThemePanel = true },
-                                onTestPanelDetectionClick = { viewModel.testPanelDetection(context) }
+                                onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
+                                onLanguageClick = { showLanguageDialog = true }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -509,6 +513,10 @@ fun HomeScreen(
                             },
                             onDismiss = { showStrictFilterDialog = false }
                         )
+                    }
+
+                    if (showLanguageDialog) {
+                        LanguageSelectionDialog(onDismiss = { showLanguageDialog = false })
                     }
 
                     if (showAppThemePanel) {
@@ -905,7 +913,8 @@ fun DefaultTopAppBar(
     onExternalFileBehaviorClick: () -> Unit,
     onStrictFilterToggleClick: () -> Unit,
     onAppThemeClick: () -> Unit,
-    onTestPanelDetectionClick: () -> Unit
+    onTestPanelDetectionClick: () -> Unit,
+    onLanguageClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -989,6 +998,13 @@ fun DefaultTopAppBar(
                 })
 
                 HorizontalDivider()
+
+                DropdownMenuItem(text = { Text("Language") }, onClick = {
+                    onLanguageClick()
+                    showOptionsMenu = false
+                })
+
+                HorizontalDivider()
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_book_cache)) }, onClick = {
                     onClearCache()
                     showOptionsMenu = false
@@ -998,11 +1014,13 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 })
 
-                HorizontalDivider()
-                DropdownMenuItem(text = { Text("Test Panel ML Detection") }, onClick = {
-                    onTestPanelDetectionClick()
-                    showOptionsMenu = false
-                })
+                if (BuildConfig.DEBUG) {
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("Test Panel ML Detection") }, onClick = {
+                        onTestPanelDetectionClick()
+                        showOptionsMenu = false
+                    })
+                }
 
                 if (BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss") {
                     HorizontalDivider()
@@ -1925,4 +1943,47 @@ fun CreateAppThemeDialog(
             }
         }
     }
+}
+
+@Composable
+fun LanguageSelectionDialog(onDismiss: () -> Unit) {
+    val currentLocales = AppCompatDelegate.getApplicationLocales()
+    val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.language ?: "en" else "en"
+
+    val languages = listOf(
+        "en" to "English (Default)",
+        "ar" to "العربية (Arabic)",
+        "de" to "Deutsch (German)",
+        "tr" to "Türkçe (Turkish)"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Language") },
+        text = {
+            Column {
+                languages.forEach { (tag, name) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                AppCompatDelegate.setApplicationLocales(
+                                    LocaleListCompat.forLanguageTags(tag)
+                                )
+                                onDismiss()
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = currentTag == tag, onClick = null)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(name)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        }
+    )
 }

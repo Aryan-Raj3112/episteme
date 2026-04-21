@@ -33,6 +33,8 @@ android {
         versionCode = 44
         versionName = "1.0.43"
 
+        resourceConfigurations += setOf("en", "ar", "de", "tr")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
