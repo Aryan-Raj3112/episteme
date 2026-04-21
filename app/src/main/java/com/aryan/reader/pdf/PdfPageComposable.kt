@@ -4753,8 +4753,12 @@ private fun PdfPageRenderer(
                             pageHeightPx = staticData.targetHeight.toFloat(),
                             handlePosition = HandlePosition.AUTO,
                             onBoundsChanged = { newBounds ->
-                                Timber.tag("PdfTextBoxDebug").v("PdfPageRenderer onBoundsChanged [ID: ${box.id}] bounds=$newBounds")
-                                onTextBoxChange(box.copy(relativeBounds = newBounds))
+                                Timber.tag("PdfTextBoxDebug").v("PdfPageRenderer onBoundsChanged [ID: ${box.id}] bounds=$newBounds draggingBoxId=$draggingBoxId")
+                                if (draggingBoxId != box.id) {
+                                    onTextBoxChange(box.copy(relativeBounds = newBounds))
+                                } else {
+                                    Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onBoundsChanged IGNORED because box[ID: ${box.id}] is being dragged globally")
+                                }
                             },
                             onTextChanged = { newText ->
                                 onTextBoxChange(box.copy(text = newText))

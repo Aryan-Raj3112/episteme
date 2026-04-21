@@ -267,7 +267,7 @@ fun ResizableTextBox(
                 onValueChange = onTextChanged,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding((8f / scale).dp)
+                    .padding(8.dp)
                     .verticalScroll(rememberScrollState())
                     .focusRequester(focusRequester),
                 textStyle = TextStyle(
@@ -275,7 +275,7 @@ fun ResizableTextBox(
                     background = box.backgroundColor,
                     fontFamily = fontFamily,
                     fontSize = with(LocalDensity.current) {
-                        (box.fontSize * pageHeightPx).coerceAtLeast(10f / scale).toSp()
+                        (box.fontSize * pageHeightPx).toSp()
                     },
                     fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,

@@ -585,8 +585,8 @@ internal fun PdfVerticalReader(
                         val dist = (draggingBoxOffset.y - topEdge).coerceAtMost(scrollZone)
                         val ratio = 1f - (dist / scrollZone).coerceIn(0f, 1f)
                         scrollDelta = -15f * ratio
-                    } else if (draggingBoxOffset.y + draggingBoxSize.height > bottomEdge - scrollZone) {
-                        val boxBottom = draggingBoxOffset.y + draggingBoxSize.height
+                    } else if (draggingBoxOffset.y + (draggingBoxSize.height * zoomAnimatable.value) > bottomEdge - scrollZone) {
+                        val boxBottom = draggingBoxOffset.y + (draggingBoxSize.height * zoomAnimatable.value)
                         val dist = (bottomEdge - boxBottom).coerceAtMost(scrollZone)
                         val ratio = 1f - (dist / scrollZone).coerceIn(0f, 1f)
                         scrollDelta = 15f * ratio
@@ -1638,17 +1638,20 @@ internal fun PdfVerticalReader(
                                         val boxScreenY = pageScreenY + (localTopLeft.y * currentZoom)
 
                                         draggingBoxSize = Size(
-                                            box.relativeBounds.width * page.width * currentZoom,
-                                            box.relativeBounds.height * page.height * currentZoom
+                                            box.relativeBounds.width * page.width,
+                                            box.relativeBounds.height * page.height
                                         )
-                                        draggingBoxPageHeight = page.height * currentZoom
+                                        draggingBoxPageHeight = page.height
 
                                         draggingBoxOffset = Offset(boxScreenX, boxScreenY)
                                         draggingBoxTouchDelta = touchOffset * currentZoom
                                         draggingBoxId = box.id
                                     },
                                     onTextBoxDrag = { dragDelta ->
-                                        draggingBoxOffset += dragDelta
+                                        val currentZoom = zoomAnimatable.value
+                                        val scaledDelta = dragDelta * currentZoom
+                                        Timber.tag("PdfTextBoxDebug").v("VerticalReader onTextBoxDrag dragDelta=$dragDelta zoom=$currentZoom scaledDelta=$scaledDelta")
+                                        draggingBoxOffset += scaledDelta
                                     },
                                     onTextBoxDragEnd = {
                                         scope.launch {
@@ -1681,9 +1684,9 @@ internal fun PdfVerticalReader(
                                                 val rawRelY =
                                                     (finalBoxY / currentZoom) / targetPage.height
                                                 val relW =
-                                                    (draggingBoxSize.width / currentZoom) / targetPage.width
+                                                    draggingBoxSize.width / targetPage.width
                                                 val relH =
-                                                    (draggingBoxSize.height / currentZoom) / targetPage.height
+                                                    draggingBoxSize.height / targetPage.height
 
                                                 val clampedW = relW.coerceAtMost(1f)
                                                 val clampedH = relH.coerceAtMost(1f)
@@ -2051,7 +2054,8 @@ internal fun PdfVerticalReader(
                 val fontScaleRatio =
                     if (currentBoxHeight > 0) draggingBoxPageHeight / currentBoxHeight else 1f
 
-                val boxBottomY = draggingBoxOffset.y + draggingBoxSize.height
+                val currentZoom = zoomAnimatable.value
+                val boxBottomY = draggingBoxOffset.y + (draggingBoxSize.height * currentZoom)
                 val spaceBelow = screenHeight - boxBottomY
                 val overlayHandlePos =
                     if (spaceBelow < with(density) { 60.dp.toPx() }) HandlePosition.TOP else HandlePosition.BOTTOM
@@ -2061,6 +2065,11 @@ internal fun PdfVerticalReader(
                         IntOffset(
                             draggingBoxOffset.x.roundToInt(), draggingBoxOffset.y.roundToInt()
                         )
+                    }
+                    .graphicsLayer {
+                        scaleX = currentZoom
+                        scaleY = currentZoom
+                        transformOrigin = TransformOrigin(0f, 0f)
                     }
                     .zIndex(100f)) {
                     ResizableTextBox(
@@ -2073,6 +2082,7 @@ internal fun PdfVerticalReader(
                         isDarkMode = isDarkMode,
                         pageWidthPx = draggingBoxSize.width,
                         pageHeightPx = draggingBoxSize.height,
+                        scale = currentZoom,
                         handlePosition = overlayHandlePos,
                         onBoundsChanged = {},
                         onTextChanged = {},

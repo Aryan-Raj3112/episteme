@@ -150,6 +150,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -1353,7 +1354,12 @@ fun PdfViewerScreen(
         val startY = 0.45f
 
         val newStyle = toolSettings.textStyle
-        val fontSizeNorm = 0.02f
+
+        val pageRatio = displayPageRatios.getOrElse(currentP) { 1f }
+        val screenWidthPx = view.width.toFloat().takeIf { it > 0f } ?: with(density) { 360.dp.toPx() }
+        val estimatedPageHeightPx = if (pageRatio > 0) screenWidthPx / pageRatio else screenWidthPx
+        val newFontSizePx = with(density) { newStyle.fontSize.sp.toPx() }
+        val fontSizeNorm = if (estimatedPageHeightPx > 0) newFontSizePx / estimatedPageHeightPx else 0.02f
 
         val newBox = PdfTextBox(
             id = generateShortId(),
@@ -1366,7 +1372,9 @@ fun PdfViewerScreen(
             isBold = newStyle.isBold,
             isItalic = newStyle.isItalic,
             isUnderline = newStyle.isUnderline,
-            isStrikeThrough = newStyle.isStrikeThrough
+            isStrikeThrough = newStyle.isStrikeThrough,
+            fontPath = newStyle.fontPath,
+            fontName = newStyle.fontName
         )
 
         textBoxes.add(newBox)
@@ -3511,11 +3519,16 @@ fun PdfViewerScreen(
                                                         box.relativeBounds.width * renderedWidth,
                                                         box.relativeBounds.height * renderedHeight
                                                     )
-                                                    paginationDraggingOffset = Offset(
-                                                        offsetX + (box.relativeBounds.left * renderedWidth),
-                                                        offsetY + (box.relativeBounds.top * renderedHeight)
-                                                    )
                                                     paginationDragPageHeight = renderedHeight
+
+                                                    val baseBoxLeft = offsetX + (box.relativeBounds.left * renderedWidth)
+                                                    val baseBoxTop = offsetY + (box.relativeBounds.top * renderedHeight)
+                                                    val centerX = containerWidthPx / 2f
+                                                    val centerY = containerHeightPx / 2f
+                                                    val screenX = (baseBoxLeft - centerX) * currentActiveScale + centerX + currentActiveOffset.x
+                                                    val screenY = (baseBoxTop - centerY) * currentActiveScale + centerY + currentActiveOffset.y
+
+                                                    paginationDraggingOffset = Offset(screenX, screenY)
                                                 },
                                                 onTextBoxDrag = { dragDelta ->
                                                     Timber.tag("PdfTextBoxDebug").v("Pagination onTextBoxDrag delta=$dragDelta | currentOffset=$paginationDraggingOffset")
@@ -3576,8 +3589,14 @@ fun PdfViewerScreen(
                                                             val relW = paginationOriginalRelSize.width
                                                             val relH = paginationOriginalRelSize.height
 
-                                                            val rawRelX = (paginationDraggingOffset.x - offsetX) / renderedWidth
-                                                            val rawRelY = (paginationDraggingOffset.y - offsetY) / renderedHeight
+                                                            val centerX = containerWidthPx / 2f
+                                                            val centerY = containerHeightPx / 2f
+
+                                                            val unzoomedX = (paginationDraggingOffset.x - currentActiveOffset.x - centerX) / currentActiveScale + centerX
+                                                            val unzoomedY = (paginationDraggingOffset.y - currentActiveOffset.y - centerY) / currentActiveScale + centerY
+
+                                                            val rawRelX = (unzoomedX - offsetX) / renderedWidth
+                                                            val rawRelY = (unzoomedY - offsetY) / renderedHeight
 
                                                             val maxRelX = (1f - relW - padRelX).coerceAtLeast(padRelX)
                                                             val maxRelY = (1f - relH - padRelY).coerceAtLeast(padRelY)
@@ -3585,9 +3604,11 @@ fun PdfViewerScreen(
                                                             val finalRelX = rawRelX.coerceIn(padRelX, maxRelX)
                                                             val finalRelY = rawRelY.coerceIn(padRelY, maxRelY)
 
+                                                            val targetOffsetUnzoomedX = offsetX + (finalRelX * renderedWidth)
+                                                            val targetOffsetUnzoomedY = offsetY + (finalRelY * renderedHeight)
                                                             val targetOffset = Offset(
-                                                                offsetX + (finalRelX * renderedWidth),
-                                                                offsetY + (finalRelY * renderedHeight)
+                                                                (targetOffsetUnzoomedX - centerX) * currentActiveScale + centerX + currentActiveOffset.x,
+                                                                (targetOffsetUnzoomedY - centerY) * currentActiveScale + centerY + currentActiveOffset.y
                                                             )
 
                                                             val startOffset = paginationDraggingOffset
@@ -3628,7 +3649,7 @@ fun PdfViewerScreen(
                                                     paginationDragPageHeight / paginationDraggingSize.height else 1f
 
                                                 val screenHeight = boxConstraints.maxHeight.toFloat()
-                                                val boxBottomY = paginationDraggingOffset.y + paginationDraggingSize.height
+                                                val boxBottomY = paginationDraggingOffset.y + (paginationDraggingSize.height * currentActiveScale)
                                                 val spaceBelow = screenHeight - boxBottomY
                                                 val overlayHandlePos = if (spaceBelow < with(density) { 60.dp.toPx() }) HandlePosition.TOP else HandlePosition.BOTTOM
 
@@ -3640,6 +3661,11 @@ fun PdfViewerScreen(
                                                                 paginationDraggingOffset.y.roundToInt()
                                                             )
                                                         }
+                                                        .graphicsLayer {
+                                                            scaleX = currentActiveScale
+                                                            scaleY = currentActiveScale
+                                                            transformOrigin = TransformOrigin(0f, 0f)
+                                                        }
                                                 ) {
                                                     ResizableTextBox(
                                                         box = draggedBox.copy(
@@ -3647,10 +3673,11 @@ fun PdfViewerScreen(
                                                             fontSize = draggedBox.fontSize * fontScaleRatio
                                                         ),
                                                         isSelected = true,
-                                                        isEditMode = false, // Purely visual
+                                                        isEditMode = false,
                                                         isDarkMode = isPdfDarkMode,
                                                         pageWidthPx = paginationDraggingSize.width,
                                                         pageHeightPx = paginationDraggingSize.height,
+                                                        scale = currentActiveScale,
                                                         handlePosition = overlayHandlePos,
                                                         onBoundsChanged = {},
                                                         onTextChanged = {},
