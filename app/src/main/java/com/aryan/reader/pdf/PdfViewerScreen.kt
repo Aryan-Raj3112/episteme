@@ -2311,9 +2311,21 @@ fun PdfViewerScreen(
                     ocrAttempted -> "OCR found no text on this page."
                     else -> "Page seems empty or text not extractable."
                 }
-                ttsController.stop()
-                isAutoPagingForTts = false
-                Timber.w("TTS start failed: $finalError")
+
+                val nextPage = pageToRead + 1
+                if (nextPage < totalPages) {
+                    Timber.i("TTS found no text on page $pageToRead. Skipping to $nextPage.")
+                    isAutoPagingForTts = true
+                    if (displayMode == DisplayMode.PAGINATION) {
+                        coroutineScope.launch { pagerState.animateScrollToPage(nextPage) }
+                    } else {
+                        startTts(pageToReadOverride = nextPage)
+                    }
+                } else {
+                    ttsController.stop()
+                    isAutoPagingForTts = false
+                    Timber.w("TTS start failed (reached end of document): $finalError")
+                }
             }
         }
     }
@@ -2969,7 +2981,7 @@ fun PdfViewerScreen(
     }
 
     val isTtsSessionActive =
-        (ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER"
+        ((ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER") || isAutoPagingForTts
 
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
         coroutineScope.launch {
@@ -4720,6 +4732,7 @@ fun PdfViewerScreen(
                         if (isTtsSessionActive) {
                             Timber.d("TTS button clicked: Stopping TTS")
                             ttsController.stop()
+                            isAutoPagingForTts = false
                         } else {
                             startTtsWithPermissionCheck(null, null)
                         }
@@ -6027,6 +6040,7 @@ fun PdfViewerScreen(
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
                         onClose = {
                             ttsController.stop()
+                            isAutoPagingForTts = false
                         },
                         credits = uiState.credits
                     )
