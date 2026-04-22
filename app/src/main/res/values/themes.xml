@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Reader" parent="Theme.AppCompat.DayNight.NoActionBar" />
+
+    <!-- Modern Splash Screen Theme -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- You can specify a background color here if needed, otherwise it defaults to the system's window background -->
+        <!-- <item name="windowSplashScreenBackground">#121212</item> -->
+        <item name="postSplashScreenTheme">@style/Theme.Reader</item>
+    </style>
 </resources>

@@ -279,15 +279,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val appContext: Context = application.applicationContext
     private val authRepository = AuthRepository(appContext)
     private val recentFilesRepository = RecentFilesRepository(appContext)
-    private val pdfTextRepository = PdfTextRepository(appContext)
 
-    private val bookCacheDao = BookCacheDatabase.getDatabase(application).bookCacheDao()
-    private val epubParser = EpubParser(appContext)
-    private val mobiParser = MobiParser(appContext)
-    private val fb2Parser = com.aryan.reader.epub.Fb2Parser(appContext)
-    private val odtParser = com.aryan.reader.epub.OdtParser(appContext)
-    private val singleFileImporter = SingleFileImporter(appContext)
-    private val bookImporter = BookImporter(appContext)
+    private val pdfTextRepository by lazy { PdfTextRepository(appContext) }
+    private val bookCacheDao by lazy { BookCacheDatabase.getDatabase(application).bookCacheDao() }
+    private val epubParser by lazy { EpubParser(appContext) }
+    private val mobiParser by lazy { MobiParser(appContext) }
+    private val fb2Parser by lazy { com.aryan.reader.epub.Fb2Parser(appContext) }
+    private val odtParser by lazy { com.aryan.reader.epub.OdtParser(appContext) }
+    private val singleFileImporter by lazy { SingleFileImporter(appContext) }
+    private val bookImporter by lazy { BookImporter(appContext) }
+    private val pageLayoutRepository by lazy { PageLayoutRepository(appContext) }
+    private val pdfRichTextRepository by lazy { com.aryan.reader.pdf.PdfRichTextRepository(appContext) }
+    private val pdfTextBoxRepository by lazy { PdfTextBoxRepository(appContext) }
+    private val pdfHighlightRepository by lazy { PdfHighlightRepository(appContext) }
+    private val pdfAnnotationRepository by lazy { PdfAnnotationRepository(appContext) }
+
     private val prefs: SharedPreferences =
         application.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
     private val firestoreRepository = FirestoreRepository()
@@ -304,10 +310,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val feedbackRepository = FeedbackRepository(appContext)
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
-    private val pageLayoutRepository = PageLayoutRepository(appContext)
-    private val pdfRichTextRepository = com.aryan.reader.pdf.PdfRichTextRepository(appContext)
-    private val pdfTextBoxRepository = PdfTextBoxRepository(appContext)
-    private val pdfHighlightRepository = PdfHighlightRepository(appContext)
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
@@ -521,7 +523,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = ReaderScreenState()
+        initialValue = _internalState.value
     )
 
     fun setTabsEnabled(enabled: Boolean) {
@@ -815,7 +817,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         Timber.d("ViewModel instance created.")
-        PDFBoxResourceLoader.init(getApplication())
+        viewModelScope.launch(Dispatchers.IO) {
+            PDFBoxResourceLoader.init(getApplication())
+        }
         val currentOpenCount = prefs.getInt(KEY_APP_OPEN_COUNT, 0)
         prefs.edit { putInt(KEY_APP_OPEN_COUNT, currentOpenCount + 1) }
 
@@ -1199,8 +1203,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
-
-    private val pdfAnnotationRepository = PdfAnnotationRepository(appContext)
 
     private fun getFastFileId(context: Context, uri: Uri): String {
         var result = uri.toString()

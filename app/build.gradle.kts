@@ -234,6 +234,8 @@ dependencies {
     debugImplementation("org.tensorflow:tensorflow-lite-support:0.5.0")
     debugImplementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
     debugImplementation("org.tensorflow:tensorflow-lite-gpu-api:2.17.0")
+
+    implementation("androidx.core:core-splashscreen:1.2.0")
 }
 
 spotless {
