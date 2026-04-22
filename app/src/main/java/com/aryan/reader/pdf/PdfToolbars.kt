@@ -94,7 +94,8 @@ internal fun PdfTopBar(
     onPrint: () -> Unit,
     onTabClick: (String) -> Unit,
     onTabClose: (String) -> Unit,
-    onNewTabClick: () -> Unit
+    onNewTabClick: () -> Unit,
+    onGenerateDemoAnnotations: () -> Unit
 ) {
     AnimatedVisibility(
         visible = showStandardBars,
@@ -179,6 +180,9 @@ internal fun PdfTopBar(
                         }
 
                         if (BuildConfig.DEBUG) {
+                            TooltipIconButton(text = "Demo Annotations", onClick = onGenerateDemoAnnotations) {
+                                Icon(Icons.Default.BugReport, contentDescription = "Generate Demo Annotations", tint = MaterialTheme.colorScheme.secondary)
+                            }
                             TooltipIconButton(text = stringResource(R.string.pen_playground), onClick = onShowPenPlayground) {
                                 Icon(Icons.Default.Star, contentDescription = "Open Pen Playground", tint = MaterialTheme.colorScheme.primary)
                             }

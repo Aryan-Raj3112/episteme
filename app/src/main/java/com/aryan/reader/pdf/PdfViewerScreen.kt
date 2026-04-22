@@ -4481,7 +4481,22 @@ fun PdfViewerScreen(
                             }
                         }
                     },
-                    onNewTabClick = { showNewTabSheet = true }
+                    onNewTabClick = { showNewTabSheet = true },
+                    onGenerateDemoAnnotations = {
+                        val page = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                        val demoAnnots = DemoAnnotationGenerator.generateDemoAnnotations(page)
+
+                        if (demoAnnots.isNotEmpty()) {
+                            Timber.d("Debug: Generating ${demoAnnots.size} demo annotations for page $page")
+                            val existing = allAnnotations[page] ?: emptyList()
+                            allAnnotations = allAnnotations + (page to (existing + demoAnnots))
+
+                            demoAnnots.forEach { annot ->
+                                undoStack.add(HistoryAction.Add(page, annot))
+                            }
+                            redoStack.clear()
+                        }
+                    }
                 )
 
                 ReflowProgressOverlay(

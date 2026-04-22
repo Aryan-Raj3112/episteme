@@ -26,10 +26,8 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 
 object DemoAnnotationGenerator {
 
-    // --- SVG Configuration ---
     private const val SVG_WIDTH = 800f
 
-    // Extracted from your Figma SVG
     private val DECORATIVE_DOTS = listOf(
         DotData(120f, 90f, 5f, Color(0xFFF59E0B), 0.7f),
         DotData(680f, 210f, 6f, Color(0xFFEC4899), 0.7f),
@@ -72,47 +70,36 @@ object DemoAnnotationGenerator {
     fun generateDemoAnnotations(pageIndex: Int): List<PdfAnnotation> {
         val annotations = mutableListOf<PdfAnnotation>()
 
-        // --- Layout Calculation ---
-        // We want the SVG to occupy 80% of the page width, centered.
-        // PDF coordinates are 0..1.
         val targetWidthPercent = 0.8f
-        // SVG aspect ratio 300 / 800 = 0.375
 
-        // Calculate scale factor relative to normalized page coordinates
         val scaleX = targetWidthPercent / SVG_WIDTH
-        val scaleY = scaleX // Keep uniform scale in abstract space
 
         // Center offsets (0.5 is middle of page)
         val startX = (1f - targetWidthPercent) / 2f
-        val startY = 0.4f // Position slightly above center vertically
+        val startY = 0.2f
 
         var currentTime = System.currentTimeMillis()
 
-        // Helper to transform SVG points to PDF Page Points
         fun transformPoint(x: Float, y: Float): PdfPoint {
             val pdfX = startX + (x * scaleX)
-            val pdfY = startY + (y * scaleY)
+            val pdfY = startY + (y * scaleX)
             return PdfPoint(pdfX, pdfY, currentTime)
         }
 
-        // 1. Render Decorative Dots
         DECORATIVE_DOTS.forEach { dot ->
             val pdfPoint = transformPoint(dot.cx, dot.cy)
 
-            // To make a "Dot" with the pen, we need at least 2 points very close together
-            // or a single point might not render depending on the implementation.
             val points = listOf(
                 pdfPoint,
                 pdfPoint.copy(x = pdfPoint.x + 0.0001f, timestamp = currentTime + 10)
             )
 
-            // Convert SVG radius to stroke width
             val relativeThickness = (dot.r / SVG_WIDTH) * 2.5f
 
             annotations.add(
                 PdfAnnotation(
                     type = AnnotationType.INK,
-                    inkType = InkType.PEN, // Standard pen for dots
+                    inkType = InkType.PEN,
                     pageIndex = pageIndex,
                     points = points,
                     color = dot.color.copy(alpha = dot.alpha),
@@ -122,7 +109,6 @@ object DemoAnnotationGenerator {
             currentTime += 50
         }
 
-        // 2. Render Text ("Try Episteme!")
         val textPaths = splitSvgPaths(TEXT_STROKES_DATA)
         textPaths.forEach { pathString ->
             val path = PathParser.createPathFromPathData(pathString)
@@ -130,7 +116,6 @@ object DemoAnnotationGenerator {
 
             if (flattenedPoints.isNotEmpty()) {
                 val pdfPoints = flattenedPoints.mapIndexed { _, p ->
-                    // Increment time to simulate drawing speed for Fountain Pen physics
                     currentTime += 8
                     transformPoint(p.x, p.y).copy(timestamp = currentTime)
                 }
@@ -138,18 +123,17 @@ object DemoAnnotationGenerator {
                 annotations.add(
                     PdfAnnotation(
                         type = AnnotationType.INK,
-                        inkType = InkType.FOUNTAIN_PEN, // Handwriting looks best with this
+                        inkType = InkType.FOUNTAIN_PEN,
                         pageIndex = pageIndex,
                         points = pdfPoints,
-                        color = Color(0xFF418377), // Updated Green
-                        strokeWidth = 0.004f // Fine tip
+                        color = Color(0xFF418377),
+                        strokeWidth = 0.004f
                     )
                 )
-                currentTime += 150 // Pen lift delay
+                currentTime += 150
             }
         }
 
-        // 3. Render Underline
         val underlinePath = PathParser.createPathFromPathData(UNDERLINE_DATA)
         val underlinePointsRaw = flattenPath(underlinePath)
         val underlinePdfPoints = underlinePointsRaw.map { p ->
@@ -160,18 +144,16 @@ object DemoAnnotationGenerator {
         annotations.add(
             PdfAnnotation(
                 type = AnnotationType.INK,
-                inkType = InkType.PEN, // Consistent width for underline
+                inkType = InkType.PEN,
                 pageIndex = pageIndex,
                 points = underlinePdfPoints,
-                color = Color(0xFFEC4899).copy(alpha = 0.6f), // Pink
+                color = Color(0xFFEC4899).copy(alpha = 0.6f),
                 strokeWidth = 0.005f
             )
         )
 
         return annotations
     }
-
-    // --- Helpers ---
 
     private data class DotData(val cx: Float, val cy: Float, val r: Float, val color: Color, val alpha: Float)
     private data class PointF(val x: Float, val y: Float)
@@ -180,11 +162,9 @@ object DemoAnnotationGenerator {
      * Android's Path doesn't give us points directly. We use approximate().
      */
     private fun flattenPath(path: Path): List<PointF> {
-        // Approximate the path with error tolerance 0.5 (pixels in SVG space)
         val approximation = path.approximate(0.5f)
         val points = mutableListOf<PointF>()
 
-        // approximation array format: [t0, x0, y0, t1, x1, y1, ...]
         var i = 0
         while (i < approximation.size) {
             val x = approximation[i + 1]
@@ -204,15 +184,12 @@ object DemoAnnotationGenerator {
         val result = mutableListOf<String>()
 
         rawPaths.forEach { fullPathString ->
-            // Clean up and standardize
             val cleanStr = fullPathString.trim()
 
-            // Split by "M" (Move command).
             val parts = cleanStr.split("M")
 
             parts.forEach { part ->
                 if (part.isNotBlank()) {
-                    // Re-prepend M because split removed it
                     result.add("M ${part.trim()}")
                 }
             }
