@@ -32,19 +32,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
-import com.aryan.reader.opds.OpdsViewModel
-import com.aryan.reader.opds.OpdsEntry
-import com.aryan.reader.opds.OpdsCatalog
-import org.jsoup.Jsoup
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.AssistChip
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +58,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -79,24 +68,28 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -105,6 +98,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -138,9 +132,13 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.opds.OpdsAcquisition
+import com.aryan.reader.opds.OpdsCatalog
+import com.aryan.reader.opds.OpdsEntry
+import com.aryan.reader.opds.OpdsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.jsoup.Jsoup
 import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
@@ -611,6 +609,7 @@ fun LibraryScreenContent(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .statusBarsPadding()
                                 .height(64.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -924,7 +923,7 @@ private fun ShelfDetailScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
 
     Scaffold(
-        modifier = Modifier.statusBarsPadding(),
+        modifier = Modifier,
         topBar = {
             if (isContextualModeActive) {
                 ContextualTopAppBar(
@@ -1077,7 +1076,7 @@ private fun AddBooksModeScreen(
     var showSourceMenu by remember { mutableStateOf(false) }
 
     Scaffold(
-        modifier = Modifier.statusBarsPadding(),
+        modifier = Modifier,
         topBar = {
             CustomTopAppBar(
                 title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
