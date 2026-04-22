@@ -23,7 +23,7 @@ data class PanelResult(
     val confidence: Float
 )
 
-class ComicPanelDetector(modelFile: File) {
+class ComicPanelDetector(modelFile: File) : IPanelDetector {
 
     private var interpreter: Interpreter? = null
     private val inputSize = 640
@@ -85,7 +85,7 @@ class ComicPanelDetector(modelFile: File) {
         }
     }
 
-    fun detectPanels(bitmap: Bitmap, confidenceThreshold: Float = 0.25f, iouThreshold: Float = 0.45f): List<RectF> {
+    override fun detectPanels(bitmap: Bitmap, confidenceThreshold: Float, iouThreshold: Float): List<RectF> {
         val tflite = interpreter ?: return emptyList()
         val buffer = outputBuffer ?: return emptyList()
         val floatBuf = floatOutputBuffer ?: return emptyList()
@@ -188,7 +188,7 @@ class ComicPanelDetector(modelFile: File) {
         return intersectionArea / (box1Area + box2Area - intersectionArea)
     }
 
-    fun close() {
+    override fun close() {
         interpreter?.close()
         interpreter = null
 

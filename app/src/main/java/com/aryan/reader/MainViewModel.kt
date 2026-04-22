@@ -316,15 +316,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
     private var externalOpenedBookId: String? = null
 
-    private var panelDetector: com.aryan.reader.ml.ComicPanelDetector? = null
+    private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
 
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
 
-    private fun getOrInitDetector(context: Context): com.aryan.reader.ml.ComicPanelDetector? {
-        if (panelDetector == null) {
+    private fun getOrInitDetector(context: Context): com.aryan.reader.ml.IPanelDetector? {
+        if (panelDetector == null && BuildConfig.DEBUG) {
             val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
             if (modelFile.exists()) {
-                panelDetector = com.aryan.reader.ml.ComicPanelDetector(modelFile)
+                try {
+                    val clazz = Class.forName("com.aryan.reader.ml.ComicPanelDetector")
+                    panelDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as com.aryan.reader.ml.IPanelDetector
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to instantiate ComicPanelDetector via reflection")
+                }
             } else {
                 Timber.e("Model file best_float16.tflite not found in external files dir")
             }
