@@ -1908,7 +1908,6 @@ internal fun PaginatedReaderContent(
                                     val down = event.changes.firstOrNull { it.pressed }
                                     if (down != null) {
                                         pageTurnTouchY = down.position.y
-                                        Timber.tag("PageTurnFixDiag").v("Touch Event: Y=${down.position.y} at OffsetFraction=${pagerState.currentPageOffsetFraction}")
                                     }
                                 }
                             }
@@ -3952,10 +3951,6 @@ private fun Modifier.realisticBookPage(
     isDarkTheme: Boolean,
     touchY: Float?
 ): Modifier = composed {
-    // Log composition frequency
-    SideEffect {
-        Timber.tag("PageTurnFixDiag").v("Page $pageIndex re-composed. Offset: ${pagerState.currentPageOffsetFraction}")
-    }
 
     val frontPath = remember { Path() }
     val backPath = remember { Path() }
@@ -3965,7 +3960,6 @@ private fun Modifier.realisticBookPage(
         .graphicsLayer {
             val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
 
-            // Log layer property updates
             if (abs(pageOffset) > 0.001f && abs(pageOffset) < 0.999f) {
                 Timber.tag("PageTurnFixDiag").d("graphicsLayer: Page $pageIndex, Offset: $pageOffset")
             }
@@ -3994,7 +3988,14 @@ private fun Modifier.realisticBookPage(
                 val h = size.height
 
                 val startY = touchY ?: h
-                val centerDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+                val rawCenterDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+
+                val flattenFactor = if (progress > 0.75f) {
+                    ((progress - 0.75f) / 0.25f).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                val centerDist = rawCenterDist * (1f - flattenFactor)
 
                 val cornerY = if (centerDist >= 0) h else 0f
 
