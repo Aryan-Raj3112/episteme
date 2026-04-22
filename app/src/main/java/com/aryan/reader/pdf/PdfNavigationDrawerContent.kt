@@ -101,28 +101,30 @@ internal fun PdfNavigationDrawerContent(
                             mutableStateOf(allParentIndices)
                         }
 
-                        val visibleItemInfo = remember(flatTableOfContents, expandedEntryIndices) {
-                            val result = mutableListOf<Pair<Int, TocEntry>>()
-                            val visibilityStack = BooleanArray(20) { false }
-                            visibilityStack[0] = true
+                        val visibleItemInfo by remember(flatTableOfContents) {
+                            derivedStateOf {
+                                val result = mutableListOf<Pair<Int, TocEntry>>()
+                                val visibilityStack = BooleanArray(20) { false }
+                                visibilityStack[0] = true
 
-                            for (i in flatTableOfContents.indices) {
-                                val entry = flatTableOfContents[i]
-                                val level = entry.nestLevel.coerceIn(0, 19)
+                                for (i in flatTableOfContents.indices) {
+                                    val entry = flatTableOfContents[i]
+                                    val level = entry.nestLevel.coerceIn(0, 19)
 
-                                if (visibilityStack[level]) {
-                                    result.add(i to entry)
-                                    val isExpanded = expandedEntryIndices.contains(i)
-                                    if (level + 1 < visibilityStack.size) {
-                                        visibilityStack[level + 1] = isExpanded
-                                    }
-                                } else {
-                                    if (level + 1 < visibilityStack.size) {
-                                        visibilityStack[level + 1] = false
+                                    if (visibilityStack[level]) {
+                                        result.add(i to entry)
+                                        val isExpanded = expandedEntryIndices.contains(i)
+                                        if (level + 1 < visibilityStack.size) {
+                                            visibilityStack[level + 1] = isExpanded
+                                        }
+                                    } else {
+                                        if (level + 1 < visibilityStack.size) {
+                                            visibilityStack[level + 1] = false
+                                        }
                                     }
                                 }
+                                result
                             }
-                            result
                         }
 
                         val currentTocEntry by remember(currentPage, flatTableOfContents) {
@@ -138,19 +140,27 @@ internal fun PdfNavigationDrawerContent(
                                 if (targetOriginalIndex != -1) {
                                     var currentLevel = targetEntry.nestLevel
                                     val newExpanded = expandedEntryIndices.toMutableSet()
+
                                     for (i in targetOriginalIndex downTo 0) {
                                         val entry = flatTableOfContents[i]
                                         if (entry.nestLevel < currentLevel) {
                                             newExpanded.add(i)
                                             currentLevel = entry.nestLevel
                                         }
+                                        if (currentLevel == 0) break
                                     }
+
                                     expandedEntryIndices = newExpanded
 
-                                    delay(100)
-
                                     val visibleIdx = visibleItemInfo.indexOfFirst { it.second == targetEntry }
+
                                     if (visibleIdx != -1) {
+                                        var attempts = 0
+                                        while (listState.layoutInfo.totalItemsCount <= visibleIdx && attempts < 10) {
+                                            delay(30)
+                                            attempts++
+                                        }
+
                                         listState.animateScrollToItem(visibleIdx)
                                     }
                                 }
