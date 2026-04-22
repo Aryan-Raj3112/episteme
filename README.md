@@ -24,7 +24,7 @@ Episteme Reader is an offline-first reader for documents and e‑books on Androi
 ## Features
 
 ### Supported Formats
-- Documents: PDF, DOCX
+- Documents: PDF, DOCX, ODT/FODT
 - E‑books: EPUB, MOBI, AZW3, FB2
 - Comics: CBZ, CBR, CB7
 - Text: MD, TXT, HTML
@@ -88,7 +88,12 @@ Powered by the Android OSS ecosystem:
 
 ## Contributors
 
-- [CCerrer](https://github.com/CCerrer) — Testing & QA
+| Contributor | Contribution |
+|---|---|
+| <img src="https://github.com/CCerrer.png?size=48" width="24" height="24" valign="middle" alt="CCerrer avatar"> [CCerrer](https://github.com/CCerrer) | Testing & QA |
+| <img src="https://github.com/ottozumkeller.png?size=48" width="24" height="24" valign="middle" alt="ottozumkeller avatar"> [ottozumkeller](https://github.com/ottozumkeller) | Translation (German) |
+| <img src="https://github.com/TURBOKANTR.png?size=48" width="24" height="24" valign="middle" alt="TURBOKANTR avatar"> [TURBOKANTR](https://github.com/TURBOKANTR) | Translation (Turkish) |
+| <img src="https://github.com/eyadalkordy24.png?size=48" width="24" height="24" valign="middle" alt="eyadalkordy24 avatar"> [eyadalkordy24](https://github.com/eyadalkordy24) | Translation (Arabic) |
 
 ## Translations
 
