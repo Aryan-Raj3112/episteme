@@ -28,10 +28,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.graphics.Color
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,8 +57,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SelectAll
@@ -69,6 +73,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -100,6 +105,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -111,6 +117,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.log10
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 internal const val PRIVACY_POLICY_URL = "https://aryan-raj3112.github.io/reader-policy/privacy-policy.html"
 internal const val TERMS_URL = "https://aryan-raj3112.github.io/reader-policy/terms-and-conditions.html"
@@ -874,20 +881,168 @@ fun AutoSizeText(
 
 @Composable
 fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolean = false) {
-    val containerColor = if (overlay) androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.secondaryContainer
-    val contentColor = if (overlay) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+    val containerColor = if (overlay) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.secondaryContainer
+    val contentColor = if (overlay) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
 
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(50),
         color = containerColor,
-        contentColor = contentColor
+        contentColor = contentColor,
+        border = if (overlay) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
     ) {
         Text(
             text = type.name.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+private const val UNKNOWN_AUTHOR_LABEL = "No author listed"
+
+fun RecentFileItem.cardTitle(): String {
+    return customName ?: title?.takeIf { it.isNotBlank() } ?: displayName
+}
+
+fun RecentFileItem.cardAuthor(): String {
+    return author
+        ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+        ?: UNKNOWN_AUTHOR_LABEL
+}
+
+fun RecentFileItem.progressPercentValue(): Int {
+    return (progressPercentage ?: 0f).coerceIn(0f, 100f).roundToInt()
+}
+
+fun RecentFileItem.progressFraction(): Float {
+    return progressPercentValue() / 100f
+}
+
+fun RecentFileItem.isOpdsStream(): Boolean {
+    return uriString?.startsWith("opds-pse://") == true
+}
+
+@Composable
+private fun statusBadgeColors(overlay: Boolean): Pair<Color, Color> {
+    val container = if (overlay) {
+        MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.92f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    }
+    val content = if (overlay) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    return container to content
+}
+
+@Composable
+fun StatusIconBadge(
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    overlay: Boolean = false,
+) {
+    val (containerColor, contentColor) = statusBadgeColors(overlay)
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        tonalElevation = if (overlay) 0.dp else 2.dp,
+        shadowElevation = if (overlay) 0.dp else 1.dp,
+        border = if (overlay) BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)) else null
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.padding(6.dp).size(14.dp)
+        )
+    }
+}
+
+@Composable
+fun FileStatusBadges(
+    item: RecentFileItem,
+    isPinned: Boolean,
+    modifier: Modifier = Modifier,
+    overlay: Boolean = false,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (item.sourceFolderUri != null) {
+            StatusIconBadge(
+                icon = Icons.Default.Folder,
+                contentDescription = stringResource(R.string.local_folder),
+                overlay = overlay
+            )
+        }
+        if (item.isOpdsStream()) {
+            StatusIconBadge(
+                icon = Icons.Default.Cloud,
+                contentDescription = stringResource(R.string.opds_stream),
+                overlay = overlay
+            )
+        }
+        if (isPinned) {
+            StatusIconBadge(
+                icon = Icons.Default.PushPin,
+                contentDescription = stringResource(R.string.pinned),
+                overlay = overlay
+            )
+        }
+    }
+}
+
+@Composable
+fun ReadingProgressSection(
+    progressPercentage: Float?,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    compact: Boolean = false,
+) {
+    val percent = (progressPercentage ?: 0f).coerceIn(0f, 100f).roundToInt()
+    val progress = percent / 100f
+
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (label != null) {
+                Text(
+                    text = label,
+                    style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Text(
+                    text = "$percent%",
+                    style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(if (compact) 6.dp else 8.dp))
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (compact) 5.dp else 6.dp),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         )
     }
 }
