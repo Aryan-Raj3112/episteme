@@ -51,7 +51,10 @@ data class RecentFileEntity(
     @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean,
     @ColumnInfo(defaultValue = "NULL") val customName: String?,
     @ColumnInfo(defaultValue = "NULL") val highlights: String?,
-    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long
+    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long,
+    @ColumnInfo(defaultValue = "NULL") val seriesName: String?,
+    @ColumnInfo(defaultValue = "NULL") val seriesIndex: Double?,
+    @ColumnInfo(defaultValue = "NULL") val description: String?
 )
 
 data class RecentFileSummary(
@@ -76,5 +79,8 @@ data class RecentFileSummary(
     @ColumnInfo(defaultValue = "NULL") val sourceFolderUri: String?,
     @ColumnInfo(defaultValue = "0") val isReflowPreferred: Boolean,
     @ColumnInfo(defaultValue = "NULL") val customName: String?,
-    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long
+    @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long,
+    @ColumnInfo(defaultValue = "NULL") val seriesName: String?,
+    @ColumnInfo(defaultValue = "NULL") val seriesIndex: Double?,
+    @ColumnInfo(defaultValue = "NULL") val description: String?
 )

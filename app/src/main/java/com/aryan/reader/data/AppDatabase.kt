@@ -27,7 +27,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities =[RecentFileEntity::class, CustomFontEntity::class], version = 16, exportSchema = false)
+@Database(entities =[RecentFileEntity::class, CustomFontEntity::class], version = 17, exportSchema = false)
 @TypeConverters(FileTypeConverter::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recentFileDao(): RecentFileDao
@@ -191,6 +191,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN seriesName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN seriesIndex REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN description TEXT DEFAULT NULL")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -202,7 +210,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16
+                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
+                        MIGRATION_16_17
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

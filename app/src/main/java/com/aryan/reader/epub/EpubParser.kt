@@ -244,6 +244,24 @@ class EpubParser(private val context: Context) {
         val metadataLanguage =
             document.metadata.selectFirstChildTag("dc:language")?.textContent ?: "en"
         val metadataCoverId = getMetadataCoverId(document.metadata)
+        val metadataDescription =
+            document.metadata.selectFirstChildTag("dc:description")?.textContent
+
+        Timber.d("EpubParser: Extracted OPF metadata: title='$metadataTitle', author='$metadataAuthor'")
+
+        var metadataSeriesName: String? = null
+        var metadataSeriesIndex: Double? = null
+
+        document.metadata.selectChildTag("meta")
+            .ifEmpty { document.metadata.selectChildTag("opf:meta") }
+            .forEach { meta ->
+                val nameAttr = meta.getAttributeValue("name")
+                val contentAttr = meta.getAttributeValue("content")
+
+                if (nameAttr == "calibre:series") metadataSeriesName = contentAttr
+                if (nameAttr == "calibre:series_index") metadataSeriesIndex = contentAttr?.toDoubleOrNull()
+            }
+
         val opfRelativePath = document.opfFilePath
         val opfParentDir = File(opfRelativePath).parentFile ?: File("")
         val manifestItems = getManifestItems(document.manifest, opfParentDir)
@@ -344,7 +362,10 @@ class EpubParser(private val context: Context) {
             pageList = pageTargets,
             tableOfContents = tableOfContents,
             extractionBasePath = extractionBasePath,
-            css = cssContent
+            css = cssContent,
+            seriesName = metadataSeriesName,
+            seriesIndex = metadataSeriesIndex,
+            description = metadataDescription
         )
     }
 

@@ -46,5 +46,8 @@ data class EpubBook(
     val extractionBasePath: String = "",
     val css: Map<String, String> = emptyMap(),
     @Transient
-    val chaptersForPagination: List<EpubChapter> = chapters
+    val chaptersForPagination: List<EpubChapter> = chapters,
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
+    val description: String? = null,
 )

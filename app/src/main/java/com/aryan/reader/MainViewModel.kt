@@ -115,6 +115,8 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.epub.CalibreBundleExtractor
+import com.aryan.reader.epub.CalibreBundleResult
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -128,6 +130,13 @@ private const val KEY_FILTER_FOLDERS = "filter_folders"
 private const val KEY_FILTER_READ_STATUS = "filter_read_status"
 
 data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
+
+data class ImportResult(
+    val internalUri: Uri,
+    val bookId: String,
+    val type: FileType,
+    val bundleResult: CalibreBundleResult? = null
+)
 
 data class UserData(
     val uid: String, val displayName: String?, val photoUrl: String?, val email: String?
@@ -418,6 +427,47 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             customAppThemes = loadCustomAppThemes(prefs)
         )
     )
+
+    private suspend fun prepareBookForImport(externalUri: Uri): ImportResult? {
+        var type = getFileTypeFromUri(externalUri, appContext)
+
+        val hash = FileHasher.calculateSha256 {
+            appContext.contentResolver.openInputStream(externalUri)
+        }
+        if (hash == null) {
+            Timber.e("Failed to process file hash for $externalUri")
+            return null
+        }
+
+        val existingItem = recentFilesRepository.getFileByBookId(hash)
+        if (existingItem != null) {
+            Timber.i("Book with ID: $hash already exists. Skipping import.")
+            return null
+        }
+
+        val fileName = getFileNameFromUri(externalUri, appContext) ?: ""
+        if (fileName.endsWith(".zip", ignoreCase = true) || type == FileType.CBZ) {
+            val bundleResult = CalibreBundleExtractor.processZip(appContext, externalUri, hash, bookImporter, recentFilesRepository)
+
+            Timber.d("MainViewModel: Calibre processZip returned: $bundleResult")
+
+            if (bundleResult != null) {
+                return ImportResult(
+                    internalUri = bundleResult.internalBookUri,
+                    bookId = hash,
+                    type = bundleResult.type,
+                    bundleResult = bundleResult
+                )
+            }
+            if (type == null) type = FileType.CBZ
+        }
+
+        if (type == null) return null
+
+        Timber.i("Importing new book with ID: $hash")
+        val internalFile = bookImporter.importBook(externalUri) ?: return null
+        return ImportResult(internalFile.toUri(), hash, type, null)
+    }
 
     open val uiState: StateFlow<ReaderScreenState> = combine(
         _internalState, recentFilesRepository.getRecentFilesFlow(), _prefsUpdateFlow
@@ -1925,38 +1975,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun prepareBookForImport(externalUri: Uri): Triple<Uri, String, FileType>? {
-        val type = getFileTypeFromUri(externalUri, appContext)
-        if (type == null) {
-            Timber.e("Could not determine file type for external URI: $externalUri")
-            return null
-        }
-
-        val hash = FileHasher.calculateSha256 {
-            appContext.contentResolver.openInputStream(externalUri)
-        }
-
-        if (hash == null) {
-            Timber.e("Failed to process file hash for $externalUri")
-            return null
-        }
-
-        val existingItem = recentFilesRepository.getFileByBookId(hash)
-        if (existingItem != null) {
-            Timber.i("Book with ID: $hash already exists. Skipping import.")
-            return null
-        }
-
-        Timber.i("Importing new book with ID: $hash")
-        val internalFile = bookImporter.importBook(externalUri)
-        if (internalFile == null) {
-            Timber.e("Failed to copy book to internal storage for $externalUri")
-            return null
-        }
-
-        return Triple(internalFile.toUri(), hash, type)
-    }
-
     private fun downloadBook(item: RecentFileItem, openWhenComplete: Boolean = false): Job {
         if (!uiState.value.isSyncEnabled) {
             _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_enable_sync_download)) }
@@ -2568,7 +2586,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         epubBook: EpubBook? = null,
         customDisplayName: String? = null,
         isRecent: Boolean,
-        sourceFolderUri: String? = null
+        sourceFolderUri: String? = null,
+        bundleResult: CalibreBundleResult? = null
     ) = withContext(Dispatchers.IO) {
         val addStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf")
@@ -2600,12 +2619,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             uri, appContext
         ) ?: "Unknown File"
 
-        var coverPath: String? = null
-        var title: String? = null
-        var author: String? = null
+        var coverPath: String? = bundleResult?.coverCachePath
+        var title: String? = bundleResult?.title
+        var author: String? = bundleResult?.author
+        var seriesName: String? = bundleResult?.seriesName
+        var seriesIndex: Double? = bundleResult?.seriesIndex
+        var description: String? = bundleResult?.description
         var bookForMetadata = epubBook
 
-        if (bookForMetadata == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT)) {
+        if (bookForMetadata == null && bundleResult == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT)) {
             Timber.d("Parsing downloaded book for cover/metadata: $displayName")
             Timber.tag("FileOpenPerf")
                 .d("[$bookId] addFileToRecent: Starting metadata parsing (no book provided)")
@@ -2677,18 +2699,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val finalBookMetadata = bookForMetadata
 
         if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) && finalBookMetadata != null) {
-            title =
-                finalBookMetadata.title.takeIf { it.isNotBlank() && it != "content" } ?: displayName
+            title = title ?: finalBookMetadata.title.takeIf { it.isNotBlank() && it != "content" } ?: displayName
 
-            author = finalBookMetadata.author.takeIf {
+            author = author ?: finalBookMetadata.author.takeIf {
                 it.isNotBlank() && !it.equals("Unknown", ignoreCase = true)
             }
 
-            finalBookMetadata.coverImage?.let { cover ->
-                coverPath = recentFilesRepository.saveCoverToCache(cover, uri)
+            if (coverPath == null) {
+                finalBookMetadata.coverImage?.let { cover ->
+                    coverPath = recentFilesRepository.saveCoverToCache(cover, uri)
+                }
             }
+
+            seriesName = seriesName ?: finalBookMetadata.seriesName
+            seriesIndex = seriesIndex ?: finalBookMetadata.seriesIndex
+            description = description ?: finalBookMetadata.description
         } else if (type == FileType.PDF || type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
-            title = displayName
+            title = title ?: displayName
 
             if (type == FileType.PDF) {
                 try {
@@ -2698,12 +2725,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         val meta = pdfiumCore.getDocumentMeta(pdfDocument)
 
                         val extractedTitle = meta.title
-                        if (!extractedTitle.isNullOrBlank()) {
+                        if (!extractedTitle.isNullOrBlank() && title == displayName) {
                             title = extractedTitle
                         }
 
                         val extractedAuthor = meta.author
-                        if (!extractedAuthor.isNullOrBlank()) {
+                        if (!extractedAuthor.isNullOrBlank() && author == null) {
                             author = extractedAuthor
                         }
 
@@ -2713,49 +2740,53 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.e(e, "Failed to extract PDF title using PdfiumCore")
                 }
 
-                val pdfCoverGenerator = PdfCoverGenerator(appContext)
-                val coverBitmap = pdfCoverGenerator.generateCover(uri)
-                if (coverBitmap != null) {
-                    coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
+                if (coverPath == null) {
+                    val pdfCoverGenerator = PdfCoverGenerator(appContext)
+                    val coverBitmap = pdfCoverGenerator.generateCover(uri)
+                    if (coverBitmap != null) {
+                        coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
+                    }
                 }
             } else if (uri.scheme != "opds-pse" && (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7)) {
-                var cacheFile: File? = null
-                try {
-                    cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
-                    withContext(Dispatchers.IO) {
-                        appContext.contentResolver.openInputStream(uri)?.use { input ->
-                            cacheFile.outputStream().use { output -> input.copyTo(output) }
-                        }
-                    }
-                    val archiveDoc = com.aryan.reader.pdf.ArchiveDocumentWrapper(cacheFile)
-                    if (archiveDoc.getPageCount() > 0) {
-                        val page = archiveDoc.openPage(0)
-                        if (page != null) {
-                            val w = page.getPageWidthPoint()
-                            val h = page.getPageHeightPoint()
-                            if (w > 0 && h > 0) {
-                                val targetHeight = 800
-                                val targetWidth = (targetHeight * (w.toFloat() / h.toFloat())).toInt()
-                                if (targetWidth > 0) {
-                                    val bitmap = createBitmap(targetWidth, targetHeight)
-                                    page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, false)
-                                    coverPath = recentFilesRepository.saveCoverToCache(bitmap, uri)
-                                }
-                            }
-                            page.close()
-                        }
-                    }
-                    archiveDoc.close()
-                } catch (e: Exception) {
-                    Timber.e(e, "Error generating CBZ cover")
-                } finally {
+                if (coverPath == null) {
+                    var cacheFile: File? = null
                     try {
-                        if (cacheFile?.exists() == true) {
-                            val deleted = cacheFile.delete()
-                            if (deleted) Timber.d("Successfully deleted temp archive file: ${cacheFile.name}")
+                        cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
+                        withContext(Dispatchers.IO) {
+                            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                                cacheFile.outputStream().use { output -> input.copyTo(output) }
+                            }
                         }
+                        val archiveDoc = com.aryan.reader.pdf.ArchiveDocumentWrapper(cacheFile)
+                        if (archiveDoc.getPageCount() > 0) {
+                            val page = archiveDoc.openPage(0)
+                            if (page != null) {
+                                val w = page.getPageWidthPoint()
+                                val h = page.getPageHeightPoint()
+                                if (w > 0 && h > 0) {
+                                    val targetHeight = 800
+                                    val targetWidth = (targetHeight * (w.toFloat() / h.toFloat())).toInt()
+                                    if (targetWidth > 0) {
+                                        val bitmap = createBitmap(targetWidth, targetHeight)
+                                        page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, false)
+                                        coverPath = recentFilesRepository.saveCoverToCache(bitmap, uri)
+                                    }
+                                }
+                                page.close()
+                            }
+                        }
+                        archiveDoc.close()
                     } catch (e: Exception) {
-                        Timber.e(e, "Failed to delete temp archive file")
+                        Timber.e(e, "Error generating CBZ cover")
+                    } finally {
+                        try {
+                            if (cacheFile?.exists() == true) {
+                                val deleted = cacheFile.delete()
+                                if (deleted) Timber.d("Successfully deleted temp archive file: ${cacheFile.name}")
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to delete temp archive file")
+                        }
                     }
                 }
             }
@@ -2778,7 +2809,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             isDeleted = false,
             isRecent = isRecent,
             sourceFolderUri = sourceFolderUri,
-            fileSize = fileSize
+            fileSize = fileSize,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            description = description
         )
         recentFilesRepository.addRecentFile(newItem)
         Timber.i("Added/Updated $displayName ($type) to recent files via repository.")
@@ -2910,7 +2944,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             bookId = bookId,
                             customDisplayName = displayName,
                             isRecent = false,
-                            sourceFolderUri = null
+                            sourceFolderUri = null,
+                            bundleResult = importResult.bundleResult
                         )
                         importedCount++
                     } else {
@@ -2969,7 +3004,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
                 openBook(
-                    internalUri, bookId = bookId, type = type, originalDisplayName = displayName
+                    importResult.internalUri, bookId = importResult.bookId, type = importResult.type,
+                    originalDisplayName = displayName, bundleResult = importResult.bundleResult
                 )
             } else {
                 val hash = FileHasher.calculateSha256 {
@@ -3201,7 +3237,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun openBook(
-        uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false
+        uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false, bundleResult: CalibreBundleResult? = null
     ) {
         val openBookStartTime = System.currentTimeMillis()
         Timber.tag("FileOpenPerf")
@@ -3293,7 +3329,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         bookId,
                         customDisplayName = originalDisplayName,
                         isRecent = true,
-                        sourceFolderUri = null
+                        sourceFolderUri = null,
+                        bundleResult = bundleResult
                     )
 
                     if (!suppressNavigation) {
@@ -3341,22 +3378,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                     when (type) {
                         FileType.EPUB -> {
-                            loadEpub(uri, bookId, customDisplayName = originalDisplayName)
+                            loadEpub(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
                         }
 
                         FileType.MOBI -> {
-                            loadMobi(uri, bookId, customDisplayName = originalDisplayName)
+                            loadMobi(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
                         }
 
                         FileType.FB2 -> {
-                            loadFb2(uri, bookId, customDisplayName = originalDisplayName)
+                            loadFb2(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
                         }
                         FileType.ODT, FileType.FODT -> {
-                            loadOdt(uri, bookId, type == FileType.FODT, customDisplayName = originalDisplayName)
+                            loadOdt(uri, bookId, type == FileType.FODT, customDisplayName = originalDisplayName, bundleResult = bundleResult)
                         }
                         else -> {
                             loadSingleFile(
-                                uri, bookId, type, customDisplayName = originalDisplayName
+                                uri, bookId, type, customDisplayName = originalDisplayName, bundleResult = bundleResult
                             )
                         }
                     }
@@ -3365,7 +3402,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadFb2(uri: Uri, bookId: String, customDisplayName: String? = null) {
+    private fun loadFb2(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadFb2 START")
         viewModelScope.launch {
@@ -3388,7 +3425,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.tag("FileOpenPerf").d("[$bookId] loadFb2 completed | chapters=${fb2Book.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
                 addFileToRecent(
-                    uri, FileType.FB2, bookId, fb2Book, customDisplayName, isRecent = true, sourceFolderUri = null
+                    uri, FileType.FB2, bookId, fb2Book, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = fb2Book, isLoading = false) }
@@ -3401,7 +3438,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadOdt(uri: Uri, bookId: String, isFlat: Boolean, customDisplayName: String? = null) {
+    private fun loadOdt(uri: Uri, bookId: String, isFlat: Boolean, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadOdt START | isFlat=$isFlat")
         viewModelScope.launch {
@@ -3425,7 +3462,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.tag("FileOpenPerf").d("[$bookId] loadOdt completed | chapters=${odtBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
                 addFileToRecent(
-                    uri, if (isFlat) FileType.FODT else FileType.ODT, bookId, odtBook, customDisplayName, isRecent = true, sourceFolderUri = null
+                    uri, if (isFlat) FileType.FODT else FileType.ODT, bookId, odtBook, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = odtBook, isLoading = false) }
@@ -3442,7 +3479,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         uri: Uri,
         bookId: String,
         type: FileType,
-        customDisplayName: String? = null
+        customDisplayName: String? = null,
+        bundleResult: CalibreBundleResult? = null
     ) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile START | type=$type")
@@ -3478,7 +3516,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     epubBook,
                     customDisplayName,
                     isRecent = true,
-                    sourceFolderUri = null
+                    sourceFolderUri = null,
+                    bundleResult = bundleResult
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }
@@ -3616,7 +3655,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadMobi(uri: Uri, bookId: String, customDisplayName: String? = null) {
+    private fun loadMobi(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
         viewModelScope.launch {
             if (!_internalState.value.isLoading) {
                 _internalState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -3645,7 +3684,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         mobiAsEpubBook,
                         customDisplayName,
                         isRecent = true,
-                        sourceFolderUri = null
+                        sourceFolderUri = null,
+                        bundleResult = bundleResult
                     )
                     _internalState.update {
                         it.copy(selectedEpubBook = mobiAsEpubBook, isLoading = false)
@@ -3664,7 +3704,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadEpub(uri: Uri, bookId: String, customDisplayName: String? = null) {
+    private fun loadEpub(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadEpub START")
         viewModelScope.launch {
@@ -3696,7 +3736,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     epubBook,
                     customDisplayName,
                     isRecent = true,
-                    sourceFolderUri = null
+                    sourceFolderUri = null,
+                    bundleResult = bundleResult
                 )
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }

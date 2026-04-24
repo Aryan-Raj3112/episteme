@@ -47,7 +47,10 @@ data class RecentFileItem(
     val isReflowPreferred: Boolean = false,
     val customName: String? = null,
     val highlightsJson: String? = null,
-    val fileSize: Long = 0L
+    val fileSize: Long = 0L,
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
+    val description: String? = null
 ) {
     fun getUri(): Uri? = uriString?.toUri()
 }
@@ -77,7 +80,10 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         isReflowPreferred = this.isReflowPreferred,
         customName = this.customName,
         highlightsJson = this.highlights,
-        fileSize = this.fileSize
+        fileSize = this.fileSize,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description
     )
 }
 
@@ -106,7 +112,10 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         isReflowPreferred = this.isReflowPreferred,
         customName = this.customName,
         highlights = this.highlightsJson,
-        fileSize = this.fileSize
+        fileSize = this.fileSize,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description
     )
 }
 
@@ -184,6 +193,9 @@ fun RecentFileSummary.toRecentFileItem(): RecentFileItem {
         isReflowPreferred = this.isReflowPreferred,
         customName = this.customName,
         highlightsJson = null,
-        fileSize = this.fileSize
+        fileSize = this.fileSize,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description
     )
 }
