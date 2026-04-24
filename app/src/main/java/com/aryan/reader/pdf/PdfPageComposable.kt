@@ -415,6 +415,7 @@ internal fun PdfPageComposable(
     isVerticalScroll: Boolean = false,
     visualScaleProvider: () -> Float = { 1f },
     clearSelectionTrigger: Long = 0L,
+    resetZoomTrigger: Long = 0L,
     onTtsHighlightCenterCalculated: ((Float) -> Unit)? = null,
     onSearchHighlightCenterCalculated: ((Float) -> Unit)? = null,
     activeTheme: com.aryan.reader.ReaderTheme = com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
@@ -1642,6 +1643,32 @@ internal fun PdfPageComposable(
                     actualBitmapHeightPx,
                     currentPageRotation
                 )
+            }
+        }
+    }
+
+    LaunchedEffect(resetZoomTrigger) {
+        if (resetZoomTrigger != 0L && scale > 1f && isZoomEnabled && !isVerticalScroll && !isScrollLocked) {
+            coroutineScope.launch {
+                val startScale = scale
+                val startOffset = offset
+                Animatable(0f).animateTo(
+                    1f, animationSpec = tween(durationMillis = 300)
+                ) {
+                    val progress = value
+                    scale = androidx.compose.ui.util.lerp(
+                        startScale, 1f, progress
+                    )
+                    offset = androidx.compose.ui.geometry.lerp(
+                        startOffset, Offset.Zero, progress
+                    )
+                    onScaleChanged(scale)
+                }
+                if (scale <= 1.05f) {
+                    scale = 1f
+                    offset = Offset.Zero
+                    onScaleChanged(scale)
+                }
             }
         }
     }

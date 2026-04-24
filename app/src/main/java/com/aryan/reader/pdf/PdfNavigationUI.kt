@@ -239,15 +239,45 @@ internal fun BookmarkButton(
 }
 
 @Composable
-internal fun ZoomPercentageIndicator(percentage: Int) {
+internal fun ZoomPercentageIndicator(
+    percentage: Int,
+    onResetZoomClick: () -> Unit
+) {
     Surface(
         shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f)
     ) {
-        Text(
-            text = "$percentage%",
-            color = Color.White,
-            style = MaterialTheme.typography.bodyLarge,
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-        )
+        ) {
+            Text(
+                text = "$percentage%",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Divider
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(16.dp)
+                    .background(Color.White.copy(alpha = 0.5f))
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Reset Zoom Button
+            Icon(
+                painter = painterResource(id = R.drawable.zoom_out),
+                contentDescription = "Reset Zoom",
+                tint = Color.White,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onResetZoomClick)
+            )
+        }
     }
 }

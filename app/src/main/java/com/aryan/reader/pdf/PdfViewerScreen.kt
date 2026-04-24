@@ -989,6 +989,7 @@ fun PdfViewerScreen(
     var isLoadingDocument by remember { mutableStateOf(true) }
 
     var selectionClearTrigger by remember { mutableLongStateOf(0L) }
+    var resetZoomTrigger by remember { mutableLongStateOf(0L) }
 
     val displayPageRatios by remember(pageAspectRatios, virtualPages) {
         derivedStateOf {
@@ -3420,6 +3421,7 @@ fun PdfViewerScreen(
                                                 onBookmarkClick = { onToggleBookmark(pageIndex) },
                                                 isZoomEnabled = true,
                                                 clearSelectionTrigger = selectionClearTrigger,
+                                                resetZoomTrigger = resetZoomTrigger,
                                                 pageAnnotations = pageAnnotationsProvider,
                                                 drawingState = drawingState,
                                                 onDrawStart = onDrawStartPagination,
@@ -3915,7 +3917,8 @@ fun PdfViewerScreen(
                                             onZoomAndPanChanged = { newScale, newOffset ->
                                                 currentActiveScale = newScale
                                                 currentActiveOffset = newOffset
-                                            }
+                                            },
+                                            resetZoomTrigger = resetZoomTrigger
                                         )
                                     }
                                 }
@@ -5160,7 +5163,12 @@ fun PdfViewerScreen(
                     exit = fadeOut()
                 ) {
                     val percentage = (currentPageScale * 100).roundToInt()
-                    ZoomPercentageIndicator(percentage = percentage)
+                    ZoomPercentageIndicator(
+                        percentage = percentage,
+                        onResetZoomClick = {
+                            resetZoomTrigger = System.currentTimeMillis()
+                        }
+                    )
                 }
 
                 val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0

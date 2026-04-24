@@ -247,7 +247,8 @@ internal fun PdfVerticalReader(
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: () -> Unit = {},
     lockedState: Triple<Float, Float, Float>? = null,
-    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null
+    onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
+    resetZoomTrigger: Long = 0L
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     DisposableEffect(state) {
@@ -490,6 +491,66 @@ internal fun PdfVerticalReader(
             targetZoom: Float, targetPanX: Float, targetPanY: Float
         ): Triple<Float, Float, Float> {
             return clampValues(targetZoom, targetPanX, targetPanY)
+        }
+
+        LaunchedEffect(resetZoomTrigger) {
+            if (resetZoomTrigger != 0L && zoomAnimatable.value > fitZoom && !isScrollLocked) {
+                scope.launch {
+                    zoomAnimatable.stop()
+                    panXAnimatable.stop()
+                    panYAnimatable.stop()
+
+                    val startZoom = zoomAnimatable.value
+                    val startPanX = panXAnimatable.value
+                    val startPanY = panYAnimatable.value
+                    val targetZoom = fitZoom
+
+                    val pivotScreenX = screenWidth / 2f
+                    val pivotScreenY = screenHeight / 2f
+
+                    val pivotContentX = (pivotScreenX - startPanX) / startZoom
+                    val pivotContentY = (pivotScreenY - startPanY) / startZoom
+
+                    val rawNextPanX = pivotScreenX - (pivotContentX * targetZoom)
+                    val rawNextPanY = pivotScreenY - (pivotContentY * targetZoom)
+
+                    val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
+
+                    panXAnimatable.updateBounds(
+                        lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
+                        upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
+                    )
+                    panYAnimatable.updateBounds(
+                        lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
+                        upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
+                    )
+
+                    coroutineScope {
+                        launch { zoomAnimatable.animateTo(finalZoom, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                        launch { panXAnimatable.animateTo(finalX, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                        launch { panYAnimatable.animateTo(finalY, animationSpec = tween(400, easing = FastOutSlowInEasing)) }
+                    }
+
+                    onZoomChange(zoomAnimatable.value)
+
+                    val zoomedDocWidth = screenWidth * finalZoom
+                    val finalMinX: Float
+                    val finalMaxX: Float
+                    if (zoomedDocWidth < screenWidth) {
+                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                        finalMinX = centeredX
+                        finalMaxX = centeredX
+                    } else {
+                        finalMinX = -(zoomedDocWidth - screenWidth)
+                        finalMaxX = 0f
+                    }
+                    panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
+
+                    val zDocH = totalDocHeight * finalZoom
+                    val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
+                    panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
+                }
+            }
         }
 
         LaunchedEffect(
