@@ -102,7 +102,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -482,6 +481,14 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
                         InfoRowDetailed(stringResource(R.string.author), it)
+                    }
+                    item.seriesName?.takeIf { it.isNotBlank() }?.let { series ->
+                        val seriesText = if (item.seriesIndex != null && item.seriesIndex > 0) {
+                            "$series #${item.seriesIndex.toInt()}"
+                        } else {
+                            series
+                        }
+                        InfoRowDetailed("Series", seriesText)
                     }
                     InfoRowDetailed(stringResource(R.string.format), item.type.name)
                     InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))

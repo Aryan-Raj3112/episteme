@@ -917,14 +917,6 @@ fun RecentFileCard(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                if (item.tags.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    BookTagChipsRow(
-                        tags = item.tags,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
                 if (!item.isAvailable) {
                     Spacer(modifier = Modifier.height(12.dp))
 
