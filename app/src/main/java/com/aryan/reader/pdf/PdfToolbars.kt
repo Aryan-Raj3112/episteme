@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.sp
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.FileType
 import com.aryan.reader.R
@@ -437,6 +439,8 @@ fun PdfBottomBar(
     isEditMode: Boolean,
     isTtsSessionActive: Boolean,
     ttsErrorMessage: String?,
+    jumpBackPage: Int?,
+    onJumpBack: () -> Unit,
     onShowSlider: () -> Unit,
     onShowToc: () -> Unit,
     onSearchClick: () -> Unit,
@@ -460,8 +464,35 @@ fun PdfBottomBar(
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = bottomBarPadding).height(56.dp).padding(horizontal = 8.dp).horizontalScroll(bottomBarScrollState),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
+                if (jumpBackPage != null) {
+                    TooltipIconButton(
+                        text = "Jump Back to Page ${jumpBackPage + 1}",
+                        description = "Return to previous page",
+                        onClick = onJumpBack
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = "Jump Back",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "${jumpBackPage + 1}",
+                                fontSize = 10.sp,
+                                lineHeight = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
                 if (!hiddenTools.contains(PdfReaderTool.SLIDER.name)) {
                     TooltipIconButton(
                         text = stringResource(R.string.tooltip_slider),
