@@ -69,60 +69,77 @@ fun MainScreen(
     }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val viewingShelfName = uiState.viewingShelfName
+    val viewingShelfName = uiState.viewingShelfId
 
-    if (viewingShelfName != null) {
-        ShelfScreen(viewModel = viewModel)
-    } else {
-        val pagerState = rememberPagerState(
-            initialPage = uiState.mainScreenStartPage,
-            pageCount = { bottomBarItems.size }
-        )
-        val scope = rememberCoroutineScope()
+    androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
+        if (viewingShelfName != null) {
+            ShelfScreen(viewModel = viewModel)
+        } else {
+            val pagerState = rememberPagerState(
+                initialPage = uiState.mainScreenStartPage,
+                pageCount = { bottomBarItems.size }
+            )
+            val scope = rememberCoroutineScope()
 
-        LaunchedEffect(uiState.mainScreenStartPage) {
-            if (pagerState.currentPage != uiState.mainScreenStartPage) {
-                pagerState.animateScrollToPage(uiState.mainScreenStartPage)
+            LaunchedEffect(uiState.mainScreenStartPage) {
+                if (pagerState.currentPage != uiState.mainScreenStartPage) {
+                    pagerState.animateScrollToPage(uiState.mainScreenStartPage)
+                }
             }
-        }
 
-        LaunchedEffect(pagerState.currentPage) {
-            viewModel.setMainScreenPage(pagerState.currentPage)
-        }
+            LaunchedEffect(pagerState.currentPage) {
+                viewModel.setMainScreenPage(pagerState.currentPage)
+            }
 
-        Scaffold(
-            contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-                NavigationBar {
-                    bottomBarItems.forEachIndexed { index, screen ->
-                        NavigationBarItem(
-                            icon = { Icon(painterResource(id = screen.iconResId), contentDescription = stringResource(screen.stringResId)) },
-                            label = { Text(stringResource(screen.stringResId)) },
-                            selected = pagerState.currentPage == index,
-                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } }
+            Scaffold(
+                contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+                bottomBar = {
+                    NavigationBar {
+                        bottomBarItems.forEachIndexed { index, screen ->
+                            NavigationBarItem(
+                                icon = { Icon(painterResource(id = screen.iconResId), contentDescription = stringResource(screen.stringResId)) },
+                                label = { Text(stringResource(screen.stringResId)) },
+                                selected = pagerState.currentPage == index,
+                                onClick = { scope.launch { pagerState.animateScrollToPage(index) } }
+                            )
+                        }
+                    }
+                }
+            ) { innerPadding ->
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    key = { bottomBarItems[it].route },
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = false
+                ) { page ->
+                    when (page) {
+                        0 -> HomeScreen(
+                            viewModel = viewModel,
+                            windowSizeClass = windowSizeClass,
+                            navController = navController
                         )
+                        1 -> LibraryScreen(viewModel = viewModel)
                     }
                 }
             }
-        ) { innerPadding ->
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                key = { bottomBarItems[it].route },
-                beyondViewportPageCount = 1,
-                userScrollEnabled = false
-            ) { page ->
-                when (page) {
-                    0 -> HomeScreen(
-                        viewModel = viewModel,
-                        windowSizeClass = windowSizeClass,
-                        navController = navController
-                    )
-                    1 -> LibraryScreen(viewModel = viewModel)
-                }
-            }
+        }
+
+        if (uiState.showTagSelectionDialogFor.isNotEmpty()) {
+            TagSelectionBottomSheet(
+                allTags = uiState.allTags,
+                selectedBookIds = uiState.showTagSelectionDialogFor,
+                booksWithTags = uiState.rawLibraryFiles,
+                onCreateAndAssign = { name ->
+                    viewModel.createAndAssignTag(name, uiState.showTagSelectionDialogFor)
+                },
+                onToggleTag = { tagId, assign ->
+                    viewModel.toggleTagForBooks(tagId, uiState.showTagSelectionDialogFor, assign)
+                },
+                onDismiss = viewModel::closeTagSelection
+            )
         }
     }
 }

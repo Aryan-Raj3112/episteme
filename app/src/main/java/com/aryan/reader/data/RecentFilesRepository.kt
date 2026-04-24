@@ -39,6 +39,8 @@ import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import org.json.JSONObject
 import org.json.JSONArray
+import java.util.UUID
+import androidx.core.content.edit
 
 private const val COVER_CACHE_DIR = "cover_cache"
 
@@ -53,6 +55,11 @@ class RecentFilesRepository(private val context: Context) {
     private val pageLayoutRepository = PageLayoutRepository(context)
     private val pdfTextBoxRepository = PdfTextBoxRepository(context)
     private val pdfHighlightRepository = com.aryan.reader.pdf.data.PdfHighlightRepository(context)
+
+    val activeShelvesFlow = AppDatabase.getDatabase(context).shelfDao().getAllActiveShelves()
+    val shelfCrossRefsFlow = AppDatabase.getDatabase(context).shelfDao().getAllBookShelfCrossRefs()
+    val tagsFlow = AppDatabase.getDatabase(context).tagDao().getAllTags()
+    val tagCrossRefsFlow = AppDatabase.getDatabase(context).tagDao().getAllBookTagCrossRefs()
 
     init {
         if (!coverCacheDir.exists()) {
@@ -74,12 +81,54 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext recentFileDao.getFileByUri(uriString)?.toRecentFileItem()
     }
 
+    suspend fun addShelf(shelf: ShelfEntity) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).shelfDao().insertShelf(shelf)
+    }
+
+    suspend fun addBooksToShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
+        val timestamp = System.currentTimeMillis()
+        val crossRefs = bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) }
+        AppDatabase.getDatabase(context).shelfDao().insertBookShelfCrossRefs(crossRefs)
+    }
+
+    suspend fun renameShelf(shelfId: String, newName: String) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).shelfDao().updateShelfName(shelfId, newName, System.currentTimeMillis())
+    }
+
+    suspend fun deleteShelf(shelfId: String) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).shelfDao().markShelfAsDeleted(shelfId, System.currentTimeMillis())
+    }
+
+    suspend fun removeBooksFromShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).shelfDao().removeBooksFromShelf(shelfId, bookIds)
+    }
+
     suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFilesBySourceFolder(sourceFolderUri).map { it.toRecentFileItem() }
     }
 
     suspend fun getAllFilesForSync(): List<RecentFileItem> = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getAllFiles().map { it.toRecentFileItem() }
+    }
+
+    suspend fun createTag(tag: TagEntity) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).tagDao().insertTag(tag)
+    }
+
+    suspend fun seedTagsIfEmpty(tags: List<TagEntity>) = withContext(Dispatchers.IO) {
+        if (tags.isEmpty()) return@withContext
+        val tagDao = AppDatabase.getDatabase(context).tagDao()
+        if (tagDao.getTagCount() == 0) {
+            tagDao.insertTags(tags)
+        }
+    }
+
+    suspend fun assignTagToBook(bookId: String, tagId: String) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).tagDao().insertBookTagCrossRef(BookTagCrossRef(bookId, tagId))
+    }
+
+    suspend fun removeTagFromBook(bookId: String, tagId: String) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).tagDao().removeTagFromBook(tagId, bookId)
     }
 
     suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
@@ -504,5 +553,47 @@ class RecentFilesRepository(private val context: Context) {
             recentFileDao.insertOrUpdateFiles(entities)
         }
         Timber.d("Batch inserted/updated ${items.size} recent files in DB.")
+    }
+
+    suspend fun migrateLegacyShelvesToRoom() = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("is_shelves_migrated_to_room", false)) return@withContext
+
+        Timber.i("Starting migration of legacy SharedPreferences shelves to Room DB...")
+
+        val shelfNames = prefs.getStringSet("shelf_names", emptySet()) ?: emptySet()
+        if (shelfNames.isEmpty()) {
+            prefs.edit { putBoolean("is_shelves_migrated_to_room", true) }
+            return@withContext
+        }
+
+        val db = AppDatabase.getDatabase(context)
+        val shelfDao = db.shelfDao()
+
+        val validBookIds = recentFileDao.getAllFiles().map { it.bookId }.toSet()
+
+        shelfNames.forEach { name ->
+            val shelfId = UUID.nameUUIDFromBytes(name.toByteArray()).toString()
+            val timestamp = prefs.getLong("shelf_timestamp_$name", System.currentTimeMillis())
+            val isDeleted = prefs.getBoolean("shelf_deleted_$name", false)
+            val bookIds = prefs.getStringSet("shelf_content_$name", emptySet()) ?: emptySet()
+
+            val shelf = ShelfEntity(
+                id = shelfId, name = name, isSmart = false, smartRulesJson = null,
+                createdAt = timestamp, updatedAt = timestamp, isDeleted = isDeleted
+            )
+            shelfDao.insertShelf(shelf)
+
+            val crossRefs = bookIds.filter { it in validBookIds }.map { bookId ->
+                BookShelfCrossRef(bookId = bookId, shelfId = shelfId, addedAt = timestamp)
+            }
+
+            if (crossRefs.isNotEmpty()) {
+                shelfDao.insertBookShelfCrossRefs(crossRefs)
+            }
+        }
+
+        prefs.edit { putBoolean("is_shelves_migrated_to_room", true) }
+        Timber.i("Successfully migrated legacy shelves to Room.")
     }
 }

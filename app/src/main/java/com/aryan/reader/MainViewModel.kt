@@ -115,6 +115,8 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.data.SmartCollectionEngine
+import com.aryan.reader.data.TagEntity
 import com.aryan.reader.epub.CalibreBundleExtractor
 import com.aryan.reader.epub.CalibreBundleResult
 import io.legere.pdfiumandroid.PdfiumCore
@@ -128,6 +130,8 @@ private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
 private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
 private const val KEY_FILTER_FOLDERS = "filter_folders"
 private const val KEY_FILTER_READ_STATUS = "filter_read_status"
+private const val KEY_FILTER_TAG_IDS = "filter_tag_ids"
+private const val KEY_DEFAULT_TAGS_SEEDED = "default_tags_seeded"
 
 data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
 
@@ -186,11 +190,16 @@ data class SyncedFolder(
     val uriString: String, val name: String, val lastScanTime: Long, val allowedFileTypes: Set<FileType> = FileType.entries.toSet()
 )
 
-data class Shelf(val name: String, val books: List<RecentFileItem>) {
-    val bookCount: Int
-        get() = books.size
-    val topBook: RecentFileItem?
-        get() = books.maxByOrNull { it.timestamp }
+enum class ShelfType { MANUAL, SMART, TAG, SERIES, FOLDER }
+
+data class Shelf(
+    val id: String,
+    val name: String,
+    val type: ShelfType,
+    val books: List<RecentFileItem>
+) {
+    val bookCount: Int get() = books.size
+    val topBook: RecentFileItem? get() = books.maxByOrNull { it.timestamp }
 }
 
 enum class SortOrder(val displayName: String) {
@@ -210,10 +219,14 @@ enum class ReadStatusFilter(val displayName: String) {
 data class LibraryFilters(
     val fileTypes: Set<FileType> = emptySet(),
     val sourceFolders: Set<String> = emptySet(),
-    val readStatus: ReadStatusFilter = ReadStatusFilter.ALL
+    val readStatus: ReadStatusFilter = ReadStatusFilter.ALL,
+    val tagIds: Set<String> = emptySet()
 ) {
     val isActive: Boolean
-        get() = fileTypes.isNotEmpty() || sourceFolders.isNotEmpty() || readStatus != ReadStatusFilter.ALL
+        get() = fileTypes.isNotEmpty() ||
+            sourceFolders.isNotEmpty() ||
+            readStatus != ReadStatusFilter.ALL ||
+            tagIds.isNotEmpty()
 }
 
 data class ReaderScreenState(
@@ -233,7 +246,7 @@ data class ReaderScreenState(
     val initialHighlightsJson: String? = null,
     val initialPageInBook: Int? = null,
     val shelves: List<Shelf> = emptyList(),
-    val viewingShelfName: String? = null,
+    val viewingShelfId: String? = null,
     val isAddingBooksToShelf: Boolean = false,
     val showCreateShelfDialog: Boolean = false,
     val mainScreenStartPage: Int = 0,
@@ -243,7 +256,7 @@ data class ReaderScreenState(
     val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
     val booksSelectedForAdding: Set<String> = emptySet(),
     val booksAvailableForAdding: List<RecentFileItem> = emptyList(),
-    val contextualActionShelfNames: Set<String> = emptySet(),
+    val contextualActionShelfIds: Set<String> = emptySet(),
     val currentUser: UserData? = null,
     val isAuthMenuExpanded: Boolean = false,
     val isProUser: Boolean = false,
@@ -281,7 +294,9 @@ data class ReaderScreenState(
     val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
     val appTextDimFactor: Float = 1.0f,
     val appSeedColor: androidx.compose.ui.graphics.Color? = null,
-    val customAppThemes: List<CustomAppTheme> = emptyList()
+    val customAppThemes: List<CustomAppTheme> = emptyList(),
+    val allTags: List<TagEntity> = emptyList(),
+    val showTagSelectionDialogFor: Set<String> = emptySet(),
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -396,7 +411,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 sourceFolders = prefs.getStringSet(KEY_FILTER_FOLDERS, emptySet()) ?: emptySet(),
                 readStatus = runCatching {
                     ReadStatusFilter.valueOf(prefs.getString(KEY_FILTER_READ_STATUS, ReadStatusFilter.ALL.name) ?: ReadStatusFilter.ALL.name)
-                }.getOrDefault(ReadStatusFilter.ALL)
+                }.getOrDefault(ReadStatusFilter.ALL),
+                tagIds = prefs.getStringSet(KEY_FILTER_TAG_IDS, emptySet()) ?: emptySet()
             ),
             syncedFolders = loadSyncedFoldersFromPrefs(),
             lastFolderScanTime = if (prefs.contains(KEY_LAST_FOLDER_SCAN_TIME)) prefs.getLong(
@@ -469,24 +485,47 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return ImportResult(internalFile.toUri(), hash, type, null)
     }
 
+    val libraryFlow = combine(
+        recentFilesRepository.getRecentFilesFlow(),
+        recentFilesRepository.activeShelvesFlow,
+        recentFilesRepository.shelfCrossRefsFlow,
+        ::Triple
+    )
+
+    val tagFlow = combine(
+        recentFilesRepository.tagsFlow,
+        recentFilesRepository.tagCrossRefsFlow,
+        ::Pair
+    )
+
     open val uiState: StateFlow<ReaderScreenState> = combine(
-        _internalState, recentFilesRepository.getRecentFilesFlow(), _prefsUpdateFlow
-    ) { internalState, recentFilesFromDb, _ ->
+        _internalState, libraryFlow, tagFlow
+    ) { internalState, (recentFilesFromDb, dbShelves, shelfRefs), (dbTags, tagRefs) ->
+        val tagsById = dbTags.associateBy { it.id }
+        val bookTagsMap = tagRefs.groupBy { it.bookId }.mapValues { entry ->
+            entry.value.mapNotNull { tagsById[it.tagId] }
+        }
+
+        val allLibraryFiles = recentFilesFromDb
+            .filterNot { it.bookId.endsWith("_reflow") }
+            .map { item ->
+            item.copy(tags = bookTagsMap[item.bookId] ?: emptyList())
+        }
+
         val query = internalState.searchQuery.trim()
         val rawFilteredByQuery = if (query.isBlank()) {
-            recentFilesFromDb
+            allLibraryFiles
         } else {
-            recentFilesFromDb.filter { item ->
+            allLibraryFiles.filter { item ->
                 item.displayName.contains(query, ignoreCase = true) ||
-                        item.title?.contains(query, ignoreCase = true) == true ||
-                        item.author?.contains(query, ignoreCase = true) == true
+                    item.title?.contains(query, ignoreCase = true) == true ||
+                    item.author?.contains(query, ignoreCase = true) == true ||
+                    item.tags.any { tag -> tag.name.contains(query, ignoreCase = true) }
             }
         }
 
-        val baseVisibleFiles = rawFilteredByQuery.filterNot { it.bookId.endsWith("_reflow") }
-
         val filters = internalState.libraryFilters
-        val libraryFiltered = baseVisibleFiles.filter { item ->
+        val libraryFiltered = rawFilteredByQuery.filter { item ->
             val matchType = if (filters.fileTypes.isNotEmpty()) item.type in filters.fileTypes else true
             val matchFolder = if (filters.sourceFolders.isNotEmpty()) {
                 val matchesInApp = filters.sourceFolders.contains("IN_APP_STORAGE") && item.sourceFolderUri == null && item.uriString?.startsWith("opds-pse") != true
@@ -500,7 +539,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ReadStatusFilter.IN_PROGRESS -> progress > 0f && progress < 100f
                 ReadStatusFilter.COMPLETED -> progress >= 100f
             }
-            matchType && matchFolder && matchStatus
+            val matchTags = if (filters.tagIds.isNotEmpty()) {
+                item.tags.any { it.id in filters.tagIds }
+            } else true
+            matchType && matchFolder && matchStatus && matchTags
         }
 
         fun sortFiles(files: List<RecentFileItem>): List<RecentFileItem> {
@@ -515,65 +557,89 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        val sortedLibraryFiles = sortFiles(libraryFiltered).let { list ->
-            val pinned = list.filter { it.bookId in internalState.pinnedLibraryBookIds }
-            val unpinned = list.filter { it.bookId !in internalState.pinnedLibraryBookIds }
-            pinned + unpinned
-        }
-
-        val visibleRecentFiles = sortFiles(baseVisibleFiles.filter { it.isRecent }).let { list ->
-            val pinned = list.filter { it.bookId in internalState.pinnedHomeBookIds }
-            val unpinned = list.filter { it.bookId !in internalState.pinnedHomeBookIds }
-            val combined = pinned + unpinned
-            if (internalState.recentFilesLimit > 0) combined.take(internalState.recentFilesLimit) else combined
-        }
-
-        val allBaseFiles = recentFilesFromDb.filterNot { it.bookId.endsWith("_reflow") }
-        val openTabsList = internalState.openTabIds.mapNotNull { tabId ->
-            allBaseFiles.find { it.bookId == tabId }
-        }
-
-        val validContextualItems = internalState.contextualActionItems.filter { contextItem ->
-            baseVisibleFiles.any { dbItem -> dbItem.uriString == contextItem.uriString }
-        }.toSet()
-
-        val shelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()) ?: emptySet()
+        val sortedLibraryFiles = sortFiles(libraryFiltered)
+        val visibleRecentFiles = sortFiles(allLibraryFiles.filter { it.isRecent }).take(
+            if (internalState.recentFilesLimit > 0) internalState.recentFilesLimit else Int.MAX_VALUE
+        )
+        val openTabsList = internalState.openTabIds.mapNotNull { tabId -> allLibraryFiles.find { it.bookId == tabId } }
+        val allShelves = mutableListOf<Shelf>()
         val shelvedBookIds = mutableSetOf<String>()
+        val baseFilesMap = allLibraryFiles.associateBy { it.bookId }
 
-        val shelvesFromPrefs = shelfNames.map { shelfName ->
-            val bookIds = prefs.getStringSet("$KEY_SHELF_CONTENT_PREFIX$shelfName", emptySet()) ?: emptySet()
-            val booksForShelf = baseVisibleFiles.filter { it.bookId in bookIds }
-            shelvedBookIds.addAll(booksForShelf.map { it.bookId })
-            Shelf(shelfName, booksForShelf)
-        }.sortedBy { it.name }
-
-        val unshelvedBooks = baseVisibleFiles.filter { it.bookId !in shelvedBookIds }
-        val allShelves = shelvesFromPrefs + Shelf("Unshelved", unshelvedBooks)
-
-        val booksAvailableForAdding =
-            if (internalState.isAddingBooksToShelf && internalState.viewingShelfName != null) {
-                val currentShelfBooksUris = allShelves.find {
-                    it.name == internalState.viewingShelfName
-                }?.books?.map { it.uriString }?.toSet() ?: emptySet()
-
-                when (internalState.addBooksSource) {
-                    AddBooksSource.UNSHELVED -> unshelvedBooks
-                    AddBooksSource.ALL_BOOKS -> baseVisibleFiles.filter {
-                        it.uriString !in currentShelfBooksUris
-                    }
+        dbShelves.forEach { shelfEntity ->
+            if (shelfEntity.isSmart && shelfEntity.smartRulesJson != null) {
+                val rules = SmartCollectionEngine.fromJson(shelfEntity.smartRulesJson)
+                if (rules != null) {
+                    val matchingBooks = allLibraryFiles.filter { SmartCollectionEngine.evaluate(it, rules) }
+                    allShelves.add(Shelf(shelfEntity.id, shelfEntity.name, ShelfType.SMART, sortFiles(matchingBooks)))
+                    shelvedBookIds.addAll(matchingBooks.map { it.bookId })
                 }
             } else {
-                emptyList()
+                val bookIdsInShelf = shelfRefs.filter { it.shelfId == shelfEntity.id }.sortedBy { it.addedAt }.map { it.bookId }
+                val booksInShelf = bookIdsInShelf.mapNotNull { baseFilesMap[it] }
+                allShelves.add(Shelf(shelfEntity.id, shelfEntity.name, ShelfType.MANUAL, sortFiles(booksInShelf)))
+                shelvedBookIds.addAll(bookIdsInShelf)
             }
+        }
+
+        val tagShelves = dbTags.mapNotNull { tag ->
+            val taggedBooks = allLibraryFiles.filter { item -> item.tags.any { it.id == tag.id } }
+            if (taggedBooks.isEmpty()) {
+                null
+            } else {
+                Shelf("tag_${tag.id}", tag.name, ShelfType.TAG, sortFiles(taggedBooks))
+            }
+        }
+        allShelves.addAll(tagShelves)
+
+        val seriesShelves = allLibraryFiles
+            .filter { !it.seriesName.isNullOrBlank() }
+            .groupBy { it.seriesName!! }
+            .filter { it.value.size >= 2 }
+            .map { (series, books) ->
+                val sortedSeries = books.sortedBy { it.seriesIndex ?: 999.0 }
+                shelvedBookIds.addAll(books.map { it.bookId })
+                Shelf("series_$series", series, ShelfType.SERIES, sortedSeries)
+            }
+        allShelves.addAll(seriesShelves)
+
+        val folderShelves = allLibraryFiles
+            .filter { it.sourceFolderUri != null }
+            .groupBy { it.sourceFolderUri!! }
+            .map { (folderUri, books) ->
+                val folderName = internalState.syncedFolders.find { it.uriString == folderUri }?.name ?: "Local Folder"
+                shelvedBookIds.addAll(books.map { it.bookId })
+                Shelf("folder_$folderUri", folderName, ShelfType.FOLDER, sortFiles(books))
+            }
+        allShelves.addAll(folderShelves)
+
+        val unshelvedBooks = allLibraryFiles.filter { it.bookId !in shelvedBookIds }
+        allShelves.add(Shelf("unshelved", "Unshelved", ShelfType.MANUAL, sortFiles(unshelvedBooks)))
+
+        allShelves.sortWith(compareBy({ it.type.ordinal }, { it.name.lowercase() }))
+
+        val booksAvailableForAdding = if (internalState.isAddingBooksToShelf && internalState.viewingShelfId != null) {
+            val currentShelfBookIds = allShelves
+                .find { it.id == internalState.viewingShelfId }
+                ?.books
+                ?.map { it.bookId }
+                ?.toSet()
+                ?: emptySet()
+            when (internalState.addBooksSource) {
+                AddBooksSource.UNSHELVED -> unshelvedBooks
+                AddBooksSource.ALL_BOOKS -> allLibraryFiles.filter { it.bookId !in currentShelfBookIds }
+            }
+        } else emptyList()
 
         internalState.copy(
             recentFiles = visibleRecentFiles,
             allRecentFiles = sortedLibraryFiles,
-            rawLibraryFiles = baseVisibleFiles,
-            contextualActionItems = validContextualItems,
+            rawLibraryFiles = allLibraryFiles,
+            contextualActionItems = internalState.contextualActionItems.mapNotNull { ctx -> allLibraryFiles.find { it.bookId == ctx.bookId } }.toSet(),
             shelves = allShelves,
             openTabs = openTabsList,
-            booksAvailableForAdding = booksAvailableForAdding
+            booksAvailableForAdding = booksAvailableForAdding,
+            allTags = dbTags
         )
     }.stateIn(
         scope = viewModelScope,
@@ -647,6 +713,57 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         } ?: run {
             _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
         }
+    }
+
+    fun openTagSelection(bookIds: Set<String>) {
+        if (bookIds.isEmpty()) return
+        _internalState.update { it.copy(showTagSelectionDialogFor = bookIds) }
+    }
+
+    fun closeTagSelection() {
+        _internalState.update { it.copy(showTagSelectionDialogFor = emptySet()) }
+    }
+
+    fun createAndAssignTag(name: String, bookIds: Set<String>) {
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank() || bookIds.isEmpty()) return
+
+        viewModelScope.launch {
+            val tagId = UUID.randomUUID().toString()
+            val colors = listOf(0xFFE57373, 0xFFF06292, 0xFFBA68C8, 0xFF9575CD, 0xFF7986CB, 0xFF64B5F6, 0xFF4FC3F7, 0xFF4DD0E1, 0xFF4DB6AC, 0xFF81C784, 0xFFAED581, 0xFFFF8A65, 0xFFA1887F, 0xFF90A4AE)
+            val color = colors.random().toInt()
+
+            val tag = TagEntity(tagId, trimmedName, color, System.currentTimeMillis())
+            recentFilesRepository.createTag(tag)
+
+            bookIds.forEach { bookId ->
+                recentFilesRepository.assignTagToBook(bookId, tagId)
+            }
+        }
+    }
+
+    fun toggleTagForBooks(tagId: String, bookIds: Set<String>, assign: Boolean) {
+        if (tagId.isBlank() || bookIds.isEmpty()) return
+        viewModelScope.launch {
+            bookIds.forEach { bookId ->
+                if (assign) {
+                    recentFilesRepository.assignTagToBook(bookId, tagId)
+                } else {
+                    recentFilesRepository.removeTagFromBook(bookId, tagId)
+                }
+            }
+        }
+    }
+
+    private fun buildDefaultTags(): List<TagEntity> {
+        val now = System.currentTimeMillis()
+        return listOf(
+            TagEntity(id = "default_to_read", name = "To Read", color = 0xFF64B5F6.toInt(), createdAt = now),
+            TagEntity(id = "default_reading", name = "Reading", color = 0xFF81C784.toInt(), createdAt = now + 1),
+            TagEntity(id = "default_finished", name = "Finished", color = 0xFFFFB74D.toInt(), createdAt = now + 2),
+            TagEntity(id = "default_favorites", name = "Favorites", color = 0xFFF06292.toInt(), createdAt = now + 3),
+            TagEntity(id = "default_reference", name = "Reference", color = 0xFF9575CD.toInt(), createdAt = now + 4)
+        )
     }
 
     fun closeTab(bookId: String) {
@@ -872,6 +989,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         Timber.d("ViewModel instance created.")
+        viewModelScope.launch {
+            recentFilesRepository.migrateLegacyShelvesToRoom()
+            if (!prefs.getBoolean(KEY_DEFAULT_TAGS_SEEDED, false)) {
+                recentFilesRepository.seedTagsIfEmpty(buildDefaultTags())
+                prefs.edit { putBoolean(KEY_DEFAULT_TAGS_SEEDED, true) }
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             PDFBoxResourceLoader.init(getApplication())
         }
@@ -1373,6 +1497,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putStringSet(KEY_FILTER_FILE_TYPES, filters.fileTypes.map { it.name }.toSet())
             putStringSet(KEY_FILTER_FOLDERS, filters.sourceFolders)
             putString(KEY_FILTER_READ_STATUS, filters.readStatus.name)
+            putStringSet(KEY_FILTER_TAG_IDS, filters.tagIds)
         }
 
         Timber.d("Library filters updated and persisted: $filters")
@@ -4019,16 +4144,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun createShelf(name: String) {
         if (name.isNotBlank()) {
-            val currentShelves = prefs.getStringSet(KEY_SHELVES, emptySet()) ?: emptySet()
-            val newTimestamp = System.currentTimeMillis()
-            prefs.edit {
-                putStringSet(KEY_SHELVES, currentShelves + name)
-                putLong("$KEY_SHELF_TIMESTAMP_PREFIX$name", newTimestamp)
-                putStringSet("$KEY_SHELF_CONTENT_PREFIX$name", emptySet())
-                putBoolean("$KEY_SHELF_DELETED_PREFIX$name", false)
+            viewModelScope.launch {
+                val shelfId = UUID.randomUUID().toString()
+                val shelf = com.aryan.reader.data.ShelfEntity(
+                    id = shelfId,
+                    name = name,
+                    isSmart = false,
+                    smartRulesJson = null,
+                    createdAt = System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis()
+                )
+                recentFilesRepository.addShelf(shelf)
+                dismissCreateShelfDialog()
+                syncShelfChangeToFirestore(shelfId)
             }
-            dismissCreateShelfDialog()
-            syncShelfChangeToFirestore(name)
         }
     }
 
@@ -4040,194 +4169,131 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(libraryScreenStartPage = page) }
     }
 
-    fun navigateToShelf(name: String) {
+    fun navigateToShelf(id: String) {
         _internalState.update {
-            it.copy(viewingShelfName = name, mainScreenStartPage = 1, libraryScreenStartPage = 1)
+            it.copy(viewingShelfId = id, mainScreenStartPage = 1, libraryScreenStartPage = 1)
         }
     }
 
-    fun showRenameShelfDialog(shelfName: String) {
-        _internalState.update { it.copy(showRenameShelfDialogFor = shelfName) }
+    fun showRenameShelfDialog(shelfId: String) {
+        _internalState.update { it.copy(showRenameShelfDialogFor = shelfId) }
     }
 
     fun dismissRenameShelfDialog() {
         _internalState.update { it.copy(showRenameShelfDialogFor = null) }
     }
 
-    fun showDeleteShelfDialog(shelfName: String) {
-        _internalState.update { it.copy(showDeleteShelfDialogFor = shelfName) }
+    fun showDeleteShelfDialog(shelfId: String) {
+        _internalState.update { it.copy(showDeleteShelfDialogFor = shelfId) }
     }
 
     fun dismissDeleteShelfDialog() {
         _internalState.update { it.copy(showDeleteShelfDialogFor = null) }
     }
 
-    fun renameShelf(oldName: String, newName: String) {
-        if (oldName.isBlank() || newName.isBlank() || oldName == newName) {
+    fun renameShelf(shelfId: String, newName: String) {
+        if (shelfId.isBlank() || newName.isBlank()) {
             dismissRenameShelfDialog()
             return
         }
-
-        val currentShelves =
-            prefs.getStringSet(KEY_SHELVES, emptySet())?.toMutableSet() ?: mutableSetOf()
-
-        if (newName in currentShelves) {
-            Timber.w("Cannot rename shelf. A shelf with the name '$newName' already exists.")
-            _internalState.update {
-                it.copy(errorMessage = appContext.getString(R.string.error_shelf_exists))
-            }
+        viewModelScope.launch {
+            recentFilesRepository.renameShelf(shelfId, newName)
+            syncShelfChangeToFirestore(shelfId)
+            _internalState.update { it.copy(viewingShelfId = shelfId) }
             dismissRenameShelfDialog()
-            return
         }
-
-        val oldContentKey = "$KEY_SHELF_CONTENT_PREFIX$oldName"
-        val shelfContent = prefs.getStringSet(oldContentKey, emptySet()) ?: emptySet()
-        val newTimestamp = System.currentTimeMillis()
-
-        prefs.edit {
-            currentShelves.remove(oldName)
-            putBoolean("$KEY_SHELF_DELETED_PREFIX$oldName", true)
-            putLong("$KEY_SHELF_TIMESTAMP_PREFIX$oldName", newTimestamp)
-
-            currentShelves.add(newName)
-            putStringSet(KEY_SHELVES, currentShelves)
-            putStringSet("$KEY_SHELF_CONTENT_PREFIX$newName", shelfContent)
-            putLong("$KEY_SHELF_TIMESTAMP_PREFIX$newName", newTimestamp)
-        }
-
-        syncShelfChangeToFirestore(oldName)
-        syncShelfChangeToFirestore(newName)
-
-        _internalState.update { it.copy(viewingShelfName = newName) }
-        dismissRenameShelfDialog()
     }
 
-    fun deleteShelf(shelfName: String) {
-        if (shelfName.isBlank() || shelfName == "Unshelved") {
+    fun deleteShelf(shelfId: String) {
+        if (shelfId.isBlank() || shelfId == "unshelved") {
             dismissDeleteShelfDialog()
             return
         }
-
-        _internalState.update {
-            it.copy(
-                viewingShelfName = null,
-                isAddingBooksToShelf = false,
-                showDeleteShelfDialogFor = null
-            )
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(viewingShelfId = null, isAddingBooksToShelf = false, showDeleteShelfDialogFor = null)
+            }
+            recentFilesRepository.deleteShelf(shelfId)
+            syncShelfChangeToFirestore(shelfId)
         }
-
-        prefs.edit {
-            val currentShelves =
-                prefs.getStringSet(KEY_SHELVES, emptySet())?.toMutableSet() ?: mutableSetOf()
-            currentShelves.remove(shelfName)
-            putStringSet(KEY_SHELVES, currentShelves)
-            putBoolean("$KEY_SHELF_DELETED_PREFIX$shelfName", true)
-            putLong("$KEY_SHELF_TIMESTAMP_PREFIX$shelfName", System.currentTimeMillis())
-        }
-        syncShelfChangeToFirestore(shelfName)
     }
 
     fun unselectShelf() {
-        _internalState.update { it.copy(viewingShelfName = null, isAddingBooksToShelf = false) }
+        _internalState.update { it.copy(viewingShelfId = null, isAddingBooksToShelf = false) }
     }
 
     fun removeContextualItemsFromShelf() {
-        val shelfName = _internalState.value.viewingShelfName
-        if (shelfName.isNullOrBlank() || shelfName == "Unshelved") {
-            Timber.w("Attempted to remove items from an invalid or unshelved shelf: $shelfName")
+        val shelfId = _internalState.value.viewingShelfId
+        if (shelfId.isNullOrBlank() || shelfId == "unshelved") {
             clearContextualAction()
             return
         }
 
-        val bookIdsToRemove = _internalState.value.contextualActionItems.map { it.bookId }.toSet()
+        val bookIdsToRemove = _internalState.value.contextualActionItems.map { it.bookId }
         if (bookIdsToRemove.isEmpty()) {
-            Timber.w("removeContextualItemsFromShelf called but no items were selected.")
             clearContextualAction()
             return
         }
 
-        Timber.d("Removing ${bookIdsToRemove.size} book(s) from shelf '$shelfName'.")
-        val key = "$KEY_SHELF_CONTENT_PREFIX$shelfName"
-        val currentBookIds = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
-
-        currentBookIds.removeAll(bookIdsToRemove)
-
-        prefs.edit {
-            putStringSet(key, currentBookIds)
-            putLong("$KEY_SHELF_TIMESTAMP_PREFIX$shelfName", System.currentTimeMillis())
+        viewModelScope.launch {
+            recentFilesRepository.removeBooksFromShelf(shelfId, bookIdsToRemove)
+            clearContextualAction()
+            syncShelfChangeToFirestore(shelfId)
         }
-        Timber.d(
-            "Successfully removed books. Shelf '$shelfName' now has ${currentBookIds.size} books."
-        )
-
-        clearContextualAction()
-        syncShelfChangeToFirestore(shelfName)
     }
 
     fun onShelfClick(shelf: Shelf) {
-        if (_internalState.value.contextualActionShelfNames.isNotEmpty()) {
-            toggleShelfSelection(shelf.name)
+        if (_internalState.value.contextualActionShelfIds.isNotEmpty()) {
+            toggleShelfSelection(shelf)
         } else {
-            navigateToShelf(shelf.name)
+            navigateToShelf(shelf.id)
         }
     }
 
-    private fun toggleShelfSelection(shelfName: String) {
-        if (shelfName == "Unshelved") return
+    private fun toggleShelfSelection(shelf: Shelf) {
+        if (shelf.type != ShelfType.MANUAL) return
 
         _internalState.update { state ->
-            val currentSelection = state.contextualActionShelfNames
-            val newSelection = if (shelfName in currentSelection) {
-                currentSelection - shelfName
+            val currentSelection = state.contextualActionShelfIds
+            val newSelection = if (shelf.id in currentSelection) {
+                currentSelection - shelf.id
             } else {
-                currentSelection + shelfName
+                currentSelection + shelf.id
             }
-            state.copy(contextualActionShelfNames = newSelection)
+            state.copy(contextualActionShelfIds = newSelection)
         }
     }
 
     fun onShelfLongPress(shelf: Shelf) {
-        if (shelf.name == "Unshelved") return // Cannot select "Unshelved"
-        val currentSelection = _internalState.value.contextualActionShelfNames
-        if (shelf.name !in currentSelection) {
+        if (shelf.type != ShelfType.MANUAL || shelf.id == "unshelved") return
+        val currentSelection = _internalState.value.contextualActionShelfIds
+        if (shelf.id !in currentSelection) {
             _internalState.update {
-                it.copy(contextualActionShelfNames = currentSelection + shelf.name)
+                it.copy(contextualActionShelfIds = currentSelection + shelf.id)
             }
         }
     }
 
     fun clearShelfContextualAction() {
-        if (_internalState.value.contextualActionShelfNames.isNotEmpty()) {
-            _internalState.update { it.copy(contextualActionShelfNames = emptySet()) }
+        if (_internalState.value.contextualActionShelfIds.isNotEmpty()) {
+            _internalState.update { it.copy(contextualActionShelfIds = emptySet()) }
         }
     }
 
     fun deleteSelectedShelves() {
-        val shelvesToDelete =
-            _internalState.value.contextualActionShelfNames.filter { it != "Unshelved" }
+        val shelvesToDelete = _internalState.value.contextualActionShelfIds
         if (shelvesToDelete.isEmpty()) {
             clearShelfContextualAction()
             return
         }
 
-        Timber.d("Deleting ${shelvesToDelete.size} shelves: ${shelvesToDelete.joinToString()}")
-        val currentShelves =
-            prefs.getStringSet(KEY_SHELVES, emptySet())?.toMutableSet() ?: mutableSetOf()
-        val newTimestamp = System.currentTimeMillis()
-
-        prefs.edit {
-            shelvesToDelete.forEach { shelfName ->
-                currentShelves.remove(shelfName)
-                putBoolean("$KEY_SHELF_DELETED_PREFIX$shelfName", true)
-                putLong("$KEY_SHELF_TIMESTAMP_PREFIX$shelfName", newTimestamp)
+        viewModelScope.launch {
+            shelvesToDelete.forEach { shelfId ->
+                recentFilesRepository.deleteShelf(shelfId)
+                syncShelfChangeToFirestore(shelfId)
             }
-            putStringSet(KEY_SHELVES, currentShelves)
+            clearShelfContextualAction()
         }
-
-        shelvesToDelete.forEach { syncShelfChangeToFirestore(it) }
-
-        Timber.d("Shelves deleted successfully.")
-        clearShelfContextualAction()
     }
 
     fun showAddBooksToShelf() {
@@ -4240,27 +4306,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun syncShelfChangeToFirestore(shelfName: String) {
+    private fun syncShelfChangeToFirestore(shelfId: String) {
         if (!uiState.value.isSyncEnabled) return
         val currentUser = uiState.value.currentUser ?: return
 
-        viewModelScope.launch {
-            val shelfContent =
-                prefs.getStringSet("$KEY_SHELF_CONTENT_PREFIX$shelfName", null)?.toList()
-                    ?: emptyList()
-            val isDeleted = prefs.getBoolean("$KEY_SHELF_DELETED_PREFIX$shelfName", false)
-            val timestamp = prefs.getLong("$KEY_SHELF_TIMESTAMP_PREFIX$shelfName", 0L)
+        viewModelScope.launch(Dispatchers.IO) {
+            val db = com.aryan.reader.data.AppDatabase.getDatabase(appContext)
+            val shelf = db.shelfDao().getShelfById(shelfId) ?: return@launch
+            val crossRefs = db.shelfDao().getCrossRefsForShelf(shelfId)
+            val bookIds = crossRefs.map { it.bookId }
 
             val shelfMetadata = ShelfMetadata(
-                name = shelfName,
-                bookIds = shelfContent,
-                isDeleted = isDeleted,
-                lastModifiedTimestamp = timestamp
+                name = shelf.name,
+                bookIds = bookIds,
+                isDeleted = shelf.isDeleted,
+                lastModifiedTimestamp = shelf.updatedAt
             )
 
             val deviceId = getInstallationId()
             firestoreRepository.syncShelf(currentUser.uid, shelfMetadata, deviceId)
-            Timber.d("Pushed shelf update to Firestore for: $shelfName")
         }
     }
 
@@ -4274,34 +4338,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun addBooksToShelf(shelfName: String) {
+    fun addBooksToShelf(shelfId: String) {
         val bookIdsToAdd = _internalState.value.booksSelectedForAdding
         if (bookIdsToAdd.isEmpty()) {
-            Timber.w("addBooksToShelf called for '$shelfName' but no books were selected.")
             dismissAddBooksToShelf()
             return
         }
-
-        Timber.i(
-            "Attempting to add ${bookIdsToAdd.size} books to shelf '$shelfName'. Book IDs: ${bookIdsToAdd.joinToString()}"
-        )
-        val key = "$KEY_SHELF_CONTENT_PREFIX$shelfName"
-        val currentBookIds = prefs.getStringSet(key, emptySet()) ?: emptySet()
-        Timber.d("Existing book IDs in shelf '$shelfName': ${currentBookIds.joinToString()}")
-
-        val newBookIds = currentBookIds + bookIdsToAdd
-        prefs.edit {
-            putStringSet(key, newBookIds)
-            putLong("$KEY_SHELF_TIMESTAMP_PREFIX$shelfName", System.currentTimeMillis())
-        }
-        Timber.i(
-            "Successfully updated shelf '$shelfName'. It now contains ${newBookIds.size} book(s)."
-        )
-
-        syncShelfChangeToFirestore(shelfName)
-
-        _internalState.update {
-            it.copy(isAddingBooksToShelf = false, booksSelectedForAdding = emptySet())
+        viewModelScope.launch {
+            recentFilesRepository.addBooksToShelf(shelfId, bookIdsToAdd.toList())
+            syncShelfChangeToFirestore(shelfId)
+            _internalState.update {
+                it.copy(isAddingBooksToShelf = false, booksSelectedForAdding = emptySet())
+            }
         }
     }
 

@@ -50,7 +50,8 @@ data class RecentFileItem(
     val fileSize: Long = 0L,
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
-    val description: String? = null
+    val description: String? = null,
+    val tags: List<TagEntity> = emptyList()
 ) {
     fun getUri(): Uri? = uriString?.toUri()
 }

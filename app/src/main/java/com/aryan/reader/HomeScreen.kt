@@ -345,6 +345,9 @@ fun HomeScreen(
                             ContextualTopAppBar(
                                 selectedItemCount = selectedContextItems.size,
                                 onNavIconClick = { viewModel.clearContextualAction() },
+                                onTagClick = {
+                                    viewModel.openTagSelection(selectedContextItems.map { it.bookId }.toSet())
+                                },
                                 onInfoClick = {
                                     if (selectedContextItems.size == 1) {
                                         itemForInfoDialog = selectedContextItems.first()
@@ -472,7 +475,8 @@ fun HomeScreen(
                                 },
                                 onUpdateName = { newName ->
                                     viewModel.updateCustomName(item.bookId, newName)
-                                }
+                                },
+                                onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                             )
                         }
                     }
@@ -912,6 +916,14 @@ fun RecentFileCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (item.tags.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    BookTagChipsRow(
+                        tags = item.tags,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 if (!item.isAvailable) {
                     Spacer(modifier = Modifier.height(12.dp))

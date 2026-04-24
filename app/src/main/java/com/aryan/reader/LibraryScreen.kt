@@ -74,8 +74,11 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
@@ -131,6 +134,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.data.TagEntity
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
 import com.aryan.reader.opds.OpdsEntry
@@ -159,7 +163,7 @@ fun LibraryScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedItems = uiState.contextualActionItems
     val isContextualModeActive = selectedItems.isNotEmpty()
-    val selectedShelves = uiState.contextualActionShelfNames
+    val selectedShelves = uiState.contextualActionShelfIds
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     val sortOrder = uiState.sortOrder
     val shelves = uiState.shelves
@@ -278,6 +282,7 @@ fun LibraryScreen(
             selectedShelves = selectedShelves,
             sortOrder = sortOrder,
             libraryFilters = uiState.libraryFilters,
+            allTags = uiState.allTags,
             pinnedLibraryBookIds = uiState.pinnedLibraryBookIds,
             pagerState = pagerState,
             scope = scope,
@@ -289,6 +294,7 @@ fun LibraryScreen(
             onFilterClick = { showFilterSheet = true },
             onClearFilters = { viewModel.updateLibraryFilters(LibraryFilters()) },
             onRemoveFilter = { viewModel.updateLibraryFilters(it) },
+            onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
             onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
             onClearSelection = { viewModel.clearContextualAction() },
             onItemClick = viewModel::onRecentFileClicked,
@@ -358,6 +364,7 @@ fun LibraryScreen(
         if (showFilterSheet) {
             LibraryFilterSheet(
                 filters = uiState.libraryFilters,
+                allTags = uiState.allTags,
                 syncedFolders = uiState.syncedFolders,
                 onApply = { viewModel.updateLibraryFilters(it) },
                 onDismiss = { showFilterSheet = false }
@@ -385,7 +392,8 @@ fun LibraryScreen(
                     },
                     onUpdateName = { newName ->
                         viewModel.updateCustomName(item.bookId, newName)
-                    }
+                    },
+                    onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                 )
             }
         }
@@ -399,7 +407,7 @@ fun ShelfScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedItems = uiState.contextualActionItems
-    val viewingShelfName = uiState.viewingShelfName
+    val viewingShelfId = uiState.viewingShelfId
     val isAddingBooks = uiState.isAddingBooksToShelf
     val shelves = uiState.shelves
     val sortOrder = uiState.sortOrder
@@ -418,13 +426,13 @@ fun ShelfScreen(
         }
     }
 
-    val currentShelf = shelves.find { it.name == viewingShelfName }
+    val currentShelf = shelves.find { it.id == viewingShelfId }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (viewingShelfName != null && currentShelf != null) {
+        if (viewingShelfId != null && currentShelf != null) {
             if (isAddingBooks) {
                 AddBooksModeScreen(
-                    shelfName = viewingShelfName,
+                    shelfName = currentShelf.name,
                     availableBooks = uiState.booksAvailableForAdding,
                     selectedBookUris = uiState.booksSelectedForAdding,
                     currentSource = uiState.addBooksSource,
@@ -433,7 +441,7 @@ fun ShelfScreen(
                     onSourceChange = viewModel::setAddBooksSource,
                     onBookClick = { item -> viewModel.toggleBookSelectionForAdding(item.bookId) },
                     onBack = viewModel::dismissAddBooksToShelf,
-                    onAddSelectedBooks = { viewModel.addBooksToShelf(viewingShelfName) },
+                    onAddSelectedBooks = { viewModel.addBooksToShelf(viewingShelfId) },
                     downloadingBookIds = uiState.downloadingBookIds
                 )
             } else {
@@ -447,6 +455,7 @@ fun ShelfScreen(
                     onBookClick = viewModel::onRecentFileClicked,
                     onBookLongClick = viewModel::onRecentItemLongPress,
                     onClearSelection = viewModel::clearContextualAction,
+                    onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
                     onInfoClick = {
                         if (selectedItems.size == 1) {
                             itemForInfoDialog = selectedItems.first()
@@ -454,24 +463,27 @@ fun ShelfScreen(
                         }
                     },
                     onDeleteClick = { showRemoveFromShelfDialog = true },
-                    onRenameShelf = { viewModel.showRenameShelfDialog(currentShelf.name) },
-                    onDeleteShelf = { viewModel.showDeleteShelfDialog(currentShelf.name) },
+                    onRenameShelf = { viewModel.showRenameShelfDialog(currentShelf.id) },
+                    onDeleteShelf = { viewModel.showDeleteShelfDialog(currentShelf.id) },
                     downloadingBookIds = uiState.downloadingBookIds
                 )
             }
         }
 
         if (showRenameDialogFor != null) {
-            RenameShelfDialog(
-                initialName = showRenameDialogFor,
-                onConfirm = { newName -> viewModel.renameShelf(showRenameDialogFor, newName) },
-                onDismiss = viewModel::dismissRenameShelfDialog
-            )
+            val shelfToRename = shelves.find { it.id == showRenameDialogFor }
+            if (shelfToRename != null) {
+                RenameShelfDialog(
+                    initialName = shelfToRename.name,
+                    onConfirm = { newName -> viewModel.renameShelf(showRenameDialogFor, newName) },
+                    onDismiss = viewModel::dismissRenameShelfDialog
+                )
+            }
         }
 
         if (showDeleteDialogFor != null) {
             DeleteShelfConfirmationDialog(
-                shelfName = showDeleteDialogFor,
+                shelfName = shelves.find { it.id == showDeleteDialogFor }?.name ?: "",
                 onConfirm = { viewModel.deleteShelf(showDeleteDialogFor) },
                 onDismiss = viewModel::dismissDeleteShelfDialog
             )
@@ -493,13 +505,9 @@ fun ShelfScreen(
             if (showInfoDialog) {
                 FileInfoDialog(
                     item = item,
-                    onDismiss = {
-                        showInfoDialog = false
-                        itemForInfoDialog = null
-                    },
-                    onUpdateName = { newName ->
-                        viewModel.updateCustomName(item.bookId, newName)
-                    }
+                    onDismiss = { showInfoDialog = false; itemForInfoDialog = null },
+                    onUpdateName = { newName -> viewModel.updateCustomName(item.bookId, newName) },
+                    onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                 )
             }
         }
@@ -519,6 +527,7 @@ fun LibraryScreenContent(
     selectedShelves: Set<String>,
     sortOrder: SortOrder,
     libraryFilters: LibraryFilters,
+    allTags: List<TagEntity>,
     pinnedLibraryBookIds: Set<String>,
     pagerState: PagerState,
     scope: CoroutineScope,
@@ -530,6 +539,7 @@ fun LibraryScreenContent(
     onFilterClick: () -> Unit,
     onClearFilters: () -> Unit,
     onRemoveFilter: (LibraryFilters) -> Unit,
+    onTagClick: () -> Unit,
     onPinClick: () -> Unit,
     onClearSelection: () -> Unit,
     onItemClick: (RecentFileItem) -> Unit,
@@ -590,6 +600,7 @@ fun LibraryScreenContent(
                     ContextualTopAppBar(
                         selectedItemCount = selectedItems.size,
                         onNavIconClick = onClearSelection,
+                        onTagClick = onTagClick,
                         onPinClick = onPinClick,
                         onInfoClick = onInfoClick,
                         onDeleteClick = onDeleteClick,
@@ -734,6 +745,19 @@ fun LibraryScreenContent(
                                     trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
                                 )
                             }
+                            if (libraryFilters.tagIds.isNotEmpty()) {
+                                val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
+                                val tagLabel = when {
+                                    selectedTags.isEmpty() -> "${libraryFilters.tagIds.size} tags"
+                                    selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
+                                    else -> "${selectedTags.size} tags"
+                                }
+                                AssistChip(
+                                    onClick = { onRemoveFilter(libraryFilters.copy(tagIds = emptySet())) },
+                                    label = { Text("Tags: $tagLabel") },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                )
+                            }
                         }
                     }
                 }
@@ -846,16 +870,52 @@ private fun ShelvesScreen(
     onShelfLongClick: (Shelf) -> Unit,
     selectedShelves: Set<String>,
 ) {
+    val tagShelves = remember(shelves) { shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 } }
+    val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG } }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(shelves, key = { it.name }) { shelf ->
+        if (tagShelves.isNotEmpty() && selectedShelves.isEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Browse by tag",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        tagShelves.forEach { shelf ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { onShelfClick(shelf) },
+                                label = { Text(shelf.name) },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.tag),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        items(visibleShelves, key = { it.id }) { shelf ->
             ShelfListItem(
                 shelf = shelf,
-                isSelected = shelf.name in selectedShelves,
+                isSelected = shelf.id in selectedShelves,
                 onItemClick = { onShelfClick(shelf) },
                 onItemLongClick = { onShelfLongClick(shelf) }
             )
@@ -912,6 +972,7 @@ private fun ShelfDetailScreen(
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
     onClearSelection: () -> Unit,
+    onTagClick: () -> Unit,
     onInfoClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onRenameShelf: () -> Unit,
@@ -929,6 +990,7 @@ private fun ShelfDetailScreen(
                 ContextualTopAppBar(
                     selectedItemCount = selectedItems.size,
                     onNavIconClick = onClearSelection,
+                    onTagClick = onTagClick,
                     onInfoClick = onInfoClick,
                     onDeleteClick = onDeleteClick
                 )
@@ -988,7 +1050,7 @@ private fun ShelfDetailScreen(
                             }
                         }
 
-                        if (shelf.name != "Unshelved") {
+                        if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
                             Box {
                                 IconButton(onClick = { showMoreMenu = true }) {
                                     Icon(
@@ -1022,7 +1084,7 @@ private fun ShelfDetailScreen(
             }
         },
         floatingActionButton = {
-            if (shelf.name != "Unshelved" && !isContextualModeActive) {
+            if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved" && !isContextualModeActive) {
                 ExtendedFloatingActionButton(
                     onClick = onAddBooksClick,
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -1294,13 +1356,29 @@ private fun ShelfListItem(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = shelf.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val icon = when (shelf.type) {
+                        ShelfType.SMART -> Icons.Default.Star
+                        ShelfType.TAG -> Icons.Default.LibraryBooks
+                        ShelfType.FOLDER -> Icons.Default.Folder
+                        ShelfType.SERIES -> Icons.Default.LibraryBooks
+                        ShelfType.MANUAL -> Icons.Default.List
+                    }
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = shelf.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = getBookCountString(shelf.bookCount),
@@ -1356,7 +1434,7 @@ private fun LibraryListItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp)
-                .height(132.dp),
+                .height(if (item.tags.isNotEmpty()) 176.dp else 132.dp),
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -1488,6 +1566,14 @@ private fun LibraryListItem(
                     }
                 }
 
+                if (item.tags.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    BookTagChipsRow(
+                        tags = item.tags,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 Spacer(modifier = Modifier.weight(1f))
 
                 ReadingProgressSection(
@@ -1558,7 +1644,7 @@ private fun DeleteShelfConfirmationDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.dialog_delete_shelf)) },
-        text = { Text(stringResource(R.string.dialog_delete_shelf_desc)) },
+        text = { Text(stringResource(R.string.dialog_delete_shelf_desc, shelfName)) },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_delete)) }
         },
@@ -1912,6 +1998,7 @@ private fun EditFolderFiltersDialog(
 @Composable
 fun LibraryFilterSheet(
     filters: LibraryFilters,
+    allTags: List<TagEntity>,
     syncedFolders: List<SyncedFolder>,
     onApply: (LibraryFilters) -> Unit,
     onDismiss: () -> Unit
@@ -1984,6 +2071,41 @@ fun LibraryFilterSheet(
                         onClick = { currentFilters = currentFilters.copy(readStatus = status) },
                         label = { Text(status.displayName) }
                     )
+                }
+            }
+
+            if (allTags.isNotEmpty()) {
+                Text("Tags", style = MaterialTheme.typography.titleMedium)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    allTags.forEach { tag ->
+                        val selected = tag.id in currentFilters.tagIds
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                val newSet = if (selected) {
+                                    currentFilters.tagIds - tag.id
+                                } else {
+                                    currentFilters.tagIds + tag.id
+                                }
+                                currentFilters = currentFilters.copy(tagIds = newSet)
+                            },
+                            label = { Text(tag.name) },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(
+                                            Color(tag.color ?: 0xFF64B5F6.toInt()),
+                                            CircleShape
+                                        )
+                                )
+                            }
+                        )
+                    }
                 }
             }
 

@@ -33,7 +33,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.material3.TriStateCheckbox
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.aryan.reader.data.TagEntity
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -220,6 +232,7 @@ fun ContextualTopAppBar(
     selectedItemCount: Int,
     onNavIconClick: () -> Unit,
     onInfoClick: (() -> Unit)? = null,
+    onTagClick: (() -> Unit)? = null,
     onSelectAllClick: (() -> Unit)? = null,
     onPinClick: (() -> Unit)? = null,
     onDeleteClick: () -> Unit
@@ -232,6 +245,11 @@ fun ContextualTopAppBar(
             }
         },
         actions = {
+            if (onTagClick != null) {
+                IconButton(onClick = onTagClick) {
+                    Icon(painterResource(id = R.drawable.tag), contentDescription = "Tag")
+                }
+            }
             if (onPinClick != null) {
                 IconButton(onClick = onPinClick) {
                     Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
@@ -342,7 +360,7 @@ fun DeleteConfirmationDialog(
 }
 
 @Composable
-fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (String?) -> Unit) {
+fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (String?) -> Unit, onOpenTags: () -> Unit) {
     LocalContext.current
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
 
@@ -486,6 +504,19 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                             clipboardManager.setText(AnnotatedString(pathTextFinal))
                         }
                     )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tags", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = onOpenTags) { Text("+ Add / Edit") }
+                }
+
+                if (item.tags.isNotEmpty()) {
+                    BookTagChipsRow(tags = item.tags, compact = false)
+                } else {
+                    Text("No tags assigned.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 Row(
@@ -901,6 +932,53 @@ fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolea
     }
 }
 
+private fun TagEntity.displayColor(): Color = Color(color ?: 0xFF64B5F6.toInt())
+
+@Composable
+fun BookTagChipsRow(
+    tags: List<TagEntity>,
+    modifier: Modifier = Modifier,
+    compact: Boolean = true,
+) {
+    if (tags.isEmpty()) return
+
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        tags.forEach { tag ->
+            val tagColor = tag.displayColor()
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = tagColor.copy(alpha = 0.14f),
+                contentColor = tagColor
+            ) {
+                Row(
+                    modifier = Modifier.padding(
+                        horizontal = if (compact) 8.dp else 10.dp,
+                        vertical = if (compact) 4.dp else 6.dp
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(if (compact) 6.dp else 8.dp)
+                            .background(tagColor, androidx.compose.foundation.shape.CircleShape)
+                    )
+                    Text(
+                        text = tag.name,
+                        style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
 private const val UNKNOWN_AUTHOR_LABEL = "No author listed"
 
 fun RecentFileItem.cardTitle(): String {
@@ -1045,5 +1123,93 @@ fun ReadingProgressSection(
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TagSelectionBottomSheet(
+    allTags: List<TagEntity>,
+    selectedBookIds: Set<String>,
+    booksWithTags: List<RecentFileItem>,
+    onCreateAndAssign: (String) -> Unit,
+    onToggleTag: (String, Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredTags = remember(allTags, searchQuery) {
+        if (searchQuery.isBlank()) allTags else allTags.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    }
+
+    val exactMatch = allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 500.dp)) {
+            Text("Apply Tags", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+
+            androidx.compose.material3.OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search or create tag...") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                leadingIcon = { Icon(Icons.Default.Search, null) }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                if (searchQuery.isNotBlank() && !exactMatch) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                onCreateAndAssign(searchQuery)
+                                searchQuery = ""
+                            }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Create \"${searchQuery.trim()}\"", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+
+                items(filteredTags, key = { it.id }) { tag ->
+                    var checkedCount = 0
+                    selectedBookIds.forEach { bookId ->
+                        val book = booksWithTags.find { it.bookId == bookId }
+                        if (book?.tags?.any { it.id == tag.id } == true) checkedCount++
+                    }
+
+                    val state = when (checkedCount) {
+                        0 -> ToggleableState.Off
+                        selectedBookIds.size -> ToggleableState.On
+                        else -> ToggleableState.Indeterminate
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            val assign = state != ToggleableState.On
+                            onToggleTag(tag.id, assign)
+                        }.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TriStateCheckbox(state = state, onClick = null)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Surface(shape = androidx.compose.foundation.shape.CircleShape, color = Color(tag.color ?: 0xFF64B5F6.toInt()).copy(alpha = 0.2f), modifier = Modifier.size(24.dp)) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(painterResource(id = R.drawable.tag), contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(tag.color ?: 0xFF64B5F6.toInt()))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(tag.name, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
     }
 }
