@@ -573,6 +573,8 @@ fun PaginatedReaderScreen(
         }
     } else Modifier
 
+    var isNavigatingByLink by remember { mutableStateOf(false) }
+
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg).then(textureModifier)) {
         val textMeasurer = rememberTextMeasurer()
         val baseTextStyle = MaterialTheme.typography.bodyLarge
@@ -887,6 +889,7 @@ fun PaginatedReaderScreen(
             },
             onLinkClick = { currentChapterPath, href, onNavComplete ->
                 coroutineScope.launch(Dispatchers.IO) {
+                    isNavigatingByLink = true
                     var isFootnote = false
                     var footnoteHtml: String? = null
 
@@ -971,8 +974,12 @@ fun PaginatedReaderScreen(
                     withContext(Dispatchers.Main) {
                         if (!footnoteHtml.isNullOrBlank()) {
                             onFootnoteRequested(footnoteHtml)
+                            isNavigatingByLink = false
                         } else {
-                            paginator.navigateToHref(currentChapterPath, href, onNavComplete)
+                            paginator.navigateToHref(currentChapterPath, href) {
+                                onNavComplete(it)
+                                isNavigatingByLink = false
+                            }
                         }
                     }
                 }
@@ -994,6 +1001,30 @@ fun PaginatedReaderScreen(
             onUpdatePalette = onUpdatePalette,
             effectiveText = effectiveText
         )
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isNavigatingByLink,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
+                    .clickable(enabled = true) { },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "Navigating...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+        }
     }
 }
 

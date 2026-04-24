@@ -481,10 +481,18 @@
         if (anchor) {
             var href = anchor.getAttribute('href');
             var epubType = anchor.getAttribute('epub:type');
+            var linkText = (anchor.textContent || '').trim().substring(0, 80);
+
+            console.log("LINK_NAV: [JS-CLICK] href='" + href + "', epub:type='" + epubType + "', label='" + linkText + "'");
+
+            if (window.LinkNavBridge && window.LinkNavBridge.onLinkClicked) {
+                window.LinkNavBridge.onLinkClicked(href || '', epubType || '', linkText);
+            }
 
             console.log("FootnoteDiag: Link clicked. href: '" + href + "', epub:type: '" + epubType + "'");
 
-            if ((href && href.startsWith('#')) || epubType === 'noteref') {
+           if ((href && href.startsWith('#')) || epubType === 'noteref') {
+               console.log("LINK_NAV: [JS-CLASSIFY] type=FRAGMENT_OR_FOOTNOTE, href='" + href + "'");
                 var targetId = href ? href.substring(1) : null;
                 console.log("FootnoteDiag: Extracted targetId: '" + targetId + "'");
 
@@ -504,6 +512,8 @@
                     }
                 }
             }
+        } else {
+            console.log("LINK_NAV: [JS-NO-ANCHOR] No <a> tag found in click target hierarchy");
         }
     }, true);
 

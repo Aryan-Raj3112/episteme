@@ -92,6 +92,8 @@ import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 
+private const val TAG_LINK_NAV = "LINK_NAV"
+
 private fun getFontCssInjection(): String {
     return """
         @font-face { font-family: 'Merriweather'; src: url('file:///android_asset/fonts/merriweather.ttf'); }
@@ -313,6 +315,17 @@ class FootnoteJsBridge(
     }
 }
 
+@Suppress("unused")
+class LinkNavJsBridge(
+    private val currentChapterTitle: String
+) {
+    @JavascriptInterface
+    fun onLinkClicked(href: String, epubType: String, linkText: String) {
+        Timber.tag(TAG_LINK_NAV)
+            .d("[JS-CLICK] href='$href', epub:type='$epubType', label='$linkText' | currentChapter='$currentChapterTitle'")
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ChapterWebView(
@@ -370,6 +383,7 @@ fun ChapterWebView(
     onAutoScrollChapterEnd: () -> Unit = {},
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
+    onInternalLinkClick: (String) -> Unit,
     activeTextureId: String? = null
 ) {
     Timber.d(
@@ -550,6 +564,11 @@ fun ChapterWebView(
                             consoleMessage?.let {
                                 val message = it.message()
                                 when {
+                                    message.startsWith("LINK_NAV:") -> {
+                                        Timber.tag(TAG_LINK_NAV)
+                                            .d("JS -> ${message.substringAfter("LINK_NAV: ")}")
+                                    }
+
                                     message.startsWith("FootnoteDiag:") -> {
                                         Timber.tag("FootnoteDiag")
                                             .d("JS -> ${message.substringAfter("FootnoteDiag: ")}")
@@ -653,15 +672,30 @@ fun ChapterWebView(
                         }, "FootnoteBridge"
                     )
 
+                    addJavascriptInterface(
+                        LinkNavJsBridge(chapterTitle), "LinkNavBridge"
+                    )
+
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView?, request: WebResourceRequest?
                         ): Boolean {
                             val url = request?.url?.toString()
                             if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
-                                Timber.d("Intercepted external link: $url")
+                                Timber.tag(TAG_LINK_NAV)
+                                    .d("[EXTERNAL-INTERCEPT] url='$url' from chapter '$chapterTitle'")
                                 showExternalLinkDialog = url
                                 return true
+                            }
+                            if (url != null && url.startsWith("file://")) {
+                                Timber.tag(TAG_LINK_NAV)
+                                    .d("[INTERNAL-LINK-INTERCEPTED] url='$url' from chapter '$chapterTitle'")
+                                onInternalLinkClick(url)
+                                return true
+                            }
+                            if (url != null) {
+                                Timber.tag(TAG_LINK_NAV)
+                                    .d("[INTERNAL-LINK-PASSED] url='$url' from chapter '$chapterTitle' — allowing WebView to handle")
                             }
                             return false
                         }
@@ -768,10 +802,59 @@ fun ChapterWebView(
                                 }
                             } else if (!initialFragmentId.isNullOrBlank()) {
                                 Timber.tag("NavDiag").d("WebView onPageFinished: Scrolling to Element ID: $initialFragmentId")
-                                view?.evaluateJavascript(
-                                    "javascript:var el = document.getElementById('$initialFragmentId'); if(el) { el.scrollIntoView(); } else { console.log('Element not found: $initialFragmentId'); }",
-                                    null
-                                )
+                                val js = """
+                                    (function() {
+                                        var targetId = '$initialFragmentId';
+                                        var el = document.getElementById(targetId) || document.querySelector('[name="' + targetId + '"]');
+                                        if (el) {
+                                            var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                            return -2;
+                                        }
+                                        if (window.virtualization && window.virtualization.chunksData) {
+                                            for (var i = 0; i < window.virtualization.chunksData.length; i++) {
+                                                var chunkHtml = window.virtualization.chunksData[i];
+                                                if (chunkHtml && (chunkHtml.indexOf('id="' + targetId + '"') !== -1 || chunkHtml.indexOf('name="' + targetId + '"') !== -1 || chunkHtml.indexOf("id='" + targetId + "'") !== -1 || chunkHtml.indexOf("name='" + targetId + "'") !== -1)) {
+                                                    return i;
+                                                }
+                                            }
+                                        }
+                                        return -1;
+                                    })()
+                                """.trimIndent()
+
+                                view?.evaluateJavascript(js) { result ->
+                                    val chunkIdx = result?.toIntOrNull() ?: -1
+                                    if (chunkIdx >= 0) {
+                                        for (i in 0..chunkIdx) {
+                                            onChunkRequested(i)
+                                        }
+                                        val scrollJs = """
+                                            (function() {
+                                                var chunkIndex = $chunkIdx;
+                                                var fragmentId = '$initialFragmentId';
+                                                setTimeout(function() {
+                                                    var chunkDiv = document.querySelector('.chunk-container[data-chunk-index="' + chunkIndex + '"]');
+                                                    if (chunkDiv && chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                                                        chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+                                                        chunkDiv.style.height = "";
+                                                    }
+                                                    setTimeout(function() {
+                                                        var el = document.getElementById(fragmentId) || document.querySelector('[name="' + fragmentId + '"]');
+                                                        if (el) {
+                                                            var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                        } else if (chunkDiv) {
+                                                            var targetScrollY = window.scrollY + chunkDiv.getBoundingClientRect().top - window.VIEWPORT_PADDING_TOP;
+                                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                        }
+                                                    }, 50);
+                                                }, 200);
+                                            })()
+                                        """.trimIndent()
+                                        view.evaluateJavascript(scrollJs, null)
+                                    }
+                                }
                                 onChapterInitiallyScrolled()
                                 scrollActionTaken = true
                             } else if (initialScrollTarget != null) {

@@ -971,31 +971,7 @@ class BookPaginator(
                 return@launch
             }
 
-            val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
-            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
-
-            if (chapterPages == null) {
-                Timber.e("Href Navigation failed: Could not paginate target chapter $targetChapterIndex.")
-                return@launch
-            }
-
-            var targetPageInChapter = 0
-            if (anchor != null) {
-                Timber.d("Searching for anchor '$anchor' in chapter $targetChapterIndex.")
-                pageLoop@ for ((pageIndex, page) in chapterPages.withIndex()) {
-                    for (block in page.content) {
-                        if (block.elementId == anchor) {
-                            targetPageInChapter = pageIndex
-                            Timber.i("Found anchor '$anchor' on page $pageIndex in chapter $targetChapterIndex")
-                            break@pageLoop
-                        }
-                    }
-                }
-            }
-
-            val finalPageIndex = chapterStartPage + targetPageInChapter
-            Timber.i("Href navigation complete. Final page index: $finalPageIndex")
-            withContext(Dispatchers.Main) { onNavigationComplete(finalPageIndex) }
+            findPageForAnchor(targetChapterIndex, anchor, onNavigationComplete)
         }
     }
 

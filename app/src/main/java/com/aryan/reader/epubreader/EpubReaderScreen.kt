@@ -219,6 +219,8 @@ private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
 private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
 private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
 
+private const val TAG_LINK_NAV = "LINK_NAV"
+
 private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     prefs.edit { putStringSet(HIDDEN_TOOLS_KEY, hiddenTools) }
@@ -1269,6 +1271,8 @@ fun EpubReaderHost(
         ttsChapterIndex = ttsChapterIndex,
         onTtsChapterIndexChange = { newIndex -> ttsChapterIndex = newIndex },
         onNavigateToChapter = { nextIndex ->
+            Timber.tag(TAG_LINK_NAV)
+                .d("[CHAPTER-NAV] source=TTS_CHAPTER_CHANGE, from=$currentChapterIndex, to=$nextIndex")
             Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("TtsSessionObserver triggered onNavigateToChapter to: $nextIndex")
             initialScrollTargetForChapter = ChapterScrollPosition.START
             cfiToLoad = null
@@ -1787,16 +1791,80 @@ fun EpubReaderHost(
                             if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                                 fragmentToLoad = entry.fragmentId
                                 if (targetChapterIndex != currentChapterIndex) {
+                                    Timber.tag(TAG_LINK_NAV)
+                                        .d("[CHAPTER-NAV] source=TOC_ENTRY, from=$currentChapterIndex, to=$targetChapterIndex, fragment='${entry.fragmentId}', label='${entry.label}'")
                                     initialScrollTargetForChapter = null
                                     currentScrollYPosition = 0
                                     currentScrollHeightValue = 0
                                     currentChapterIndex = targetChapterIndex
                                 } else {
                                     if (entry.fragmentId != null) {
-                                        webViewRefForTts?.evaluateJavascript(
-                                            "javascript:var el = document.getElementById('${entry.fragmentId}'); if(el) { el.scrollIntoView(); }",
-                                            null
-                                        )
+                                        val js = """
+                                            (function() {
+                                                var targetId = '${entry.fragmentId}';
+                                                var el = document.getElementById(targetId) || document.querySelector('[name="' + targetId + '"]');
+                                                if (el) {
+                                                    var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                    return -2;
+                                                }
+                                                if (window.virtualization && window.virtualization.chunksData) {
+                                                    for (var i = 0; i < window.virtualization.chunksData.length; i++) {
+                                                        var chunkHtml = window.virtualization.chunksData[i];
+                                                        if (chunkHtml && (chunkHtml.indexOf('id="' + targetId + '"') !== -1 || chunkHtml.indexOf('name="' + targetId + '"') !== -1 || chunkHtml.indexOf("id='" + targetId + "'") !== -1 || chunkHtml.indexOf("name='" + targetId + "'") !== -1)) {
+                                                            return i;
+                                                        }
+                                                    }
+                                                }
+                                                return -1;
+                                            })()
+                                        """.trimIndent()
+                                        webViewRefForTts?.evaluateJavascript(js) { result ->
+                                            val chunkIdx = result?.toIntOrNull() ?: -1
+                                            if (chunkIdx >= 0) {
+                                                if (chunkIdx >= loadedChunkCount) {
+                                                    val chunksToInject = (loadedChunkCount..chunkIdx)
+                                                    chunksToInject.forEach { idx ->
+                                                        val content = chapterChunks.getOrNull(idx)
+                                                        if (content != null) {
+                                                            val escaped = escapeJsString(content)
+                                                            webViewRefForTts?.evaluateJavascript(
+                                                                "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                                                                null
+                                                            )
+                                                        }
+                                                    }
+                                                    loadUpToChunkIndex = chunkIdx
+                                                    loadedChunkCount = max(loadedChunkCount, chunkIdx + 1)
+                                                }
+                                                val scrollJs = """
+                                                    (function() {
+                                                        var chunkIndex = $chunkIdx;
+                                                        var fragmentId = '${entry.fragmentId}';
+                                                        var chunkDiv = document.querySelector('.chunk-container[data-chunk-index="' + chunkIndex + '"]');
+                                                        if (chunkDiv) {
+                                                            if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                                                                chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+                                                                chunkDiv.style.height = "";
+                                                            }
+                                                            setTimeout(function() {
+                                                                var el = document.getElementById(fragmentId) || document.querySelector('[name="' + fragmentId + '"]');
+                                                                if (el) {
+                                                                    var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                                                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                                } else {
+                                                                    var targetScrollY = window.scrollY + chunkDiv.getBoundingClientRect().top - window.VIEWPORT_PADDING_TOP;
+                                                                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                                }
+                                                            }, 150);
+                                                        }
+                                                    })()
+                                                """.trimIndent()
+                                                webViewRefForTts?.evaluateJavascript(scrollJs, null)
+                                            } else if (chunkIdx == -1) {
+                                                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+                                            }
+                                        }
                                     } else {
                                         webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
                                     }
@@ -1810,6 +1878,8 @@ fun EpubReaderHost(
 
                                     bookPaginator.findPageForAnchor(targetChapterIndex, entry.fragmentId) { targetPage ->
                                         scope.launch {
+                                            Timber.tag(TAG_LINK_NAV)
+                                                .d("[CHAPTER-NAV] source=TOC_ENTRY_PAGINATED, from=$currentChapterIndex, to=$targetChapterIndex, page=$targetPage, anchor='${entry.fragmentId}', label='${entry.label}'")
                                             Timber.tag("TOC_NAV_DEBUG").d("Scrolling Pager to page: $targetPage")
                                             paginatedPagerState.scrollToPage(targetPage)
                                             isNavigatingByToc = false
@@ -1832,6 +1902,8 @@ fun EpubReaderHost(
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
                                 if (index != currentChapterIndex) {
+                                    Timber.tag(TAG_LINK_NAV)
+                                        .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER, from=$currentChapterIndex, to=$index")
                                     initialScrollTargetForChapter = ChapterScrollPosition.START
                                     currentScrollYPosition = 0
                                     currentScrollHeightValue = 0
@@ -1848,6 +1920,8 @@ fun EpubReaderHost(
                                     if (index != currentFromPager) {
                                         val targetPage = bookPaginator.chapterStartPageIndices[index]
                                         if (targetPage != null) {
+                                            Timber.tag(TAG_LINK_NAV)
+                                                .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER_PAGINATED, from=$currentFromPager, to=$index, page=$targetPage")
                                             paginatedPagerState.scrollToPage(targetPage)
                                             if (showBars) showBars = false
                                         }
@@ -1870,6 +1944,8 @@ fun EpubReaderHost(
                                 val targetChunk = locator?.let { it.blockIndex / 20 }
 
                                 if (bookmark.chapterIndex != currentChapterIndex) {
+                                    Timber.tag(TAG_LINK_NAV)
+                                        .d("[CHAPTER-NAV] source=BOOKMARK, from=$currentChapterIndex, to=${bookmark.chapterIndex}, cfi='${bookmark.cfi}', label='${bookmark.label}'")
                                     chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) {
                                         targetChunk
                                     } else {
@@ -1979,6 +2055,8 @@ fun EpubReaderHost(
                                 val targetChunk = locator?.let { it.blockIndex / 20 }
 
                                 if (highlight.chapterIndex != currentChapterIndex) {
+                                    Timber.tag(TAG_LINK_NAV)
+                                        .d("[CHAPTER-NAV] source=HIGHLIGHT, from=$currentChapterIndex, to=${highlight.chapterIndex}, cfi='${highlight.cfi}'")
                                     chunkTargetOverride = if (targetChunk != null && targetChunk >= 0) targetChunk else 0
                                     currentScrollYPosition = 0
                                     currentScrollHeightValue = 0
@@ -2630,6 +2708,8 @@ fun EpubReaderHost(
 
                                                 scope.launch {
                                                     if (currentChapterIndex < chapters.size - 1) {
+                                                        Timber.tag(TAG_LINK_NAV)
+                                                            .d("[CHAPTER-NAV] source=AUTO_SCROLL_END, from=$currentChapterIndex, to=${currentChapterIndex + 1}")
                                                         Timber.d("Screen: Moving to next chapter (${currentChapterIndex + 1}).")
                                                         initialScrollTargetForChapter = ChapterScrollPosition.START
                                                         currentScrollYPosition = 0
@@ -2656,6 +2736,8 @@ fun EpubReaderHost(
                                                             initialScrollTargetForChapter = ChapterScrollPosition.END
                                                             currentScrollYPosition = 0
                                                             currentScrollHeightValue = 0
+                                                            Timber.tag(TAG_LINK_NAV)
+                                                                .d("[CHAPTER-NAV] source=OVERSCROLL_TOP_SEAMLESS, from=$targetChapterIndex, to=${targetChapterIndex - 1}")
                                                             currentChapterIndex--
                                                             if (showBars) showBars = false
                                                             delay(300)
@@ -2678,6 +2760,8 @@ fun EpubReaderHost(
                                                             initialScrollTargetForChapter = ChapterScrollPosition.START
                                                             currentScrollYPosition = 0
                                                             currentScrollHeightValue = 0
+                                                            Timber.tag(TAG_LINK_NAV)
+                                                                .d("[CHAPTER-NAV] source=OVERSCROLL_BOTTOM_SEAMLESS, from=$targetChapterIndex, to=${targetChapterIndex + 1}")
                                                             currentChapterIndex++
                                                             if (showBars) showBars = false
                                                             delay(300)
@@ -2699,6 +2783,8 @@ fun EpubReaderHost(
                                                         initialScrollTargetForChapter = ChapterScrollPosition.END
                                                         currentScrollYPosition = 0
                                                         currentScrollHeightValue = 0
+                                                        Timber.tag(TAG_LINK_NAV)
+                                                            .d("[CHAPTER-NAV] source=PULL_TO_TURN_PREV, from=$targetChapterIndex, to=${targetChapterIndex - 1}")
                                                         currentChapterIndex--
                                                         if (showBars) showBars = false
                                                         Timber.d("Changed to previous chapter: $currentChapterIndex, will scroll to END")
@@ -2719,6 +2805,8 @@ fun EpubReaderHost(
                                                         initialScrollTargetForChapter = ChapterScrollPosition.START
                                                         currentScrollYPosition = 0
                                                         currentScrollHeightValue = 0
+                                                        Timber.tag(TAG_LINK_NAV)
+                                                            .d("[CHAPTER-NAV] source=PULL_TO_TURN_NEXT, from=$targetChapterIndex, to=${targetChapterIndex + 1}")
                                                         currentChapterIndex++
                                                         if (showBars) showBars = false
                                                     }
@@ -2760,6 +2848,111 @@ fun EpubReaderHost(
                                                 showBars = false
                                                 showFormatAdjustmentBars = false
                                                 Timber.d("Highlight clicked - Forcing bars hidden")
+                                            },
+                                            onInternalLinkClick = { url ->
+                                                scope.launch {
+                                                    val basePath = "file://${epubBook.extractionBasePath}/"
+                                                    val relativeUrl = url.removePrefix(basePath)
+                                                    val pathPart = relativeUrl.substringBefore('#')
+                                                    val fragmentPart = relativeUrl.substringAfter('#', "").takeIf { it.isNotEmpty() }
+
+                                                    val decodedPath = try { java.net.URLDecoder.decode(pathPart, "UTF-8") } catch(e: Exception) { pathPart }
+                                                    val targetChapterIndex = chapters.indexOfFirst { it.absPath == decodedPath }
+
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> url: $url")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> basePath: $basePath")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> relativeUrl: $relativeUrl")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> pathPart: $pathPart")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> decodedPath: $decodedPath")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> fragmentPart: $fragmentPart")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> targetChapterIndex: $targetChapterIndex (current is $currentChapterIndex)")
+
+                                                    if (targetChapterIndex != -1) {
+                                                        if (targetChapterIndex != currentChapterIndex) {
+                                                            Timber.tag(TAG_LINK_NAV).d("[CHAPTER-NAV] source=INTERNAL_LINK, from=$currentChapterIndex, to=$targetChapterIndex, fragment='$fragmentPart'")
+                                                            initialScrollTargetForChapter = null
+                                                            fragmentToLoad = fragmentPart
+                                                            currentScrollYPosition = 0
+                                                            currentScrollHeightValue = 0
+                                                            currentChapterIndex = targetChapterIndex
+                                                        } else {
+                                                            Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> Target is current chapter. Evaluating JS for fragment.")
+                                                            if (fragmentPart != null) {
+                                                                val js = """
+                                                                    (function() {
+                                                                        var targetId = '$fragmentPart';
+                                                                        var el = document.getElementById(targetId) || document.querySelector('[name="' + targetId + '"]');
+                                                                        if (el) {
+                                                                            var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                                            return -2;
+                                                                        }
+                                                                        if (window.virtualization && window.virtualization.chunksData) {
+                                                                            for (var i = 0; i < window.virtualization.chunksData.length; i++) {
+                                                                                var chunkHtml = window.virtualization.chunksData[i];
+                                                                                if (chunkHtml && (chunkHtml.indexOf('id="' + targetId + '"') !== -1 || chunkHtml.indexOf('name="' + targetId + '"') !== -1 || chunkHtml.indexOf("id='" + targetId + "'") !== -1 || chunkHtml.indexOf("name='" + targetId + "'") !== -1)) {
+                                                                                    return i;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        return -1;
+                                                                    })()
+                                                                """.trimIndent()
+                                                                webViewRefForTts?.evaluateJavascript(js) { result ->
+                                                                    val chunkIdx = result?.toIntOrNull() ?: -1
+                                                                    if (chunkIdx >= 0) {
+                                                                        if (chunkIdx >= loadedChunkCount) {
+                                                                            val chunksToInject = (loadedChunkCount..chunkIdx)
+                                                                            chunksToInject.forEach { idx ->
+                                                                                val content = chapterChunks.getOrNull(idx)
+                                                                                if (content != null) {
+                                                                                    val escaped = escapeJsString(content)
+                                                                                    webViewRefForTts?.evaluateJavascript(
+                                                                                        "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                                                                                        null
+                                                                                    )
+                                                                                }
+                                                                            }
+                                                                            loadUpToChunkIndex = chunkIdx
+                                                                            loadedChunkCount = max(loadedChunkCount, chunkIdx + 1)
+                                                                        }
+                                                                        val scrollJs = """
+                                                                            (function() {
+                                                                                var chunkIndex = $chunkIdx;
+                                                                                var fragmentId = '$fragmentPart';
+                                                                                var chunkDiv = document.querySelector('.chunk-container[data-chunk-index="' + chunkIndex + '"]');
+                                                                                if (chunkDiv) {
+                                                                                    if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                                                                                        chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+                                                                                        chunkDiv.style.height = "";
+                                                                                    }
+                                                                                    setTimeout(function() {
+                                                                                        var el = document.getElementById(fragmentId) || document.querySelector('[name="' + fragmentId + '"]');
+                                                                                        if (el) {
+                                                                                            var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                                                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                                                        } else {
+                                                                                            var targetScrollY = window.scrollY + chunkDiv.getBoundingClientRect().top - window.VIEWPORT_PADDING_TOP;
+                                                                                            window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                                                                        }
+                                                                                    }, 150);
+                                                                                }
+                                                                            })()
+                                                                        """.trimIndent()
+                                                                        webViewRefForTts?.evaluateJavascript(scrollJs, null)
+                                                                    } else if (chunkIdx == -1) {
+                                                                        webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+                                                            }
+                                                        }
+                                                        if (showBars) showBars = false
+                                                    } else {
+                                                        Timber.tag(TAG_LINK_NAV).w("Could not find chapter for internal link: $url")
+                                                    }
+                                                }
                                             },
                                             onWebViewInstanceCreated = { webView ->
                                                 webViewRefForTts = webView
@@ -2841,7 +3034,10 @@ fun EpubReaderHost(
                                                             Timber.d("Empty chapter detected during start. Advancing UI to next chapter.")
                                                             val nextIdx = targetChapterIndex + 1
                                                             if (nextIdx < chapters.size) {
-                                                                initialScrollTargetForChapter = ChapterScrollPosition.START
+                                                                Timber.tag(TAG_LINK_NAV)
+                                                                    .d("[CHAPTER-NAV] source=TTS_EMPTY_CHAPTER_SKIP, from=$targetChapterIndex, to=$nextIdx")
+                                                                initialScrollTargetForChapter =
+                                                                    ChapterScrollPosition.START
                                                                 currentScrollYPosition = 0
                                                                 currentScrollHeightValue = 0
                                                                 currentChapterIndex = nextIdx
