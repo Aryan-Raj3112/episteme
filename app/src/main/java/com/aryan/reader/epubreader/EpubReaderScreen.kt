@@ -2440,11 +2440,7 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
-                        val contentBottomPadding = if (showBars || showFormatAdjustmentBars) {
-                            0.dp
-                        } else {
-                            if (pageInfoMode == PageInfoMode.DEFAULT) PAGE_INFO_BAR_HEIGHT else 0.dp
-                        }
+                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) PAGE_INFO_BAR_HEIGHT else 0.dp
 
                         val horizontalPadding = if (removeEdgePadding) 0.dp else 16.dp
 
