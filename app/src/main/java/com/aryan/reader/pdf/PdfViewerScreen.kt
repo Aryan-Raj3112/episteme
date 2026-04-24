@@ -3093,10 +3093,12 @@ fun PdfViewerScreen(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
                 PdfNavigationDrawerContent(
+                    pdfDocument = pdfDocument,
                     flatTableOfContents = flatTableOfContents,
                     bookmarks = bookmarks,
                     userHighlights = userHighlights,
                     currentPage = currentPage,
+                    totalPages = totalDisplayPages,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         coroutineScope.launch {

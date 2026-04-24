@@ -1,9 +1,24 @@
-// PdfNavigationDrawerContent.kt
 package com.aryan.reader.pdf
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -13,29 +28,260 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.legere.pdfiumandroid.api.Bookmark
+import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import timber.log.Timber
+import androidx.core.graphics.createBitmap
+
+private const val MAX_FIXED_RECURSION = 128
+
+internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
+
+internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
+
+/**
+ * Patches the library bug where siblings are truncated due to depth-state leakage.
+ */
+suspend fun PdfDocumentKt.getFixedTableOfContents(): List<Bookmark> {
+    val tag = "PdfTocFix"
+    Timber.tag(tag).i("Starting Pure Reflection Traversal...")
+
+    return try {
+        // 1. Get the 'document' field (PdfDocumentU) from PdfDocumentKt
+        val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
+        val docUInstance = documentField.get(this) ?: return getTableOfContents()
+
+        // 2. Get the 'nativeDocument' field from PdfDocumentU
+        val nativeDocField = docUInstance.javaClass.getDeclaredField("nativeDocument").apply { isAccessible = true }
+        val nativeDocInstance = nativeDocField.get(docUInstance) ?: return getTableOfContents()
+
+        // 3. Get the native pointer (long) from PdfDocumentU
+        val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
+        val mNativeDocPtr = ptrField.get(docUInstance) as Long
+
+        // 4. Look up native methods using primitive 'long' types (mandatory for JNI)
+        val nClass = nativeDocInstance.javaClass
+        val lp = Long::class.javaPrimitiveType!! // Shorthand for 'long'
+
+        val getTitleM = nClass.getMethod("getBookmarkTitle", lp)
+        val getDestIdxM = nClass.getMethod("getBookmarkDestIndex", lp, lp)
+        val getFirstChildM = nClass.getMethod("getFirstChildBookmark", lp, lp)
+        val getSiblingM = nClass.getMethod("getSiblingBookmark", lp, lp)
+
+        val topLevel = mutableListOf<Bookmark>()
+        val visited = mutableSetOf<Long>()
+
+        /**
+         * Corrected traversal: Iterative for siblings, recursive for children.
+         */
+        fun walk(parentList: MutableList<Bookmark>, startPtr: Long, level: Int) {
+            var currentPtr = startPtr
+            var itemIndex = 0
+
+            while (currentPtr != 0L) {
+                if (visited.contains(currentPtr)) break
+                visited.add(currentPtr)
+
+                val title = getTitleM.invoke(nativeDocInstance, currentPtr) as? String ?: "Untitled"
+                val pageIdx = getDestIdxM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+
+                Timber.tag(tag).v("Lvl $level | Item $itemIndex | Ptr: 0x${java.lang.Long.toHexString(currentPtr)} | $title")
+
+                val bookmark = Bookmark().apply {
+                    this.mNativePtr = currentPtr
+                    this.title = title
+                    this.pageIdx = pageIdx
+                }
+                parentList.add(bookmark)
+
+                // Recursive dive into children
+                val firstChild = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+                if (firstChild != 0L && level < MAX_FIXED_RECURSION) {
+                    walk(bookmark.children, firstChild, level + 1)
+                }
+
+                // Iterative move to next sibling
+                currentPtr = getSiblingM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
+                itemIndex++
+            }
+        }
+
+        // 5. Start from the root (Pass 0L as primitive long)
+        val firstRoot = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, 0L) as Long
+        if (firstRoot != 0L) {
+            walk(topLevel, firstRoot, 0)
+        }
+
+        if (topLevel.isEmpty()) {
+            Timber.tag(tag).w("No items found, falling back to library.")
+            getTableOfContents()
+        } else {
+            Timber.tag(tag).i("TOC Successfully Patched! Nodes: ${visited.size}")
+            topLevel
+        }
+    } catch (e: Exception) {
+        Timber.tag(tag).e(e, "Reflection traversal critical error.")
+        this.getTableOfContents()
+    }
+}
+
+internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntry> {
+    Timber.tag("PdfTocDebug").d("Processing level $level with ${bookmarks.size} items")
+    val entries = mutableListOf<TocEntry>()
+    for ((index, bookmark) in bookmarks.withIndex()) {
+        val title = bookmark.title ?: "Untitled Chapter"
+        val childCount = bookmark.children.size
+
+        Timber.tag("PdfTocDebug").d(
+            "Lvl $level | Item $index: \"$title\" (Page: ${bookmark.pageIdx}) | Children: $childCount"
+        )
+
+        entries.add(
+            TocEntry(
+                title = title,
+                pageIndex = bookmark.pageIdx.toInt(),
+                nestLevel = level
+            )
+        )
+
+        if (childCount > 0) {
+            Timber.tag("PdfTocDebug").v("Entering children of \"$title\"")
+            entries.addAll(flattenToc(bookmark.children, level + 1))
+            Timber.tag("PdfTocDebug").v("Returned to Lvl $level from \"$title\"")
+        }
+    }
+    return entries
+}
+
+internal fun loadPdfBookmarksFromJson(bookmarksJson: String?): Set<PdfBookmark> {
+    if (bookmarksJson.isNullOrBlank()) return emptySet()
+    return try {
+        val jsonArray = JSONArray(bookmarksJson)
+        (0 until jsonArray.length()).mapNotNull { i ->
+            try {
+                val json = jsonArray.getJSONObject(i)
+                PdfBookmark(
+                    pageIndex = json.getInt("pageIndex"),
+                    title = json.getString("title"),
+                    totalPages = json.getInt("totalPages")
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to parse bookmark from JSON object")
+                null
+            }
+        }.toSet()
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to parse bookmarks from JSON string: $bookmarksJson")
+        emptySet()
+    }
+}
+
+@Composable
+internal fun PdfTocTreeItem(
+    label: String,
+    nestLevel: Int,
+    isExpanded: Boolean,
+    hasChildren: Boolean,
+    isCurrent: Boolean,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit
+) {
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent,
+        label = "TocItemBackground"
+    )
+
+    val contentColor = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .background(backgroundColor)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(modifier = Modifier.width((16 * nestLevel).dp))
+
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clickable(enabled = hasChildren, onClick = onToggleExpand),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasChildren) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Text(
+            text = label,
+            style = if (nestLevel == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isCurrent) FontWeight.Bold else if (nestLevel == 0) FontWeight.SemiBold else FontWeight.Normal,
+            color = contentColor,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(end = 16.dp)
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PdfNavigationDrawerContent(
+    pdfDocument: ReaderDocument?,
     flatTableOfContents: List<TocEntry>,
     bookmarks: Set<PdfBookmark>,
     userHighlights: List<PdfUserHighlight>,
     currentPage: Int,
+    totalPages: Int,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
     onRenameBookmark: (PdfBookmark, String) -> Unit,
@@ -44,11 +290,15 @@ internal fun PdfNavigationDrawerContent(
     onNoteRequested: (String?) -> Unit,
     onCloseDrawer: () -> Unit
 ) {
-    val drawerPagerState = rememberPagerState(pageCount = { 3 })
+    val drawerPagerState = rememberPagerState(pageCount = { 4 })
     val drawerScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = drawerPagerState.currentPage) {
+        ScrollableTabRow(
+            selectedTabIndex = drawerPagerState.currentPage,
+            edgePadding = 8.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Tab(selected = drawerPagerState.currentPage == 0, onClick = {
                 drawerScope.launch { drawerPagerState.animateScrollToPage(0) }
             }, text = { Text("Chapters") })
@@ -67,6 +317,14 @@ internal fun PdfNavigationDrawerContent(
                 },
                 text = { Text("Highlights") },
                 modifier = Modifier.testTag("HighlightsTab")
+            )
+            Tab(
+                selected = drawerPagerState.currentPage == 3,
+                onClick = {
+                    drawerScope.launch { drawerPagerState.animateScrollToPage(3) }
+                },
+                text = { Text("Pages") },
+                modifier = Modifier.testTag("PagesTab")
             )
         }
 
@@ -527,6 +785,104 @@ internal fun PdfNavigationDrawerContent(
                                         onClick = { showDeleteConfirmDialogFor = null }
                                     ) { Text("Cancel") }
                                 }
+                            )
+                        }
+                    }
+                }
+                3 -> { // Pages Page
+                    val listState = rememberLazyListState()
+                    val pageRows = remember(totalPages) { (0 until totalPages).chunked(3) }
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(end = 12.dp)
+                            ) {
+                                items(pageRows, key = { it.firstOrNull() ?: 0 }) { row ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp, horizontal = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        row.forEach { pageIdx ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .aspectRatio(0.707f) // Standard A4 Aspect Ratio
+                                                    .background(
+                                                        MaterialTheme.colorScheme.surfaceVariant,
+                                                        RoundedCornerShape(4.dp)
+                                                    )
+                                                    .border(
+                                                        width = if (currentPage == pageIdx) 2.dp else 1.dp,
+                                                        color = if (currentPage == pageIdx) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.1f),
+                                                        shape = RoundedCornerShape(4.dp)
+                                                    )
+                                                    .clickable {
+                                                        onCloseDrawer()
+                                                        onPageSelected(pageIdx)
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                var thumb by remember { mutableStateOf(PdfThumbnailCache.get(pageIdx)) }
+
+                                                LaunchedEffect(pageIdx, pdfDocument) {
+                                                    if (thumb == null && pdfDocument != null) {
+                                                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                            try {
+                                                                val cached = PdfThumbnailCache.get(pageIdx)
+                                                                if (cached != null) {
+                                                                    thumb = cached
+                                                                } else {
+                                                                    pdfDocument.openPage(pageIdx)?.use { p ->
+                                                                        val w = p.getPageWidthPoint()
+                                                                        val h = p.getPageHeightPoint()
+                                                                        val ratio = if (h > 0) w.toFloat() / h.toFloat() else 1f
+                                                                        val thumbW = 200
+                                                                        val thumbH = (thumbW / ratio).toInt().coerceAtLeast(1)
+                                                                        val bmp = createBitmap(thumbW, thumbH)
+                                                                        bmp.eraseColor(android.graphics.Color.WHITE)
+                                                                        p.renderPageBitmap(bmp, 0, 0, thumbW, thumbH, false)
+                                                                        PdfThumbnailCache.put(pageIdx, bmp)
+                                                                        thumb = bmp
+                                                                    }
+                                                                }
+                                                            } catch (_: Exception) {
+                                                                // Ignore generation failure gracefully
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if (thumb != null) {
+                                                    Image(
+                                                        bitmap = thumb!!.asImageBitmap(),
+                                                        contentDescription = "Page ${pageIdx + 1}",
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                }
+
+                                                Text(
+                                                    text = "${pageIdx + 1}",
+                                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                    color = Color.White,
+                                                    modifier = Modifier
+                                                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+                                    }
+                                }
+                            }
+                            VerticalScrollbar(
+                                listState = listState,
+                                modifier = Modifier.align(Alignment.CenterEnd)
                             )
                         }
                     }
