@@ -400,7 +400,9 @@ class RecentFilesRepository(private val context: Context) {
         if (item != null) {
             val currentTime = System.currentTimeMillis()
             recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
-            Timber.d("Updated PDF reading position for ${item.bookId} to page $page, progress $progress%")
+            Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
+        } else {
+            Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
         }
     }
 

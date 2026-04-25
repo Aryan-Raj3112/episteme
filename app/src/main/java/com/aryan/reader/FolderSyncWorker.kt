@@ -148,7 +148,7 @@ class FolderSyncWorker(
 
                 if (existingItem != null) {
                     if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
-                        Timber.tag("FolderSync").d("Applying remote update for $bookId (Progress: ${remoteMeta.progressPercentage}%)")
+                        Timber.tag("PdfPositionDebug").w("FolderSyncWorker applies remote progress for $bookId | Local Page: ${existingItem.lastPage} -> Remote Page: ${remoteMeta.lastPage}")
                         val itemToUpdate = existingItem.copy(
                             lastChapterIndex = remoteMeta.lastChapterIndex,
                             lastPage = remoteMeta.lastPage,
@@ -164,6 +164,8 @@ class FolderSyncWorker(
                             timestamp = if (remoteMeta.isRecent) remoteMeta.lastModifiedTimestamp else existingItem.timestamp
                         )
                         recentFilesRepository.addRecentFile(itemToUpdate)
+                    } else {
+                        Timber.tag("PdfPositionDebug").d("FolderSyncWorker: Local meta is newer/equal for $bookId. Ignoring remote. Local Page: ${existingItem.lastPage}")
                     }
                 }
             }

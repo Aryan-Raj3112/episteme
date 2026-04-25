@@ -989,6 +989,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         Timber.d("ViewModel instance created.")
+        WorkManager.getInstance(application).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
         viewModelScope.launch {
             recentFilesRepository.migrateLegacyShelvesToRoom()
             if (!prefs.getBoolean(KEY_DEFAULT_TAGS_SEEDED, false)) {
@@ -1923,16 +1924,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 scanSyncedFolder()
-
-                val workManager = WorkManager.getInstance(appContext)
-                val constraints = Constraints.Builder().setRequiresBatteryNotLow(true).build()
-                val syncRequest =
-                    PeriodicWorkRequestBuilder<FolderSyncWorker>(4, TimeUnit.HOURS).setConstraints(
-                        constraints
-                    ).build()
-                workManager.enqueueUniquePeriodicWork(
-                    FolderSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, syncRequest
-                )
 
                 showBanner(appContext.getString(R.string.banner_folder_added, name))
 
@@ -3928,16 +3919,56 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 0f
             }
-            Timber.tag("PdfPositionDebug").d("ViewModel: Saving to DB | Page: $page | Total: $totalPages | URI: ${currentPdfUri.lastPathSegment}")
+            Timber.tag("PdfPositionDebug").i("ViewModel: Save request triggered | Page: $page | Total: $totalPages | Progress: $progress | URI: ${currentPdfUri.lastPathSegment}")
             viewModelScope.launch {
                 recentFilesRepository.getFileByUri(currentPdfUri.toString())?.let { _ ->
                     recentFilesRepository.updatePdfReadingPosition(
                         uriString = currentPdfUri.toString(), page = page, progress = progress
                     )
+                } ?: run {
+                    Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
                 }
             }
         } else {
             Timber.tag("PdfPositionDebug").w("ViewModel: Save aborted. No selectedPdfUri found in state.")
+        }
+    }
+
+    fun exportLogsToFile(activityContext: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Timber.d("Generating logcat dump for debugging...")
+                val logFile = File(appContext.cacheDir, "debug_logs_${System.currentTimeMillis()}.txt")
+
+                val process = Runtime.getRuntime().exec("logcat -d -v threadtime -t 5000")
+                process.inputStream.bufferedReader().use { reader ->
+                    logFile.writeText(reader.readText())
+                }
+
+                val authority = "${appContext.packageName}.provider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(appContext, authority, logFile)
+
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_TITLE, "App Debug Logs")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+
+                val chooser = Intent.createChooser(intent, "Export Debug Logs")
+                if (activityContext !is android.app.Activity) {
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+
+                withContext(Dispatchers.Main) {
+                    activityContext.startActivity(chooser)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to export logs")
+                withContext(Dispatchers.Main) {
+                    showBanner("Failed to export logs", isError = true)
+                }
+            }
         }
     }
 

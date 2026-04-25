@@ -339,7 +339,8 @@ fun HomeScreen(
                                 },
                                 onAppThemeClick = { showAppThemePanel = true },
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
-                                onLanguageClick = { showLanguageDialog = true }
+                                onLanguageClick = { showLanguageDialog = true },
+                                onExportLogsClick = { viewModel.exportLogsToFile(context) }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -992,7 +993,8 @@ fun DefaultTopAppBar(
     onStrictFilterToggleClick: () -> Unit,
     onAppThemeClick: () -> Unit,
     onTestPanelDetectionClick: () -> Unit,
-    onLanguageClick: () -> Unit
+    onLanguageClick: () -> Unit,
+    onExportLogsClick: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -1096,6 +1098,11 @@ fun DefaultTopAppBar(
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Test Panel ML Detection") }, onClick = {
                         onTestPanelDetectionClick()
+                        showOptionsMenu = false
+                    })
+
+                    DropdownMenuItem(text = { Text("Export Logs (Last 5000 lines)") }, onClick = {
+                        onExportLogsClick()
                         showOptionsMenu = false
                     })
                 }
