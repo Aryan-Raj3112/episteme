@@ -1,32 +1,40 @@
 package com.aryan.reader.data
 
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
+@Serializable
 enum class SmartField { TITLE, AUTHOR, PROGRESS, FILE_TYPE, FOLDER, TAG }
+@Serializable
 enum class SmartOperator { EQUALS, CONTAINS, GREATER_THAN, LESS_THAN }
 
+@Serializable
 data class SmartRule(
     val field: SmartField,
     val operator: SmartOperator,
     val value: String
 )
 
+@Serializable
 data class SmartCollectionDefinition(
     val matchAll: Boolean = true,
     val rules: List<SmartRule> = emptyList()
 )
 
 object SmartCollectionEngine {
-    private val gson = Gson()
+    private val json = Json {
+        encodeDefaults = true
+        ignoreUnknownKeys = true
+    }
 
-    fun toJson(definition: SmartCollectionDefinition): String = gson.toJson(definition)
+    fun toJson(definition: SmartCollectionDefinition): String = json.encodeToString(definition)
 
     fun fromJson(json: String?): SmartCollectionDefinition? {
         if (json.isNullOrBlank()) return null
         return try {
-            gson.fromJson(json, object : TypeToken<SmartCollectionDefinition>() {}.type)
-        } catch (e: Exception) { null }
+            this.json.decodeFromString<SmartCollectionDefinition>(json)
+        } catch (_: Exception) { null }
     }
 
     fun evaluate(book: RecentFileItem, definition: SmartCollectionDefinition): Boolean {
