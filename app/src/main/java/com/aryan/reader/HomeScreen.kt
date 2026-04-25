@@ -339,6 +339,7 @@ fun HomeScreen(
                                 },
                                 onAppThemeClick = { showAppThemePanel = true },
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
+                                onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
                                 onLanguageClick = { showLanguageDialog = true },
                                 onExportLogsClick = { viewModel.exportLogsToFile(context) }
                             )
@@ -993,6 +994,7 @@ fun DefaultTopAppBar(
     onStrictFilterToggleClick: () -> Unit,
     onAppThemeClick: () -> Unit,
     onTestPanelDetectionClick: () -> Unit,
+    onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
     onExportLogsClick: () -> Unit
 ) {
@@ -1098,6 +1100,11 @@ fun DefaultTopAppBar(
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text("Test Panel ML Detection") }, onClick = {
                         onTestPanelDetectionClick()
+                        showOptionsMenu = false
+                    })
+
+                    DropdownMenuItem(text = { Text("Test Speech Bubble ML Detection") }, onClick = {
+                        onTestSpeechBubbleDetectionClick()
                         showOptionsMenu = false
                     })
 

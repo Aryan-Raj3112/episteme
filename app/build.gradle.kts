@@ -235,6 +235,8 @@ dependencies {
     debugImplementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
     debugImplementation("org.tensorflow:tensorflow-lite-gpu-api:2.17.0")
 
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.25.0")
+
     implementation("androidx.core:core-splashscreen:1.2.0")
 }
 

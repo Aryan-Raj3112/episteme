@@ -341,6 +341,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var externalOpenedBookId: String? = null
 
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
+    private var speechBubbleDetector: com.aryan.reader.ml.ISpeechBubbleDetector? = null
 
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
 
@@ -359,6 +360,106 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         return panelDetector
+    }
+
+    private fun getOrInitSpeechBubbleDetector(context: Context): com.aryan.reader.ml.ISpeechBubbleDetector? {
+        if (speechBubbleDetector == null && BuildConfig.DEBUG) {
+            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_model.onnx")
+            if (modelFile.exists()) {
+                try {
+                    val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
+                    speechBubbleDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as com.aryan.reader.ml.ISpeechBubbleDetector
+                } catch (t: Throwable) {
+                    Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection")
+                }
+            } else {
+                Timber.e("Model file manga_speech_bubble_model.onnx not found in external files dir")
+            }
+        }
+        return speechBubbleDetector
+    }
+
+    fun testSpeechBubbleDetection(context: Context) {
+        viewModelScope.launch(mlDispatcher) {
+            try { // <--- We now wrap the WHOLE thing in a Throwable catch
+                val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_model.onnx")
+                if (!modelFile.exists()) {
+                    withContext(Dispatchers.Main) { showBanner("ONNX Model not found", isError = true) }
+                    return@launch
+                }
+
+                val cbzItem = uiState.value.contextualActionItems.firstOrNull { it.type == FileType.CBZ }
+                    ?: uiState.value.allRecentFiles.firstOrNull { it.type == FileType.CBZ }
+
+                if (cbzItem == null) {
+                    withContext(Dispatchers.Main) { showBanner("No CBZ found in Library.", isError = true) }
+                    return@launch
+                }
+
+                val uri = cbzItem.getUri() ?: return@launch
+                Timber.d("BUBBLE TEST START: ${cbzItem.displayName}")
+
+                var cacheFile: File? = null
+                try {
+                    Timber.d("Initializing Speech Bubble Detector...")
+                    val detector = getOrInitSpeechBubbleDetector(context) ?: run {
+                        withContext(Dispatchers.Main) { showBanner("ONNX Model could not be loaded", isError = true) }
+                        return@launch
+                    }
+                    Timber.d("Detector successfully initialized. Copying CBZ to cache...")
+
+                    cacheFile = File(context.cacheDir, "temp_test_bubble.cbz")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        cacheFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    Timber.d("CBZ copied to cache successfully. Opening archive...")
+
+                    val archiveDoc = com.aryan.reader.pdf.ArchiveDocumentWrapper(cacheFile)
+                    val totalPages = archiveDoc.getPageCount()
+                    Timber.d("Archive opened. Total pages: $totalPages")
+
+                    val targetIndex = 2
+                    if (targetIndex < totalPages) {
+                        Timber.d("Reading page $targetIndex...")
+                        val page = archiveDoc.openPage(targetIndex)
+                        if (page != null) {
+                            val w = page.getPageWidthPoint()
+                            val h = page.getPageHeightPoint()
+                            if (w > 0 && h > 0) {
+                                Timber.d("Rendering bitmap: $w x $h...")
+                                val bitmap = androidx.core.graphics.createBitmap(w, h)
+                                page.renderPageBitmap(bitmap, 0, 0, w, h, false)
+
+                                Timber.d("Running ONNX Inference...")
+                                val pageStartTime = System.currentTimeMillis()
+                                val bubbles = detector.detectBubbles(bitmap, confidenceThreshold = 0.4f)
+                                val pageDuration = System.currentTimeMillis() - pageStartTime
+
+                                val logLine = "Page $targetIndex: ${pageDuration}ms (Found ${bubbles.size} bubbles)"
+                                Timber.d(">>> [BUBBLE] $logLine")
+
+                                withContext(Dispatchers.Main) {
+                                    showBanner("Bubble Test Complete! $logLine")
+                                }
+                                bitmap.recycle()
+                            }
+                            page.close()
+                        }
+                    } else {
+                        Timber.e("Page $targetIndex out of bounds")
+                        withContext(Dispatchers.Main) {
+                            showBanner("CBZ does not have a 3rd page.", isError = true)
+                        }
+                    }
+                    archiveDoc.close()
+                    Timber.d("Archive closed cleanly.")
+                } finally {
+                    cacheFile?.delete()
+                }
+            } catch (t: Throwable) {
+                Timber.e(t, "Fatal error during bubble test")
+            }
+        }
     }
 
     data class PageModificationResult(
@@ -4558,6 +4659,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         firestoreRepository.removeListener(feedbackListener)
         panelDetector?.close()
         panelDetector = null
+
+        speechBubbleDetector?.close()
+        speechBubbleDetector = null
+
         Timber.d("ViewModel instance cleared (onCleared).")
     }
 
