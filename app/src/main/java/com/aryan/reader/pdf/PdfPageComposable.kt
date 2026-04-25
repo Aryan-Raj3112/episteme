@@ -456,7 +456,7 @@ internal fun PdfPageComposable(
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
     onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
-    onDetectPanels: suspend (Bitmap) -> List<android.graphics.RectF> = { emptyList() },
+    onDetectBubbles: suspend (Bitmap) -> List<android.graphics.RectF> = { emptyList() },
     onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
@@ -2698,32 +2698,24 @@ internal fun PdfPageComposable(
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
 
                             if (com.aryan.reader.BuildConfig.DEBUG && startScale <= 1.1f && bitmapState != null) {
-                                val tapInContentCoords = screenToContentCoordinates(tapOffset)
+                                val bubbles = onDetectBubbles(bitmapState!!)
 
-                                val ratioX = bitmapState!!.width.toFloat() / actualBitmapWidthPx.toFloat()
-                                val ratioY = bitmapState!!.height.toFloat() / actualBitmapHeightPx.toFloat()
-                                val tapXInBitmap = tapInContentCoords.x * ratioX
-                                val tapYInBitmap = tapInContentCoords.y * ratioY
-
-                                val panels = onDetectPanels(bitmapState!!)
-
-                                val tappedPanel = panels.firstOrNull {
-                                    it.contains(tapXInBitmap, tapYInBitmap)
-                                }
-
-                                if (tappedPanel != null) {
-                                    Timber.d("Popup: Cropping panel $tappedPanel")
-                                    val left = tappedPanel.left.coerceAtLeast(0f).toInt()
-                                    val top = tappedPanel.top.coerceAtLeast(0f).toInt()
-                                    val right = tappedPanel.right.coerceAtMost(bitmapState!!.width.toFloat()).toInt()
-                                    val bottom = tappedPanel.bottom.coerceAtMost(bitmapState!!.height.toFloat()).toInt()
-                                    val width = right - left
-                                    val height = bottom - top
-
-                                    if (width > 0 && height > 0) {
-                                        val cropped = android.graphics.Bitmap.createBitmap(bitmapState!!, left, top, width, height)
-                                        onShowPanelPopup(cropped)
+                                if (bubbles.isNotEmpty()) {
+                                    try {
+                                        val resultBitmap = bitmapState!!.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                                        val canvas = android.graphics.Canvas(resultBitmap)
+                                        val paint = android.graphics.Paint().apply {
+                                            color = android.graphics.Color.RED
+                                            style = android.graphics.Paint.Style.STROKE
+                                            strokeWidth = 8f
+                                        }
+                                        for (bubble in bubbles) {
+                                            canvas.drawRect(bubble, paint)
+                                        }
+                                        onShowPanelPopup(resultBitmap)
                                         return@launch
+                                    } catch (e: Exception) {
+                                        Timber.e(e, "Failed to copy bitmap for bubbles")
                                     }
                                 }
                             }

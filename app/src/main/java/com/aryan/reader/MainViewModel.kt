@@ -4978,6 +4978,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<android.graphics.RectF> {
+        return withContext(mlDispatcher) {
+            try {
+                val detector = getOrInitSpeechBubbleDetector(context)
+                detector?.detectBubbles(bitmap) ?: emptyList()
+            } catch (e: Exception) {
+                Timber.e(e, "Error during speech bubble detection")
+                emptyList()
+            }
+        }
+    }
+
     companion object {
         private const val KEY_SORT_ORDER = "sort_order"
         internal const val KEY_SHELVES = "shelf_names"

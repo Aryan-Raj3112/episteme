@@ -3506,12 +3506,12 @@ fun PdfViewerScreen(
                                                         currentActiveOffset = newOffset
                                                     }
                                                 },
-                                                onDetectPanels = { bitmap ->
-                                                    Toast.makeText(context, "Scanning for panels...", Toast.LENGTH_SHORT).show()
-                                                    viewModel.detectComicPanels(bitmap, context)
+                                                onDetectBubbles = { bitmap ->
+                                                    Toast.makeText(context, "Scanning for bubbles...", Toast.LENGTH_SHORT).show()
+                                                    viewModel.detectSpeechBubbles(bitmap, context)
                                                 },
-                                                onShowPanelPopup = { croppedBitmap ->
-                                                    poppedUpPanelBitmap = croppedBitmap
+                                                onShowPanelPopup = { bitmapWithRects ->
+                                                    poppedUpPanelBitmap = bitmapWithRects
                                                 },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
@@ -5595,7 +5595,7 @@ fun PdfViewerScreen(
                     ) {
                         Image(
                             bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
-                            contentDescription = "Zoomed Panel",
+                            contentDescription = "Annotated Page",
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp)
@@ -5615,7 +5615,7 @@ fun PdfViewerScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close Panel",
+                                contentDescription = "Close Image",
                                 tint = Color.White
                             )
                         }
