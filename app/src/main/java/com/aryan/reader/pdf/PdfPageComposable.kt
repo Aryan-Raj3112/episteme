@@ -398,7 +398,8 @@ internal fun PdfPageComposable(
     searchHighlightMode: SearchHighlightMode = SearchHighlightMode.ALL,
     searchResultToHighlight: SearchResult?,
     ocrHoverHighlights: StableHolder<List<RectF>> = StableHolder(emptyList()),
-    onSingleTap: () -> Unit,
+    onPreSingleTap: ((Offset) -> Boolean)? = null,
+    onSingleTap: (Offset?) -> Unit,
     isProUser: Boolean,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
@@ -499,6 +500,7 @@ internal fun PdfPageComposable(
     }
 
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
+    val currentOnPreSingleTap by rememberUpdatedState(onPreSingleTap)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
 
     val effectiveScale = if (isZoomEnabled && !isVerticalScroll) scale else externalScale
@@ -2612,9 +2614,21 @@ internal fun PdfPageComposable(
                 if (!isTapDetectionAllowed) return@pointerInput
 
                 detectTapGestures(onTap = { tapOffset ->
+                    if (currentOnPreSingleTap?.invoke(tapOffset) == true) {
+                        return@detectTapGestures
+                    }
+
                     val tapInContentCoords = screenToContentCoordinates(tapOffset)
                     val tapXInBitmap = tapInContentCoords.x
                     val tapYInBitmap = tapInContentCoords.y
+                    val isWithinContentBounds =
+                        tapXInBitmap in 0f..actualBitmapWidthPx.toFloat() &&
+                            tapYInBitmap in 0f..actualBitmapHeightPx.toFloat()
+
+                    if (!isWithinContentBounds) {
+                        currentOnSingleTap(tapOffset)
+                        return@detectTapGestures
+                    }
 
                     coroutineScope.launch {
                         val nativeResult = withContext(Dispatchers.IO) {
@@ -2776,7 +2790,7 @@ internal fun PdfPageComposable(
                                 currentPageRotation,
                             )
                         } else {
-                            currentOnSingleTap()
+                            currentOnSingleTap(tapOffset)
                         }
                     }
                 }, onDoubleTap = { tapOffset ->

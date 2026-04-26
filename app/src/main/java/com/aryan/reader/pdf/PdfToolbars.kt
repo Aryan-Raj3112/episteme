@@ -83,6 +83,8 @@ internal fun PdfTopBar(
     onShowCustomizeTools: () -> Unit,
     onShowOcrLanguage: () -> Unit,
     onShowVisualOptions: () -> Unit,
+    tapToNavigateEnabled: Boolean,
+    onToggleTapToNavigate: () -> Unit,
     onChangeDisplayMode: (DisplayMode) -> Unit,
     onToggleKeepScreenOn: () -> Unit,
     onStartAutoScroll: () -> Unit,
@@ -240,6 +242,26 @@ internal fun PdfTopBar(
                                         enabled = !isTtsSessionActive,
                                         onClick = { onChangeDisplayMode(DisplayMode.PAGINATION); showMoreMenu = false },
                                         trailingIcon = { if (displayMode == DisplayMode.PAGINATION) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
+                                    )
+                                    HorizontalDivider()
+                                }
+
+                                if (!hiddenTools.contains(PdfReaderTool.TAP_TO_TURN.name)) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
+                                        enabled = displayMode == DisplayMode.PAGINATION,
+                                        onClick = {
+                                            onToggleTapToNavigate()
+                                            showMoreMenu = false
+                                        },
+                                        trailingIcon = {
+                                            if (tapToNavigateEnabled) {
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_enabled)
+                                                )
+                                            }
+                                        }
                                     )
                                     HorizontalDivider()
                                 }

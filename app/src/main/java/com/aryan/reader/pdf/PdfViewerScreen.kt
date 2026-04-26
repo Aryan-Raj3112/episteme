@@ -215,6 +215,8 @@ import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.epubreader.TtsOverlayControls
+import com.aryan.reader.epubreader.loadTapToNavigateSetting
+import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
@@ -291,6 +293,7 @@ fun PdfViewerScreen(
     val focusManager = LocalFocusManager.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
+    var tapToNavigateEnabled by remember { mutableStateOf(loadTapToNavigateSetting(context)) }
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
@@ -3239,6 +3242,44 @@ fun PdfViewerScreen(
                             val stablePdfDocument = remember(pdfDocument) { StableHolder(pdfDocument!!) }
                             when (displayMode) {
                                 DisplayMode.PAGINATION -> {
+                                    val onPaginationPreSingleTap: (Offset) -> Boolean = { tapOffset ->
+                                        val canTurnPagesByTap = tapToNavigateEnabled &&
+                                            (currentPageScale <= 1.02f || isScrollLocked)
+
+                                        if (!canTurnPagesByTap) {
+                                            false
+                                        } else {
+                                            val oneQuarterWidthPx = boxMaxWidthFloat / 4f
+                                            when {
+                                                tapOffset.x < oneQuarterWidthPx -> {
+                                                    coroutineScope.launch {
+                                                        val targetPage =
+                                                            (pagerState.currentPage - 1).coerceAtLeast(0)
+                                                        if (targetPage != pagerState.currentPage) {
+                                                            pagerState.scrollToPage(targetPage)
+                                                        }
+                                                    }
+                                                    true
+                                                }
+
+                                                tapOffset.x > (boxMaxWidthFloat - oneQuarterWidthPx) -> {
+                                                    coroutineScope.launch {
+                                                        val targetPage =
+                                                            (pagerState.currentPage + 1).coerceAtMost(
+                                                                pagerState.pageCount - 1
+                                                            )
+                                                        if (targetPage != pagerState.currentPage) {
+                                                            pagerState.scrollToPage(targetPage)
+                                                        }
+                                                    }
+                                                    true
+                                                }
+
+                                                else -> false
+                                            }
+                                        }
+                                    }
+
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         HorizontalPager(
                                             state = pagerState,
@@ -3439,7 +3480,8 @@ fun PdfViewerScreen(
                                                 modifier = Modifier.fillMaxSize(),
                                                 showAllTextHighlights = showAllTextHighlights,
                                                 onHighlightLoading = { /* no-op for paginated mode */ },
-                                                onSingleTap = onSingleTapStable,
+                                                onPreSingleTap = onPaginationPreSingleTap,
+                                                onSingleTap = { _ -> onSingleTapStable() },
                                                 isProUser = isProUser,
                                                 onShowDictionaryUpsellDialog = {
                                                     if (useOnlineDictionary) {
@@ -4477,6 +4519,11 @@ fun PdfViewerScreen(
                         showOcrLanguageDialog = true
                     },
                     onShowVisualOptions = { showVisualOptionsSheet = true },
+                    tapToNavigateEnabled = tapToNavigateEnabled,
+                    onToggleTapToNavigate = {
+                        tapToNavigateEnabled = !tapToNavigateEnabled
+                        saveTapToNavigateSetting(context, tapToNavigateEnabled)
+                    },
                     onChangeDisplayMode = { displayMode = it },
                     onToggleKeepScreenOn = {
                         isKeepScreenOn = !isKeepScreenOn

@@ -47,6 +47,7 @@ enum class PdfReaderTool(val title: String, val category: String) {
     THEME("Theme Settings", "Top Bar"),
     LOCK_PANNING("Lock Panning", "Top Bar"),
     VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
+    TAP_TO_TURN("Tap to Turn Pages", "Overflow Menu"),
     FULL_SCREEN("Full Screen", "Top Bar"),
     SLIDER("Navigation Slider", "Bottom Bar"),
     TOC("Sidebar", "Bottom Bar"),

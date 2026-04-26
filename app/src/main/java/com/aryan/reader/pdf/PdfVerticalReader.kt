@@ -1542,7 +1542,7 @@ internal fun PdfVerticalReader(
                             }
 
                             val onSingleTapLambda = remember(onPageClick) {
-                                {
+                                { _: Offset? ->
                                     selectionClearTrigger++
                                     onPageClick()
                                 }
