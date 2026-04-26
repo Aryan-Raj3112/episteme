@@ -35,18 +35,15 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
+import androidx.core.graphics.createBitmap
 import androidx.core.net.toUri
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import kotlinx.coroutines.withTimeoutOrNull
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.aryan.reader.data.CloudflareRepository
@@ -61,8 +58,12 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.RemoteConfigRepository
 import com.aryan.reader.data.ShelfMetadata
+import com.aryan.reader.data.SmartCollectionEngine
+import com.aryan.reader.data.TagEntity
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
+import com.aryan.reader.epub.CalibreBundleExtractor
+import com.aryan.reader.epub.CalibreBundleResult
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.MobiParser
@@ -83,9 +84,11 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -94,6 +97,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -105,6 +109,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -113,16 +118,8 @@ import java.io.FileOutputStream
 import java.util.Date
 import java.util.UUID
 import java.util.concurrent.CancellationException
-import java.util.concurrent.TimeUnit
-import androidx.core.graphics.createBitmap
-import com.aryan.reader.data.SmartCollectionEngine
-import com.aryan.reader.data.TagEntity
-import com.aryan.reader.epub.CalibreBundleExtractor
-import com.aryan.reader.epub.CalibreBundleResult
-import io.legere.pdfiumandroid.PdfiumCore
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.flow.distinctUntilChanged
 import java.util.concurrent.Executors.newSingleThreadExecutor
+import java.util.concurrent.TimeUnit
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
@@ -132,6 +129,18 @@ private const val KEY_FILTER_FOLDERS = "filter_folders"
 private const val KEY_FILTER_READ_STATUS = "filter_read_status"
 private const val KEY_FILTER_TAG_IDS = "filter_tag_ids"
 private const val KEY_DEFAULT_TAGS_SEEDED = "default_tags_seeded"
+private val PDF_VIEWER_FILE_TYPES = setOf(FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7)
+private val EPUB_READER_FILE_TYPES = setOf(
+    FileType.EPUB,
+    FileType.MOBI,
+    FileType.MD,
+    FileType.TXT,
+    FileType.HTML,
+    FileType.FB2,
+    FileType.DOCX,
+    FileType.ODT,
+    FileType.FODT
+)
 
 data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
 
@@ -786,6 +795,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId. URI found: ${uri != null}")
 
         uri?.let {
+            persistReaderSession(bookId, item.type)
             Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
             _internalState.update { state ->
                 state.copy(
@@ -1119,6 +1129,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         sweepOrphanedCache()
+        restoreReaderSessionIfNeeded()
 
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
 
@@ -1183,6 +1194,186 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
         }
     }
+
+    private fun persistReaderSession(bookId: String, type: FileType) {
+        prefs.edit {
+            putString(KEY_LAST_OPEN_BOOK_ID, bookId)
+            putString(KEY_LAST_OPEN_FILE_TYPE, type.name)
+        }
+    }
+
+    private fun clearPersistedReaderSession() {
+        prefs.edit {
+            remove(KEY_LAST_OPEN_BOOK_ID)
+            remove(KEY_LAST_OPEN_FILE_TYPE)
+        }
+    }
+
+    private fun restoreReaderSessionIfNeeded() {
+        val currentState = _internalState.value
+        if (currentState.selectedBookId != null || currentState.selectedPdfUri != null || currentState.selectedEpubUri != null) {
+            return
+        }
+
+        val persistedType = prefs.getString(KEY_LAST_OPEN_FILE_TYPE, null)?.let { typeName ->
+            runCatching { FileType.valueOf(typeName) }.getOrNull()
+        }
+        val restoreBookId = prefs.getString(KEY_LAST_OPEN_BOOK_ID, null) ?: return
+        if (persistedType == null) {
+            clearPersistedReaderSession()
+            return
+        }
+
+        viewModelScope.launch {
+            val item = recentFilesRepository.getFileByBookId(restoreBookId)
+            val restoreUri = item?.getUri()
+            if (item == null || restoreUri == null || item.type != persistedType) {
+                Timber.tag("ReaderRestore")
+                    .w("Skipping restore for bookId=$restoreBookId. Item missing, URI missing, or type mismatch.")
+                clearPersistedReaderSession()
+                return@launch
+            }
+
+            when {
+                item.type in PDF_VIEWER_FILE_TYPES -> {
+                    _internalState.update { state ->
+                        if (state.selectedBookId != null || state.selectedPdfUri != null || state.selectedEpubUri != null) {
+                            state
+                        } else {
+                            state.copy(
+                                selectedPdfUri = restoreUri,
+                                selectedBookId = item.bookId,
+                                selectedEpubBook = null,
+                                selectedEpubUri = null,
+                                selectedFileType = item.type,
+                                isLoading = false,
+                                errorMessage = null,
+                                initialLocator = null,
+                                initialCfi = null,
+                                initialBookmarksJson = item.bookmarksJson,
+                                initialHighlightsJson = null,
+                                initialPageInBook = item.lastPage
+                            )
+                        }
+                    }
+                    persistReaderSession(item.bookId, item.type)
+                    Timber.tag("ReaderRestore").i("Restored reader session for ${item.bookId} (${item.type}).")
+                }
+                item.type in EPUB_READER_FILE_TYPES -> {
+                    val locator =
+                        if (item.lastChapterIndex != null && item.locatorBlockIndex != null && item.locatorCharOffset != null) {
+                            Locator(
+                                chapterIndex = item.lastChapterIndex,
+                                blockIndex = item.locatorBlockIndex,
+                                charOffset = item.locatorCharOffset
+                            )
+                        } else {
+                            null
+                        }
+
+                    _internalState.update { state ->
+                        if (state.selectedBookId != null || state.selectedPdfUri != null || state.selectedEpubUri != null) {
+                            state
+                        } else {
+                            state.copy(
+                                selectedPdfUri = null,
+                                selectedBookId = item.bookId,
+                                selectedEpubBook = null,
+                                selectedEpubUri = restoreUri,
+                                selectedFileType = item.type,
+                                isLoading = true,
+                                errorMessage = null,
+                                initialLocator = locator,
+                                initialCfi = item.lastPositionCfi,
+                                initialBookmarksJson = item.bookmarksJson,
+                                initialHighlightsJson = item.highlightsJson,
+                                initialPageInBook = null
+                            )
+                        }
+                    }
+
+                    runCatching {
+                        restoreEpubReaderBook(item, restoreUri)
+                    }.onSuccess { restoredBook ->
+                        _internalState.update { state ->
+                            if (state.selectedBookId != item.bookId) {
+                                state
+                            } else {
+                                state.copy(selectedEpubBook = restoredBook, isLoading = false, errorMessage = null)
+                            }
+                        }
+                        persistReaderSession(item.bookId, item.type)
+                        Timber.tag("ReaderRestore").i("Restored reader session for ${item.bookId} (${item.type}).")
+                    }.onFailure { error ->
+                        Timber.tag("ReaderRestore").e(error, "Failed to restore EPUB-like session for ${item.bookId}")
+                        clearPersistedReaderSession()
+                        _internalState.update { state ->
+                            if (state.selectedBookId != item.bookId) {
+                                state
+                            } else {
+                                state.copy(
+                                    selectedBookId = null,
+                                    selectedEpubUri = null,
+                                    selectedEpubBook = null,
+                                    selectedFileType = null,
+                                    isLoading = false,
+                                    errorMessage = appContext.getString(R.string.error_load_file, error.message)
+                                )
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    clearPersistedReaderSession()
+                }
+            }
+        }
+    }
+
+    private suspend fun restoreEpubReaderBook(item: RecentFileItem, uri: Uri): EpubBook =
+        withContext(Dispatchers.IO) {
+            appContext.contentResolver.openInputStream(uri).use { inputStream ->
+                if (inputStream == null) {
+                    throw Exception("Could not open input stream for restore")
+                }
+
+                when (item.type) {
+                    FileType.EPUB -> epubParser.createEpubBook(
+                        inputStream = inputStream,
+                        bookId = item.bookId,
+                        originalBookNameHint = item.displayName
+                    )
+
+                    FileType.MOBI -> mobiParser.createMobiBook(
+                        inputStream = inputStream,
+                        bookId = item.bookId,
+                        originalBookNameHint = item.displayName
+                    ) ?: throw Exception("MobiParser returned null. The file might be DRM-protected or invalid.")
+
+                    FileType.FB2 -> fb2Parser.createFb2Book(
+                        inputStream = inputStream,
+                        bookId = item.bookId,
+                        originalBookNameHint = item.displayName
+                    )
+
+                    FileType.ODT, FileType.FODT -> odtParser.createOdtBook(
+                        inputStream = inputStream,
+                        bookId = item.bookId,
+                        originalBookNameHint = item.displayName,
+                        isFlat = item.type == FileType.FODT
+                    )
+
+                    FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> singleFileImporter.importSingleFile(
+                        inputStream = inputStream,
+                        type = item.type,
+                        originalBookNameHint = item.displayName,
+                        bookId = item.bookId
+                    )
+
+                    else -> throw IllegalArgumentException("Unsupported reader restore type: ${item.type}")
+                }
+            }
+        }
 
     private fun getDisplayPathFromUri(context: Context, uriString: String): String {
         val uri = uriString.toUri()
@@ -1870,6 +2061,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 initialPageInBook = null
             )
         }
+        clearPersistedReaderSession()
 
         if (closingBookId != null && closingBookId == externalOpenedBookId) {
             val behavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK"
@@ -3288,6 +3480,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val bookId = item.bookId
 
             if (type == FileType.PDF || type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+                persistReaderSession(bookId, type)
                 _internalState.update {
                     it.copy(
                         selectedEpubUri = null,
@@ -3317,6 +3510,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 stateUpdateDeferred.complete(true)
 
             } else {
+                persistReaderSession(bookId, type)
                 val epubBook = withContext(Dispatchers.IO) {
                     appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
                         singleFileImporter.importSingleFile(
@@ -3540,6 +3734,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             isLoading = false
                         )
                     }
+                    persistReaderSession(bookId, type)
                     addFileToRecent(
                         uri,
                         type,
@@ -3587,6 +3782,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             initialHighlightsJson = recentItem?.highlightsJson,
                         )
                     }
+                    persistReaderSession(bookId, type)
 
                     if (!suppressNavigation) {
                         Timber.tag("FileSwitch").d("EPUB state updated, emitting navigation event")
@@ -5011,6 +5207,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_TABS_ENABLED = "tabs_enabled"
         private const val KEY_OPEN_TAB_IDS = "open_tab_ids"
         private const val KEY_ACTIVE_TAB = "active_tab_book_id"
+        private const val KEY_LAST_OPEN_BOOK_ID = "last_open_book_id"
+        private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
         private const val KEY_APP_THEME_MODE = "app_theme_mode"
