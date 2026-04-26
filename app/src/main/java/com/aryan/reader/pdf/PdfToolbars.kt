@@ -447,7 +447,9 @@ fun PdfBottomBar(
     onToggleHighlights: () -> Unit,
     onShowAiHub: () -> Unit,
     onToggleEditMode: () -> Unit,
-    onToggleTts: () -> Unit
+    onToggleTts: () -> Unit,
+    isBubbleZoomModeActive: Boolean,
+    onToggleBubbleZoom: () -> Unit
 ) {
     AnimatedVisibility(
         visible = showStandardBars && !searchStateActive,
@@ -564,6 +566,20 @@ fun PdfBottomBar(
                         onClick = onToggleTts
                     ) {
                         Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS", tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                if (BuildConfig.DEBUG) {
+                    TooltipIconButton(
+                        text = if (isBubbleZoomModeActive) "Exit Smart Zoom" else "Smart Comic Zoom",
+                        description = "Toggle Smart Comic Zoom",
+                        onClick = onToggleBubbleZoom
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = "Smart Comic Zoom",
+                            tint = if (isBubbleZoomModeActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 

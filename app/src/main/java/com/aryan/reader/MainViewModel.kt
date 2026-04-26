@@ -364,7 +364,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun getOrInitSpeechBubbleDetector(context: Context): com.aryan.reader.ml.ISpeechBubbleDetector? {
         if (speechBubbleDetector == null && BuildConfig.DEBUG) {
-            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_model.onnx")
+            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v2.onnx")
             if (modelFile.exists()) {
                 try {
                     val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")

@@ -585,6 +585,7 @@ fun PdfViewerScreen(
     var customHighlightColors by remember { mutableStateOf(loadCustomHighlightColors(context)) }
     var showHighlightColorPicker by remember { mutableStateOf(false) }
     var highlightColorPickerInitialSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
+    var isBubbleZoomModeActive by remember { mutableStateOf(false) }
 
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
@@ -3683,7 +3684,15 @@ fun PdfViewerScreen(
                                                         paginationDraggingBoxId = null
                                                     }
                                                 },
-                                                onDragPageTurn = { /* Handled in onTextBoxDrag */ },
+                                                onDragPageTurn = { direction ->
+                                                    coroutineScope.launch {
+                                                        val targetPage = pagerState.currentPage + direction
+                                                        if (targetPage in 0 until totalDisplayPages) {
+                                                            pagerState.animateScrollToPage(targetPage)
+                                                        }
+                                                    }
+                                                },
+                                                isBubbleZoomModeActive = isBubbleZoomModeActive,
                                                 isVisible = isVisiblePage,
                                                 isActivePage = pagerState.currentPage == pageIndex,
                                                 isScrolling = pagerState.isScrollInProgress
@@ -4861,6 +4870,10 @@ fun PdfViewerScreen(
                         } else {
                             startTtsWithPermissionCheck(null, null)
                         }
+                    },
+                    isBubbleZoomModeActive = isBubbleZoomModeActive,
+                    onToggleBubbleZoom = {
+                        isBubbleZoomModeActive = !isBubbleZoomModeActive
                     }
                 )
 
