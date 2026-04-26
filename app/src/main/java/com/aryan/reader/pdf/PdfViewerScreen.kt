@@ -660,22 +660,11 @@ fun PdfViewerScreen(
         snapPreviewLocation,
         isEditMode,
         isDockDragging,
-        showStandardBars,
         systemUiMode,
         statusBarHeightDp
     ) {
         if (!isEditMode) {
-            var h = 0.dp
-            if (showStandardBars) {
-                h += 56.dp
-            }
-
-            val isStatusBarVisible = systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)
-
-            if (isStatusBarVisible) {
-                h += statusBarHeightDp
-            }
-            h
+            0.dp
         } else {
             val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
             val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
@@ -689,6 +678,31 @@ fun PdfViewerScreen(
         targetValue = targetVerticalHeaderHeight,
         animationSpec = tween(durationMillis = 200),
         label = "verticalHeaderHeight"
+    )
+
+    val targetTopOverlayInset = remember(
+        showStandardBars,
+        systemUiMode,
+        statusBarHeightDp
+    ) {
+        if (!showStandardBars) {
+            0.dp
+        } else {
+            var inset = 56.dp
+            val isStatusBarVisible =
+                systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)
+
+            if (isStatusBarVisible) {
+                inset += statusBarHeightDp
+            }
+            inset
+        }
+    }
+
+    val topOverlayInset by animateDpAsState(
+        targetValue = targetTopOverlayInset,
+        animationSpec = tween(durationMillis = 200),
+        label = "topOverlayInset"
     )
 
     val verticalFooterHeight by remember(
@@ -4196,7 +4210,7 @@ fun PdfViewerScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .padding(top = if (showBars) verticalHeaderHeight else 0.dp)
+                        .padding(top = topOverlayInset)
                         .padding(8.dp)
                 ) {
                     Surface(
@@ -4604,7 +4618,7 @@ fun PdfViewerScreen(
                 ReflowProgressOverlay(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = verticalHeaderHeight)
+                        .padding(top = topOverlayInset)
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp),
                     showStandardBars = showStandardBars,
@@ -4619,7 +4633,7 @@ fun PdfViewerScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = verticalHeaderHeight)
+                            .padding(top = topOverlayInset)
                             .background(MaterialTheme.colorScheme.surface)
                     ) {
                         if (isBackgroundIndexing) {
