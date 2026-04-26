@@ -139,6 +139,17 @@ android {
             version = "3.22.1"
         }
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.jvmArgs("-Xss2m")
+        }
+    }
+    configurations {
+        named("testImplementation") {
+            exclude(group = "org.slf4j", module = "slf4j-android")
+        }
+    }
 }
 //noinspection UseTomlInstead
 dependencies {
@@ -238,6 +249,11 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.25.0")
 
     implementation("androidx.core:core-splashscreen:1.2.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk-android:1.14.9")
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("org.slf4j:slf4j-nop:2.0.17")
 }
 
 spotless {

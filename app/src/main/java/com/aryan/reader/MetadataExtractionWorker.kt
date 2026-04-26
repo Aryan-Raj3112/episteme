@@ -7,6 +7,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.epub.EpubParser
+import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.pdf.PdfCoverGenerator
 import io.legere.pdfiumandroid.PdfiumCore
@@ -55,6 +56,13 @@ class MetadataExtractionWorker(
 
                 if (item.sourceFolderUri == null) return@forEach
 
+                val tempExtractionDir =
+                    if (item.type == FileType.EPUB || item.type == FileType.MOBI || item.type == FileType.ODT || item.type == FileType.FODT) {
+                        ImportedFileCache.createTemporaryBookDir(appContext, item.bookId, "metadata")
+                    } else {
+                        null
+                    }
+
                 try {
                     val uri = item.uriString?.toUri() ?: return@forEach
                     val type = item.type
@@ -86,7 +94,8 @@ class MetadataExtractionWorker(
                                     inputStream = inputStream,
                                     bookId = item.bookId,
                                     originalBookNameHint = item.displayName,
-                                    parseContent = false
+                                    parseContent = false,
+                                    extractionDirOverride = tempExtractionDir
                                 )
                                 title = book.title.takeIf { it.isNotBlank() && it != "content" }
                                 author = book.author.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
@@ -97,7 +106,8 @@ class MetadataExtractionWorker(
                                     inputStream = inputStream,
                                     bookId = item.bookId,
                                     originalBookNameHint = item.displayName,
-                                    parseContent = false
+                                    parseContent = false,
+                                    extractionDirOverride = tempExtractionDir
                                 )
                                 book?.let {
                                     title = it.title.takeIf { t -> t.isNotBlank() && t != "content" }
@@ -139,7 +149,8 @@ class MetadataExtractionWorker(
                                     bookId = item.bookId,
                                     originalBookNameHint = item.displayName,
                                     isFlat = type == FileType.FODT,
-                                    parseContent = false
+                                    parseContent = false,
+                                    extractionDirOverride = tempExtractionDir
                                 )
                                 title = book.title.takeIf { it.isNotBlank() && it != "content" }
                                 author = book.author.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
@@ -166,13 +177,16 @@ class MetadataExtractionWorker(
                     Timber.tag("MetadataWorker").e(e, "Failed to extract metadata for ${item.displayName}")
                 } finally {
                     try {
-                        val cacheDir = File(appContext.cacheDir, "imported_file_${item.bookId}")
-                        if (cacheDir.exists()) {
-                            val deleted = cacheDir.deleteRecursively()
-                            if (deleted) Timber.tag("MetadataWorker").d("Cleaned up extraction cache for ${item.bookId}")
+                        if (tempExtractionDir?.exists() == true) {
+                            val deleted = tempExtractionDir.deleteRecursively()
+                            if (deleted) {
+                                Timber.tag("MetadataWorker")
+                                    .d("Cleaned up temporary extraction cache for ${item.bookId}")
+                            }
                         }
                     } catch (e: Exception) {
-                        Timber.tag("MetadataWorker").e(e, "Failed to clean up extraction cache for ${item.bookId}")
+                        Timber.tag("MetadataWorker")
+                            .e(e, "Failed to clean up temporary extraction cache for ${item.bookId}")
                     }
                 }
             }

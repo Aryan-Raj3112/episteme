@@ -28,6 +28,7 @@ import timber.log.Timber
 import com.aryan.reader.BookImporter
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.pdf.PdfRichTextRepository
+import com.aryan.reader.epub.ImportedFileCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -454,8 +455,7 @@ class RecentFilesRepository(private val context: Context) {
                         pdfTextBoxRepository.getFileForSync(item.bookId).delete()
                         pdfHighlightRepository.getFileForSync(item.bookId).delete()
 
-                        val cacheDir = File(context.cacheDir, "imported_file_${item.bookId}")
-                        if (cacheDir.exists()) cacheDir.deleteRecursively()
+                        ImportedFileCache.clearBookCache(context, item.bookId)
                     } catch (e: Exception) {
                         Timber.e(e, "Error during deep cleanup of sidecars for ${item.bookId}: ${e.message}")
                     }
@@ -527,8 +527,10 @@ class RecentFilesRepository(private val context: Context) {
         renameSafely(pdfTextBoxRepository.getFileForSync(oldId), pdfTextBoxRepository.getFileForSync(newId))
         renameSafely(pdfHighlightRepository.getFileForSync(oldId), pdfHighlightRepository.getFileForSync(newId))
 
-        val oldCache = File(context.cacheDir, "imported_file_$oldId")
-        val newCache = File(context.cacheDir, "imported_file_$newId")
+        ImportedFileCache.clearTemporaryBookDirs(context, oldId)
+        ImportedFileCache.clearTemporaryBookDirs(context, newId)
+        val oldCache = ImportedFileCache.activeBookDir(context, oldId)
+        val newCache = ImportedFileCache.activeBookDir(context, newId)
         if (oldCache.exists()) {
             if (newCache.exists()) newCache.deleteRecursively()
             oldCache.renameTo(newCache)
@@ -540,8 +542,7 @@ class RecentFilesRepository(private val context: Context) {
         try {
             pdfRichTextRepository.getFileForSync(bookId).delete()
             pageLayoutRepository.getLayoutFile(bookId).delete()
-            val cacheDir = File(context.cacheDir, "imported_file_$bookId")
-            if (cacheDir.exists()) cacheDir.deleteRecursively()
+            ImportedFileCache.clearBookCache(context, bookId)
             Timber.d("Cleared layout and text caches for modified book: $bookId")
         } catch (e: Exception) {
             Timber.e(e, "Error clearing caches for $bookId")

@@ -66,6 +66,7 @@ import com.aryan.reader.epub.CalibreBundleExtractor
 import com.aryan.reader.epub.CalibreBundleResult
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.EpubParser
+import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.epub.SingleFileImporter
 import com.aryan.reader.paginatedreader.Locator
@@ -343,6 +344,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val feedbackRepository = FeedbackRepository(appContext)
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
+    private val epubRecoveryMutex = Mutex()
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
@@ -373,7 +375,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun getOrInitSpeechBubbleDetector(context: Context): com.aryan.reader.ml.ISpeechBubbleDetector? {
         if (speechBubbleDetector == null && BuildConfig.DEBUG) {
-            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v2.onnx")
+            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.onnx")
             if (modelFile.exists()) {
                 try {
                     val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
@@ -1330,50 +1332,122 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun restoreEpubReaderBook(item: RecentFileItem, uri: Uri): EpubBook =
-        withContext(Dispatchers.IO) {
-            appContext.contentResolver.openInputStream(uri).use { inputStream ->
-                if (inputStream == null) {
-                    throw Exception("Could not open input stream for restore")
+    private suspend fun restoreEpubReaderBook(item: RecentFileItem, uri: Uri): EpubBook {
+        return restoreEpubReaderBook(item.type, item.bookId, item.displayName, uri)
+    }
+
+    private suspend fun restoreEpubReaderBook(
+        type: FileType,
+        bookId: String,
+        displayName: String,
+        uri: Uri
+    ): EpubBook = withContext(Dispatchers.IO) {
+        appContext.contentResolver.openInputStream(uri).use { inputStream ->
+            if (inputStream == null) {
+                throw Exception("Could not open input stream for restore")
+            }
+
+            when (type) {
+                FileType.EPUB -> epubParser.createEpubBook(
+                    inputStream = inputStream,
+                    bookId = bookId,
+                    originalBookNameHint = displayName
+                )
+
+                FileType.MOBI -> mobiParser.createMobiBook(
+                    inputStream = inputStream,
+                    bookId = bookId,
+                    originalBookNameHint = displayName
+                ) ?: throw Exception("MobiParser returned null. The file might be DRM-protected or invalid.")
+
+                FileType.FB2 -> fb2Parser.createFb2Book(
+                    inputStream = inputStream,
+                    bookId = bookId,
+                    originalBookNameHint = displayName
+                )
+
+                FileType.ODT, FileType.FODT -> odtParser.createOdtBook(
+                    inputStream = inputStream,
+                    bookId = bookId,
+                    originalBookNameHint = displayName,
+                    isFlat = type == FileType.FODT
+                )
+
+                FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> singleFileImporter.importSingleFile(
+                    inputStream = inputStream,
+                    type = type,
+                    originalBookNameHint = displayName,
+                    bookId = bookId
+                )
+
+                else -> throw IllegalArgumentException("Unsupported reader restore type: $type")
+            }
+        }
+    }
+
+    fun recoverSelectedEpubContent() {
+        val state = _internalState.value
+        val bookId = state.selectedBookId ?: return
+        val uri = state.selectedEpubUri ?: return
+        val type = state.selectedFileType ?: return
+
+        if (type !in EPUB_READER_FILE_TYPES) return
+
+        val displayName = state.selectedEpubBook?.fileName
+            ?: state.selectedEpubBook?.title
+            ?: getFileNameFromUri(uri, appContext)
+            ?: "unknown_book"
+
+        viewModelScope.launch {
+            epubRecoveryMutex.withLock {
+                val latestState = _internalState.value
+                if (latestState.selectedBookId != bookId || latestState.selectedEpubUri != uri) {
+                    return@withLock
+                }
+                if (latestState.selectedEpubBook?.extractionBasePath?.let { path ->
+                        path.isNotBlank() && File(path).exists()
+                    } == true
+                ) {
+                    return@withLock
                 }
 
-                when (item.type) {
-                    FileType.EPUB -> epubParser.createEpubBook(
-                        inputStream = inputStream,
-                        bookId = item.bookId,
-                        originalBookNameHint = item.displayName
+                _internalState.update {
+                    if (it.selectedBookId == bookId) it.copy(isLoading = true, errorMessage = null) else it
+                }
+
+                runCatching {
+                    val item = recentFilesRepository.getFileByBookId(bookId)
+                    restoreEpubReaderBook(
+                        type = item?.type ?: type,
+                        bookId = bookId,
+                        displayName = item?.displayName ?: displayName,
+                        uri = uri
                     )
-
-                    FileType.MOBI -> mobiParser.createMobiBook(
-                        inputStream = inputStream,
-                        bookId = item.bookId,
-                        originalBookNameHint = item.displayName
-                    ) ?: throw Exception("MobiParser returned null. The file might be DRM-protected or invalid.")
-
-                    FileType.FB2 -> fb2Parser.createFb2Book(
-                        inputStream = inputStream,
-                        bookId = item.bookId,
-                        originalBookNameHint = item.displayName
-                    )
-
-                    FileType.ODT, FileType.FODT -> odtParser.createOdtBook(
-                        inputStream = inputStream,
-                        bookId = item.bookId,
-                        originalBookNameHint = item.displayName,
-                        isFlat = item.type == FileType.FODT
-                    )
-
-                    FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> singleFileImporter.importSingleFile(
-                        inputStream = inputStream,
-                        type = item.type,
-                        originalBookNameHint = item.displayName,
-                        bookId = item.bookId
-                    )
-
-                    else -> throw IllegalArgumentException("Unsupported reader restore type: ${item.type}")
+                }.onSuccess { restoredBook ->
+                    _internalState.update {
+                        if (it.selectedBookId == bookId && it.selectedEpubUri == uri) {
+                            it.copy(selectedEpubBook = restoredBook, isLoading = false, errorMessage = null)
+                        } else {
+                            it
+                        }
+                    }
+                    Timber.tag("EpubRecovery").i("Recovered missing extracted content for $bookId")
+                }.onFailure { error ->
+                    Timber.tag("EpubRecovery").e(error, "Failed to recover missing extracted content for $bookId")
+                    _internalState.update {
+                        if (it.selectedBookId == bookId && it.selectedEpubUri == uri) {
+                            it.copy(
+                                isLoading = false,
+                                errorMessage = appContext.getString(R.string.error_load_file, error.message)
+                            )
+                        } else {
+                            it
+                        }
+                    }
                 }
             }
         }
+    }
 
     private fun getDisplayPathFromUri(context: Context, uriString: String): String {
         val uri = uriString.toUri()
@@ -3263,6 +3337,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
                 val allDbIds = recentFilesRepository.getAllFilesForSync().map { it.bookId }.toSet()
                 val validStreamHashes = allDbIds.map { it.hashCode().toString() }.toSet()
+                ImportedFileCache.deleteStaleTemporaryBookDirs(appContext, TimeUnit.HOURS.toMillis(1))
 
                 cacheDir.listFiles()?.forEach { file ->
                     val name = file.name
@@ -3271,7 +3346,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
                             if (deleted) Timber.d("Sweeper cleaned old temp file: $name")
                         }
-                    } else if (name.startsWith("imported_file_")) {
+                    } else if (ImportedFileCache.isActiveBookDir(name)) {
                         val bookId = name.removePrefix("imported_file_")
                         if (bookId !in allDbIds) {
                             val deleted = file.deleteRecursively()
@@ -3637,11 +3712,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun clearImportedFileCache(bookId: String) {
         try {
-            val cacheDir = File(appContext.cacheDir, "imported_file_$bookId")
-            if (cacheDir.exists()) {
-                val deleted = cacheDir.deleteRecursively()
-                Timber.tag("FileCleanup").d("Deleted imported cache for $bookId: $deleted")
-            }
+            ImportedFileCache.clearBookCache(appContext, bookId)
+            Timber.tag("FileCleanup").d("Deleted imported cache for $bookId")
         } catch (e: Exception) {
             Timber.e(e, "Failed to clear imported file cache for $bookId")
         }

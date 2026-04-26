@@ -167,17 +167,14 @@ class EpubParser(private val context: Context) {
         bookId: String,
         shouldUseToc: Boolean = true,
         originalBookNameHint: String = "streamed_book",
-        parseContent: Boolean = true
+        parseContent: Boolean = true,
+        extractionDirOverride: File? = null
     ): EpubBook {
         return withContext(Dispatchers.IO) {
             Timber.d("Parsing EPUB input stream for bookId: $bookId")
 
-            val extractionDir = File(context.cacheDir, "imported_file_$bookId")
-
-            if (extractionDir.exists()) {
-                extractionDir.deleteRecursively()
-            }
-            extractionDir.mkdirs()
+            val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+                ?: ImportedFileCache.prepareActiveBookDir(context, bookId)
 
             val tempFile = File.createTempFile("epub_stream", ".epub", context.cacheDir)
             val filesMap: Map<String, EpubFile>

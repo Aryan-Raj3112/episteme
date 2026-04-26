@@ -109,27 +109,18 @@ class MobiParser(private val context: Context) {
     private external fun parseMobiFile(filePath: String): ParsedMobiData?
 
     companion object {
-        const val EXTRACTED_EPUB_DIR_NAME = "extracted_epubs"
-
         init {
             System.loadLibrary("mobi")
             System.loadLibrary("native-lib")
         }
     }
 
-    private fun getBookExtractionDir(bookIdentifier: String): File {
-        val parentDir = File(context.cacheDir, EXTRACTED_EPUB_DIR_NAME)
-        if (!parentDir.exists()) {
-            parentDir.mkdirs()
-        }
-        return File(parentDir, bookIdentifier)
-    }
-
     suspend fun createMobiBook(
         inputStream: InputStream,
         bookId: String,
         originalBookNameHint: String,
-        parseContent: Boolean = true
+        parseContent: Boolean = true,
+        extractionDirOverride: File? = null
     ): EpubBook? = withContext(Dispatchers.IO) {
         val tempFile = File.createTempFile("temp_mobi_", ".mobi", context.cacheDir)
         try {
@@ -162,8 +153,8 @@ class MobiParser(private val context: Context) {
         val bookTitle = parsedData.title ?: originalBookNameHint
         val bookAuthor = parsedData.author ?: "Unknown Author"
 
-        val extractionDir = File(context.cacheDir, "imported_file_$bookId")
-        extractionDir.mkdirs()
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.prepareActiveBookDir(context, bookId)
 
         val sequentialImageMap = parsedData.resources
             .filter { it.mediaType.startsWith("image/") }

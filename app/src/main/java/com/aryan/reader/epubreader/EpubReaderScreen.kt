@@ -413,6 +413,48 @@ fun EpubReaderScreen(
         }
     } else null
 
+    val hasValidExtractionBasePath = remember(epubBook.extractionBasePath) {
+        epubBook.extractionBasePath.isNotBlank() && File(epubBook.extractionBasePath).exists()
+    }
+    var requestedContentRecovery by remember(epubBook.extractionBasePath, uiState.selectedBookId) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(hasValidExtractionBasePath, uiState.selectedBookId, uiState.selectedEpubUri) {
+        if (!hasValidExtractionBasePath && !requestedContentRecovery && uiState.selectedEpubUri != null) {
+            requestedContentRecovery = true
+            viewModel.recoverSelectedEpubContent()
+        }
+    }
+
+    if (!hasValidExtractionBasePath) {
+        val isRecovering = uiState.isLoading || (requestedContentRecovery && uiState.errorMessage == null)
+        val message = uiState.errorMessage ?: if (isRecovering) {
+            "Recovering book content..."
+        } else {
+            "Book content not found. Reopen the book to recreate its cache."
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isRecovering) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            Text(
+                text = message,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(24.dp),
+                color = if (uiState.errorMessage != null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                textAlign = TextAlign.Center
+            )
+        }
+        return
+    }
+
     EpubReaderHost(
         epubBook = epubBook,
         renderMode = renderMode,
