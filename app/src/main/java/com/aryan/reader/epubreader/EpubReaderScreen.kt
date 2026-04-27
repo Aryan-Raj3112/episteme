@@ -979,6 +979,7 @@ fun EpubReaderHost(
     var currentFontSizeEm by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.fontSize) }
     var currentLineHeight by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.lineHeight) }
     var currentParagraphGap by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.paragraphGap) }
+    var currentImageSize by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.imageSize) }
     var currentHorizontalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.horizontalMargin) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
@@ -995,14 +996,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         }
     }
@@ -2875,6 +2876,7 @@ fun EpubReaderHost(
                                             currentFontSize = currentFontSizeEm,
                                             currentLineHeight = currentLineHeight,
                                             currentParagraphGap = currentParagraphGap,
+                                            currentImageSize = currentImageSize,
                                             currentHorizontalMargin = currentHorizontalMargin,
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
@@ -3374,6 +3376,7 @@ fun EpubReaderHost(
                                 fontSizeMultiplier = currentFontSizeEm,
                                 lineHeightMultiplier = currentLineHeight,
                                 paragraphGapMultiplier = currentParagraphGap,
+                                imageSizeMultiplier = currentImageSize,
                                 horizontalMarginMultiplier = currentHorizontalMargin,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
@@ -4335,6 +4338,8 @@ fun EpubReaderHost(
                     onLineHeightChange = { currentLineHeight = it },
                     currentParagraphGap = currentParagraphGap,
                     onParagraphGapChange = { currentParagraphGap = it },
+                    currentImageSize = currentImageSize,
+                    onImageSizeChange = { currentImageSize = it },
                     currentHorizontalMargin = currentHorizontalMargin,
                     onHorizontalMarginChange = { currentHorizontalMargin = it },
                     currentFont = currentFontFamily,
@@ -4353,6 +4358,7 @@ fun EpubReaderHost(
                         currentFontSizeEm = DEFAULT_FONT_SIZE_VAL
                         currentLineHeight = DEFAULT_LINE_HEIGHT_VAL
                         currentParagraphGap = DEFAULT_PARAGRAPH_GAP_VAL
+                        currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null

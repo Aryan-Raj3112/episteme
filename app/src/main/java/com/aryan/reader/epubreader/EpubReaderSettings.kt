@@ -113,6 +113,7 @@ private const val TEXT_ALIGN_KEY = "reader_text_align"
 private const val FONT_SIZE_KEY = "reader_font_size"
 private const val LINE_HEIGHT_KEY = "reader_line_height"
 private const val PARAGRAPH_GAP_KEY = "reader_paragraph_gap"
+private const val IMAGE_SIZE_KEY = "reader_image_size"
 private const val AUTO_SCROLL_SPEED_KEY = "reader_auto_scroll_speed"
 private const val FONT_FAMILY_KEY = "reader_font_family"
 private const val TAP_TO_NAVIGATE_ENABLED_KEY = "tap_to_navigate_enabled"
@@ -124,6 +125,7 @@ private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
 const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
+const val DEFAULT_IMAGE_SIZE_VAL = 1.0f
 const val DEFAULT_HORIZONTAL_MARGIN_VAL = 1.0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
 private const val TTS_PITCH_KEY = "tts_pitch"
@@ -179,6 +181,7 @@ data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
     val paragraphGap: Float,
+    val imageSize: Float,
     val horizontalMargin: Float,
     val font: ReaderFont,
     val customPath: String?,
@@ -189,6 +192,7 @@ private const val FORMAT_IS_LOCAL_PREFIX = "format_is_local_"
 private const val LOCAL_FONT_SIZE_PREFIX = "local_font_size_"
 private const val LOCAL_LINE_HEIGHT_PREFIX = "local_line_height_"
 private const val LOCAL_PARAGRAPH_GAP_PREFIX = "local_paragraph_gap_"
+private const val LOCAL_IMAGE_SIZE_PREFIX = "local_image_size_"
 private const val LOCAL_HORIZONTAL_MARGIN_PREFIX = "local_horizontal_margin_"
 private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
@@ -210,6 +214,7 @@ fun saveLocalReaderSettings(
     fontSize: Float,
     lineHeight: Float,
     paragraphGap: Float,
+    imageSize: Float,
     horizontalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
@@ -220,6 +225,7 @@ fun saveLocalReaderSettings(
         putFloat(LOCAL_FONT_SIZE_PREFIX + bookId, fontSize)
         putFloat(LOCAL_LINE_HEIGHT_PREFIX + bookId, lineHeight)
         putFloat(LOCAL_PARAGRAPH_GAP_PREFIX + bookId, paragraphGap)
+        putFloat(LOCAL_IMAGE_SIZE_PREFIX + bookId, imageSize)
         putFloat(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId, horizontalMargin)
         if (customFontPath != null) {
             putString(LOCAL_FONT_FAMILY_PREFIX + bookId, "custom|$customFontPath")
@@ -303,6 +309,12 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         prefs.getFloat(PARAGRAPH_GAP_KEY, DEFAULT_PARAGRAPH_GAP_VAL)
     }
 
+    val imageSize = if (isLocal && prefs.contains(LOCAL_IMAGE_SIZE_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_IMAGE_SIZE_PREFIX + bookId, DEFAULT_IMAGE_SIZE_VAL)
+    } else {
+        prefs.getFloat(IMAGE_SIZE_KEY, DEFAULT_IMAGE_SIZE_VAL)
+    }
+
     val horizontalMargin = if (isLocal && prefs.contains(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId)) {
         prefs.getFloat(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId, DEFAULT_HORIZONTAL_MARGIN_VAL)
     } else {
@@ -332,6 +344,7 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         fontSize = fontSize,
         lineHeight = lineHeight,
         paragraphGap = paragraphGap,
+        imageSize = imageSize,
         horizontalMargin = horizontalMargin,
         font = font,
         customPath = customPath,
@@ -375,6 +388,7 @@ fun saveReaderSettings(
     fontSize: Float,
     lineHeight: Float,
     paragraphGap: Float,
+    imageSize: Float,
     horizontalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
@@ -385,6 +399,7 @@ fun saveReaderSettings(
         putFloat(FONT_SIZE_KEY, fontSize)
         putFloat(LINE_HEIGHT_KEY, lineHeight)
         putFloat(PARAGRAPH_GAP_KEY, paragraphGap)
+        putFloat(IMAGE_SIZE_KEY, imageSize)
         putFloat(HORIZONTAL_MARGIN_KEY, horizontalMargin)
         if (customFontPath != null) {
             putString(FONT_FAMILY_KEY, "custom|$customFontPath")
@@ -435,6 +450,8 @@ fun ReaderTextFormatPanel(
     onLineHeightChange: (Float) -> Unit,
     currentParagraphGap: Float,
     onParagraphGapChange: (Float) -> Unit,
+    currentImageSize: Float,
+    onImageSizeChange: (Float) -> Unit,
     currentHorizontalMargin: Float,
     onHorizontalMarginChange: (Float) -> Unit,
     currentFont: ReaderFont,
@@ -658,6 +675,14 @@ fun ReaderTextFormatPanel(
                         value = currentParagraphGap,
                         onValueChange = onParagraphGapChange,
                         valueRange = 0.0f..3.0f,
+                        formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
+                    )
+
+                    FormatSlider(
+                        label = stringResource(R.string.label_image_size),
+                        value = currentImageSize,
+                        onValueChange = onImageSizeChange,
+                        valueRange = 0.5f..2.0f,
                         formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
                     )
 

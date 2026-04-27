@@ -302,10 +302,57 @@ private fun highlightQueryInText(
     }
 }
 
+private fun computeImageRenderSizePx(
+    block: ImageBlock,
+    density: Density,
+    maxWidthPx: Float,
+    imageSizeMultiplier: Float
+): Pair<Float, Float> {
+    val intrinsicWidth = block.intrinsicWidth
+    val intrinsicHeight = block.intrinsicHeight
+    if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f || intrinsicHeight <= 0f) {
+        return 0f to 0f
+    }
+
+    val aspectRatio = intrinsicHeight / intrinsicWidth
+    val baseWidth = with(density) {
+        if (block.style.width.isSpecified && block.style.width > 0.dp) {
+            block.style.width.toPx()
+        } else {
+            intrinsicWidth
+        }
+    }
+
+    var scaledWidth = baseWidth * imageSizeMultiplier
+    if (block.style.maxWidth.isSpecified && block.style.maxWidth > 0.dp) {
+        scaledWidth = scaledWidth.coerceAtMost(with(density) { block.style.maxWidth.toPx() } * imageSizeMultiplier)
+    }
+    scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
+
+    return scaledWidth to (scaledWidth * aspectRatio)
+}
+
+private fun computeImageRenderSizeDp(
+    block: ImageBlock,
+    density: Density,
+    maxWidthDp: Dp,
+    imageSizeMultiplier: Float
+): Pair<Dp, Dp>? {
+    val (widthPx, heightPx) = computeImageRenderSizePx(
+        block = block,
+        density = density,
+        maxWidthPx = with(density) { maxWidthDp.toPx() },
+        imageSizeMultiplier = imageSizeMultiplier
+    )
+    if (widthPx <= 0f || heightPx <= 0f) return null
+    return with(density) { widthPx.toDp() to heightPx.toDp() }
+}
+
 @Composable
 private fun WrappingContentLayout(
     block: WrappingContentBlock,
     textStyle: TextStyle,
+    imageSizeMultiplier: Float,
     modifier: Modifier = Modifier,
     searchQuery: String,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -378,29 +425,12 @@ private fun WrappingContentLayout(
         }
     }) { measurables, constraints ->
         val (imageRenderWidthPx, imageRenderHeightPx) = run {
-            val imageStyle = block.floatedImage.style
-            val intrinsicWidth = block.floatedImage.intrinsicWidth
-            val intrinsicHeight = block.floatedImage.intrinsicHeight
-
-            if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f) {
-                0f to 0f
-            } else {
-                val aspectRatio = intrinsicHeight / intrinsicWidth
-                val renderWidth = with(density) {
-                    var w = intrinsicWidth
-
-                    if (imageStyle.width != Dp.Unspecified) {
-                        w = imageStyle.width.toPx()
-                    }
-
-                    if (imageStyle.maxWidth != Dp.Unspecified) {
-                        w = w.coerceAtMost(imageStyle.maxWidth.toPx())
-                    }
-
-                    w.coerceAtMost(constraints.maxWidth.toFloat())
-                }
-                renderWidth to (renderWidth * aspectRatio)
-            }
+            computeImageRenderSizePx(
+                block = block.floatedImage,
+                density = density,
+                maxWidthPx = constraints.maxWidth.toFloat(),
+                imageSizeMultiplier = imageSizeMultiplier
+            )
         }
 
         val imagePlacable = if (imageRenderWidthPx > 0 && imageRenderHeightPx > 0) {
@@ -525,6 +555,7 @@ fun PaginatedReaderScreen(
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
     paragraphGapMultiplier: Float,
+    imageSizeMultiplier: Float,
     horizontalMarginMultiplier: Float,
     fontFamily: FontFamily,
     textAlign: ReaderTextAlign,
@@ -582,6 +613,7 @@ fun PaginatedReaderScreen(
         var debouncedFontSizeMult by remember { mutableFloatStateOf(fontSizeMultiplier) }
         var debouncedLineHeightMult by remember { mutableFloatStateOf(lineHeightMultiplier) }
         var debouncedParagraphGapMult by remember { mutableFloatStateOf(paragraphGapMultiplier) }
+        var debouncedImageSizeMult by remember { mutableFloatStateOf(imageSizeMultiplier) }
         var debouncedHorizontalMarginMult by remember { mutableFloatStateOf(horizontalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
@@ -653,10 +685,11 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, horizontalMarginMultiplier, fontFamily, textAlign) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, fontFamily, textAlign) {
             if (fontSizeMultiplier != debouncedFontSizeMult ||
                 lineHeightMultiplier != debouncedLineHeightMult ||
                 paragraphGapMultiplier != debouncedParagraphGapMult ||
+                imageSizeMultiplier != debouncedImageSizeMult ||
                 horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
                 fontFamily != debouncedFontFamily ||
                 textAlign != debouncedTextAlign
@@ -676,6 +709,7 @@ fun PaginatedReaderScreen(
                 debouncedFontSizeMult = fontSizeMultiplier
                 debouncedLineHeightMult = lineHeightMultiplier
                 debouncedParagraphGapMult = paragraphGapMultiplier
+                debouncedImageSizeMult = imageSizeMultiplier
                 debouncedHorizontalMarginMult = horizontalMarginMultiplier
                 debouncedFontFamily = fontFamily
                 debouncedTextAlign = textAlign
@@ -790,7 +824,8 @@ fun PaginatedReaderScreen(
                 context = context.applicationContext,
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = userTextAlign,
-                paragraphGapMultiplier = debouncedParagraphGapMult
+                paragraphGapMultiplier = debouncedParagraphGapMult,
+                imageSizeMultiplier = debouncedImageSizeMult
             )
         }
 
@@ -871,6 +906,7 @@ fun PaginatedReaderScreen(
             searchQuery = searchQuery,
             ttsHighlightInfo = ttsHighlightInfo,
             textStyle = textStyle,
+            imageSizeMultiplier = debouncedImageSizeMult,
             horizontalPadding = horizontalPadding,
             verticalPadding = verticalPadding,
             onGetPage = { pageIndex ->
@@ -1802,6 +1838,7 @@ internal fun PaginatedReaderContent(
     searchQuery: String,
     ttsHighlightInfo: TtsHighlightInfo?,
     textStyle: TextStyle,
+    imageSizeMultiplier: Float,
     horizontalPadding: Dp,
     verticalPadding: Dp,
     onGetPage: (Int) -> Page?,
@@ -2644,6 +2681,7 @@ internal fun PaginatedReaderContent(
                                                             WrappingContentLayout(
                                                                 block = block,
                                                                 textStyle = textStyle,
+                                                                imageSizeMultiplier = imageSizeMultiplier,
                                                                 modifier = paddingModifier,
                                                                 searchQuery = searchQuery,
                                                                 ttsHighlightInfo = ttsHighlightInfo,
@@ -2678,6 +2716,7 @@ internal fun PaginatedReaderContent(
                                                                         RenderFlexChildBlock(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
+                                                                            imageSizeMultiplier = imageSizeMultiplier,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -2730,6 +2769,7 @@ internal fun PaginatedReaderContent(
                                                                         RenderFlexChildBlock(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
+                                                                            imageSizeMultiplier = imageSizeMultiplier,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -2890,23 +2930,6 @@ internal fun PaginatedReaderContent(
 
                                                         is ImageBlock -> {
                                                             val style = block.style
-                                                            val finalImageModifier = Modifier.then(
-                                                                if (style.width.isSpecified && style.width > 0.dp) Modifier.width(style.width)
-                                                                else Modifier.fillMaxWidth()
-                                                            ).then(
-                                                                if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) Modifier.widthIn(max = style.maxWidth)
-                                                                else Modifier
-                                                            ).then(
-                                                                if (block.expectedHeight > 0) {
-                                                                    Modifier.height(with(density) { block.expectedHeight.toDp() })
-                                                                } else {
-                                                                    Modifier.height(250.dp)
-                                                                }
-                                                            ).then(paddingModifier)
-                                                                .onGloballyPositioned { coords ->
-                                                                    Timber.tag("IMAGE_DIAG").v("Actual Rendered Height for [#${block.blockIndex}]: ${coords.size.height}px")
-                                                                }
-
                                                             val colorFilter =
                                                                 if (block.style.filter == "invert(100%)") {
                                                                     val matrix = floatArrayOf(
@@ -2951,14 +2974,54 @@ internal fun PaginatedReaderContent(
                                                                         )
                                                                     }).crossfade(true).build()
 
-                                                            AsyncImage(
-                                                                model = imageRequest,
-                                                                contentDescription = block.altText
-                                                                    ?: "Image from EPUB",
-                                                                modifier = finalImageModifier,
-                                                                contentScale = ContentScale.Fit,
-                                                                colorFilter = colorFilter
-                                                            )
+                                                            BoxWithConstraints(modifier = paddingModifier) {
+                                                                val scaledSize = computeImageRenderSizeDp(
+                                                                    block = block,
+                                                                    density = density,
+                                                                    maxWidthDp = maxWidth,
+                                                                    imageSizeMultiplier = imageSizeMultiplier
+                                                                )
+                                                                val finalImageModifier = Modifier
+                                                                    .then(
+                                                                        if (scaledSize != null) {
+                                                                            Modifier.width(scaledSize.first).height(scaledSize.second)
+                                                                        } else if (style.width.isSpecified && style.width > 0.dp) {
+                                                                            Modifier.width(style.width)
+                                                                        } else {
+                                                                            Modifier.fillMaxWidth()
+                                                                        }
+                                                                    )
+                                                                    .then(
+                                                                        if (scaledSize == null && style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
+                                                                            Modifier.widthIn(max = style.maxWidth)
+                                                                        } else {
+                                                                            Modifier
+                                                                        }
+                                                                    )
+                                                                    .then(
+                                                                        if (scaledSize == null) {
+                                                                            if (block.expectedHeight > 0) {
+                                                                                Modifier.height(with(density) { (block.expectedHeight * imageSizeMultiplier).toDp() })
+                                                                            } else {
+                                                                                Modifier.height(250.dp)
+                                                                            }
+                                                                        } else {
+                                                                            Modifier
+                                                                        }
+                                                                    )
+                                                                    .onGloballyPositioned { coords ->
+                                                                        Timber.tag("IMAGE_DIAG").v("Actual Rendered Height for [#${block.blockIndex}]: ${coords.size.height}px")
+                                                                    }
+
+                                                                AsyncImage(
+                                                                    model = imageRequest,
+                                                                    contentDescription = block.altText
+                                                                        ?: "Image from EPUB",
+                                                                    modifier = finalImageModifier,
+                                                                    contentScale = ContentScale.Fit,
+                                                                    colorFilter = colorFilter
+                                                                )
+                                                            }
                                                         }
 
                                                         is SpacerBlock -> {
@@ -3112,26 +3175,40 @@ internal fun PaginatedReaderContent(
                                                                                         }
 
                                                                                         is ImageBlock -> {
-                                                                                            val imageModifier = Modifier.fillMaxWidth().then(
-                                                                                                if (blockInCell.expectedHeight > 0) {
-                                                                                                    Modifier.height(with(density) { blockInCell.expectedHeight.toDp() })
-                                                                                                } else {
-                                                                                                    Modifier.height(250.dp)
-                                                                                                }
-                                                                                            )
-                                                                                            AsyncImage(
-                                                                                                model = Builder(
-                                                                                                    LocalContext.current
-                                                                                                ).data(
-                                                                                                    File(
-                                                                                                        blockInCell.path
-                                                                                                    )
+                                                                                            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                                                                                val scaledSize = computeImageRenderSizeDp(
+                                                                                                    block = blockInCell,
+                                                                                                    density = density,
+                                                                                                    maxWidthDp = maxWidth,
+                                                                                                    imageSizeMultiplier = imageSizeMultiplier
                                                                                                 )
-                                                                                                    .build(),
-                                                                                                contentDescription = blockInCell.altText,
-                                                                                                contentScale = ContentScale.Fit,
-                                                                                                modifier = imageModifier
-                                                                                            )
+                                                                                                val imageModifier = Modifier.then(
+                                                                                                    if (scaledSize != null) {
+                                                                                                        Modifier.width(scaledSize.first).height(scaledSize.second)
+                                                                                                    } else {
+                                                                                                        Modifier.fillMaxWidth().then(
+                                                                                                            if (blockInCell.expectedHeight > 0) {
+                                                                                                                Modifier.height(with(density) { (blockInCell.expectedHeight * imageSizeMultiplier).toDp() })
+                                                                                                            } else {
+                                                                                                                Modifier.height(250.dp)
+                                                                                                            }
+                                                                                                        )
+                                                                                                    }
+                                                                                                )
+                                                                                                AsyncImage(
+                                                                                                    model = Builder(
+                                                                                                        LocalContext.current
+                                                                                                    ).data(
+                                                                                                        File(
+                                                                                                            blockInCell.path
+                                                                                                        )
+                                                                                                    )
+                                                                                                        .build(),
+                                                                                                    contentDescription = blockInCell.altText,
+                                                                                                    contentScale = ContentScale.Fit,
+                                                                                                    modifier = imageModifier
+                                                                                                )
+                                                                                            }
                                                                                         }
 
                                                                                         is TextContentBlock -> {
@@ -3702,6 +3779,7 @@ private fun ChapterLoadingPlaceholder(title: String?) {
 private fun RenderFlexChildBlock(
     childBlock: ContentBlock,
     textStyle: TextStyle,
+    imageSizeMultiplier: Float,
     searchQuery: String,
     searchHighlightColor: Color,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -3824,23 +3902,6 @@ private fun RenderFlexChildBlock(
         is TextContentBlock -> renderTextBlock(childBlock)
         is ImageBlock -> {
             val style = childBlock.style
-            val imageModifier = Modifier
-                .then(
-                    if (style.width != Dp.Unspecified && style.width > 0.dp) Modifier.width(style.width)
-                    else Modifier
-                )
-                .then(
-                    if (style.maxWidth != Dp.Unspecified && style.maxWidth > 0.dp) Modifier.widthIn(max = style.maxWidth)
-                    else Modifier
-                )
-                .then(
-                    if (childBlock.expectedHeight > 0) {
-                        Modifier.height(with(density) { childBlock.expectedHeight.toDp() })
-                    } else {
-                        Modifier.height(250.dp)
-                    }
-                )
-
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
                 val matrix = floatArrayOf(
                     -1f,
@@ -3867,15 +3928,52 @@ private fun RenderFlexChildBlock(
                 ColorFilter.colorMatrix(ColorMatrix(matrix))
             } else null
 
-            AsyncImage(
-                model = Builder(LocalContext.current).data(File(childBlock.path)).crossfade(true)
-                    .build(),
-                contentDescription = childBlock.altText,
-                modifier = imageModifier,
-                contentScale = ContentScale.Fit,
-                colorFilter = colorFilter,
-                imageLoader = imageLoader
-            )
+            BoxWithConstraints {
+                val scaledSize = computeImageRenderSizeDp(
+                    block = childBlock,
+                    density = density,
+                    maxWidthDp = maxWidth,
+                    imageSizeMultiplier = imageSizeMultiplier
+                )
+                val imageModifier = Modifier
+                    .then(
+                        if (scaledSize != null) {
+                            Modifier.width(scaledSize.first).height(scaledSize.second)
+                        } else if (style.width != Dp.Unspecified && style.width > 0.dp) {
+                            Modifier.width(style.width)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .then(
+                        if (scaledSize == null && style.maxWidth != Dp.Unspecified && style.maxWidth > 0.dp) {
+                            Modifier.widthIn(max = style.maxWidth)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .then(
+                        if (scaledSize == null) {
+                            if (childBlock.expectedHeight > 0) {
+                                Modifier.height(with(density) { (childBlock.expectedHeight * imageSizeMultiplier).toDp() })
+                            } else {
+                                Modifier.height(250.dp)
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
+
+                AsyncImage(
+                    model = Builder(LocalContext.current).data(File(childBlock.path)).crossfade(true)
+                        .build(),
+                    contentDescription = childBlock.altText,
+                    modifier = imageModifier,
+                    contentScale = ContentScale.Fit,
+                    colorFilter = colorFilter,
+                    imageLoader = imageLoader
+                )
+            }
         }
 
         is SpacerBlock -> {
@@ -3948,23 +4046,37 @@ private fun RenderFlexChildBlock(
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     } else if (blockInCell is ImageBlock) {
-                                        val imageModifier = Modifier.fillMaxWidth().then(
-                                            if (blockInCell.expectedHeight > 0) {
-                                                Modifier.height(with(density) { blockInCell.expectedHeight.toDp() })
-                                            } else {
-                                                Modifier.height(250.dp)
-                                            }
-                                        )
-                                        AsyncImage(
-                                            model = Builder(LocalContext.current).data(
-                                                File(
-                                                    blockInCell.path
-                                                )
-                                            ).build(),
-                                            contentDescription = blockInCell.altText,
-                                            contentScale = ContentScale.Fit,
-                                            modifier = imageModifier
-                                        )
+                                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                            val scaledSize = computeImageRenderSizeDp(
+                                                block = blockInCell,
+                                                density = density,
+                                                maxWidthDp = maxWidth,
+                                                imageSizeMultiplier = imageSizeMultiplier
+                                            )
+                                            val imageModifier = Modifier.then(
+                                                if (scaledSize != null) {
+                                                    Modifier.width(scaledSize.first).height(scaledSize.second)
+                                                } else {
+                                                    Modifier.fillMaxWidth().then(
+                                                        if (blockInCell.expectedHeight > 0) {
+                                                            Modifier.height(with(density) { (blockInCell.expectedHeight * imageSizeMultiplier).toDp() })
+                                                        } else {
+                                                            Modifier.height(250.dp)
+                                                        }
+                                                    )
+                                                }
+                                            )
+                                            AsyncImage(
+                                                model = Builder(LocalContext.current).data(
+                                                    File(
+                                                        blockInCell.path
+                                                    )
+                                                ).build(),
+                                                contentDescription = blockInCell.altText,
+                                                contentScale = ContentScale.Fit,
+                                                modifier = imageModifier
+                                            )
+                                        }
                                     }
                                 }
                             }

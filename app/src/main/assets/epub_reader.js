@@ -79,7 +79,7 @@
             }
 
             img, svg, video, canvas {
-                max-width: 100%; width: 100%; height: auto; display: block; margin-left: auto; margin-right: auto; background-color: transparent; object-fit: contain;
+                max-width: 100%; width: auto; height: auto; display: block; margin-left: auto; margin-right: auto; background-color: transparent; object-fit: contain;
             }
 
             figure img {
@@ -517,7 +517,7 @@
         }
     }, true);
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, horizontalMargin) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -527,13 +527,15 @@
                 lineHeight +
                 ", Font: '" +
                 fontFamily +
-                "', Align: '" +
-                textAlign +
-                "', Gap: " +
-                paragraphGap +
-                ", HorizontalMargin: " +
-                horizontalMargin
-        );
+                  "', Align: '" +
+                  textAlign +
+                  "', Gap: " +
+                  paragraphGap +
+                  ", ImageSize: " +
+                  imageSize +
+                  ", HorizontalMargin: " +
+                  horizontalMargin
+          );
 
         var dynamicStyleId = "dynamicReaderStyles";
         var dynamicStyleElement = document.getElementById(dynamicStyleId);
@@ -547,11 +549,13 @@
         var newFontSize = parseFloat(fontSizeEm);
         var newLineHeight = parseFloat(lineHeight);
         var newGap = parseFloat(paragraphGap);
+        var newImageSize = parseFloat(imageSize);
         var newHorizontalMargin = parseFloat(horizontalMargin);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
         if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
+        if (isNaN(newImageSize) || newImageSize < 0.5 || newImageSize > 2.0) newImageSize = 1.0;
         if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
 
         var fontCss = "";
@@ -613,7 +617,22 @@
             }
         `;
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, horizontalMarginCss].join("\n");
+        var imageCss = `
+            :root {
+                --reader-image-size: ${newImageSize};
+            }
+            body img,
+            body svg,
+            body video,
+            body canvas,
+            body image {
+                width: min(100%, calc(100% * var(--reader-image-size))) !important;
+                max-width: 100% !important;
+                height: auto !important;
+            }
+        `;
+
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, imageCss, horizontalMarginCss].join("\n");
 
         setTimeout(
             function () {

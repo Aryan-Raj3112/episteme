@@ -50,7 +50,8 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val textMeasurer: TextMeasurer,
     private val constraints: Constraints,
     private val textStyle: TextStyle,
-    private val density: Density
+    private val density: Density,
+    private val imageSizeMultiplier: Float
 ) : BlockMeasurementProvider {
 
     override suspend fun measure(block: ContentBlock): Int {
@@ -60,7 +61,8 @@ class SuspendingAndroidBlockMeasurementProvider(
             constraints = constraints,
             defaultStyle = textStyle,
             headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
-            density = density
+            density = density,
+            imageSizeMultiplier = imageSizeMultiplier
         )
     }
 
@@ -79,29 +81,12 @@ class SuspendingAndroidBlockMeasurementProvider(
 
         val imageBlock = block.floatedImage
         val (imageWidthPx, imageHeightPx) = run {
-            val imageStyle = imageBlock.style
-            val intrinsicWidth = imageBlock.intrinsicWidth
-            val intrinsicHeight = imageBlock.intrinsicHeight
-
-            if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f) {
-                0f to 0f
-            } else {
-                val aspectRatio = intrinsicHeight / intrinsicWidth
-                val renderWidth = with(density) {
-                    var w = intrinsicWidth
-
-                    if (imageStyle.width != Dp.Unspecified) {
-                        w = imageStyle.width.toPx()
-                    }
-
-                    if (imageStyle.maxWidth != Dp.Unspecified) {
-                        w = w.coerceAtMost(imageStyle.maxWidth.toPx())
-                    }
-
-                    w.coerceAtMost(constraints.maxWidth.toFloat())
-                }
-                renderWidth to (renderWidth * aspectRatio)
-            }
+            measureScaledImageSizePx(
+                block = imageBlock,
+                density = density,
+                maxWidthPx = constraints.maxWidth.toFloat(),
+                imageSizeMultiplier = imageSizeMultiplier
+            )
         }
 
         if (imageWidthPx <= 0 || imageHeightPx <= 0) {
@@ -668,7 +653,8 @@ private suspend fun measureBlockHeight(
     constraints: Constraints,
     defaultStyle: TextStyle,
     headerStyle: TextStyle,
-    density: Density
+    density: Density,
+    imageSizeMultiplier: Float = 1.0f
 ): Int {
     var verticalPaddingPx = 0f
     var horizontalPaddingPx = 0f
@@ -739,24 +725,12 @@ private suspend fun measureBlockHeight(
             height
         }
         is ImageBlock -> {
-            val imageIntrinsicWidth = block.intrinsicWidth
-            val imageIntrinsicHeight = block.intrinsicHeight
-
-            val styledHeightPx = if (block.style.height.isSpecified) with(density) { block.style.height.toPx() } else null
-            val styledWidthPx = if (block.style.width.isSpecified) with(density) { block.style.width.toPx() } else null
-
-            val measuredHeight = when {
-                styledHeightPx != null && styledHeightPx > 0f -> styledHeightPx
-                styledWidthPx != null && styledWidthPx > 0f && imageIntrinsicWidth != null && imageIntrinsicHeight != null && imageIntrinsicWidth > 0 -> {
-                    val aspectRatio = imageIntrinsicHeight / imageIntrinsicWidth
-                    styledWidthPx * aspectRatio
-                }
-                imageIntrinsicWidth != null && imageIntrinsicHeight != null && imageIntrinsicWidth > 0 -> {
-                    val aspectRatio = imageIntrinsicHeight / imageIntrinsicWidth
-                    contentMaxWidth * aspectRatio
-                }
-                else -> with(density) { 250.dp.toPx() }
-            }
+            val measuredHeight = measureScaledImageHeightPx(
+                block = block,
+                density = density,
+                contentMaxWidth = contentMaxWidth,
+                imageSizeMultiplier = imageSizeMultiplier
+            ) ?: with(density) { 250.dp.toPx() }
 
             val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
             Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
@@ -811,7 +785,7 @@ private suspend fun measureBlockHeight(
 
                     val cellConstraints = adjustedConstraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
 
-                    val cellContentHeight = calculateContentHeightWithMargins(cell.content, textMeasurer, cellConstraints, defaultStyle, headerStyle, density)
+                    val cellContentHeight = calculateContentHeightWithMargins(cell.content, textMeasurer, cellConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
 
                     var cellDecorationHeight = 0f
                     with(density) {
@@ -829,35 +803,18 @@ private suspend fun measureBlockHeight(
             val imageBlock = block.floatedImage
 
             val (imageWidthPx, imageHeightPx) = run {
-                val imageStyle = imageBlock.style
-                val intrinsicWidth = imageBlock.intrinsicWidth
-                val intrinsicHeight = imageBlock.intrinsicHeight
-
-                if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f) {
-                    0f to 0f
-                } else {
-                    val aspectRatio = intrinsicHeight / intrinsicWidth
-                    val renderWidth = with(density) {
-                        var w = intrinsicWidth
-
-                        if (imageStyle.width != Dp.Unspecified) {
-                            w = imageStyle.width.toPx()
-                        }
-
-                        if (imageStyle.maxWidth != Dp.Unspecified) {
-                            w = w.coerceAtMost(imageStyle.maxWidth.toPx())
-                        }
-
-                        w.coerceAtMost(adjustedConstraints.maxWidth.toFloat())
-                    }
-                    renderWidth to (renderWidth * aspectRatio)
-                }
+                measureScaledImageSizePx(
+                    block = imageBlock,
+                    density = density,
+                    maxWidthPx = adjustedConstraints.maxWidth.toFloat(),
+                    imageSizeMultiplier = imageSizeMultiplier
+                )
             }
 
             // If image has no size, it can't float. Just measure the paragraphs.
             if (imageWidthPx <= 0 || imageHeightPx <= 0) {
                 val height = block.paragraphsToWrap.sumOf { p ->
-                    measureBlockHeight(p, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density)
+                    measureBlockHeight(p, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
                 }
                 return height
             }
@@ -949,10 +906,10 @@ private suspend fun measureBlockHeight(
             val isRow = block.style.flexDirection == "row"
             val height = if (isRow) {
                 block.children.maxOfOrNull { child ->
-                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density)
+                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
                 } ?: 0
             } else {
-                calculateContentHeightWithMargins(block.children, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density)
+                calculateContentHeightWithMargins(block.children, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
             }
             height
         }
@@ -1149,11 +1106,12 @@ private suspend fun calculateContentHeightWithMargins(
     constraints: Constraints,
     defaultStyle: TextStyle,
     headerStyle: TextStyle,
-    density: Density
+    density: Density,
+    imageSizeMultiplier: Float = 1.0f
 ): Int {
     var totalHeight = 0
     children.forEachIndexed { index, child ->
-        val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density)
+        val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
         val margin = with(density) {
             if (index > 0) {
                 val prevMargin = children[index - 1].style.margin.bottom.toPx()
@@ -1170,6 +1128,44 @@ private suspend fun calculateContentHeightWithMargins(
         totalHeight += with(density) { children.last().style.margin.bottom.toPx().roundToInt() }
     }
     return totalHeight
+}
+
+private fun measureScaledImageHeightPx(
+    block: ImageBlock,
+    density: Density,
+    contentMaxWidth: Float,
+    imageSizeMultiplier: Float
+): Float? = measureScaledImageSizePx(
+    block = block,
+    density = density,
+    maxWidthPx = contentMaxWidth,
+    imageSizeMultiplier = imageSizeMultiplier
+).second.takeIf { it > 0f }
+
+private fun measureScaledImageSizePx(
+    block: ImageBlock,
+    density: Density,
+    maxWidthPx: Float,
+    imageSizeMultiplier: Float
+): Pair<Float, Float> {
+    val intrinsicWidth = block.intrinsicWidth
+    val intrinsicHeight = block.intrinsicHeight
+    if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f || intrinsicHeight <= 0f) {
+        return 0f to 0f
+    }
+
+    val aspectRatio = intrinsicHeight / intrinsicWidth
+    val baseWidth = with(density) {
+        if (block.style.width.isSpecified) block.style.width.toPx() else intrinsicWidth
+    }
+
+    var scaledWidth = baseWidth * imageSizeMultiplier
+    if (block.style.maxWidth.isSpecified) {
+        scaledWidth = scaledWidth.coerceAtMost(with(density) { block.style.maxWidth.toPx() } * imageSizeMultiplier)
+    }
+    scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
+
+    return scaledWidth to (scaledWidth * aspectRatio)
 }
 
 private fun zeroOutBottomMargin(blocks: MutableList<ContentBlock>) {

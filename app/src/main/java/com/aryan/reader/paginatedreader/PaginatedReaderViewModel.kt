@@ -144,7 +144,8 @@ class PaginatedReaderViewModel : ViewModel() {
                 context = context.applicationContext,
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = null,
-                paragraphGapMultiplier = paragraphGapMultiplier
+                paragraphGapMultiplier = paragraphGapMultiplier,
+                imageSizeMultiplier = 1.0f
             )
             paginator = newPaginator
 
