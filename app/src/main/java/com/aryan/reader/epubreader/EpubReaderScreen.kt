@@ -4361,11 +4361,7 @@ fun EpubReaderHost(
                         isFormatLocal = it
                         saveFormatIsLocal(context, bookId, it)
                     },
-                    onClose = { showFormatAdjustmentBars = false },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding + 16.dp)
-                        .padding(horizontal = 16.dp)
+                    onClose = { showFormatAdjustmentBars = false }
                 )
 
                 val effectiveCurrentChapterIndex = if (currentRenderMode == RenderMode.PAGINATED) {
