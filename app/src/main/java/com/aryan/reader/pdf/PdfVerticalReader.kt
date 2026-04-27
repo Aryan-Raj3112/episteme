@@ -90,6 +90,9 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -217,8 +220,8 @@ internal fun PdfVerticalReader(
     isEditMode: Boolean = false,
     allAnnotations: () -> Map<Int, List<PdfAnnotation>> = { emptyMap() },
     drawingState: PdfDrawingState,
-    onDrawStart: (Int, PdfPoint) -> Unit,
-    onDraw: (Int, PdfPoint) -> Unit,
+    onDrawStart: (Int, PdfPoint, Boolean) -> Unit,
+    onDraw: (Int, PdfPoint, Boolean) -> Unit,
     onDrawEnd: () -> Unit,
     onOcrModelDownloading: () -> Unit = {},
     selectedTool: InkType,
@@ -261,6 +264,7 @@ internal fun PdfVerticalReader(
         }
     }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
+    var isStylusEraserOverride by remember { mutableStateOf(false) }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         val imeInsets = WindowInsets.ime
@@ -394,18 +398,17 @@ internal fun PdfVerticalReader(
 
                 val zoomedDocHeight = totalDocHeight * savedScale
                 val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
-                val maxPanY = headerHeightPx
 
                 zoomAnimatable.stop()
                 panXAnimatable.stop()
                 panYAnimatable.stop()
 
                 panXAnimatable.updateBounds(minPanX, maxPanX)
-                panYAnimatable.updateBounds(minPanY, maxPanY)
+                panYAnimatable.updateBounds(minPanY, headerHeightPx)
 
                 zoomAnimatable.snapTo(savedScale)
                 panXAnimatable.snapTo(savedPanX)
-                panYAnimatable.snapTo(savedPanY.coerceIn(minPanY, maxPanY))
+                panYAnimatable.snapTo(savedPanY.coerceIn(minPanY, headerHeightPx))
 
                 Timber.tag("PdfLockDiagnostic").d("RESTORE SNAP COMPLETE: Scale=${zoomAnimatable.value}, X=${panXAnimatable.value}, Y=${panYAnimatable.value}")
 
@@ -503,7 +506,6 @@ internal fun PdfVerticalReader(
                     val startZoom = zoomAnimatable.value
                     val startPanX = panXAnimatable.value
                     val startPanY = panYAnimatable.value
-                    val targetZoom = fitZoom
 
                     val pivotScreenX = screenWidth / 2f
                     val pivotScreenY = screenHeight / 2f
@@ -511,10 +513,10 @@ internal fun PdfVerticalReader(
                     val pivotContentX = (pivotScreenX - startPanX) / startZoom
                     val pivotContentY = (pivotScreenY - startPanY) / startZoom
 
-                    val rawNextPanX = pivotScreenX - (pivotContentX * targetZoom)
-                    val rawNextPanY = pivotScreenY - (pivotContentY * targetZoom)
+                    val rawNextPanX = pivotScreenX - (pivotContentX * fitZoom)
+                    val rawNextPanY = pivotScreenY - (pivotContentY * fitZoom)
 
-                    val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
+                    val (finalZoom, finalX, finalY) = clampCamera(fitZoom, rawNextPanX, rawNextPanY)
 
                     panXAnimatable.updateBounds(
                         lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
@@ -981,6 +983,15 @@ internal fun PdfVerticalReader(
                     return@awaitEachGesture
                 }
 
+                val buttons = currentEvent.buttons
+                Timber.tag("StylusEraserDiagnostic").d(
+                    "VerticalReader | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
+                )
+
+                val isEraserOverride = down.type == PointerType.Eraser ||
+                        (down.type == PointerType.Stylus && currentEvent.buttons.isSecondaryPressed)
+                isStylusEraserOverride = isEraserOverride
+
                 fun getPageAndPoint(screenOffset: Offset): Pair<Int, PdfPoint>? {
                     val zoom = zoomAnimatable.value
                     val panX = panXAnimatable.value
@@ -1004,14 +1015,14 @@ internal fun PdfVerticalReader(
                 var isCanceled = false
 
                 try {
-                    if (selectedTool == InkType.ERASER) {
+                    if (selectedTool == InkType.ERASER || isEraserOverride) {
                         globalEraserPosition = down.position
                     }
 
                     val startData = getPageAndPoint(down.position)
                     if (startData != null) {
                         val (pageIndex, point) = startData
-                        onDrawStart(pageIndex, point)
+                        onDrawStart(pageIndex, point, isEraserOverride)
                         down.consume()
                     }
 
@@ -1030,7 +1041,7 @@ internal fun PdfVerticalReader(
                         if (change == null || !change.pressed) break
 
                         if (change.positionChanged()) {
-                            if (selectedTool == InkType.ERASER) {
+                            if (selectedTool == InkType.ERASER || isEraserOverride) {
                                 globalEraserPosition = change.position
                             }
 
@@ -1038,11 +1049,11 @@ internal fun PdfVerticalReader(
                             if (dragData != null) {
                                 val (pageIndex, point) = dragData
 
-                                if (pageIndex != lastPageIndex && selectedTool != InkType.ERASER) {
+                                if (pageIndex != lastPageIndex && selectedTool != InkType.ERASER && !isEraserOverride) {
                                     onDrawEnd()
-                                    onDrawStart(pageIndex, point)
+                                    onDrawStart(pageIndex, point, isEraserOverride)
                                 } else {
-                                    onDraw(pageIndex, point)
+                                    onDraw(pageIndex, point, isEraserOverride)
                                 }
                                 lastPageIndex = pageIndex
                             }
@@ -1054,6 +1065,7 @@ internal fun PdfVerticalReader(
                         onDrawEnd()
                     }
                     globalEraserPosition = null
+                    isStylusEraserOverride = false
                 }
             }
         }
@@ -1533,12 +1545,16 @@ internal fun PdfVerticalReader(
                                 }
 
                             val onDrawStartLambda = remember(page.index, onDrawStart) {
-                                { point: PdfPoint -> onDrawStart(page.index, point) }
+                                { point: PdfPoint, isEraserOverride: Boolean ->
+                                    onDrawStart(page.index, point, isEraserOverride)
+                                }
                             }
 
                             val currentOnDraw by rememberUpdatedState(onDraw)
                             val onDrawLambda = remember(page.index) {
-                                { point: PdfPoint -> currentOnDraw(page.index, point) }
+                                { point: PdfPoint, isEraserOverride: Boolean ->
+                                    currentOnDraw(page.index, point, isEraserOverride)
+                                }
                             }
 
                             val onSingleTapLambda = remember(onPageClick) {
@@ -2121,7 +2137,7 @@ internal fun PdfVerticalReader(
             }
         }
 
-        if (isEditMode && selectedTool == InkType.ERASER && globalEraserPosition != null) {
+        if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && globalEraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val pos = globalEraserPosition!!
                 val radiusPx = if (activeToolThickness > 0f) {

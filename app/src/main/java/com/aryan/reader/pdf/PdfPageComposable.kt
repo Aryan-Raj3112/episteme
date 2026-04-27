@@ -87,6 +87,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -429,8 +432,8 @@ internal fun PdfPageComposable(
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
     pageAnnotations: () -> List<PdfAnnotation> = { emptyList() },
-    onDrawStart: (PdfPoint) -> Unit = {},
-    onDraw: (PdfPoint) -> Unit = {},
+    onDrawStart: (PdfPoint, Boolean) -> Unit = { _, _ -> },
+    onDraw: (PdfPoint, Boolean) -> Unit = { _, _ -> },
     onDrawEnd: () -> Unit = {},
     visibleScreenRect: () -> IntRect? = { null },
     selectedTool: InkType = InkType.PEN,
@@ -482,6 +485,7 @@ internal fun PdfPageComposable(
     LocalContext.current
     val viewConfiguration = LocalViewConfiguration.current
     val coroutineScope = rememberCoroutineScope()
+    var isStylusEraserOverride by remember { mutableStateOf(false) }
 
     Timber.d(
         "PdfPageComposable recompose: page=$pageIndex, isScrolling=$isScrolling, visualScale=$visualScaleProvider"
@@ -3116,12 +3120,20 @@ internal fun PdfPageComposable(
                             return@awaitEachGesture
                         }
 
+                        val buttons = currentEvent.buttons
+                        Timber.tag("StylusEraserDiagnostic").d(
+                            "Page $pageIndex | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
+                        )
+
+                        val isEraserOverride = down.type == PointerType.Eraser || (down.type == PointerType.Stylus && currentEvent.buttons.isSecondaryPressed)
+                        isStylusEraserOverride = isEraserOverride
+
                         val dragPointerId = down.id
                         val startPos = down.position
                         var dragStarted = false
                         val touchSlop = viewConfiguration.touchSlop
 
-                        if (selectedTool == InkType.ERASER) {
+                        if (selectedTool == InkType.ERASER || isEraserOverride) {
                             eraserPosition = down.position
                         }
 
@@ -3133,6 +3145,7 @@ internal fun PdfPageComposable(
                                     drawingState?.onDrawCancel()
                                 }
                                 eraserPosition = null
+                                isStylusEraserOverride = false
                                 return@awaitEachGesture
                             }
 
@@ -3150,12 +3163,13 @@ internal fun PdfPageComposable(
                                     val normY =
                                         (contentPos.y / actualBitmapHeightPx).coerceIn(0f, 1f)
 
-                                    onDrawStart(PdfPoint(normX, normY))
+                                    onDrawStart(PdfPoint(normX, normY), isEraserOverride)
                                     onDrawEnd()
                                 } else {
                                     onDrawEnd()
                                 }
                                 eraserPosition = null
+                                isStylusEraserOverride = false
                                 return@awaitEachGesture
                             }
 
@@ -3176,7 +3190,7 @@ internal fun PdfPageComposable(
                                                 0f, 1f
                                             )
                                         onDrawStart(
-                                            PdfPoint(startNormX, startNormY)
+                                            PdfPoint(startNormX, startNormY), isEraserOverride
                                         )
 
                                         val currContentPos = screenToContentCoordinates(
@@ -3190,9 +3204,9 @@ internal fun PdfPageComposable(
                                             (currContentPos.y / actualBitmapHeightPx).coerceIn(
                                                 0f, 1f
                                             )
-                                        onDraw(PdfPoint(currNormX, currNormY))
+                                        onDraw(PdfPoint(currNormX, currNormY), isEraserOverride)
 
-                                        if (selectedTool == InkType.ERASER) {
+                                        if (selectedTool == InkType.ERASER || isEraserOverride) {
                                             eraserPosition = change.position
                                         }
                                         change.consume()
@@ -3205,9 +3219,9 @@ internal fun PdfPageComposable(
                                         (currContentPos.x / actualBitmapWidthPx).coerceIn(0f, 1f)
                                     val currNormY =
                                         (currContentPos.y / actualBitmapHeightPx).coerceIn(0f, 1f)
-                                    onDraw(PdfPoint(currNormX, currNormY))
+                                    onDraw(PdfPoint(currNormX, currNormY), isEraserOverride)
 
-                                    if (selectedTool == InkType.ERASER) {
+                                    if (selectedTool == InkType.ERASER || isEraserOverride) {
                                         eraserPosition = change.position
                                     }
                                     change.consume()
@@ -3217,6 +3231,7 @@ internal fun PdfPageComposable(
                     }
                 } finally {
                     eraserPosition = null
+                    isStylusEraserOverride = false
                 }
             }, contentAlignment = Alignment.Center
     ) {
@@ -4047,6 +4062,7 @@ internal fun PdfPageComposable(
                         isEditMode = isEditMode,
                         selectedTool = selectedTool,
                         eraserPosition = eraserPosition,
+                        isStylusEraserOverride = isStylusEraserOverride,
                         activeToolThickness = activeToolThickness,
                         richTextController = richTextController,
                         textBoxes = textBoxes,
@@ -4864,6 +4880,7 @@ private fun PdfPageRenderer(
     isEditMode: Boolean,
     selectedTool: InkType,
     eraserPosition: Offset?,
+    isStylusEraserOverride: Boolean,
     richTextController: RichTextController?,
     textBoxes: List<PdfTextBox>,
     selectedTextBoxId: String?,
@@ -5097,7 +5114,7 @@ private fun PdfPageRenderer(
 
         val teardropPainter = painterResource(id = R.drawable.teardrop)
 
-        if (isEditMode && selectedTool == InkType.ERASER && eraserPosition != null) {
+        if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && eraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val radiusPx = if (activeToolThickness > 0f && staticData.targetWidth > 0) {
                     activeToolThickness * staticData.targetWidth * scale // Calculate dynamic size based on tool settings scale

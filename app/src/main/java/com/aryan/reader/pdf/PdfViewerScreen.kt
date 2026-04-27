@@ -3382,9 +3382,10 @@ fun PdfViewerScreen(
 
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
                                                 remember(pageIndex) {
-                                                    { point: PdfPoint ->
-                                                        if (currentSelectedTool == InkType.TEXT) {
-                                                        } else if (currentSelectedTool == InkType.ERASER) {
+                                                    { point: PdfPoint, isEraserOverride: Boolean ->
+                                                        val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                                        if (effectiveTool == InkType.TEXT) {
+                                                        } else if (effectiveTool == InkType.ERASER) {
                                                             val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                             val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
@@ -3419,12 +3420,13 @@ fun PdfViewerScreen(
 
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawStartPagination =
                                                 remember(pageIndex) {
-                                                    { point: PdfPoint ->
+                                                    { point: PdfPoint, isEraserOverride: Boolean ->
                                                         if (showToolSettings) {
                                                             showToolSettings = false
                                                         } else {
-                                                            if (currentSelectedTool == InkType.TEXT) {
-                                                            } else if (currentSelectedTool == InkType.ERASER) {
+                                                            val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                                            if (effectiveTool == InkType.TEXT) {
+                                                            } else if (effectiveTool == InkType.ERASER) {
                                                                 lastEraserPoint = point
                                                                 erasedAnnotationsFromStroke.clear()
                                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
@@ -3453,7 +3455,7 @@ fun PdfViewerScreen(
                                                                 drawingState.onDrawStart(
                                                                     pageIndex,
                                                                     pointWithTime,
-                                                                    currentSelectedTool,
+                                                                    effectiveTool,
                                                                     currentStrokeColorState,
                                                                     currentStrokeWidthState
                                                                 )
@@ -3819,12 +3821,13 @@ fun PdfViewerScreen(
 
                                     @Suppress("ControlFlowWithEmptyBody") val onDrawStartStable =
                                         remember {
-                                            { pageIndex: Int, point: PdfPoint ->
+                                            { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
                                                 if (showToolSettings) {
                                                     showToolSettings = false
                                                 } else {
-                                                    if (currentSelectedTool == InkType.TEXT) {
-                                                    } else if (currentSelectedTool == InkType.ERASER) {
+                                                    val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                                    if (effectiveTool == InkType.TEXT) {
+                                                    } else if (effectiveTool == InkType.ERASER) {
                                                         lastEraserPoint = point
                                                         erasedAnnotationsFromStroke.clear()
 
@@ -3854,7 +3857,7 @@ fun PdfViewerScreen(
                                                         drawingState.onDrawStart(
                                                             pageIndex,
                                                             pointWithTime,
-                                                            currentSelectedTool,
+                                                            effectiveTool,
                                                             currentStrokeColorState,
                                                             currentStrokeWidthState
                                                         )
@@ -3864,8 +3867,9 @@ fun PdfViewerScreen(
                                         }
 
                                     val onDrawStable = remember(isHighlighterSnapEnabled, isCurrentToolHighlighter, calculateSnappedPoint) {
-                                        { pageIndex: Int, point: PdfPoint ->
-                                            if (currentSelectedTool == InkType.ERASER) {
+                                        { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
+                                            val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                            if (effectiveTool == InkType.ERASER) {
                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
