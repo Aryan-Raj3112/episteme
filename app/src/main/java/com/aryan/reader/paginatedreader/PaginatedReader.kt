@@ -319,7 +319,7 @@ private fun computeImageRenderSizePx(
         if (block.style.width.isSpecified && block.style.width > 0.dp) {
             block.style.width.toPx()
         } else {
-            intrinsicWidth
+            maxWidthPx
         }
     }
 

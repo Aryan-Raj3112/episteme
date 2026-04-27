@@ -1156,7 +1156,7 @@ private fun measureScaledImageSizePx(
 
     val aspectRatio = intrinsicHeight / intrinsicWidth
     val baseWidth = with(density) {
-        if (block.style.width.isSpecified) block.style.width.toPx() else intrinsicWidth
+        if (block.style.width.isSpecified) block.style.width.toPx() else maxWidthPx
     }
 
     var scaledWidth = baseWidth * imageSizeMultiplier
