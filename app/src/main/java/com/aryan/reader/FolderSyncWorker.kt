@@ -37,7 +37,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.aryan.reader.data.LocalSyncUtils
+import com.aryan.reader.data.FolderBookMetadata
 import java.io.File
+import android.provider.DocumentsContract
+import java.security.MessageDigest
 
 class FolderSyncWorker(
     private val appContext: Context,
@@ -138,10 +141,10 @@ class FolderSyncWorker(
             LocalSyncUtils.migrateLegacySidecarsToSubfolder(appContext, documentTree)
 
             Timber.tag("FolderSync").d("Phase 1: Importing JSON metadata from folder...")
-            val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri)
+            val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
 
             Timber.tag("FolderSync").d("Phase 1.5: Preloading annotation sidecars...")
-            val preloadedSidecars = LocalSyncUtils.preloadAnnotationSidecars(appContext, documentTree)
+            val preloadedSidecars = LocalSyncUtils.preloadAnnotationSidecars(appContext, documentTree).toMutableMap()
 
             folderMetadataMap.forEach { (bookId, remoteMeta) ->
                 val existingItem = recentFilesRepository.getFileByBookId(bookId)
@@ -204,39 +207,39 @@ class FolderSyncWorker(
                 val contentResolver = appContext.contentResolver
                 val foundBookIds = mutableSetOf<String>()
                 val newOrUpdatedItems = mutableListOf<RecentFileItem>()
-                val existingItemsMap = existingFolderBooks.associateBy { it.bookId }
+                val existingItemsMap = existingFolderBooks.associateBy { it.bookId }.toMutableMap()
 
-                val rootDocId = android.provider.DocumentsContract.getTreeDocumentId(folderUri)
+                val rootDocId = DocumentsContract.getTreeDocumentId(folderUri)
                 val dirQueue = ArrayDeque<String>()
                 dirQueue.add(rootDocId)
 
                 val projection = arrayOf(
-                    android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    android.provider.DocumentsContract.Document.COLUMN_SIZE,
-                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED
                 )
 
                 while (dirQueue.isNotEmpty()) {
                     if (isStopped) break
                     val currentDocId = dirQueue.removeFirst()
-                    val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
+                    val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
 
                     try {
                         contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
-                            val idCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                            val nameCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                            val mimeCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
-                            val sizeCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_SIZE)
-                            val modCol = cursor.getColumnIndexOrThrow(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                            val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                            val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                            val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                            val sizeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
+                            val modCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
                             while (cursor.moveToNext() && !isStopped) {
                                 val docId = cursor.getString(idCol)
                                 val name = cursor.getString(nameCol) ?: ""
                                 val mimeType = cursor.getString(mimeCol)
 
-                                if (mimeType == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
+                                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                                     if (!name.startsWith(".") && name != "EpistemeSyncData") {
                                         dirQueue.add(docId)
                                     }
@@ -246,29 +249,49 @@ class FolderSyncWorker(
 
                                     val type = getFileType(name, mimeType)
                                     if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
-                                        val stableId = "local_$name"
+                                        val stableId = buildStableBookId(name, rootDocId, docId)
                                         foundBookIds.add(stableId)
 
-                                        val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
+                                        val docUri = DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
                                         var existingItem = existingItemsMap[stableId]
 
+                                        if (existingItem != null && existingItem.uriString != docUri.toString()) {
+                                            val collidedItem = existingItem
+                                            val collidedStableId = computeStableIdForStoredItem(collidedItem, rootDocId)
+                                            if (!collidedStableId.isNullOrBlank() && collidedStableId != stableId && collidedStableId != collidedItem.bookId) {
+                                                Timber.tag("FolderSync").i("Resolving folder ID collision for ${collidedItem.displayName}: ${collidedItem.bookId} -> $collidedStableId")
+                                                migrateFolderBookId(
+                                                    folderUriString = folderUriString,
+                                                    oldId = collidedItem.bookId,
+                                                    newId = collidedStableId,
+                                                    folderMetadataMap = folderMetadataMap,
+                                                    preloadedSidecars = preloadedSidecars,
+                                                    existingItemsMap = existingItemsMap
+                                                )
+                                                existingItem = existingItemsMap[stableId]
+                                            }
+                                        }
+
                                         if (existingItem == null) {
-                                            val oldItem = existingItemsMap.values.find { it.bookId.startsWith("local_${name}_") && it.bookId != stableId }
+                                            val oldItem = existingItemsMap.values.find {
+                                                it.bookId != stableId && (
+                                                    it.uriString == docUri.toString() ||
+                                                        it.bookId.startsWith("local_${name}_")
+                                                    )
+                                            }
                                             if (oldItem != null) {
                                                 val oldId = oldItem.bookId
                                                 Timber.tag("FolderSync").i("Migrating book ID for $name from $oldId to $stableId")
 
-                                                recentFilesRepository.migrateBookIdLocally(oldId, stableId)
-                                                existingItem = recentFilesRepository.getFileByBookId(stableId)
-
-                                                try {
-                                                    val syncDir = documentTree.findFile("EpistemeSyncData")
-                                                    if (syncDir != null) {
-                                                        syncDir.findFile(".$oldId.json")?.delete()
-                                                        syncDir.findFile("$oldId.json")?.delete()
-                                                        syncDir.findFile(".$oldId" + "_annotations.json")?.delete()
-                                                    }
-                                                } catch (_: Exception) { Timber.tag("FolderSync").e("Failed to clean up orphaned SAF sidecars.") }
+                                                migrateFolderBookId(
+                                                    folderUriString = folderUriString,
+                                                    oldId = oldId,
+                                                    newId = stableId,
+                                                    folderMetadataMap = folderMetadataMap,
+                                                    preloadedSidecars = preloadedSidecars,
+                                                    existingItemsMap = existingItemsMap
+                                                )
+                                                existingItem = existingItemsMap[stableId]
                                             }
                                         }
 
@@ -410,6 +433,80 @@ class FolderSyncWorker(
             lowerName.endsWith(".txt") -> FileType.TXT
             mimeType == "text/html" || lowerName.endsWith(".html") || lowerName.endsWith(".xhtml") || lowerName.endsWith(".htm") -> FileType.HTML
             else -> null
+        }
+    }
+
+    private fun buildStableBookId(name: String, rootDocId: String, docId: String): String {
+        val relativePath = buildRelativePath(rootDocId, docId, name)
+        if (relativePath.equals(name, ignoreCase = true)) {
+            return "local_$name"
+        }
+        return "local_${name}_${shortHash(relativePath.lowercase())}"
+    }
+
+    private fun buildRelativePath(rootDocId: String, docId: String, fallbackName: String): String {
+        val rootPath = rootDocId.substringAfter(':', "")
+        val docPath = docId.substringAfter(':', "")
+        if (docPath.isBlank()) return fallbackName
+        val relative = if (rootPath.isNotBlank() && docPath.startsWith(rootPath)) {
+            docPath.removePrefix(rootPath).trimStart('/')
+        } else {
+            docPath.substringAfterLast('/', fallbackName)
+        }
+        return relative.ifBlank { fallbackName }
+    }
+
+    private fun shortHash(value: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }.take(12)
+    }
+
+    private fun computeStableIdForStoredItem(item: RecentFileItem, rootDocId: String): String? {
+        val uriString = item.uriString ?: return null
+        return try {
+            val docId = DocumentsContract.getDocumentId(uriString.toUri())
+            buildStableBookId(item.displayName, rootDocId, docId)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun migrateFolderBookId(
+        folderUriString: String,
+        oldId: String,
+        newId: String,
+        folderMetadataMap: MutableMap<String, FolderBookMetadata>,
+        preloadedSidecars: MutableMap<String, Pair<Long, String>>,
+        existingItemsMap: MutableMap<String, RecentFileItem>
+    ) {
+        if (oldId == newId) return
+
+        recentFilesRepository.migrateBookIdLocally(oldId, newId)
+
+        val oldMetadata = folderMetadataMap.remove(oldId)
+        if (oldMetadata != null && newId !in folderMetadataMap) {
+            val migratedMetadata = oldMetadata.copy(bookId = newId)
+            LocalSyncUtils.saveMetadataToFolder(appContext, folderUriString.toUri(), migratedMetadata)
+            folderMetadataMap[newId] = migratedMetadata
+        }
+
+        val oldSidecar = preloadedSidecars.remove(oldId)
+        if (oldSidecar != null && newId !in preloadedSidecars) {
+            LocalSyncUtils.saveAnnotationSidecar(
+                context = appContext,
+                sourceFolderUri = folderUriString.toUri(),
+                bookId = newId,
+                jsonPayload = oldSidecar.second,
+                timestamp = oldSidecar.first
+            )
+            preloadedSidecars[newId] = oldSidecar
+        }
+
+        LocalSyncUtils.deleteBookSidecars(appContext, folderUriString.toUri(), oldId)
+
+        existingItemsMap.remove(oldId)
+        recentFilesRepository.getFileByBookId(newId)?.let {
+            existingItemsMap[newId] = it
         }
     }
 }
