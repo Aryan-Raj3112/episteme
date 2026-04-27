@@ -185,10 +185,134 @@ data class PaginatedSelection(
     val endOffset: Int,
     val text: String,
     val rect: Rect,
+    val startPageIndex: Int,
+    val endPageIndex: Int,
     val startBlockCharOffset: Int = 0,
     val endBlockCharOffset: Int = 0,
     val textPerBlock: Map<String, String> = emptyMap()
 )
+
+private data class SelectionBlockKey(
+    val pageIndex: Int,
+    val blockIndex: Int,
+    val blockCharOffset: Int
+)
+
+private fun buildSelectionBlockKey(
+    pageIndex: Int,
+    blockIndex: Int,
+    blockCharOffset: Int
+): String = "${pageIndex}_${blockIndex}_${blockCharOffset}"
+
+private fun parseSelectionBlockKey(key: String): SelectionBlockKey? {
+    val parts = key.split("_")
+    if (parts.size != 3) return null
+    return SelectionBlockKey(
+        pageIndex = parts[0].toIntOrNull() ?: return null,
+        blockIndex = parts[1].toIntOrNull() ?: return null,
+        blockCharOffset = parts[2].toIntOrNull() ?: return null
+    )
+}
+
+private fun compareSelectionBlockKeys(
+    firstKey: String,
+    secondKey: String
+): Int {
+    val first = parseSelectionBlockKey(firstKey)
+    val second = parseSelectionBlockKey(secondKey)
+
+    if (first == null && second == null) return firstKey.compareTo(secondKey)
+    if (first == null) return 1
+    if (second == null) return -1
+
+    return compareValuesBy(
+        first,
+        second,
+        SelectionBlockKey::pageIndex,
+        SelectionBlockKey::blockIndex,
+        SelectionBlockKey::blockCharOffset
+    )
+}
+
+private fun getTextBlockCharOffset(block: TextContentBlock): Int = when (block) {
+    is ParagraphBlock -> block.startCharOffsetInSource
+    is HeaderBlock -> block.startCharOffsetInSource
+    is QuoteBlock -> block.startCharOffsetInSource
+    is ListItemBlock -> block.startCharOffsetInSource
+}
+
+private fun headerFontScale(level: Int): Float = when (level) {
+    1 -> 1.5f
+    2 -> 1.4f
+    3 -> 1.3f
+    4 -> 1.2f
+    5 -> 1.1f
+    else -> 1.0f
+}
+
+private fun createHeaderTextStyle(
+    baseStyle: TextStyle,
+    level: Int,
+    textAlign: TextAlign?
+): TextStyle {
+    val scale = headerFontScale(level)
+    val scaledFontSize = baseStyle.fontSize * scale
+    val scaledLineHeight = if (baseStyle.lineHeight != TextUnit.Unspecified) {
+        baseStyle.lineHeight * scale
+    } else {
+        scaledFontSize * 1.2f
+    }
+
+    return baseStyle.copy(
+        fontWeight = FontWeight.Bold,
+        fontSize = scaledFontSize,
+        lineHeight = scaledLineHeight,
+        textAlign = textAlign ?: baseStyle.textAlign
+    )
+}
+
+private fun compareBlockPositionsOnPage(
+    firstBlockIndex: Int,
+    firstBlockCharOffset: Int,
+    secondBlockIndex: Int,
+    secondBlockCharOffset: Int
+): Int = when {
+    firstBlockIndex != secondBlockIndex -> firstBlockIndex.compareTo(secondBlockIndex)
+    else -> firstBlockCharOffset.compareTo(secondBlockCharOffset)
+}
+
+private fun isBlockSelectedOnPage(
+    block: TextContentBlock,
+    pageIndex: Int,
+    selection: PaginatedSelection
+): Boolean {
+    if (pageIndex < selection.startPageIndex || pageIndex > selection.endPageIndex) return false
+    if (pageIndex > selection.startPageIndex && pageIndex < selection.endPageIndex) return true
+
+    val blockCharOffset = getTextBlockCharOffset(block)
+    val afterStart = if (pageIndex == selection.startPageIndex) {
+        compareBlockPositionsOnPage(
+            block.blockIndex,
+            blockCharOffset,
+            selection.startBlockIndex,
+            selection.startBlockCharOffset
+        ) >= 0
+    } else {
+        true
+    }
+    val beforeEnd = if (pageIndex == selection.endPageIndex) {
+        compareBlockPositionsOnPage(
+            block.blockIndex,
+            blockCharOffset,
+            selection.endBlockIndex,
+            selection.endBlockCharOffset
+        ) <= 0
+    } else {
+        true
+    }
+
+    return afterStart && beforeEnd
+}
 
 class ReactiveBlockMap(
     private val delegate: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>> = mutableStateMapOf()
@@ -1375,6 +1499,7 @@ private fun TextWithEmphasis(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     style: TextStyle,
+    pageIndex: Int,
     @Suppress("unused") textMeasurer: TextMeasurer,
     onLinkClick: (String) -> Unit,
     onGeneralTap: (Offset) -> Unit,
@@ -1593,27 +1718,18 @@ private fun TextWithEmphasis(
 
         textLayoutResult?.let { layoutResult ->
             if (activeSelection != null) {
-                // ADD absolute offset helper:
-                val currentBlockAbs = when (block) {
-                    is ParagraphBlock -> block.startCharOffsetInSource
-                    is HeaderBlock -> block.startCharOffsetInSource
-                    is QuoteBlock -> block.startCharOffsetInSource
-                    is ListItemBlock -> block.startCharOffsetInSource
-                }
+                val currentBlockAbs = getTextBlockCharOffset(block)
+                val isSelectedOnPage = isBlockSelectedOnPage(block, pageIndex, activeSelection)
+                val isStart =
+                    pageIndex == activeSelection.startPageIndex &&
+                        block.blockIndex == activeSelection.startBlockIndex &&
+                        currentBlockAbs == activeSelection.startBlockCharOffset
+                val isEnd =
+                    pageIndex == activeSelection.endPageIndex &&
+                        block.blockIndex == activeSelection.endBlockIndex &&
+                        currentBlockAbs == activeSelection.endBlockCharOffset
 
-                val isStart = block.blockIndex == activeSelection.startBlockIndex && currentBlockAbs == activeSelection.startBlockCharOffset
-                val isEnd = block.blockIndex == activeSelection.endBlockIndex && currentBlockAbs == activeSelection.endBlockCharOffset
-
-                val isBetween = when {
-                    block.blockIndex > activeSelection.startBlockIndex && block.blockIndex < activeSelection.endBlockIndex -> true
-                    block.blockIndex == activeSelection.startBlockIndex && block.blockIndex == activeSelection.endBlockIndex ->
-                        currentBlockAbs > activeSelection.startBlockCharOffset && currentBlockAbs < activeSelection.endBlockCharOffset
-                    block.blockIndex == activeSelection.startBlockIndex -> currentBlockAbs > activeSelection.startBlockCharOffset
-                    block.blockIndex == activeSelection.endBlockIndex -> currentBlockAbs < activeSelection.endBlockCharOffset
-                    else -> false
-                }
-
-                if (isStart || isEnd || isBetween) {
+                if (isSelectedOnPage) {
                     val sOffset = if (isStart) activeSelection.startOffset else 0
                     val eOffset = if (isEnd) activeSelection.endOffset else layoutResult.layoutInput.text.length
 
@@ -1757,9 +1873,17 @@ private fun TextWithEmphasis(
                                             endOffset = end,
                                             text = selText,
                                             rect = Rect(topLeftWin, bottomRightWin),
+                                            startPageIndex = pageIndex,
+                                            endPageIndex = pageIndex,
                                             startBlockCharOffset = startBlockAbs,
                                             endBlockCharOffset = startBlockAbs,
-                                            textPerBlock = mapOf("${block.blockIndex}_${startBlockAbs}" to selText)
+                                            textPerBlock = mapOf(
+                                                buildSelectionBlockKey(
+                                                    pageIndex = pageIndex,
+                                                    blockIndex = block.blockIndex,
+                                                    blockCharOffset = startBlockAbs
+                                                ) to selText
+                                            )
                                         )
                                     )
                                 }
@@ -2038,6 +2162,7 @@ internal fun PaginatedReaderContent(
 
                         LaunchedEffect(activeSelection, lastTextBlock, isDraggingHandle) {
                             if (isDraggingHandle && activeSelection != null && lastTextBlock != null &&
+                                activeSelection!!.endPageIndex == pageIndex &&
                                 activeSelection!!.endBlockIndex == lastTextBlock.blockIndex &&
                                 activeSelection!!.endBlockCharOffset == lastBlockAbs) {
                                 if (activeSelection!!.endOffset >= lastTextBlock.content.text.length - 3) {
@@ -2117,14 +2242,19 @@ internal fun PaginatedReaderContent(
                                 }
 
                                 val newTextPerBlock = (previousSel?.textPerBlock ?: emptyMap()).toMutableMap()
-                                newTextPerBlock["${firstTextBlock.blockIndex}_${firstTextBlockAbs}"] = text.substring(0, endIndex)
+                                newTextPerBlock[
+                                    buildSelectionBlockKey(
+                                        pageIndex = pageIndex,
+                                        blockIndex = firstTextBlock.blockIndex,
+                                        blockCharOffset = firstTextBlockAbs
+                                    )
+                                ] = text.substring(0, endIndex)
 
-                                val newText = newTextPerBlock.entries.sortedBy {
-                                    val parts = it.key.split("_")
-                                    val idx = parts[0].toIntOrNull() ?: 0
-                                    val abs = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                    idx * 1000000L + abs
-                                }.joinToString(" ") { it.value }
+                                val newText = newTextPerBlock.entries
+                                    .sortedWith { first, second ->
+                                        compareSelectionBlockKeys(first.key, second.key)
+                                    }
+                                    .joinToString(" ") { it.value }
 
                                 activeSelection = PaginatedSelection(
                                     startBlockIndex = previousSel?.startBlockIndex ?: firstTextBlock.blockIndex,
@@ -2135,6 +2265,8 @@ internal fun PaginatedReaderContent(
                                     endOffset = endIndex,
                                     text = newText,
                                     rect = Rect(windowTopLeft, windowBottomRight),
+                                    startPageIndex = previousSel?.startPageIndex ?: pending.fromPageIndex,
+                                    endPageIndex = pageIndex,
                                     startBlockCharOffset = previousSel?.startBlockCharOffset ?: firstTextBlockAbs,
                                     endBlockCharOffset = firstTextBlockAbs,
                                     textPerBlock = newTextPerBlock
@@ -2371,6 +2503,7 @@ internal fun PaginatedReaderContent(
                                                                 text = finalContent,
                                                                 style = paragraphStyle,
                                                                 modifier = paddingModifier,
+                                                                pageIndex = pageIndex,
                                                                 textMeasurer = textMeasurer,
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
@@ -2396,10 +2529,10 @@ internal fun PaginatedReaderContent(
                                                         }
 
                                                         is HeaderBlock -> {
-                                                            val style = textStyle.copy(
-                                                                fontWeight = FontWeight.Bold,
+                                                            val style = createHeaderTextStyle(
+                                                                baseStyle = textStyle,
+                                                                level = block.level,
                                                                 textAlign = block.textAlign
-                                                                    ?: textStyle.textAlign
                                                             )
                                                             val searchHighlighted =
                                                                 highlightQueryInText(
@@ -2453,6 +2586,7 @@ internal fun PaginatedReaderContent(
                                                                 text = finalContent,
                                                                 style = style,
                                                                 modifier = paddingModifier,
+                                                                pageIndex = pageIndex,
                                                                 textMeasurer = textMeasurer,
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
@@ -2538,6 +2672,7 @@ internal fun PaginatedReaderContent(
                                                                 text = finalContent,
                                                                 style = quoteStyle,
                                                                 modifier = quoteModifier,
+                                                                pageIndex = pageIndex,
                                                                 textMeasurer = textMeasurer,
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
@@ -2652,6 +2787,7 @@ internal fun PaginatedReaderContent(
                                                                     text = finalContent,
                                                                     style = textStyle,
                                                                     modifier = Modifier.weight(1f),
+                                                                    pageIndex = pageIndex,
                                                                     textMeasurer = textMeasurer,
                                                                     onLinkClick = onLinkClickCallback,
                                                                     onGeneralTap = onGeneralTapCallback,
@@ -3255,7 +3391,7 @@ internal fun PaginatedReaderContent(
                     val currentPageBlocks =
                         blockLayoutMap.filterKeys { it.endsWith(currentPageSuffix) }.values.filter { it.second.isAttached }
                     val visibleSelectedBlocks =
-                        currentPageBlocks.filter { it.third.blockIndex in sel.startBlockIndex..sel.endBlockIndex }
+                        currentPageBlocks.filter { isBlockSelectedOnPage(it.third, pagerState.currentPage, sel) }
 
                     if (!isDraggingHandle && visibleSelectedBlocks.isNotEmpty()) {
                         val menuAnchorRect = run {
@@ -3267,14 +3403,15 @@ internal fun PaginatedReaderContent(
                             visibleSelectedBlocks.forEach { triple ->
                                 val (textLayout, coords, block) = triple
 
-                                val currentBlockAbs = when (block) {
-                                    is ParagraphBlock -> block.startCharOffsetInSource
-                                    is HeaderBlock -> block.startCharOffsetInSource
-                                    is QuoteBlock -> block.startCharOffsetInSource
-                                    is ListItemBlock -> block.startCharOffsetInSource
-                                }
-                                val isStartBlockPart = block.blockIndex == sel.startBlockIndex && currentBlockAbs == sel.startBlockCharOffset
-                                val isEndBlockPart = block.blockIndex == sel.endBlockIndex && currentBlockAbs == sel.endBlockCharOffset
+                                val currentBlockAbs = getTextBlockCharOffset(block)
+                                val isStartBlockPart =
+                                    pagerState.currentPage == sel.startPageIndex &&
+                                        block.blockIndex == sel.startBlockIndex &&
+                                        currentBlockAbs == sel.startBlockCharOffset
+                                val isEndBlockPart =
+                                    pagerState.currentPage == sel.endPageIndex &&
+                                        block.blockIndex == sel.endBlockIndex &&
+                                        currentBlockAbs == sel.endBlockCharOffset
 
                                 val blockStartOffset = if (isStartBlockPart) sel.startOffset else 0
                                 val blockEndOffset = if (isEndBlockPart) sel.endOffset else textLayout.layoutInput.text.length
@@ -3420,30 +3557,28 @@ internal fun PaginatedReaderContent(
                                 var newEndOffset = if (isStartHandle) sel.endOffset else offset
                                 var newStartCfi = if (isStartHandle) block.cfi!! else sel.startBaseCfi
                                 var newEndCfi = if (isStartHandle) sel.endBaseCfi else block.cfi!!
+                                var newStartPageIdx = if (isStartHandle) pagerState.currentPage else sel.startPageIndex
+                                var newEndPageIdx = if (isStartHandle) sel.endPageIndex else pagerState.currentPage
 
-                                val currentBlockAbs = when (block) {
-                                    is ParagraphBlock -> block.startCharOffsetInSource
-                                    is HeaderBlock -> block.startCharOffsetInSource
-                                    is QuoteBlock -> block.startCharOffsetInSource
-                                    is ListItemBlock -> block.startCharOffsetInSource
-                                }
+                                val currentBlockAbs = getTextBlockCharOffset(block)
                                 var newStartBlockAbs = if (isStartHandle) currentBlockAbs else sel.startBlockCharOffset
                                 var newEndBlockAbs = if (!isStartHandle) currentBlockAbs else sel.endBlockCharOffset
 
-                                // UPDATE Swap conditions completely:
                                 val isReversed = when {
-                                    newStartIdx > newEndIdx -> true
-                                    newStartIdx < newEndIdx -> false
+                                    newStartPageIdx != newEndPageIdx -> newStartPageIdx > newEndPageIdx
                                     else -> {
-                                        when {
-                                            newStartBlockAbs > newEndBlockAbs -> true
-                                            newStartBlockAbs < newEndBlockAbs -> false
-                                            else -> newStartOffset > newEndOffset
-                                        }
+                                        val blockCompare = compareBlockPositionsOnPage(
+                                            newStartIdx,
+                                            newStartBlockAbs,
+                                            newEndIdx,
+                                            newEndBlockAbs
+                                        )
+                                        if (blockCompare != 0) blockCompare > 0 else newStartOffset > newEndOffset
                                     }
                                 }
 
                                 if (isReversed) {
+                                    newStartPageIdx = newEndPageIdx.also { newEndPageIdx = newStartPageIdx }
                                     newStartIdx = newEndIdx.also { newEndIdx = newStartIdx }
                                     newStartOffset = newEndOffset.also { newEndOffset = newStartOffset }
                                     newStartCfi = newEndCfi.also { newEndCfi = newStartCfi }
@@ -3451,33 +3586,48 @@ internal fun PaginatedReaderContent(
                                     activeDragHandle = if (activeDragHandle == SelectionHandle.START) SelectionHandle.END else SelectionHandle.START
                                 }
 
-                                if (newStartIdx != sel.startBlockIndex || newEndIdx != sel.endBlockIndex || newStartOffset != sel.startOffset || newEndOffset != sel.endOffset) {
+                                if (
+                                    newStartPageIdx != sel.startPageIndex ||
+                                    newEndPageIdx != sel.endPageIndex ||
+                                    newStartIdx != sel.startBlockIndex ||
+                                    newEndIdx != sel.endBlockIndex ||
+                                    newStartOffset != sel.startOffset ||
+                                    newEndOffset != sel.endOffset
+                                ) {
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
-                                    val relevantBlocks = attachedBlocks.filter { it.third.blockIndex in newStartIdx..newEndIdx }
-                                        .sortedWith(compareBy({ it.third.blockIndex }, { b ->
-                                            when(b.third) {
-                                                is ParagraphBlock -> (b.third as ParagraphBlock).startCharOffsetInSource
-                                                is HeaderBlock -> (b.third as HeaderBlock).startCharOffsetInSource
-                                                is QuoteBlock -> (b.third as QuoteBlock).startCharOffsetInSource
-                                                is ListItemBlock -> (b.third as ListItemBlock).startCharOffsetInSource
-                                            }
-                                        }))
+                                    val relevantBlocks = attachedBlocks
+                                        .filter {
+                                            isBlockSelectedOnPage(
+                                                block = it.third,
+                                                pageIndex = pagerState.currentPage,
+                                                selection = PaginatedSelection(
+                                                    startBlockIndex = newStartIdx,
+                                                    endBlockIndex = newEndIdx,
+                                                    startBaseCfi = newStartCfi,
+                                                    endBaseCfi = newEndCfi,
+                                                    startOffset = newStartOffset,
+                                                    endOffset = newEndOffset,
+                                                    text = sel.text,
+                                                    rect = sel.rect,
+                                                    startPageIndex = newStartPageIdx,
+                                                    endPageIndex = newEndPageIdx,
+                                                    startBlockCharOffset = newStartBlockAbs,
+                                                    endBlockCharOffset = newEndBlockAbs,
+                                                    textPerBlock = sel.textPerBlock
+                                                )
+                                            )
+                                        }
+                                        .sortedWith(compareBy({ it.third.blockIndex }, { getTextBlockCharOffset(it.third) }))
 
                                     val newTextPerBlock = sel.textPerBlock.toMutableMap()
                                     newTextPerBlock.keys.removeAll { keyStr ->
-                                        val bIdx = keyStr.split("_").firstOrNull()?.toIntOrNull() ?: -1
-                                        bIdx !in newStartIdx..newEndIdx
+                                        parseSelectionBlockKey(keyStr)?.pageIndex == pagerState.currentPage
                                     }
 
                                     for (b in relevantBlocks) {
                                         val txt = b.third.content.text
-                                        val bAbs = when(b.third) {
-                                            is ParagraphBlock -> b.third.startCharOffsetInSource
-                                            is HeaderBlock -> b.third.startCharOffsetInSource
-                                            is QuoteBlock -> b.third.startCharOffsetInSource
-                                            is ListItemBlock -> b.third.startCharOffsetInSource
-                                        }
+                                        val bAbs = getTextBlockCharOffset(b.third)
                                         val isStartBlockPart = b.third.blockIndex == newStartIdx && bAbs == newStartBlockAbs
                                         val isEndBlockPart = b.third.blockIndex == newEndIdx && bAbs == newEndBlockAbs
 
@@ -3488,30 +3638,36 @@ internal fun PaginatedReaderContent(
                                         val safeE = e.coerceIn(safeS, txt.length)
 
                                         if (safeS < safeE) {
-                                            newTextPerBlock["${b.third.blockIndex}_${bAbs}"] = txt.substring(safeS, safeE)
+                                            newTextPerBlock[
+                                                buildSelectionBlockKey(
+                                                    pageIndex = pagerState.currentPage,
+                                                    blockIndex = b.third.blockIndex,
+                                                    blockCharOffset = bAbs
+                                                )
+                                            ] = txt.substring(safeS, safeE)
                                         } else {
-                                            newTextPerBlock.remove("${b.third.blockIndex}_${bAbs}")
+                                            newTextPerBlock.remove(
+                                                buildSelectionBlockKey(
+                                                    pageIndex = pagerState.currentPage,
+                                                    blockIndex = b.third.blockIndex,
+                                                    blockCharOffset = bAbs
+                                                )
+                                            )
                                         }
                                     }
 
-                                    val newText = newTextPerBlock.entries.sortedBy {
-                                        val parts = it.key.split("_")
-                                        val idx = parts[0].toIntOrNull() ?: 0
-                                        val abs = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                        idx * 1000000L + abs
-                                    }.joinToString(" ") { it.value }
-
-                                    val sLayout = blockLayoutMap["${newStartCfi}$currentPageSuffix"]?.takeIf {
-                                        val abs = when(it.third) {
-                                            is ParagraphBlock -> it.third.startCharOffsetInSource
-                                            is HeaderBlock -> it.third.startCharOffsetInSource
-                                            is QuoteBlock -> it.third.startCharOffsetInSource
-                                            is ListItemBlock -> it.third.startCharOffsetInSource
+                                    val newText = newTextPerBlock.entries
+                                        .sortedWith { first, second ->
+                                            compareSelectionBlockKeys(first.key, second.key)
                                         }
+                                        .joinToString(" ") { it.value }
+
+                                    val sLayout = blockLayoutMap["${newStartCfi}_$newStartPageIdx"]?.takeIf {
+                                        val abs = getTextBlockCharOffset(it.third)
                                         abs == newStartBlockAbs
                                     }
 
-                                    val eLayout = blockLayoutMap["${newEndCfi}$currentPageSuffix"]
+                                    val eLayout = blockLayoutMap["${newEndCfi}_$newEndPageIdx"]
                                     var newRect = sel.rect
 
                                     if (sLayout != null && eLayout != null && sLayout.second.isAttached && eLayout.second.isAttached) {
@@ -3569,6 +3725,8 @@ internal fun PaginatedReaderContent(
                                         endOffset = newEndOffset,
                                         text = newText,
                                         rect = newRect,
+                                        startPageIndex = newStartPageIdx,
+                                        endPageIndex = newEndPageIdx,
                                         startBlockCharOffset = newStartBlockAbs,
                                         endBlockCharOffset = newEndBlockAbs,
                                         textPerBlock = newTextPerBlock
@@ -3592,34 +3750,34 @@ internal fun PaginatedReaderContent(
                                     @Suppress("UNUSED_VARIABLE") val isScrolling = pagerState.isScrollInProgress
                                     @Suppress("UNUSED_VARIABLE") val tick = blockLayoutMap.tick
 
-                                    val selCfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
-                                    val selOffset = if (isStart) sel.startOffset else sel.endOffset
-                                    val targetBlockAbs = if (isStart) sel.startBlockCharOffset else sel.endBlockCharOffset
-                                    val layoutInfo = blockLayoutMap["${selCfi}$currentPageSuffix"]?.takeIf {
-                                        val blockAbs = when (val block = it.third) {
-                                            is ParagraphBlock -> block.startCharOffsetInSource
-                                            is HeaderBlock -> block.startCharOffsetInSource
-                                            is QuoteBlock -> block.startCharOffsetInSource
-                                            is ListItemBlock -> block.startCharOffsetInSource
+                                    val handlePageIndex = if (isStart) sel.startPageIndex else sel.endPageIndex
+                                    val pos = if (handlePageIndex == pagerState.currentPage) {
+                                        val selCfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
+                                        val selOffset = if (isStart) sel.startOffset else sel.endOffset
+                                        val targetBlockAbs = if (isStart) sel.startBlockCharOffset else sel.endBlockCharOffset
+                                        val layoutInfo = blockLayoutMap["${selCfi}_$handlePageIndex"]?.takeIf {
+                                            val blockAbs = getTextBlockCharOffset(it.third)
+                                            blockAbs == targetBlockAbs
                                         }
-                                        blockAbs == targetBlockAbs
-                                    }
 
-                                    val pos = if (layoutInfo != null && layoutInfo.second.isAttached && rootCoords != null && rootCoords!!.isAttached) {
-                                        val textLayout = layoutInfo.first
-                                        val coords = layoutInfo.second
-                                        val maxIdx = maxOf(0, textLayout.layoutInput.text.length - 1)
-                                        val safeOffset = selOffset.coerceIn(0, textLayout.layoutInput.text.length)
-                                        val safeOffsetForLine = safeOffset.coerceIn(0, maxIdx)
+                                        if (layoutInfo != null && layoutInfo.second.isAttached && rootCoords != null && rootCoords!!.isAttached) {
+                                            val textLayout = layoutInfo.first
+                                            val coords = layoutInfo.second
+                                            val maxIdx = maxOf(0, textLayout.layoutInput.text.length - 1)
+                                            val safeOffset = selOffset.coerceIn(0, textLayout.layoutInput.text.length)
+                                            val safeOffsetForLine = safeOffset.coerceIn(0, maxIdx)
 
-                                        val line = textLayout.getLineForOffset(safeOffsetForLine)
-                                        val x = textLayout.getHorizontalPosition(safeOffset, usePrimaryDirection = true)
-                                        val y = textLayout.getLineBottom(line)
+                                            val line = textLayout.getLineForOffset(safeOffsetForLine)
+                                            val x = textLayout.getHorizontalPosition(safeOffset, usePrimaryDirection = true)
+                                            val y = textLayout.getLineBottom(line)
 
-                                        try {
-                                            val windowPos = coords.localToWindow(Offset(x, y))
-                                            rootCoords!!.windowToLocal(windowPos)
-                                        } catch (e: Exception) {
+                                            try {
+                                                val windowPos = coords.localToWindow(Offset(x, y))
+                                                rootCoords!!.windowToLocal(windowPos)
+                                            } catch (e: Exception) {
+                                                Offset.Unspecified
+                                            }
+                                        } else {
                                             Offset.Unspecified
                                         }
                                     } else {
@@ -3828,17 +3986,11 @@ private fun RenderFlexChildBlock(
 
         // Apply block specific styles (like header font weight)
         val finalStyle = if (block is HeaderBlock) {
-            textStyle.copy(
-                fontWeight = FontWeight.Bold, fontSize = textStyle.fontSize * block.level.let {
-                    when (it) {
-                        1 -> 1.5f
-                        2 -> 1.4f
-                        3 -> 1.3f
-                        4 -> 1.2f
-                        5 -> 1.1f
-                        else -> 1.0f
-                    }
-                })
+            createHeaderTextStyle(
+                baseStyle = textStyle,
+                level = block.level,
+                textAlign = block.textAlign
+            )
         } else {
             textStyle
         }
@@ -3847,6 +3999,7 @@ private fun RenderFlexChildBlock(
             text = finalContent,
             style = finalStyle,
             modifier = Modifier,
+            pageIndex = pageIndex,
             textMeasurer = textMeasurer,
             onLinkClick = onLinkClickCallback,
             onGeneralTap = onGeneralTapCallback,

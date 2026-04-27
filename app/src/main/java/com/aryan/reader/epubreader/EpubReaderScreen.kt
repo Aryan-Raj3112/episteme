@@ -3467,7 +3467,10 @@ fun EpubReaderHost(
                                 onStartTtsFromSelection = { cfi, offset ->
                                     startTtsFromSelectionPaginated(cfi, offset)
                                 },
-                                userHighlights = userHighlights.filter { it.chapterIndex == (currentChapterInPaginatedMode ?: -1) },
+                                userHighlights = userHighlights.filter { highlight ->
+                                    val currentChapter = currentChapterInPaginatedMode ?: return@filter false
+                                    highlight.chapterIndex in (currentChapter - 1)..(currentChapter + 1)
+                                },
                                 onHighlightCreated = { cfi, text, colorId ->
                                     Timber.d("EpubReaderScreen: onHighlightCreated. CFI: $cfi")
                                     val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
