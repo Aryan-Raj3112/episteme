@@ -13,8 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.util.LruCache
 import androidx.activity.compose.BackHandler
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -41,8 +40,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -465,7 +462,7 @@ internal fun PdfPageComposable(
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
     onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
-    onDetectBubbles: suspend (Bitmap) -> List<android.graphics.RectF> = { emptyList() },
+    onDetectBubbles: suspend (Bitmap) -> List<com.aryan.reader.ml.SpeechBubble> = { emptyList() },
     onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
@@ -486,10 +483,6 @@ internal fun PdfPageComposable(
     val viewConfiguration = LocalViewConfiguration.current
     val coroutineScope = rememberCoroutineScope()
     var isStylusEraserOverride by remember { mutableStateOf(false) }
-
-    Timber.d(
-        "PdfPageComposable recompose: page=$pageIndex, isScrolling=$isScrolling, visualScale=$visualScaleProvider"
-    )
 
     var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
@@ -630,9 +623,7 @@ internal fun PdfPageComposable(
     }
 
     LaunchedEffect(centeringOffsetX, centeringOffsetY, pageIndex) {
-        Timber.d(
-            "PdfPageComposable Page $pageIndex | Centering Offset: x=$centeringOffsetX, y=$centeringOffsetY"
-        )
+
     }
 
     var showMagnifier by remember { mutableStateOf(false) }
@@ -658,32 +649,47 @@ internal fun PdfPageComposable(
         screenOffset
     }
 
-    var detectedBubbles by remember { mutableStateOf<List<android.graphics.RectF>>(emptyList()) }
-    var currentBubbleIndex by remember { mutableIntStateOf(-1) }
+    var detectedBubbles by remember { mutableStateOf<List<com.aryan.reader.ml.SpeechBubble>>(emptyList()) }
+    var expandedBubbleIndex by remember { mutableIntStateOf(-1) }
     var isDetectingBubbles by remember { mutableStateOf(false) }
-    var croppedBubbleBitmap by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
 
     LaunchedEffect(isBubbleZoomModeActive, isActivePage, bitmapState, actualBitmapWidthPx, actualBitmapHeightPx) {
+        Timber.tag("BubbleZoom").d("LaunchedEffect triggered. modeActive=$isBubbleZoomModeActive, activePage=$isActivePage, hasBitmap=${bitmapState != null}, dims=${actualBitmapWidthPx}x${actualBitmapHeightPx}")
+
         if (isBubbleZoomModeActive && isActivePage && bitmapState != null && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0) {
+            Timber.tag("BubbleZoom").d("Conditions met. Starting detection...")
             isDetectingBubbles = true
             try {
                 val rawBubbles = onDetectBubbles(bitmapState!!)
-                val rowHeight = actualBitmapHeightPx * 0.1f
-                detectedBubbles = rawBubbles.sortedWith(compareBy<android.graphics.RectF> { (it.centerY() / rowHeight).roundToInt() }.thenBy { it.centerX() })
+                Timber.tag("BubbleZoom").d("Detection complete. Found ${rawBubbles.size} raw bubbles.")
 
-                currentBubbleIndex = if (detectedBubbles.isNotEmpty()) {
-                    0
-                } else {
-                    -1
+                // NEW: Scale bubbles down from render bitmap space to logical screen space
+                val scaleX = actualBitmapWidthPx.toFloat() / bitmapState!!.width.toFloat()
+                val scaleY = actualBitmapHeightPx.toFloat() / bitmapState!!.height.toFloat()
+
+                val logicalBubbles = rawBubbles.map { b ->
+                    b.copy(bounds = android.graphics.RectF(
+                        b.bounds.left * scaleX,
+                        b.bounds.top * scaleY,
+                        b.bounds.right * scaleX,
+                        b.bounds.bottom * scaleY
+                    ))
                 }
+
+                val rowHeight = actualBitmapHeightPx * 0.1f
+                detectedBubbles = logicalBubbles.sortedWith(compareBy<com.aryan.reader.ml.SpeechBubble> { (it.bounds.centerY() / rowHeight).roundToInt() }.thenBy { it.bounds.centerX() })
+                expandedBubbleIndex = -1
+
+                Timber.tag("BubbleZoom").d("Sorted logical bubbles count: ${detectedBubbles.size}")
             } catch (e: Exception) {
-                Timber.e(e, "Bubble detection failed")
+                Timber.tag("BubbleZoom").e(e, "Bubble detection failed with exception")
             } finally {
                 isDetectingBubbles = false
             }
         } else {
+            Timber.tag("BubbleZoom").d("Conditions NOT met or mode disabled. Clearing bubbles.")
             detectedBubbles = emptyList()
-            currentBubbleIndex = -1
+            expandedBubbleIndex = -1
             if (!isBubbleZoomModeActive && scale > 1f && !isVerticalScroll && isZoomEnabled) {
                 coroutineScope.launch {
                     Animatable(scale).animateTo(1f, tween(300)) {
@@ -693,52 +699,6 @@ internal fun PdfPageComposable(
                     }
                 }
             }
-        }
-    }
-
-    LaunchedEffect(currentBubbleIndex, detectedBubbles, bitmapState) {
-        if (isBubbleZoomModeActive && currentBubbleIndex in detectedBubbles.indices && bitmapState != null && !bitmapState!!.isRecycled) {
-            // Smoothly reset the zoom if it's currently zoomed in
-            if (scale > 1f) {
-                coroutineScope.launch {
-                    val startScale = scale
-                    val startOffset = offset
-                    Animatable(0f).animateTo(1f, tween(300)) {
-                        scale = androidx.compose.ui.util.lerp(startScale, 1f, value)
-                        offset = androidx.compose.ui.geometry.lerp(startOffset, Offset.Zero, value)
-                        onScaleChanged(scale)
-                    }
-                }
-            }
-
-            // Crop the bubble from the page's bitmap
-            val bubble = detectedBubbles[currentBubbleIndex]
-            val paddingX = bubble.width() * 0.15f // 15% padding
-            val paddingY = bubble.height() * 0.15f
-
-            val left = (bubble.left - paddingX).toInt().coerceAtLeast(0)
-            val top = (bubble.top - paddingY).toInt().coerceAtLeast(0)
-            val right = (bubble.right + paddingX).toInt().coerceAtMost(bitmapState!!.width)
-            val bottom = (bubble.bottom + paddingY).toInt().coerceAtMost(bitmapState!!.height)
-
-            val width = right - left
-            val height = bottom - top
-
-            if (width > 0 && height > 0) {
-                try {
-                    val cropped = android.graphics.Bitmap.createBitmap(
-                        bitmapState!!, left, top, width, height
-                    )
-                    croppedBubbleBitmap = cropped.asImageBitmap()
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to crop bubble")
-                    croppedBubbleBitmap = null
-                }
-            } else {
-                croppedBubbleBitmap = null
-            }
-        } else {
-            croppedBubbleBitmap = null
         }
     }
 
@@ -2634,6 +2594,29 @@ internal fun PdfPageComposable(
                         return@detectTapGestures
                     }
 
+                    Timber.tag("BubbleZoom").d("Tap inside bounds. modeActive=$isBubbleZoomModeActive, detectedBubbles=${detectedBubbles.size}, tapPos=($tapXInBitmap, $tapYInBitmap)")
+
+                    if (isBubbleZoomModeActive && detectedBubbles.isNotEmpty()) {
+                        val tappedBubbleIndex = detectedBubbles.indexOfFirst { bubble ->
+                            tapXInBitmap >= bubble.bounds.left && tapXInBitmap <= bubble.bounds.right &&
+                                    tapYInBitmap >= bubble.bounds.top && tapYInBitmap <= bubble.bounds.bottom
+                        }
+
+                        Timber.tag("BubbleZoom").d("Tapped bubble index: $tappedBubbleIndex (expandedIndex=$expandedBubbleIndex)")
+
+                        if (tappedBubbleIndex != -1) {
+                            if (expandedBubbleIndex == tappedBubbleIndex) {
+                                expandedBubbleIndex = -1
+                            } else {
+                                expandedBubbleIndex = tappedBubbleIndex
+                            }
+                            return@detectTapGestures
+                        } else if (expandedBubbleIndex != -1) {
+                            expandedBubbleIndex = -1
+                            return@detectTapGestures
+                        }
+                    }
+
                     coroutineScope.launch {
                         val nativeResult = withContext(Dispatchers.IO) {
                             try {
@@ -3344,10 +3327,6 @@ internal fun PdfPageComposable(
                 offset = Offset.Zero
                 onScaleChanged(1f)
             }
-
-            Timber.d(
-                "PdfPageComposable Page $pageIndex initialized/resized/locked. scale=$scale, offset=$offset"
-            )
         }
 
         LaunchedEffect(
@@ -3500,15 +3479,8 @@ internal fun PdfPageComposable(
                 val viewContainerHeightPx =
                     with(density) { currentContainerMaxHeight.toPx().toInt() }
 
-                Timber.d(
-                    "PdfPageComposable Page $pageIndex | viewContainerPx: ${viewContainerWidthPx}x${viewContainerHeightPx}"
-                )
-
                 if (viewContainerWidthPx <= 0 || viewContainerHeightPx <= 0) {
                     if (bitmapState == null) isLoadingPage = true
-                    Timber.d(
-                        "PdfPageComposable: viewContainer dimensions invalid ($viewContainerWidthPx x $viewContainerHeightPx), waiting."
-                    )
                     return@LaunchedEffect
                 }
 
@@ -4079,17 +4051,8 @@ internal fun PdfPageComposable(
                         isBubbleZoomModeActive = isBubbleZoomModeActive,
                         isActivePage = isActivePage,
                         isDetectingBubbles = isDetectingBubbles,
-                        detectedBubblesCount = detectedBubbles.size,
-                        currentBubbleIndex = currentBubbleIndex,
-                        croppedBubbleBitmap = croppedBubbleBitmap,
-                        onPrevBubble = {
-                            if (currentBubbleIndex > 0) currentBubbleIndex--
-                            else onDragPageTurn(-1)
-                        },
-                        onNextBubble = {
-                            if (currentBubbleIndex < detectedBubbles.size - 1) currentBubbleIndex++
-                            else onDragPageTurn(1)
-                        }
+                        detectedBubbles = detectedBubbles,
+                        expandedBubbleIndex = expandedBubbleIndex
                     )
                 }
 
@@ -4280,7 +4243,6 @@ private fun PdfHighlightsLayer(
     selectionHighlightColor: Color,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap()
 ) {
-    Timber.d("PdfHighlightsLayer Recompose")
     Canvas(modifier = Modifier
         .fillMaxSize()
         .graphicsLayer()) {
@@ -4902,11 +4864,8 @@ private fun PdfPageRenderer(
     isBubbleZoomModeActive: Boolean = false,
     isActivePage: Boolean = true,
     isDetectingBubbles: Boolean = false,
-    detectedBubblesCount: Int = 0,
-    currentBubbleIndex: Int = -1,
-    croppedBubbleBitmap: androidx.compose.ui.graphics.ImageBitmap? = null,
-    onPrevBubble: () -> Unit = {},
-    onNextBubble: () -> Unit = {}
+    detectedBubbles: List<com.aryan.reader.ml.SpeechBubble> = emptyList(),
+    expandedBubbleIndex: Int = -1
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -5347,51 +5306,118 @@ private fun PdfPageRenderer(
                 androidx.compose.material3.CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center)
                 )
-            } else {
-                if (croppedBubbleBitmap != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.7f))
-                    )
+            } else if (detectedBubbles.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize().zIndex(20f)) {
+                    // Draw shadow-like hints for unexpanded bubbles
+                    detectedBubbles.forEachIndexed { index, bubble ->
+                        if (index != expandedBubbleIndex) {
+                            val left = bubble.bounds.left + staticData.centeringOffsetX // Prefix with staticData
+                            val top = bubble.bounds.top + staticData.centeringOffsetY   // Prefix with staticData
+                            val width = bubble.bounds.width()
+                            val height = bubble.bounds.height()
 
-                    androidx.compose.foundation.Image(
-                        bitmap = croppedBubbleBitmap,
-                        contentDescription = "Zoomed Bubble",
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 48.dp, vertical = 24.dp)
-                            .clip(RoundedCornerShape(16.dp)),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                    )
-                }
+                            if (bubble.maskBitmap != null) {
+                                drawImage(
+                                    image = bubble.maskBitmap.asImageBitmap(),
+                                    dstOffset = IntOffset(left.toInt(), top.toInt()),
+                                    dstSize = IntSize(width.toInt(), height.toInt()),
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.35f))
+                                )
+                            } else {
+                                drawRoundRect(
+                                    color = Color.Black.copy(alpha = 0.35f),
+                                    topLeft = Offset(left, top),
+                                    size = Size(width, height),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f)
+                                )
+                            }
+                        }
+                    }
 
-                androidx.compose.material3.IconButton(
-                    onClick = onPrevBubble,
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), androidx.compose.foundation.shape.CircleShape)
-                ) {
-                    androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Previous Bubble",
-                        tint = Color.White
-                    )
-                }
+                    if (expandedBubbleIndex != -1 && staticData.bitmap.item != null) {
+                        val bubble = detectedBubbles[expandedBubbleIndex]
+                        val left = bubble.bounds.left + staticData.centeringOffsetX
+                        val top = bubble.bounds.top + staticData.centeringOffsetY
+                        val logicalWidth = bubble.bounds.width()
+                        val logicalHeight = bubble.bounds.height()
+                        val pivotX = left + logicalWidth / 2f
+                        val pivotY = top + logicalHeight / 2f
 
-                androidx.compose.material3.IconButton(
-                    onClick = onNextBubble,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), androidx.compose.foundation.shape.CircleShape)
-                ) {
-                    androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Next Bubble",
-                        tint = Color.White
-                    )
+                        withTransform({
+                            scale(1.5f, 1.5f, Offset(pivotX, pivotY))
+                        }) {
+                            val dstOffset = IntOffset(left.toInt(), top.toInt())
+                            val dstSize = IntSize(logicalWidth.toInt(), logicalHeight.toInt())
+
+                            val renderScaleX = staticData.bitmap.item.width.toFloat() / staticData.targetWidth.toFloat()
+                            val renderScaleY = staticData.bitmap.item.height.toFloat() / staticData.targetHeight.toFloat()
+
+                            val srcOffset = IntOffset(
+                                (bubble.bounds.left * renderScaleX).toInt(),
+                                (bubble.bounds.top * renderScaleY).toInt()
+                            )
+                            val srcSize = IntSize(
+                                (logicalWidth * renderScaleX).toInt(),
+                                (logicalHeight * renderScaleY).toInt()
+                            )
+
+                            if (bubble.maskBitmap != null) {
+                                drawImage(
+                                    image = bubble.maskBitmap.asImageBitmap(),
+                                    dstOffset = IntOffset(left.toInt() + 12, top.toInt() + 12),
+                                    dstSize = dstSize,
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f))
+                                )
+                            } else {
+                                drawRoundRect(
+                                    color = Color.Black.copy(alpha = 0.5f),
+                                    topLeft = Offset(left + 12f, top + 12f),
+                                    size = Size(logicalWidth, logicalHeight),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f)
+                                )
+                            }
+
+                            if (bubble.maskBitmap != null) {
+                                val rect = androidx.compose.ui.geometry.Rect(
+                                    dstOffset.x.toFloat(),
+                                    dstOffset.y.toFloat(),
+                                    dstOffset.x.toFloat() + dstSize.width,
+                                    dstOffset.y.toFloat() + dstSize.height
+                                )
+                                drawContext.canvas.saveLayer(rect, androidx.compose.ui.graphics.Paint())
+                                drawImage(
+                                    image = staticData.bitmap.item.asImageBitmap(),
+                                    srcOffset = srcOffset,
+                                    srcSize = srcSize,
+                                    dstOffset = dstOffset,
+                                    dstSize = dstSize
+                                )
+                                drawImage(
+                                    image = bubble.maskBitmap.asImageBitmap(),
+                                    dstOffset = dstOffset,
+                                    dstSize = dstSize,
+                                    blendMode = BlendMode.DstIn
+                                )
+                                drawContext.canvas.restore()
+                            } else {
+                                clipRect(left, top, left + logicalWidth, top + logicalHeight) {
+                                    drawImage(
+                                        image = staticData.bitmap.item.asImageBitmap(),
+                                        srcOffset = srcOffset,
+                                        srcSize = srcSize,
+                                        dstOffset = dstOffset,
+                                        dstSize = dstSize
+                                    )
+                                }
+                                drawRect(
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    topLeft = Offset(left, top),
+                                    size = Size(logicalWidth, logicalHeight),
+                                    style = Stroke(width = 4f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

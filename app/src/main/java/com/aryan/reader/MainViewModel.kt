@@ -5246,13 +5246,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<android.graphics.RectF> {
+    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<com.aryan.reader.ml.SpeechBubble> {
+        Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles called")
         return withContext(mlDispatcher) {
             try {
                 val detector = getOrInitSpeechBubbleDetector(context)
-                detector?.detectBubbles(bitmap) ?: emptyList()
+                if (detector == null) {
+                    Timber.tag("BubbleZoom").w("ViewModel: Detector is null!")
+                }
+                val bubbles = detector?.detectBubbles(bitmap) ?: emptyList()
+                Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles returning ${bubbles.size} bubbles")
+                bubbles
             } catch (e: Exception) {
-                Timber.e(e, "Error during speech bubble detection")
+                Timber.tag("BubbleZoom").e(e, "ViewModel: Error during speech bubble detection")
                 emptyList()
             }
         }
