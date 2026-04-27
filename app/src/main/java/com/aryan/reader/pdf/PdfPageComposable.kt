@@ -5321,7 +5321,8 @@ private fun PdfPageRenderer(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(left.toInt(), top.toInt()),
                                     dstSize = IntSize(width.toInt(), height.toInt()),
-                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.35f))
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.35f)),
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             } else {
                                 drawRoundRect(
@@ -5366,7 +5367,8 @@ private fun PdfPageRenderer(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(left.toInt() + 12, top.toInt() + 12),
                                     dstSize = dstSize,
-                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f))
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f)),
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             } else {
                                 drawRoundRect(
@@ -5390,13 +5392,15 @@ private fun PdfPageRenderer(
                                     srcOffset = srcOffset,
                                     srcSize = srcSize,
                                     dstOffset = dstOffset,
-                                    dstSize = dstSize
+                                    dstSize = dstSize,
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                                 drawImage(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = dstOffset,
                                     dstSize = dstSize,
-                                    blendMode = BlendMode.DstIn
+                                    blendMode = BlendMode.DstIn,
+                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                                 drawContext.canvas.restore()
                             } else {

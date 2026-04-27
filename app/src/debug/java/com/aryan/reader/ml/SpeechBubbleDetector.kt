@@ -139,25 +139,22 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
                         val val2 = detsOutput[i * 4 + 2]
                         val val3 = detsOutput[i * 4 + 3]
 
-                        // YOLOv8 NMS export returns [x1, y1, x2, y2]
-                        val cx = val0
+                        val w = val2 * 1.08f
+                        val h = val3 * 1.08f
 
-                        val rawLeft = cx - val2 / 2
-                        val rawTop = val1 - val3 / 2
-                        val rawRight = cx + val2 / 2
-                        val rawBottom = val1 + val3 / 2
+                        val rawLeft = val0 - w / 2
+                        val rawTop = val1 - h / 2
+                        val rawRight = val0 + w / 2
+                        val rawBottom = val1 + h / 2
 
                         val left = rawLeft * scaleX
                         val top = rawTop * scaleY
                         val right = rawRight * scaleX
                         val bottom = rawBottom * scaleY
 
-                        Timber.tag("BubbleZoom").v("Detector: Bubble $i: raw coords[$rawLeft, $rawTop, $rawRight, $rawBottom], conf=$maxConf")
-
                         var maskBitmap: Bitmap? = null
                         if (masksOutput != null && maskH > 0 && maskW > 0) {
                             try {
-                                // 126x126 is the mask for the ENTIRE image. We need to crop it to the bounding box.
                                 val maskScaleX = if (isNormalized) maskW.toFloat() else maskW.toFloat() / inputSize
                                 val maskScaleY = if (isNormalized) maskH.toFloat() else maskH.toFloat() / inputSize
 
@@ -174,15 +171,32 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
                                     val maskPixels = IntArray(cropW * cropH)
                                     val offset = i * maskW * maskH
 
+                                    // Dilate radius: expands the mask slightly to include outline
+                                    val dilationRadius = 1
+
                                     for (y in 0 until cropH) {
                                         for (x in 0 until cropW) {
                                             val maskX = mLeft + x
                                             val maskY = mTop + y
-                                            val p = maskY * maskW + maskX
 
-                                            if (offset + p < masksOutput.size) {
-                                                maskPixels[y * cropW + x] = if (masksOutput[offset + p] > 0.0f) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
+                                            var isWhite = false
+
+                                            // Morphological Dilation: Check neighbors to expand & smooth the mask
+                                            for (dy in -dilationRadius..dilationRadius) {
+                                                for (dx in -dilationRadius..dilationRadius) {
+                                                    val nx = (maskX + dx).coerceIn(0, maskW - 1)
+                                                    val ny = (maskY + dy).coerceIn(0, maskH - 1)
+                                                    val p = ny * maskW + nx
+                                                    // > -0.5f captures slightly softer edge bounds
+                                                    if (offset + p < masksOutput.size && masksOutput[offset + p] > -0.5f) {
+                                                        isWhite = true
+                                                        break
+                                                    }
+                                                }
+                                                if (isWhite) break
                                             }
+
+                                            maskPixels[y * cropW + x] = if (isWhite) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
                                         }
                                     }
                                     maskBmp.setPixels(maskPixels, 0, cropW, 0, 0, cropW, cropH)
