@@ -850,6 +850,8 @@
     <string name="label_font_size">Font Size</string>
     <string name="label_line_height">Line Height</string>
     <string name="label_paragraph_gap">Paragraph Gap</string>
+    <string name="label_horizontal_margin">Horizontal Margin</string>
+    <string name="label_none">None</string>
     <!-- Short label for the "Original" font option in the reader settings. "Orig" is an abbreviation. -->
     <string name="label_original">Orig</string>
     <!-- Typographic sample label shown in the font size picker — "Aa" represents text size visually. Do not translate. -->

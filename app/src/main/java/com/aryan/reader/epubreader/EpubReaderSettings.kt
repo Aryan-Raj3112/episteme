@@ -124,6 +124,7 @@ private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
 const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
+const val DEFAULT_HORIZONTAL_MARGIN_VAL = 1.0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
 private const val TTS_PITCH_KEY = "tts_pitch"
 
@@ -178,6 +179,7 @@ data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
     val paragraphGap: Float,
+    val horizontalMargin: Float,
     val font: ReaderFont,
     val customPath: String?,
     val textAlign: ReaderTextAlign
@@ -187,8 +189,10 @@ private const val FORMAT_IS_LOCAL_PREFIX = "format_is_local_"
 private const val LOCAL_FONT_SIZE_PREFIX = "local_font_size_"
 private const val LOCAL_LINE_HEIGHT_PREFIX = "local_line_height_"
 private const val LOCAL_PARAGRAPH_GAP_PREFIX = "local_paragraph_gap_"
+private const val LOCAL_HORIZONTAL_MARGIN_PREFIX = "local_horizontal_margin_"
 private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
+private const val HORIZONTAL_MARGIN_KEY = "reader_horizontal_margin"
 
 fun loadFormatIsLocal(context: Context, bookId: String): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -206,6 +210,7 @@ fun saveLocalReaderSettings(
     fontSize: Float,
     lineHeight: Float,
     paragraphGap: Float,
+    horizontalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -215,6 +220,7 @@ fun saveLocalReaderSettings(
         putFloat(LOCAL_FONT_SIZE_PREFIX + bookId, fontSize)
         putFloat(LOCAL_LINE_HEIGHT_PREFIX + bookId, lineHeight)
         putFloat(LOCAL_PARAGRAPH_GAP_PREFIX + bookId, paragraphGap)
+        putFloat(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId, horizontalMargin)
         if (customFontPath != null) {
             putString(LOCAL_FONT_FAMILY_PREFIX + bookId, "custom|$customFontPath")
         } else {
@@ -268,6 +274,14 @@ fun loadPullToTurnMultiplier(context: Context): Float {
     return prefs.getFloat(PULL_TO_TURN_MULTIPLIER_KEY, 1.0f)
 }
 
+fun loadHorizontalMargin(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    if (prefs.contains(HORIZONTAL_MARGIN_KEY)) {
+        return prefs.getFloat(HORIZONTAL_MARGIN_KEY, DEFAULT_HORIZONTAL_MARGIN_VAL)
+    }
+    return if (loadRemoveEdgePadding(context)) 0f else DEFAULT_HORIZONTAL_MARGIN_VAL
+}
+
 fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): FormatSettings {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -289,6 +303,12 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         prefs.getFloat(PARAGRAPH_GAP_KEY, DEFAULT_PARAGRAPH_GAP_VAL)
     }
 
+    val horizontalMargin = if (isLocal && prefs.contains(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId, DEFAULT_HORIZONTAL_MARGIN_VAL)
+    } else {
+        loadHorizontalMargin(context)
+    }
+
     val savedFontVal = if (isLocal && prefs.contains(LOCAL_FONT_FAMILY_PREFIX + bookId)) {
         prefs.getString(LOCAL_FONT_FAMILY_PREFIX + bookId, ReaderFont.ORIGINAL.id) ?: ReaderFont.ORIGINAL.id
     } else {
@@ -308,7 +328,15 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
     }
     val textAlign = ReaderTextAlign.entries.find { it.id == alignId } ?: ReaderTextAlign.DEFAULT
 
-    return FormatSettings(fontSize, lineHeight, paragraphGap, font, customPath, textAlign)
+    return FormatSettings(
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        paragraphGap = paragraphGap,
+        horizontalMargin = horizontalMargin,
+        font = font,
+        customPath = customPath,
+        textAlign = textAlign
+    )
 }
 
 fun getComposeFontFamily(
@@ -347,6 +375,7 @@ fun saveReaderSettings(
     fontSize: Float,
     lineHeight: Float,
     paragraphGap: Float,
+    horizontalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -356,6 +385,7 @@ fun saveReaderSettings(
         putFloat(FONT_SIZE_KEY, fontSize)
         putFloat(LINE_HEIGHT_KEY, lineHeight)
         putFloat(PARAGRAPH_GAP_KEY, paragraphGap)
+        putFloat(HORIZONTAL_MARGIN_KEY, horizontalMargin)
         if (customFontPath != null) {
             putString(FONT_FAMILY_KEY, "custom|$customFontPath")
         } else {
@@ -405,6 +435,8 @@ fun ReaderTextFormatPanel(
     onLineHeightChange: (Float) -> Unit,
     currentParagraphGap: Float,
     onParagraphGapChange: (Float) -> Unit,
+    currentHorizontalMargin: Float,
+    onHorizontalMarginChange: (Float) -> Unit,
     currentFont: ReaderFont,
     currentCustomFontName: String?,
     onFontOptionClick: () -> Unit,
@@ -417,10 +449,6 @@ fun ReaderTextFormatPanel(
 ) {
     if (isVisible) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-        // Dummy states for the new sliders
-        var dummyHorizontalMargin by remember { mutableFloatStateOf(1.0f) }
-        var dummyImageSize by remember { mutableFloatStateOf(1.0f) }
 
         ModalBottomSheet(
             onDismissRequest = onClose,
@@ -605,6 +633,7 @@ fun ReaderTextFormatPanel(
 
                 // Resolve the string once outside the lambdas
                 val originalLabel = stringResource(R.string.label_original)
+                val noneLabel = stringResource(R.string.label_none)
 
                 // Wide, smooth sliders without dots
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -632,22 +661,18 @@ fun ReaderTextFormatPanel(
                         formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
                     )
 
-                    // Dummy: Horizontal Margin
                     FormatSlider(
-                        label = "Horizontal Margin",
-                        value = dummyHorizontalMargin,
-                        onValueChange = { dummyHorizontalMargin = it },
+                        label = stringResource(R.string.label_horizontal_margin),
+                        value = currentHorizontalMargin,
+                        onValueChange = onHorizontalMarginChange,
                         valueRange = 0.0f..3.0f,
-                        formatValue = { if (it in 0.99f..1.01f) "Default" else "%.1fx".format(it) }
-                    )
-
-                    // Dummy: Image Size
-                    FormatSlider(
-                        label = "Image Size",
-                        value = dummyImageSize,
-                        onValueChange = { dummyImageSize = it },
-                        valueRange = 0.5f..2.0f,
-                        formatValue = { if (it in 0.99f..1.01f) "Default" else "%.1fx".format(it) }
+                        formatValue = {
+                            when {
+                                it <= 0.01f -> noneLabel
+                                it in 0.99f..1.01f -> originalLabel
+                                else -> "%.1fx".format(it)
+                            }
+                        }
                     )
                 }
             }
@@ -782,8 +807,6 @@ fun VisualOptionsSheet(
     onPageInfoModeChange: (PageInfoMode) -> Unit,
     pullToTurnEnabled: Boolean,
     onPullToTurnChange: (Boolean) -> Unit,
-    removeEdgePadding: Boolean,
-    onRemoveEdgePaddingChange: (Boolean) -> Unit,
     pullToTurnMultiplier: Float,
     onPullToTurnMultiplierChange: (Float) -> Unit,
     onDismiss: () -> Unit
@@ -880,30 +903,6 @@ fun VisualOptionsSheet(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onRemoveEdgePaddingChange(!removeEdgePadding) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.visual_options_edge_padding), style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.visual_options_edge_padding_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Switch(checked = removeEdgePadding, onCheckedChange = { onRemoveEdgePaddingChange(it) })
-                }
-            }
-
             Spacer(modifier = Modifier.height(32.dp))
         }
     }

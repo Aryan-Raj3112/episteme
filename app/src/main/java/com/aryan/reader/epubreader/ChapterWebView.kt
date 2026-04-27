@@ -349,6 +349,7 @@ fun ChapterWebView(
     currentFontSize: Float,
     currentLineHeight: Float,
     currentParagraphGap: Float,
+    currentHorizontalMargin: Float,
     onChapterInitiallyScrolled: () -> Unit,
     modifier: Modifier = Modifier,
     onTap: () -> Unit,
@@ -485,6 +486,7 @@ fun ChapterWebView(
             currentFontSize,
             currentLineHeight,
             currentParagraphGap,
+            currentHorizontalMargin,
             currentFontFamily,
             currentTextAlign
         ) {
@@ -778,7 +780,7 @@ fun ChapterWebView(
                             }
 
                             view?.evaluateJavascript(
-                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap);",
+                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentHorizontalMargin);",
                                 null
                             )
 
@@ -942,7 +944,7 @@ fun ChapterWebView(
                 )
 
                 webView.evaluateJavascript(
-                    "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap);",
+                    "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentHorizontalMargin);",
                     null
                 )
 

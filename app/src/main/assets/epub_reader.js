@@ -517,7 +517,7 @@
         }
     }, true);
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, horizontalMargin) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -530,7 +530,9 @@
                 "', Align: '" +
                 textAlign +
                 "', Gap: " +
-                paragraphGap
+                paragraphGap +
+                ", HorizontalMargin: " +
+                horizontalMargin
         );
 
         var dynamicStyleId = "dynamicReaderStyles";
@@ -545,10 +547,12 @@
         var newFontSize = parseFloat(fontSizeEm);
         var newLineHeight = parseFloat(lineHeight);
         var newGap = parseFloat(paragraphGap);
+        var newHorizontalMargin = parseFloat(horizontalMargin);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
         if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
+        if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
 
         var fontCss = "";
         if (fontFamily && fontFamily !== "Original" && fontFamily !== "") {
@@ -600,7 +604,16 @@
             `;
         }
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss].join("\n");
+        var horizontalPaddingPx = Math.max(0, 16 * newHorizontalMargin);
+        var horizontalMarginCss = `
+            body {
+                box-sizing: border-box !important;
+                padding-left: ${horizontalPaddingPx}px !important;
+                padding-right: ${horizontalPaddingPx}px !important;
+            }
+        `;
+
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, horizontalMarginCss].join("\n");
 
         setTimeout(
             function () {

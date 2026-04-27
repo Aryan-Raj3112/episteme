@@ -563,7 +563,6 @@ fun EpubReaderHost(
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
-    var removeEdgePadding by remember { mutableStateOf(loadRemoveEdgePadding(context)) }
 
     var volumeScrollEnabled by remember {
         mutableStateOf(loadVolumeScrollSetting(context))
@@ -980,6 +979,7 @@ fun EpubReaderHost(
     var currentFontSizeEm by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.fontSize) }
     var currentLineHeight by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.lineHeight) }
     var currentParagraphGap by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.paragraphGap) }
+    var currentHorizontalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.horizontalMargin) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
     var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
@@ -995,14 +995,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         }
     }
@@ -2484,13 +2484,11 @@ fun EpubReaderHost(
                     RenderMode.VERTICAL_SCROLL -> {
                         val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) PAGE_INFO_BAR_HEIGHT else 0.dp
 
-                        val horizontalPadding = if (removeEdgePadding) 0.dp else 16.dp
-
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(bottom = contentBottomPadding)
-                                .padding(top = 16.dp, start = horizontalPadding, end = horizontalPadding)
+                                .padding(top = 16.dp)
                                 .testTag("ReaderContainer")
                         ) {
                             if (chapters.isEmpty()) {
@@ -2877,6 +2875,7 @@ fun EpubReaderHost(
                                             currentFontSize = currentFontSizeEm,
                                             currentLineHeight = currentLineHeight,
                                             currentParagraphGap = currentParagraphGap,
+                                            currentHorizontalMargin = currentHorizontalMargin,
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
                                             currentTextAlign = currentTextAlign,
@@ -3375,6 +3374,7 @@ fun EpubReaderHost(
                                 fontSizeMultiplier = currentFontSizeEm,
                                 lineHeightMultiplier = currentLineHeight,
                                 paragraphGapMultiplier = currentParagraphGap,
+                                horizontalMarginMultiplier = currentHorizontalMargin,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
                                 activeHighlightPalette = currentHighlightPalette,
@@ -3386,7 +3386,6 @@ fun EpubReaderHost(
                                     offset = ttsState.startOffsetInSource
                                 ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
                                 activeTextureId = activeTextureId,
-                                removeEdgePadding = removeEdgePadding,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
                                 modifier = Modifier.alpha(if (isPagerInitialized) 1f else 0f),
                                 onPaginatorReady = { newPaginator ->
@@ -4336,6 +4335,8 @@ fun EpubReaderHost(
                     onLineHeightChange = { currentLineHeight = it },
                     currentParagraphGap = currentParagraphGap,
                     onParagraphGapChange = { currentParagraphGap = it },
+                    currentHorizontalMargin = currentHorizontalMargin,
+                    onHorizontalMarginChange = { currentHorizontalMargin = it },
                     currentFont = currentFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
                         customFonts.find { it.path == currentCustomFontPath }?.displayName ?: "Custom Font"
@@ -4352,6 +4353,7 @@ fun EpubReaderHost(
                         currentFontSizeEm = DEFAULT_FONT_SIZE_VAL
                         currentLineHeight = DEFAULT_LINE_HEIGHT_VAL
                         currentParagraphGap = DEFAULT_PARAGRAPH_GAP_VAL
+                        currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT
@@ -4701,11 +4703,6 @@ fun EpubReaderHost(
                 onPullToTurnChange = {
                     pullToTurnEnabled = it
                     savePullToTurn(context, it)
-                },
-                removeEdgePadding = removeEdgePadding,
-                onRemoveEdgePaddingChange = {
-                    removeEdgePadding = it
-                    saveRemoveEdgePadding(context, it)
                 },
                 pullToTurnMultiplier = pullToTurnMultiplier,
                 onPullToTurnMultiplierChange = {

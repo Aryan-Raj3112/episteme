@@ -525,11 +525,11 @@ fun PaginatedReaderScreen(
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
     paragraphGapMultiplier: Float,
+    horizontalMarginMultiplier: Float,
     fontFamily: FontFamily,
     textAlign: ReaderTextAlign,
     ttsHighlightInfo: TtsHighlightInfo?,
     initialChapterIndexInBook: Int?,
-    removeEdgePadding: Boolean = false,
     onPaginatorReady: (IPaginator) -> Unit,
     onTap: (Offset?) -> Unit,
     isProUser: Boolean,
@@ -582,6 +582,7 @@ fun PaginatedReaderScreen(
         var debouncedFontSizeMult by remember { mutableFloatStateOf(fontSizeMultiplier) }
         var debouncedLineHeightMult by remember { mutableFloatStateOf(lineHeightMultiplier) }
         var debouncedParagraphGapMult by remember { mutableFloatStateOf(paragraphGapMultiplier) }
+        var debouncedHorizontalMarginMult by remember { mutableFloatStateOf(horizontalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
 
@@ -652,8 +653,14 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, fontFamily, textAlign) {
-            if (fontSizeMultiplier != debouncedFontSizeMult || lineHeightMultiplier != debouncedLineHeightMult || paragraphGapMultiplier != debouncedParagraphGapMult || fontFamily != debouncedFontFamily || textAlign != debouncedTextAlign) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, horizontalMarginMultiplier, fontFamily, textAlign) {
+            if (fontSizeMultiplier != debouncedFontSizeMult ||
+                lineHeightMultiplier != debouncedLineHeightMult ||
+                paragraphGapMultiplier != debouncedParagraphGapMult ||
+                horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
+                fontFamily != debouncedFontFamily ||
+                textAlign != debouncedTextAlign
+            ) {
                 Timber.d("Formatting changed. Waiting for debounce.")
                 delay(400L)
 
@@ -669,6 +676,7 @@ fun PaginatedReaderScreen(
                 debouncedFontSizeMult = fontSizeMultiplier
                 debouncedLineHeightMult = lineHeightMultiplier
                 debouncedParagraphGapMult = paragraphGapMultiplier
+                debouncedHorizontalMarginMult = horizontalMarginMultiplier
                 debouncedFontFamily = fontFamily
                 debouncedTextAlign = textAlign
                 Timber.d("Debounce complete. Applying new format settings.")
@@ -684,7 +692,7 @@ fun PaginatedReaderScreen(
         }
 
         val density = LocalDensity.current
-        val horizontalPadding = if (removeEdgePadding) 0.dp else 16.dp
+        val horizontalPadding = 16.dp * debouncedHorizontalMarginMult
         val verticalPadding = 16.dp
 
         val textConstraints =
