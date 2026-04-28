@@ -206,10 +206,17 @@ data class Shelf(
     val id: String,
     val name: String,
     val type: ShelfType,
-    val books: List<RecentFileItem>
+    val books: List<RecentFileItem>,
+    val directBooks: List<RecentFileItem> = books,
+    val parentShelfId: String? = null,
+    val childShelfIds: List<String> = emptyList(),
+    val depth: Int = 0,
+    val sortKey: String = name.lowercase()
 ) {
     val bookCount: Int get() = books.size
     val topBook: RecentFileItem? get() = books.maxByOrNull { it.timestamp }
+    val directBookCount: Int get() = directBooks.size
+    val childShelfCount: Int get() = childShelfIds.size
 }
 
 enum class SortOrder(val displayName: String) {
@@ -715,24 +722,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         allShelves.addAll(seriesShelves)
 
-        val folderShelves = allLibraryFiles
-            .filter { it.sourceFolderUri != null }
-            .groupBy { it.sourceFolderUri!! }
-            .map { (folderUri, books) ->
-                val folderName = internalState.syncedFolders.find { it.uriString == folderUri }?.name ?: "Local Folder"
-                shelvedBookIds.addAll(books.map { it.bookId })
-                Shelf("folder_$folderUri", folderName, ShelfType.FOLDER, sortFiles(books))
+        val folderShelves = buildFolderShelves(
+            allLibraryFiles = allLibraryFiles,
+            syncedFolders = internalState.syncedFolders,
+            sortFiles = ::sortFiles
+        ).also { shelves ->
+            shelves.forEach { shelf ->
+                shelvedBookIds.addAll(shelf.books.map { it.bookId })
             }
+        }
         allShelves.addAll(folderShelves)
 
         val unshelvedBooks = allLibraryFiles.filter { it.bookId !in shelvedBookIds }
         allShelves.add(Shelf("unshelved", "Unshelved", ShelfType.MANUAL, sortFiles(unshelvedBooks)))
 
-        allShelves.sortWith(compareBy({ it.type.ordinal }, { it.name.lowercase() }))
+        allShelves.sortWith(compareBy({ it.type.ordinal }, { it.sortKey }))
 
-        val booksAvailableForAdding = if (internalState.isAddingBooksToShelf && internalState.viewingShelfId != null) {
+        val validShelfIds = allShelves.mapTo(mutableSetOf()) { it.id }
+        val viewingShelfId = internalState.viewingShelfId?.takeIf { it in validShelfIds }
+        val selectedShelfIds = internalState.contextualActionShelfIds.filterTo(mutableSetOf()) { it in validShelfIds }
+
+        val booksAvailableForAdding = if (internalState.isAddingBooksToShelf && viewingShelfId != null) {
             val currentShelfBookIds = allShelves
-                .find { it.id == internalState.viewingShelfId }
+                .find { it.id == viewingShelfId }
                 ?.books
                 ?.map { it.bookId }
                 ?.toSet()
@@ -747,6 +759,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             recentFiles = visibleRecentFiles,
             allRecentFiles = sortedLibraryFiles,
             rawLibraryFiles = allLibraryFiles,
+            viewingShelfId = viewingShelfId,
+            isAddingBooksToShelf = internalState.isAddingBooksToShelf && viewingShelfId != null,
+            contextualActionShelfIds = selectedShelfIds,
             contextualActionItems = internalState.contextualActionItems.mapNotNull { ctx -> allLibraryFiles.find { it.bookId == ctx.bookId } }.toSet(),
             shelves = allShelves,
             openTabs = openTabsList,
@@ -758,6 +773,145 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = _internalState.value
     )
+
+    private data class FolderShelfAccumulator(
+        val id: String,
+        val name: String,
+        val depth: Int,
+        val parentShelfId: String?,
+        val sortPath: String,
+        val books: MutableList<RecentFileItem> = mutableListOf(),
+        val directBooks: MutableList<RecentFileItem> = mutableListOf(),
+        val childShelfIds: MutableList<String> = mutableListOf()
+    )
+
+    private fun buildFolderShelves(
+        allLibraryFiles: List<RecentFileItem>,
+        syncedFolders: List<SyncedFolder>,
+        sortFiles: (List<RecentFileItem>) -> List<RecentFileItem>
+    ): List<Shelf> {
+        val folderNamesByUri = syncedFolders.associate { it.uriString to it.name }
+
+        return allLibraryFiles
+            .filter { it.sourceFolderUri != null }
+            .groupBy { it.sourceFolderUri!! }
+            .flatMap { (folderUri, books) ->
+                val rootName = folderNamesByUri[folderUri] ?: "Local Folder"
+                val rootShelfId = "folder_$folderUri"
+                val rootAccumulator = FolderShelfAccumulator(
+                    id = rootShelfId,
+                    name = rootName,
+                    depth = 0,
+                    parentShelfId = null,
+                    sortPath = ""
+                )
+                val rootShelf = Shelf(
+                    id = rootShelfId,
+                    name = rootName,
+                    type = ShelfType.FOLDER,
+                    books = sortFiles(books),
+                    directBooks = mutableListOf<RecentFileItem>().also { direct ->
+                        direct.addAll(books.filter { getRelativeFolderSegments(it).isEmpty() })
+                    },
+                    childShelfIds = emptyList(),
+                    depth = 0,
+                    sortKey = "folder:${rootName.lowercase()}:"
+                )
+
+                val nestedShelves = linkedMapOf<String, FolderShelfAccumulator>()
+                books.forEach { book ->
+                    rootAccumulator.books.add(book)
+                    val segments = getRelativeFolderSegments(book)
+                    if (segments.isEmpty()) {
+                        rootAccumulator.directBooks.add(book)
+                    }
+                    var currentPath = ""
+                    var parentShelfId = rootShelfId
+                    segments.forEachIndexed { index, segment ->
+                        currentPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
+                        val shelfId = "folder_$folderUri::$currentPath"
+                        val accumulator = nestedShelves.getOrPut(currentPath) {
+                            val newShelf = FolderShelfAccumulator(
+                                id = shelfId,
+                                name = segment,
+                                depth = index + 1,
+                                parentShelfId = parentShelfId,
+                                sortPath = currentPath.lowercase()
+                            )
+                            if (parentShelfId == rootShelfId) {
+                                rootAccumulator.childShelfIds.add(shelfId)
+                            } else {
+                                nestedShelves.values.find { it.id == parentShelfId }?.childShelfIds?.add(shelfId)
+                            }
+                            newShelf
+                        }
+                        accumulator.books.add(book)
+                        if (index == segments.lastIndex) {
+                            accumulator.directBooks.add(book)
+                        }
+                        parentShelfId = shelfId
+                    }
+                }
+
+                val sortedNestedShelves = nestedShelves
+                    .values
+                    .sortedBy { it.sortPath }
+                    .map { shelf ->
+                        Shelf(
+                            id = shelf.id,
+                            name = shelf.name,
+                            type = ShelfType.FOLDER,
+                            books = sortFiles(shelf.books),
+                            directBooks = sortFiles(shelf.directBooks),
+                            parentShelfId = shelf.parentShelfId,
+                            childShelfIds = shelf.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
+                            depth = shelf.depth,
+                            sortKey = "folder:${rootName.lowercase()}:${shelf.sortPath}"
+                        )
+                    }
+
+                listOf(
+                    rootShelf.copy(
+                        directBooks = sortFiles(rootAccumulator.directBooks),
+                        childShelfIds = rootAccumulator.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() }
+                    )
+                ) + sortedNestedShelves
+            }
+    }
+
+    private fun getRelativeFolderSegments(item: RecentFileItem): List<String> {
+        val documentUriString = item.uriString ?: return emptyList()
+        val rootFolderUriString = item.sourceFolderUri ?: return emptyList()
+
+        return try {
+            val documentUri = documentUriString.toUri()
+            val rootFolderUri = rootFolderUriString.toUri()
+            val rootDocId = DocumentsContract.getTreeDocumentId(rootFolderUri)
+            val documentId = when {
+                DocumentsContract.isDocumentUri(appContext, documentUri) -> DocumentsContract.getDocumentId(documentUri)
+                DocumentsContract.isTreeUri(documentUri) -> DocumentsContract.getTreeDocumentId(documentUri)
+                else -> return emptyList()
+            }
+
+            val rootPath = rootDocId.substringAfter(':', "")
+            val documentPath = documentId.substringAfter(':', "")
+            val relativeDocumentPath = when {
+                rootPath.isBlank() -> documentPath
+                documentPath == rootPath -> ""
+                documentPath.startsWith("$rootPath/") -> documentPath.removePrefix("$rootPath/")
+                else -> documentPath
+            }
+
+            relativeDocumentPath
+                .substringBeforeLast('/', "")
+                .split('/')
+                .map { Uri.decode(it).trim() }
+                .filter { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Timber.tag("FolderShelves").w(e, "Failed to derive relative folder path for ${item.displayName}")
+            emptyList()
+        }
+    }
 
     fun setTabsEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }
@@ -4620,6 +4774,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun unselectShelf() {
         _internalState.update { it.copy(viewingShelfId = null, isAddingBooksToShelf = false) }
+    }
+
+    fun navigateBackFromShelf() {
+        val currentShelf = uiState.value.shelves.find { it.id == _internalState.value.viewingShelfId }
+        val parentShelfId = currentShelf?.takeIf { it.type == ShelfType.FOLDER }?.parentShelfId
+        if (parentShelfId != null) {
+            _internalState.update { it.copy(viewingShelfId = parentShelfId, isAddingBooksToShelf = false) }
+        } else {
+            unselectShelf()
+        }
     }
 
     fun removeContextualItemsFromShelf() {

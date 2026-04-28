@@ -64,6 +64,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
@@ -74,8 +76,6 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LibraryBooks
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -422,11 +422,14 @@ fun ShelfScreen(
         when {
             selectedItems.isNotEmpty() -> viewModel.clearContextualAction()
             isAddingBooks -> viewModel.dismissAddBooksToShelf()
-            else -> viewModel.unselectShelf()
+            else -> viewModel.navigateBackFromShelf()
         }
     }
 
     val currentShelf = shelves.find { it.id == viewingShelfId }
+    val childShelves = remember(shelves, currentShelf) {
+        currentShelf?.childShelfIds?.mapNotNull { childId -> shelves.find { it.id == childId } } ?: emptyList()
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (viewingShelfId != null && currentShelf != null) {
@@ -447,11 +450,13 @@ fun ShelfScreen(
             } else {
                 ShelfDetailScreen(
                     shelf = currentShelf,
+                    childShelves = childShelves,
                     selectedItems = selectedItems,
                     sortOrder = sortOrder,
                     onSortOrderChange = viewModel::setSortOrder,
-                    onBack = viewModel::unselectShelf,
+                    onBack = viewModel::navigateBackFromShelf,
                     onAddBooksClick = viewModel::showAddBooksToShelf,
+                    onChildShelfClick = viewModel::onShelfClick,
                     onBookClick = viewModel::onRecentFileClicked,
                     onBookLongClick = viewModel::onRecentItemLongPress,
                     onClearSelection = viewModel::clearContextualAction,
@@ -871,7 +876,15 @@ private fun ShelvesScreen(
     selectedShelves: Set<String>,
 ) {
     val tagShelves = remember(shelves) { shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 } }
-    val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG } }
+    val visibleShelves = remember(shelves) {
+        shelves.filter { shelf ->
+            when {
+                shelf.type == ShelfType.TAG -> false
+                shelf.type == ShelfType.FOLDER -> shelf.parentShelfId == null
+                else -> true
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -964,11 +977,13 @@ private fun CreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit
 @Composable
 private fun ShelfDetailScreen(
     shelf: Shelf,
+    childShelves: List<Shelf>,
     selectedItems: Set<RecentFileItem>,
     sortOrder: SortOrder,
     onSortOrderChange: (SortOrder) -> Unit,
     onBack: () -> Unit,
     onAddBooksClick: () -> Unit,
+    onChildShelfClick: (Shelf) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
     onClearSelection: () -> Unit,
@@ -980,6 +995,7 @@ private fun ShelfDetailScreen(
     downloadingBookIds: Set<String>,
 ) {
     val isContextualModeActive = selectedItems.isNotEmpty()
+    val isFolderShelf = shelf.type == ShelfType.FOLDER
     var showSortMenu by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
 
@@ -1004,7 +1020,14 @@ private fun ShelfDetailScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = getBookCountString(shelf.bookCount),
+                                text = when {
+                                    isFolderShelf && shelf.childShelfCount > 0 && shelf.directBookCount > 0 ->
+                                        "${shelf.childShelfCount} folders • ${getBookCountString(shelf.directBookCount)}"
+                                    isFolderShelf && shelf.childShelfCount > 0 ->
+                                        "${shelf.childShelfCount} folders"
+                                    isFolderShelf -> getBookCountString(shelf.directBookCount)
+                                    else -> getBookCountString(shelf.bookCount)
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1093,7 +1116,7 @@ private fun ShelfDetailScreen(
             }
         }
     ) { paddingValues ->
-        if (shelf.books.isEmpty()) {
+        if (childShelves.isEmpty() && shelf.directBooks.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(paddingValues),
                 contentAlignment = Alignment.Center
@@ -1106,7 +1129,43 @@ private fun ShelfDetailScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(shelf.books, key = { it.bookId }) { item ->
+                if (childShelves.isNotEmpty()) {
+                    if (isFolderShelf) {
+                        item {
+                            Text(
+                                text = "Folders",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    items(childShelves, key = { it.id }) { childShelf ->
+                        ShelfListItem(
+                            shelf = childShelf,
+                            isSelected = false,
+                            onItemClick = { onChildShelfClick(childShelf) },
+                            onItemLongClick = {},
+                            showHierarchyIndent = false
+                        )
+                    }
+                }
+                if (shelf.directBooks.isNotEmpty()) {
+                    if (isFolderShelf && childShelves.isNotEmpty()) {
+                        item {
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        item {
+                            Text(
+                                text = "Files",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                items(shelf.directBooks, key = { it.bookId }) { item ->
                     LibraryListItem(
                         item = item,
                         isSelected = selectedItems.any { it.bookId == item.bookId },
@@ -1322,7 +1381,10 @@ private fun ShelfListItem(
     isSelected: Boolean,
     onItemClick: () -> Unit,
     onItemLongClick: () -> Unit,
+    showHierarchyIndent: Boolean = true,
 ) {
+    val folderIndent = if (showHierarchyIndent && shelf.type == ShelfType.FOLDER) (shelf.depth * 14).dp else 0.dp
+
     androidx.compose.material3.ElevatedCard(
         shape = MaterialTheme.shapes.large,
         colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
@@ -1348,7 +1410,7 @@ private fun ShelfListItem(
             )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(start = 12.dp + folderIndent, end = 12.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ShelfCover(shelf = shelf)
@@ -1359,10 +1421,10 @@ private fun ShelfListItem(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val icon = when (shelf.type) {
                         ShelfType.SMART -> Icons.Default.Star
-                        ShelfType.TAG -> Icons.Default.LibraryBooks
+                        ShelfType.TAG -> Icons.AutoMirrored.Filled.LibraryBooks
                         ShelfType.FOLDER -> Icons.Default.Folder
-                        ShelfType.SERIES -> Icons.Default.LibraryBooks
-                        ShelfType.MANUAL -> Icons.Default.List
+                        ShelfType.SERIES -> Icons.AutoMirrored.Filled.LibraryBooks
+                        ShelfType.MANUAL -> Icons.AutoMirrored.Filled.List
                     }
                     Icon(
                         imageVector = icon,
