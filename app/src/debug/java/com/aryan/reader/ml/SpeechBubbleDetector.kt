@@ -20,7 +20,7 @@ data class SpeechBubble(
 )
 
 interface ISpeechBubbleDetector : AutoCloseable {
-    fun detectBubbles(bitmap: Bitmap, confidenceThreshold: Float = 0.4f): List<SpeechBubble>
+    fun detectBubbles(bitmap: Bitmap, confidenceThreshold: Float = 0.1f): List<SpeechBubble>
 }
 
 class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
@@ -28,20 +28,44 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
     private var session: OrtSession? = null
     private val inputSize = 504
 
+    private val byteBuffer = ByteBuffer.allocateDirect(3 * inputSize * inputSize * 4).order(ByteOrder.nativeOrder())
+    private val floatBuffer = byteBuffer.asFloatBuffer()
+    private val pixels = IntArray(inputSize * inputSize)
+
     init {
         try {
             env = OrtEnvironment.getEnvironment()
             val options = OrtSession.SessionOptions().apply {
-                setIntraOpNumThreads(4)
+                // Dynamically use available cores (cap at 4 to prevent thermal throttling)
+                val threadCount = Runtime.getRuntime().availableProcessors().coerceAtMost(4)
+                setIntraOpNumThreads(threadCount)
                 setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+
+                // 1. Thread spinning keeps CPU threads active between operations (reduces latency)
+                try {
+                    addConfigEntry("session.intra_op.allow_spinning", "1")
+                } catch (t: Throwable) {
+                    Timber.w("Could not set intra_op.allow_spinning config")
+                }
+
+                // 2. Enable XNNPACK (Highly optimized ARM CPU execution provider)
+                try {
+                    // Safest cross-version way to request XNNPACK in Android ORT
+                    addConfigEntry("session.disable_cpu_ep_fallback", "0")
+                    addConfigEntry("optimization.enable_xnnpack", "1")
+                    Timber.i("ONNX XNNPACK requested via config entry for optimized CPU inference.")
+                } catch (t: Throwable) {
+                    Timber.w(t, "Could not set XNNPACK config entries")
+                }
             }
             session = env?.createSession(modelFile.absolutePath, options)
-            Timber.i("ONNX Model loaded successfully on CPU (4 threads) from ${modelFile.absolutePath}")
         } catch (t: Throwable) {
             Timber.e(t, "Fatal error initializing ONNX model")
         }
     }
 
+    // 3. Synchronized to safely share pre-allocated buffers across calls
+    @Synchronized
     override fun detectBubbles(bitmap: Bitmap, confidenceThreshold: Float): List<SpeechBubble> {
         Timber.tag("BubbleZoom").d("Detector: detectBubbles started. Bitmap: ${bitmap.width}x${bitmap.height}, threshold: $confidenceThreshold")
         val currentEnv = env ?: run {
@@ -54,23 +78,28 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
         }
 
         try {
-            val resized = bitmap.scale(inputSize, inputSize)
-            val byteBuffer = ByteBuffer.allocateDirect(3 * inputSize * inputSize * 4).order(ByteOrder.nativeOrder())
-            val floatBuffer = byteBuffer.asFloatBuffer()
-            val pixels = IntArray(inputSize * inputSize)
+            // 4. Skip unnecessary scaling if already 504x504
+            val resized = if (bitmap.width == inputSize && bitmap.height == inputSize) {
+                bitmap
+            } else {
+                bitmap.scale(inputSize, inputSize)
+            }
+
+            floatBuffer.clear() // Reset buffer positions for reuse
             resized.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
 
-            for (i in 0 until inputSize * inputSize) {
+            val imageArea = inputSize * inputSize
+            for (i in 0 until imageArea) {
                 val pixel = pixels[i]
                 val r = ((pixel shr 16) and 0xFF) / 255.0f
                 val g = ((pixel shr 8) and 0xFF) / 255.0f
                 val b = (pixel and 0xFF) / 255.0f
 
                 floatBuffer.put(i, r)
-                floatBuffer.put(i + inputSize * inputSize, g)
-                floatBuffer.put(i + 2 * inputSize * inputSize, b)
+                floatBuffer.put(i + imageArea, g)
+                floatBuffer.put(i + 2 * imageArea, b)
             }
-            floatBuffer.rewind()
+            floatBuffer.rewind() // Ready for tensor creation
 
             val inputTensor = OnnxTensor.createTensor(currentEnv, floatBuffer, longArrayOf(1, 3, inputSize.toLong(), inputSize.toLong()))
             val inputName = currentSession.inputNames.iterator().next()

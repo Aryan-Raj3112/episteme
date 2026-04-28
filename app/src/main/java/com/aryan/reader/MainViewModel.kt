@@ -375,7 +375,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun getOrInitSpeechBubbleDetector(context: Context): com.aryan.reader.ml.ISpeechBubbleDetector? {
         if (speechBubbleDetector == null && BuildConfig.DEBUG) {
-            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.onnx")
+            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
             if (modelFile.exists()) {
                 try {
                     val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
@@ -384,7 +384,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection")
                 }
             } else {
-                Timber.e("Model file manga_speech_bubble_model.onnx not found in external files dir")
+                Timber.e("Model file manga_speech_bubble_v3.ort not found in external files dir")
             }
         }
         return speechBubbleDetector
@@ -393,7 +393,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun testSpeechBubbleDetection(context: Context) {
         viewModelScope.launch(mlDispatcher) {
             try { // <--- We now wrap the WHOLE thing in a Throwable catch
-                val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_model.onnx")
+                val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
                 if (!modelFile.exists()) {
                     withContext(Dispatchers.Main) { showBanner("ONNX Model not found", isError = true) }
                     return@launch
