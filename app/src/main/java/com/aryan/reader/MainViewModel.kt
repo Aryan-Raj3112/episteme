@@ -1033,6 +1033,89 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
+    private var googleFontsCache: List<String> = emptyList()
+
+    fun loadGoogleFontsList(context: Context): List<String> {
+        if (googleFontsCache.isEmpty()) {
+            try {
+                val jsonString = context.assets.open("google_fonts.json").bufferedReader().use { it.readText() }
+                val jsonArray = org.json.JSONArray(jsonString)
+                val list = mutableListOf<String>()
+                for (i in 0 until jsonArray.length()) {
+                    list.add(jsonArray.getString(i))
+                }
+                googleFontsCache = list
+                Timber.d("Loaded ${list.size} Google Fonts from assets.")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load google_fonts.json from assets")
+            }
+        }
+        return googleFontsCache
+    }
+
+    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val encodedName = java.net.URLEncoder.encode(fontName, "UTF-8")
+                val url = java.net.URL("https://fonts.googleapis.com/css?family=$encodedName")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+
+                // CRITICAL: We spoof an old Safari User-Agent. This forces Google to return the raw .ttf file instead of .woff2
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1")
+
+                if (connection.responseCode != 200) {
+                    withContext(Dispatchers.Main) { showBanner("Font '$fontName' not found on server.", isError = true) }
+                    return@launch
+                }
+
+                val css = connection.inputStream.bufferedReader().readText()
+
+                val regex = """url\((https://[^)]+)\)""".toRegex()
+                val match = regex.find(css)
+
+                if (match != null) {
+                    val fontUrl = match.groupValues[1]
+                    val ext = fontUrl.substringAfterLast(".", "ttf").lowercase()
+
+                    // Strict format validation
+                    if (ext != "ttf" && ext != "otf") {
+                        withContext(Dispatchers.Main) { showBanner("Unsupported format ($ext) returned for $fontName", isError = true) }
+                        return@launch
+                    }
+
+                    val fontConnection = java.net.URL(fontUrl).openConnection() as java.net.HttpURLConnection
+                    val tempFile = File(appContext.cacheDir, "$fontName.$ext")
+
+                    fontConnection.inputStream.use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+
+                    val result = fontsRepository.importFont(android.net.Uri.fromFile(tempFile))
+                    result.onSuccess { font ->
+                        if (uiState.value.isSyncEnabled) {
+                            uploadNewFont(font)
+                        }
+                        withContext(Dispatchers.Main) { showBanner("$fontName downloaded successfully!") }
+                    }.onFailure {
+                        withContext(Dispatchers.Main) {
+                            showBanner(appContext.getString(R.string.error_import_font, it.message), isError = true)
+                        }
+                    }
+                    tempFile.delete()
+                } else {
+                    withContext(Dispatchers.Main) { showBanner("Could not parse download link for $fontName", isError = true) }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to download Google Font: $fontName")
+                withContext(Dispatchers.Main) { showBanner("Failed to download $fontName: ${e.localizedMessage}", isError = true) }
+            } finally {
+                withContext(Dispatchers.Main) { onComplete() }
+            }
+        }
+    }
+
     fun closeTab(bookId: String) {
         Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
         val currentTabs = _internalState.value.openTabIds.toMutableList()
