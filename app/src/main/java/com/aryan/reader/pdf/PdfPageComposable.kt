@@ -119,6 +119,7 @@ import androidx.core.graphics.scale
 import androidx.core.graphics.set
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
+import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
@@ -462,7 +463,7 @@ internal fun PdfPageComposable(
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
     onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
-    onDetectBubbles: suspend (Bitmap) -> List<com.aryan.reader.ml.SpeechBubble> = { emptyList() },
+    onDetectBubbles: suspend (Bitmap) -> List<SpeechBubble> = { emptyList() },
     onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
@@ -649,7 +650,7 @@ internal fun PdfPageComposable(
         screenOffset
     }
 
-    var detectedBubbles by remember { mutableStateOf<List<com.aryan.reader.ml.SpeechBubble>>(emptyList()) }
+    var detectedBubbles by remember { mutableStateOf<List<SpeechBubble>>(emptyList()) }
     var expandedBubbleIndex by remember { mutableIntStateOf(-1) }
     var isDetectingBubbles by remember { mutableStateOf(false) }
 
@@ -677,7 +678,7 @@ internal fun PdfPageComposable(
                 }
 
                 val rowHeight = actualBitmapHeightPx * 0.1f
-                detectedBubbles = logicalBubbles.sortedWith(compareBy<com.aryan.reader.ml.SpeechBubble> { (it.bounds.centerY() / rowHeight).roundToInt() }.thenBy { it.bounds.centerX() })
+                detectedBubbles = logicalBubbles.sortedWith(compareBy<SpeechBubble> { (it.bounds.centerY() / rowHeight).roundToInt() }.thenBy { it.bounds.centerX() })
                 expandedBubbleIndex = -1
 
                 Timber.tag("BubbleZoom").d("Sorted logical bubbles count: ${detectedBubbles.size}")
@@ -4864,7 +4865,7 @@ private fun PdfPageRenderer(
     isBubbleZoomModeActive: Boolean = false,
     isActivePage: Boolean = true,
     isDetectingBubbles: Boolean = false,
-    detectedBubbles: List<com.aryan.reader.ml.SpeechBubble> = emptyList(),
+    detectedBubbles: List<SpeechBubble> = emptyList(),
     expandedBubbleIndex: Int = -1
 ) {
     Box(modifier = Modifier.fillMaxSize()) {

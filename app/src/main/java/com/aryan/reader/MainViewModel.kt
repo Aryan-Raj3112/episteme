@@ -69,6 +69,8 @@ import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.epub.SingleFileImporter
+import com.aryan.reader.ml.ISpeechBubbleDetector
+import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
@@ -363,7 +365,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var externalOpenedBookId: String? = null
 
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
-    private var speechBubbleDetector: com.aryan.reader.ml.ISpeechBubbleDetector? = null
+    private var speechBubbleDetector: ISpeechBubbleDetector? = null
 
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
 
@@ -384,13 +386,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return panelDetector
     }
 
-    private fun getOrInitSpeechBubbleDetector(context: Context): com.aryan.reader.ml.ISpeechBubbleDetector? {
+    private fun getOrInitSpeechBubbleDetector(context: Context): ISpeechBubbleDetector? {
         if (speechBubbleDetector == null && BuildConfig.DEBUG) {
             val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
             if (modelFile.exists()) {
                 try {
                     val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
-                    speechBubbleDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as com.aryan.reader.ml.ISpeechBubbleDetector
+                    speechBubbleDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as ISpeechBubbleDetector
                 } catch (t: Throwable) {
                     Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection")
                 }
@@ -5530,7 +5532,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<com.aryan.reader.ml.SpeechBubble> {
+    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<SpeechBubble> {
         Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles called")
         return withContext(mlDispatcher) {
             try {

@@ -5,6 +5,7 @@ import android.graphics.RectF
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.graphics.Color
 import timber.log.Timber
 import java.io.File
 import java.nio.ByteBuffer
@@ -225,7 +226,7 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
                                                 if (isWhite) break
                                             }
 
-                                            maskPixels[y * cropW + x] = if (isWhite) android.graphics.Color.WHITE else android.graphics.Color.TRANSPARENT
+                                            maskPixels[y * cropW + x] = if (isWhite) Color.WHITE else Color.TRANSPARENT
                                         }
                                     }
                                     maskBmp.setPixels(maskPixels, 0, cropW, 0, 0, cropW, cropH)
