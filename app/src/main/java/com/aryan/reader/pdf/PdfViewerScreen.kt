@@ -339,9 +339,11 @@ fun PdfViewerScreen(
         savePdfHiddenTools(context, newSet)
     }
 
+    val isOss = BuildConfig.FLAVOR == "oss"
+
     val executeWithOcrCheck = remember(hasSelectedOcrLanguage) {
         { action: () -> Unit ->
-            if (hasSelectedOcrLanguage) {
+            if (isOss || hasSelectedOcrLanguage) {
                 action()
             } else {
                 pendingActionAfterOcrSelection = action
@@ -1909,7 +1911,6 @@ fun PdfViewerScreen(
     val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser) {
         { text: String ->
             executeWithOcrCheck {
-                val isOss = BuildConfig.FLAVOR == "oss"
                 val effectiveUseOnline = !isOss && useOnlineDictionary
 
                 if (effectiveUseOnline) {
@@ -4533,8 +4534,10 @@ fun PdfViewerScreen(
                     },
                     onShowCustomizeTools = { showCustomizeToolsSheet = true },
                     onShowOcrLanguage = {
-                        hasSelectedOcrLanguage = true
-                        showOcrLanguageDialog = true
+                        if (!isOss) {
+                            hasSelectedOcrLanguage = true
+                            showOcrLanguageDialog = true
+                        }
                     },
                     onShowVisualOptions = { showVisualOptionsSheet = true },
                     tapToNavigateEnabled = tapToNavigateEnabled,
@@ -5864,7 +5867,7 @@ fun PdfViewerScreen(
                     }
                 }
 
-                if (showOcrLanguageDialog) {
+                if (showOcrLanguageDialog && !isOss) {
                     OcrLanguageSelectionDialog(
                         currentLanguage = ocrLanguage,
                         isFirstRun = !hasSelectedOcrLanguage,

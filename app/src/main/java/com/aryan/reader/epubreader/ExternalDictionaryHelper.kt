@@ -96,7 +96,11 @@ object ExternalDictionaryHelper {
                 putExtra(Intent.EXTRA_PROCESS_TEXT, query)
                 putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
                 setPackage(packageName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // Only add NEW_TASK if we don't have an Activity context,
+                // preventing task switch animations for NoDisplay apps like Notification Dictionary
+                if (context.getActivity() == null) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
             }
 
             if (processTextIntent.resolveActivity(pm) != null) {
@@ -148,7 +152,9 @@ object ExternalDictionaryHelper {
                     putExtra(Intent.EXTRA_PROCESS_TEXT, query)
                     putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
                     setPackage(packageName)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (context.getActivity() == null) {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
                 }
                 if (translateIntent.resolveActivity(pm) != null) {
                     context.startActivity(translateIntent)
@@ -162,7 +168,9 @@ object ExternalDictionaryHelper {
                 putExtra(Intent.EXTRA_PROCESS_TEXT, query)
                 putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
                 setPackage(packageName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (context.getActivity() == null) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
             }
 
             if (processTextIntent.resolveActivity(pm) != null) {
@@ -280,5 +288,16 @@ object ExternalDictionaryHelper {
         }
 
         return apps.sortedBy { it.label }
+    }
+
+    private fun Context.getActivity(): android.app.Activity? {
+        var currentContext = this
+        while (currentContext is android.content.ContextWrapper) {
+            if (currentContext is android.app.Activity) {
+                return currentContext
+            }
+            currentContext = currentContext.baseContext
+        }
+        return null
     }
 }
