@@ -793,7 +793,28 @@ internal fun PdfNavigationDrawerContent(
                     val listState = rememberLazyListState()
                     val pageRows = remember(totalPages) { (0 until totalPages).chunked(3) }
 
+                    val currentRowIndex = currentPage / 3
+
                     Column(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    drawerScope.launch {
+                                        if (currentRowIndex in pageRows.indices) {
+                                            listState.animateScrollToItem(currentRowIndex)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("Locate")
+                            }
+                        }
+
+                        HorizontalDivider()
+
                         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                             LazyColumn(
                                 state = listState,
@@ -812,7 +833,7 @@ internal fun PdfNavigationDrawerContent(
                                             Box(
                                                 modifier = Modifier
                                                     .weight(1f)
-                                                    .aspectRatio(0.707f) // Standard A4 Aspect Ratio
+                                                    .aspectRatio(0.707f)
                                                     .background(
                                                         MaterialTheme.colorScheme.surfaceVariant,
                                                         RoundedCornerShape(4.dp)
@@ -851,9 +872,7 @@ internal fun PdfNavigationDrawerContent(
                                                                         thumb = bmp
                                                                     }
                                                                 }
-                                                            } catch (_: Exception) {
-                                                                // Ignore generation failure gracefully
-                                                            }
+                                                            } catch (_: Exception) { }
                                                         }
                                                     }
                                                 }
@@ -868,10 +887,17 @@ internal fun PdfNavigationDrawerContent(
 
                                                 Text(
                                                     text = "${pageIdx + 1}",
-                                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                    style = MaterialTheme.typography.labelMedium.copy(
+                                                        fontWeight = FontWeight.Bold
+                                                    ),
                                                     color = Color.White,
                                                     modifier = Modifier
-                                                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                                        .align(Alignment.BottomEnd)
+                                                        .padding(4.dp)
+                                                        .background(
+                                                            Color.Black.copy(alpha = 0.5f),
+                                                            RoundedCornerShape(6.dp)
+                                                        )
                                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
                                             }
