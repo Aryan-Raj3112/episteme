@@ -124,6 +124,10 @@ import java.util.concurrent.TimeUnit
 
 private const val KEY_RENDER_MODE = "render_mode"
 private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
+private const val KEY_MAIN_SCREEN_START_PAGE = "main_screen_start_page"
+private const val KEY_LIBRARY_SCREEN_START_PAGE = "library_screen_start_page"
+private const val KEY_LAST_VIEWING_SHELF_ID = "last_viewing_shelf_id"
+private const val KEY_LAST_ADDING_BOOKS_TO_SHELF = "last_adding_books_to_shelf"
 
 private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
 private const val KEY_FILTER_FOLDERS = "filter_folders"
@@ -520,6 +524,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (_: IllegalArgumentException) {
                 AddBooksSource.UNSHELVED
             },
+            mainScreenStartPage = prefs.getInt(KEY_MAIN_SCREEN_START_PAGE, 0).coerceIn(0, 1),
+            libraryScreenStartPage = prefs.getInt(
+                KEY_LIBRARY_SCREEN_START_PAGE,
+                0
+            ).coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
+            viewingShelfId = prefs.getString(KEY_LAST_VIEWING_SHELF_ID, null),
+            isAddingBooksToShelf = prefs.getBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, false),
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
             isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
@@ -4799,17 +4810,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setMainScreenPage(page: Int) {
-        _internalState.update { it.copy(mainScreenStartPage = page) }
+        val sanitizedPage = page.coerceIn(0, 1)
+        _internalState.update { it.copy(mainScreenStartPage = sanitizedPage) }
+        persistLibraryLandingState()
     }
 
     fun setLibraryScreenPage(page: Int) {
-        _internalState.update { it.copy(libraryScreenStartPage = page) }
+        val maxLibraryPage = if (BuildConfig.IS_OFFLINE) 2 else 3
+        val sanitizedPage = page.coerceIn(0, maxLibraryPage)
+        _internalState.update {
+            it.copy(libraryScreenStartPage = sanitizedPage)
+        }
+        persistLibraryLandingState()
     }
 
     fun navigateToShelf(id: String) {
         _internalState.update {
             it.copy(viewingShelfId = id, mainScreenStartPage = 1, libraryScreenStartPage = 1)
         }
+        persistLibraryLandingState()
     }
 
     fun showRenameShelfDialog(shelfId: String) {
@@ -4837,6 +4856,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             recentFilesRepository.renameShelf(shelfId, newName)
             syncShelfChangeToFirestore(shelfId)
             _internalState.update { it.copy(viewingShelfId = shelfId) }
+            persistLibraryLandingState()
             dismissRenameShelfDialog()
         }
     }
@@ -4850,6 +4870,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update {
                 it.copy(viewingShelfId = null, isAddingBooksToShelf = false, showDeleteShelfDialogFor = null)
             }
+            persistLibraryLandingState()
             recentFilesRepository.deleteShelf(shelfId)
             syncShelfChangeToFirestore(shelfId)
         }
@@ -4857,6 +4878,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun unselectShelf() {
         _internalState.update { it.copy(viewingShelfId = null, isAddingBooksToShelf = false) }
+        persistLibraryLandingState()
     }
 
     fun navigateBackFromShelf() {
@@ -4864,6 +4886,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val parentShelfId = currentShelf?.takeIf { it.type == ShelfType.FOLDER }?.parentShelfId
         if (parentShelfId != null) {
             _internalState.update { it.copy(viewingShelfId = parentShelfId, isAddingBooksToShelf = false) }
+            persistLibraryLandingState()
         } else {
             unselectShelf()
         }
@@ -4951,6 +4974,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 booksSelectedForAdding = emptySet()
             )
         }
+        persistLibraryLandingState()
     }
 
     private fun syncShelfChangeToFirestore(shelfId: String) {
@@ -4983,6 +5007,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 addBooksSource = AddBooksSource.UNSHELVED
             )
         }
+        persistLibraryLandingState()
     }
 
     fun addBooksToShelf(shelfId: String) {
@@ -4997,12 +5022,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update {
                 it.copy(isAddingBooksToShelf = false, booksSelectedForAdding = emptySet())
             }
+            persistLibraryLandingState()
         }
     }
 
     fun setAddBooksSource(source: AddBooksSource) {
         _internalState.update { it.copy(addBooksSource = source) }
         prefs.edit { putString(KEY_ADD_BOOKS_SOURCE, source.name) }
+    }
+
+    private fun persistLibraryLandingState() {
+        val state = _internalState.value
+        val resolvedUiState = uiState.value
+        prefs.edit {
+            putInt(KEY_MAIN_SCREEN_START_PAGE, state.mainScreenStartPage)
+            putInt(KEY_LIBRARY_SCREEN_START_PAGE, state.libraryScreenStartPage)
+            putString(KEY_LAST_VIEWING_SHELF_ID, resolvedUiState.viewingShelfId)
+            putBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, resolvedUiState.isAddingBooksToShelf)
+        }
     }
 
     fun toggleBookSelectionForAdding(bookId: String) {

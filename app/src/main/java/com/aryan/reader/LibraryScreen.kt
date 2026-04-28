@@ -998,6 +998,68 @@ private fun ShelfDetailScreen(
     val isFolderShelf = shelf.type == ShelfType.FOLDER
     var showSortMenu by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var isSearchActive by remember(shelf.id) { mutableStateOf(false) }
+    var searchQuery by remember(shelf.id) { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+    var searchFieldValue by remember(isSearchActive, shelf.id) {
+        mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
+    }
+    val normalizedQuery = searchQuery.trim()
+    val filteredChildShelves = remember(childShelves, normalizedQuery) {
+        if (normalizedQuery.isBlank()) {
+            childShelves
+        } else {
+            childShelves.filter { childShelf ->
+                childShelf.name.contains(normalizedQuery, ignoreCase = true) ||
+                    childShelf.books.any { item ->
+                        item.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                            item.title?.contains(normalizedQuery, ignoreCase = true) == true ||
+                            item.author?.contains(normalizedQuery, ignoreCase = true) == true
+                    }
+            }
+        }
+    }
+    val filteredDirectBooks = remember(shelf.directBooks, normalizedQuery) {
+        if (normalizedQuery.isBlank()) {
+            shelf.directBooks
+        } else {
+            shelf.directBooks.filter { item ->
+                item.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                    item.title?.contains(normalizedQuery, ignoreCase = true) == true ||
+                    item.author?.contains(normalizedQuery, ignoreCase = true) == true ||
+                    item.tags.any { tag -> tag.name.contains(normalizedQuery, ignoreCase = true) }
+            }
+        }
+    }
+
+    LaunchedEffect(searchQuery) {
+        if (searchFieldValue.text != searchQuery) {
+            searchFieldValue = searchFieldValue.copy(
+                text = searchQuery,
+                selection = TextRange(searchQuery.length)
+            )
+        }
+    }
+
+    LaunchedEffect(isSearchActive) {
+        if (isSearchActive) {
+            searchFocusRequester.requestFocus()
+        }
+    }
+
+    fun clearShelfSearchQuery() {
+        searchQuery = ""
+        searchFieldValue = TextFieldValue("", TextRange.Zero)
+    }
+
+    fun closeShelfSearch() {
+        isSearchActive = false
+        clearShelfSearchQuery()
+    }
+
+    BackHandler(enabled = isSearchActive) {
+        closeShelfSearch()
+    }
 
     Scaffold(
         modifier = Modifier,
@@ -1010,6 +1072,50 @@ private fun ShelfDetailScreen(
                     onInfoClick = onInfoClick,
                     onDeleteClick = onDeleteClick
                 )
+            } else if (isSearchActive) {
+                Surface(
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .height(64.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { closeShelfSearch() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                        }
+                        OutlinedTextField(
+                            value = searchFieldValue,
+                            onValueChange = {
+                                searchFieldValue = it
+                                searchQuery = it.text
+                            },
+                            placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 4.dp)
+                                .focusRequester(searchFocusRequester),
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                            ),
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { clearShelfSearchQuery() }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear query")
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
             } else {
                 CustomTopAppBar(
                     title = {
@@ -1073,6 +1179,13 @@ private fun ShelfDetailScreen(
                             }
                         }
 
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search shelf"
+                            )
+                        }
+
                         if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
                             Box {
                                 IconButton(onClick = { showMoreMenu = true }) {
@@ -1114,44 +1227,49 @@ private fun ShelfDetailScreen(
                     text = { Text(stringResource(R.string.fab_add_books)) }
                 )
             }
-        }
-    ) { paddingValues ->
-        if (childShelves.isEmpty() && shelf.directBooks.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(stringResource(R.string.shelf_empty), style = MaterialTheme.typography.bodyLarge)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (childShelves.isNotEmpty()) {
-                    if (isFolderShelf) {
-                        item {
-                            Text(
-                                text = "Folders",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        content = { paddingValues ->
+            if (filteredChildShelves.isEmpty() && filteredDirectBooks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (normalizedQuery.isBlank()) stringResource(R.string.shelf_empty) else stringResource(
+                            R.string.no_results_found,
+                            normalizedQuery
+                        ),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(paddingValues),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (filteredChildShelves.isNotEmpty()) {
+                        if (isFolderShelf) {
+                            item {
+                                Text(
+                                    text = "Folders",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        items(filteredChildShelves, key = { it.id }) { childShelf ->
+                            ShelfListItem(
+                                shelf = childShelf,
+                                isSelected = false,
+                                onItemClick = { onChildShelfClick(childShelf) },
+                                onItemLongClick = {},
+                                showHierarchyIndent = false
                             )
                         }
                     }
-                    items(childShelves, key = { it.id }) { childShelf ->
-                        ShelfListItem(
-                            shelf = childShelf,
-                            isSelected = false,
-                            onItemClick = { onChildShelfClick(childShelf) },
-                            onItemLongClick = {},
-                            showHierarchyIndent = false
-                        )
-                    }
-                }
-                if (shelf.directBooks.isNotEmpty()) {
-                    if (isFolderShelf && childShelves.isNotEmpty()) {
+                    if (filteredDirectBooks.isNotEmpty() && isFolderShelf && filteredChildShelves.isNotEmpty()) {
                         item {
                             Spacer(modifier = Modifier.height(4.dp))
                         }
@@ -1164,19 +1282,19 @@ private fun ShelfDetailScreen(
                             )
                         }
                     }
-                }
-                items(shelf.directBooks, key = { it.bookId }) { item ->
-                    LibraryListItem(
-                        item = item,
-                        isSelected = selectedItems.any { it.bookId == item.bookId },
-                        onItemClick = { onBookClick(item) },
-                        onItemLongClick = { onBookLongClick(item) },
-                        isDownloading = item.bookId in downloadingBookIds
-                    )
+                    items(filteredDirectBooks, key = { it.bookId }) { item ->
+                        LibraryListItem(
+                            item = item,
+                            isSelected = selectedItems.any { it.bookId == item.bookId },
+                            onItemClick = { onBookClick(item) },
+                            onItemLongClick = { onBookLongClick(item) },
+                            isDownloading = item.bookId in downloadingBookIds
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -1194,76 +1312,67 @@ private fun AddBooksModeScreen(
     downloadingBookIds: Set<String>,
 ) {
     var showSortMenu by remember { mutableStateOf(false) }
-    var showSourceMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier,
         topBar = {
-            CustomTopAppBar(
-                title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    Box {
-                        TextButton(onClick = { showSortMenu = true }) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.sort),
-                                contentDescription = "Sort",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(sortOrder.displayName)
+            Column {
+                CustomTopAppBar(
+                    title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false }
-                        ) {
-                            SortOrder.entries.forEach { order ->
-                                DropdownMenuItem(
-                                    text = { Text(order.displayName) },
-                                    onClick = {
-                                        onSortOrderChange(order)
-                                        showSortMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (order == sortOrder) {
-                                            Icon(Icons.Default.Check, contentDescription = "Selected")
-                                        }
-                                    }
+                    },
+                    actions = {
+                        Box {
+                            TextButton(onClick = { showSortMenu = true }) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.sort),
+                                    contentDescription = "Sort",
+                                    modifier = Modifier.size(20.dp)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(sortOrder.displayName)
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                SortOrder.entries.forEach { order ->
+                                    DropdownMenuItem(
+                                        text = { Text(order.displayName) },
+                                        onClick = {
+                                            onSortOrderChange(order)
+                                            showSortMenu = false
+                                        },
+                                        trailingIcon = {
+                                            if (order == sortOrder) {
+                                                Icon(Icons.Default.Check, contentDescription = "Selected")
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
-
-                    Box {
-                        IconButton(onClick = { showSourceMenu = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
-                        }
-                        DropdownMenu(
-                            expanded = showSourceMenu,
-                            onDismissRequest = { showSourceMenu = false }
-                        ) {
-                            AddBooksSource.entries.forEach { source ->
-                                DropdownMenuItem(
-                                    text = { Text(source.displayName) },
-                                    onClick = {
-                                        onSourceChange(source)
-                                        showSourceMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (source == currentSource) {
-                                            Icon(Icons.Default.Check, contentDescription = "Selected")
-                                        }
-                                    }
-                                )
-                            }
-                        }
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AddBooksSource.entries.forEach { source ->
+                        FilterChip(
+                            selected = source == currentSource,
+                            onClick = { onSourceChange(source) },
+                            label = { Text(source.displayName) }
+                        )
                     }
                 }
-            )
+            }
         },
         floatingActionButton = {
             if (selectedBookUris.isNotEmpty()) {
@@ -1273,37 +1382,42 @@ private fun AddBooksModeScreen(
                     onClick = onAddSelectedBooks
                 )
             }
-        }
-    ) { paddingValues ->
-        if (availableBooks.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (currentSource == AddBooksSource.UNSHELVED) stringResource(R.string.no_unshelved_books) else stringResource(R.string.all_books_in_shelf),
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(availableBooks, key = { it.bookId }) { item ->
-                    val isSelected = item.bookId in selectedBookUris
-                    LibraryListItem(
-                        item = item,
-                        isSelected = isSelected,
-                        onItemClick = { onBookClick(item) },
-                        onItemLongClick = { onBookClick(item) },
-                        isDownloading = item.bookId in downloadingBookIds
+        },
+        content = { paddingValues ->
+            if (availableBooks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(paddingValues),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (currentSource == AddBooksSource.UNSHELVED) {
+                            stringResource(R.string.no_unshelved_books)
+                        } else {
+                            stringResource(R.string.all_books_in_shelf)
+                        },
+                        style = MaterialTheme.typography.bodyLarge
                     )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(paddingValues),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(availableBooks, key = { it.bookId }) { item ->
+                        val isSelected = item.bookId in selectedBookUris
+                        LibraryListItem(
+                            item = item,
+                            isSelected = isSelected,
+                            onItemClick = { onBookClick(item) },
+                            onItemLongClick = { onBookClick(item) },
+                            isDownloading = item.bookId in downloadingBookIds
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 }
 
 @Composable
