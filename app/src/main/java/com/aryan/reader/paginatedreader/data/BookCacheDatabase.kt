@@ -198,7 +198,7 @@ abstract class BookCacheDao {
         ConfigurationCache::class,
         AnchorIndexEntry::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class BookCacheDatabase : RoomDatabase() {

@@ -1929,10 +1929,14 @@ private fun checkLayoutMismatch(
     expectedHeight: Int,
     actualHeight: Int,
     textSnippet: String,
+    diagnostics: String = "",
     @Suppress("SameParameterValue") tolerance: Int = 2
 ) {
     if (expectedHeight == 0) {
-        Timber.tag("PAGINATION_MISMATCH").w("Block #$blockIndex ($blockType) has expectedHeight=0. Skipping check. Text: '$textSnippet'")
+        Timber.tag("PAGINATION_MISMATCH").w(
+            "Block #$blockIndex ($blockType) has expectedHeight=0. Skipping check. Text: '$textSnippet'" +
+                    if (diagnostics.isNotBlank()) "\n -> Diagnostics: $diagnostics" else ""
+        )
         return
     }
 
@@ -1943,7 +1947,8 @@ private fun checkLayoutMismatch(
                     " -> Expected: ${expectedHeight}px\n" +
                     " -> Actual:   ${actualHeight}px\n" +
                     " -> Diff:     +${diff}px\n" +
-                    " -> Content:  '$textSnippet'"
+                    " -> Content:  '$textSnippet'" +
+                    if (diagnostics.isNotBlank()) "\n -> Diagnostics: $diagnostics" else ""
         )
     }
 }
@@ -2389,6 +2394,79 @@ internal fun PaginatedReaderContent(
                                                                 expectedHeight = block.expectedHeight,
                                                                 actualHeight = actualHeight,
                                                                 textSnippet = snippet,
+                                                                diagnostics = buildString {
+                                                                    append("page=")
+                                                                    append(pageIndex)
+                                                                    append(", width=")
+                                                                    append(coordinates.size.width)
+                                                                    append("px, styleWidth=")
+                                                                    append(block.style.width)
+                                                                    append(", maxWidth=")
+                                                                    append(block.style.maxWidth)
+                                                                    append(", margin=")
+                                                                    append(block.style.margin)
+                                                                    append(", padding=")
+                                                                    append(block.style.padding)
+                                                                    append(", borders=(")
+                                                                    append(block.style.borderLeft?.width ?: 0.dp)
+                                                                    append(", ")
+                                                                    append(block.style.borderTop?.width ?: 0.dp)
+                                                                    append(", ")
+                                                                    append(block.style.borderRight?.width ?: 0.dp)
+                                                                    append(", ")
+                                                                    append(block.style.borderBottom?.width ?: 0.dp)
+                                                                    append(")")
+                                                                    when (block) {
+                                                                        is ParagraphBlock -> {
+                                                                            append(", start=")
+                                                                            append(block.startCharOffsetInSource)
+                                                                            append(", end=")
+                                                                            append(block.endCharOffsetInSource)
+                                                                            append(", chars=")
+                                                                            append(block.content.length)
+                                                                            append(", textAlign=")
+                                                                            append(block.textAlign)
+                                                                        }
+
+                                                                        is HeaderBlock -> {
+                                                                            append(", start=")
+                                                                            append(block.startCharOffsetInSource)
+                                                                            append(", end=")
+                                                                            append(block.endCharOffsetInSource)
+                                                                            append(", chars=")
+                                                                            append(block.content.length)
+                                                                            append(", textAlign=")
+                                                                            append(block.textAlign)
+                                                                        }
+
+                                                                        is QuoteBlock -> {
+                                                                            append(", start=")
+                                                                            append(block.startCharOffsetInSource)
+                                                                            append(", end=")
+                                                                            append(block.endCharOffsetInSource)
+                                                                            append(", chars=")
+                                                                            append(block.content.length)
+                                                                            append(", textAlign=")
+                                                                            append(block.textAlign)
+                                                                        }
+
+                                                                        is ListItemBlock -> {
+                                                                            append(", start=")
+                                                                            append(block.startCharOffsetInSource)
+                                                                            append(", end=")
+                                                                            append(block.endCharOffsetInSource)
+                                                                            append(", chars=")
+                                                                            append(block.content.length)
+                                                                        }
+
+                                                                        is TextContentBlock -> {
+                                                                            append(", chars=")
+                                                                            append(block.content.length)
+                                                                        }
+
+                                                                        else -> Unit
+                                                                    }
+                                                                },
                                                                 tolerance = 2
                                                             )
                                                         }
