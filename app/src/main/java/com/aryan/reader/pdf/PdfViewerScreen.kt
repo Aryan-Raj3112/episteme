@@ -6245,6 +6245,17 @@ fun PdfViewerScreen(
                         currentTtsMode = currentTtsMode,
                         isCollapsed = isTtsCollapsed,
                         onCollapseChange = { isTtsCollapsed = it },
+                        onLocateCurrentChunk = {
+                            ttsPageData?.pageIndex?.let { targetPage ->
+                                coroutineScope.launch {
+                                    if (displayMode == DisplayMode.PAGINATION) {
+                                        pagerState.scrollToPage(targetPage)
+                                    } else {
+                                        verticalReaderState.scrollToPage(targetPage)
+                                    }
+                                }
+                            }
+                        },
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
                         onClose = {
                             ttsController.stop()

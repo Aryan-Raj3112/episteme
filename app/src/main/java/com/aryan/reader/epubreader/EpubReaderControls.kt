@@ -1378,6 +1378,7 @@ fun TtsOverlayControls(
     currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
     isCollapsed: Boolean,
     onCollapseChange: (Boolean) -> Unit,
+    onLocateCurrentChunk: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1504,6 +1505,14 @@ fun TtsOverlayControls(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    painterResource(R.drawable.pin_drop),
+                                    "Locate current chunk",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Default.ChevronRight, "Collapse", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }

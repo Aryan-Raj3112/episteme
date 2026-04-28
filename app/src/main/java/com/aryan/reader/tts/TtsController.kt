@@ -157,6 +157,7 @@ class TtsController(context: Context) : Player.Listener {
         bookTitle: String,
         chapterTitle: String?,
         coverImageUri: String?,
+        chapterIndex: Int? = null,
         ttsMode: TtsPlaybackManager.TtsMode,
         playbackSource: String = "READER",
         authToken: String? = null
@@ -179,6 +180,7 @@ class TtsController(context: Context) : Player.Listener {
             putString(KEY_BOOK_TITLE, bookTitle)
             putString(KEY_CHAPTER_TITLE, chapterTitle)
             putString(KEY_COVER_IMAGE_URI, coverImageUri)
+            chapterIndex?.let { putInt(KEY_CHAPTER_INDEX, it) }
             putString(KEY_TTS_MODE, ttsMode.name)
             putString(KEY_PLAYBACK_SOURCE, playbackSource)
             putString(KEY_AUTH_TOKEN, authToken)
@@ -252,6 +254,8 @@ class TtsController(context: Context) : Player.Listener {
             val isLoading = customState.getBoolean("isLoading", false)
             val sessionFinished = customState.getBoolean("sessionFinished", false)
             val playbackSource = customState.getString("playbackSource")
+            val serviceBookTitle = customState.getString("bookTitle")
+            val serviceChapterIndex = customState.getInt("chapterIndex", -1).takeIf { it >= 0 }
 
             val mediaItemExtras = currentMediaItem?.mediaMetadata?.extras
             val sourceCfi = mediaItemExtras?.getString("sourceCfi")
@@ -270,6 +274,16 @@ class TtsController(context: Context) : Player.Listener {
                     if (isLoading) currentState.currentText else null
                 },
                 errorMessage = customState.getString("errorMessage"),
+                bookTitle = if (isPlaybackActive) {
+                    currentMediaItem?.mediaMetadata?.artist?.toString() ?: serviceBookTitle
+                } else {
+                    if (isLoading) currentState.bookTitle else serviceBookTitle
+                },
+                chapterIndex = if (isPlaybackActive || isLoading) {
+                    serviceChapterIndex ?: currentState.chapterIndex
+                } else {
+                    serviceChapterIndex
+                },
                 speakerId = serviceSpeaker,
                 sourceCfi = if (isPlaybackActive) {
                     sourceCfi

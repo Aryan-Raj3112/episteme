@@ -298,6 +298,7 @@ private fun handleVerticalAutoAdvance(
                         bookTitle = epubBookTitle,
                         chapterTitle = chapters.getOrNull(currentTtsChapterIndex)?.title,
                         coverImageUri = coverImagePath?.let { android.net.Uri.fromFile(File(it)).toString() },
+                        chapterIndex = currentTtsChapterIndex,
                         ttsMode = currentTtsMode,
                         playbackSource = "READER",
                         authToken = token
@@ -327,6 +328,7 @@ private fun handleVerticalAutoAdvance(
                     bookTitle = epubBookTitle,
                     chapterTitle = chapters.getOrNull(nextIdx)?.title,
                     coverImageUri = coverImagePath?.let { Uri.fromFile(File(it)).toString() },
+                    chapterIndex = nextIdx,
                     ttsMode = currentTtsMode,
                     playbackSource = "READER",
                     authToken = token
@@ -401,6 +403,7 @@ private fun handlePaginatedAutoAdvance(
                         bookTitle = epubBookTitle,
                         chapterTitle = chapterTitle,
                         coverImageUri = coverUriString,
+                        chapterIndex = chapterToTry,
                         ttsMode = ttsMode,
                         playbackSource = "READER",
                         authToken = token

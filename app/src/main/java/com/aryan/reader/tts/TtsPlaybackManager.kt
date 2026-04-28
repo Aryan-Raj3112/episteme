@@ -70,6 +70,7 @@ const val KEY_WORD_TIMESTAMPS = "KEY_WORD_TIMESTAMPS"
 const val KEY_WORD_OFFSETS = "KEY_WORD_OFFSETS"
 const val KEY_PLAYBACK_SOURCE = "KEY_PLAYBACK_SOURCE"
 const val KEY_AUTH_TOKEN = "KEY_AUTH_TOKEN"
+const val KEY_CHAPTER_INDEX = "KEY_CHAPTER_INDEX"
 
 private const val PREFETCH_LOOKAHEAD = 3
 
@@ -100,6 +101,8 @@ class TtsPlaybackManager(
         val isLoading: Boolean = false,
         val currentText: String? = null,
         val errorMessage: String? = null,
+        val bookTitle: String? = null,
+        val chapterIndex: Int? = null,
         val speakerId: String = DEFAULT_SPEAKER_ID,
         val sourceCfi: String? = null,
         val startOffsetInSource: Int = -1,
@@ -189,6 +192,7 @@ class TtsPlaybackManager(
                 val bookTitle = args.getString(KEY_BOOK_TITLE)
                 val chapterTitle = args.getString(KEY_CHAPTER_TITLE)
                 val coverImageUri = args.getString(KEY_COVER_IMAGE_URI)
+                val chapterIndex = args.getInt(KEY_CHAPTER_INDEX, -1).takeIf { it >= 0 }
                 val ttsModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val playbackSource = args.getString(KEY_PLAYBACK_SOURCE)
                 val ttsMode = try { TtsMode.valueOf(ttsModeName ?: TtsMode.CLOUD.name) } catch (_: Exception) { TtsMode.CLOUD }
@@ -204,7 +208,7 @@ class TtsPlaybackManager(
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
                 Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
-                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, ttsMode, playbackSource, args)
+                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, chapterIndex, ttsMode, playbackSource, args)
             }
             STOP_TTS_COMMAND -> {
                 Timber.d("Received STOP command.")
@@ -337,6 +341,7 @@ class TtsPlaybackManager(
         bookTitle: String?,
         chapterTitle: String?,
         coverImageUri: String?,
+        chapterIndex: Int?,
         ttsMode: TtsMode,
         playbackSource: String?,
         args: Bundle // Added this parameter
@@ -375,6 +380,8 @@ class TtsPlaybackManager(
 
         _ttsState.value = TtsState(
             isLoading = true,
+            bookTitle = bookTitle,
+            chapterIndex = chapterIndex,
             speakerId = speakerId,
             playbackSource = playbackSource,
             ttsMode = ttsMode.name
@@ -857,6 +864,8 @@ class TtsPlaybackManager(
         val bundle = Bundle().apply {
             putBoolean("isLoading", state.isLoading)
             putString("errorMessage", state.errorMessage)
+            putString("bookTitle", state.bookTitle)
+            putInt("chapterIndex", state.chapterIndex ?: -1)
             putString("speakerId", state.speakerId)
             putBoolean("sessionEndedByStop", state.sessionEndedByStop)
             putString("currentWordSourceCfi", state.currentWordSourceCfi)

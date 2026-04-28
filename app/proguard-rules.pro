@@ -83,3 +83,8 @@
 -keep class com.aryan.reader.pdf.NativePdfiumBridge {
     *;
 }
+
+# Preserve ONNX Runtime Java classes
+-keep class ai.onnxruntime.** { *; }
+-keepnames class ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** { *; }
