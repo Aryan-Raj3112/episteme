@@ -841,12 +841,18 @@ class BookPaginator(
         return Jsoup.parse(htmlToParse).body().text()
     }
 
-    private fun calculateAccurateStartIndex(targetChapterIndex: Int): Int {
+    private suspend fun ensureAccurateStartIndex(targetChapterIndex: Int): Int {
         if (targetChapterIndex <= 0) {
             return 0
         }
-        val startIndex = chapterStartPageIndices[targetChapterIndex] ?: 0
-        return startIndex
+
+        for (chapterIndex in 0 until targetChapterIndex) {
+            if (!finalizedChapterCounts.contains(chapterIndex)) {
+                paginateChapter(chapterIndex)
+            }
+        }
+
+        return chapterStartPageIndices[targetChapterIndex] ?: 0
     }
 
     override fun findPageForAnchor(
@@ -858,7 +864,7 @@ class BookPaginator(
             Timber.tag("TOC_NAV_DEBUG").d("Precision nav request for anchor: '$anchor'")
 
             if (anchor.isNullOrBlank()) {
-                val start = chapterStartPageIndices[chapterIndex] ?: 0
+                val start = ensureAccurateStartIndex(chapterIndex)
                 withContext(Dispatchers.Main) { onResult(start) }
                 return@launch
             }
@@ -874,9 +880,9 @@ class BookPaginator(
                 chapterIndex to null
             }
 
-            // 2. ENSURE PAGINATION: Get pages for the determined chapter
+            // 2. ENSURE PAGINATION: Resolve the chapter start after earlier chapters have real page counts.
+            val chapterStartPage = ensureAccurateStartIndex(targetChapter)
             val chapterPages = pageCache[targetChapter] ?: paginateChapter(targetChapter)
-            val chapterStartPage = chapterStartPageIndices[targetChapter] ?: 0
 
             if (chapterPages == null) {
                 withContext(Dispatchers.Main) { onResult(chapterStartPage) }
@@ -971,8 +977,8 @@ class BookPaginator(
                 return@launch
             }
 
+            val chapterStartPage = ensureAccurateStartIndex(targetChapterIndex)
             val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
-            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
 
             if (chapterPages == null) {
                 Timber.e("Href Navigation failed: Could not paginate target chapter $targetChapterIndex.")
@@ -1004,8 +1010,8 @@ class BookPaginator(
             val targetChapterIndex = result.locationInSource
             Timber.i("Finding page for search result: '${result.query}' in chapter $targetChapterIndex")
 
+            val chapterStartPage = ensureAccurateStartIndex(targetChapterIndex)
             val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
-            val chapterStartPage = calculateAccurateStartIndex(targetChapterIndex)
 
             if (chapterPages == null) {
                 Timber.e("Search result navigation failed: Could not paginate target chapter $targetChapterIndex.")
@@ -1082,8 +1088,8 @@ class BookPaginator(
         val targetChapterIndex = locator.chapterIndex
         Timber.tag("POS_DIAG").d("findPageForLocator: Searching for $locator")
 
+        val chapterStartPage = ensureAccurateStartIndex(targetChapterIndex)
         val chapterPages = pageCache[targetChapterIndex] ?: paginateChapter(targetChapterIndex)
-        val chapterStartPage = chapterStartPageIndices[targetChapterIndex] ?: 0
 
         Timber.tag("POS_DIAG").d("findPageForLocator: targetChapterIndex=$targetChapterIndex, chapterStartPage=$chapterStartPage, chapterPages.size=${chapterPages?.size}")
 
@@ -1182,8 +1188,8 @@ class BookPaginator(
         coroutineScope.launch(Dispatchers.IO) {
             Timber.i("findPageForCfi: Starting search for CFI: '$cfi' in chapter: '$chapterIndex'")
 
+            val chapterStartPage = ensureAccurateStartIndex(chapterIndex)
             val chapterPages = pageCache[chapterIndex] ?: paginateChapter(chapterIndex)
-            val chapterStartPage = calculateAccurateStartIndex(chapterIndex)
             Timber.d("findPageForCfi: Chapter $chapterIndex starts at absolute page $chapterStartPage.")
 
             if (chapterPages == null) {

@@ -1356,11 +1356,42 @@ fun EpubReaderHost(
     val latestChapterIndex by rememberUpdatedState(currentChapterIndex)
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, webViewRefForTts) {
+    DisposableEffect(lifecycleOwner, webViewRefForTts, currentRenderMode, paginator) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
-                webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                when (currentRenderMode) {
+                    RenderMode.VERTICAL_SCROLL -> {
+                        Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
+                        webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                    }
+                    RenderMode.PAGINATED -> {
+                        scope.launch {
+                            val pageToSave = paginatedPagerState.currentPage
+                            val bookPaginator = paginator as? BookPaginator
+                            val locator = bookPaginator?.getLocatorForPage(pageToSave)
+                            val chapterIndex = bookPaginator?.findChapterIndexForPage(pageToSave)
+
+                            if (locator != null && chapterIndex != null) {
+                                val progress = if (totalBookLengthChars > 0) {
+                                    val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextContent.length.toLong() }
+                                    val currentPageInChapter = pageToSave - (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0)
+                                    val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
+                                    val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
+                                    val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
+                                    val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
+                                    if (isLastPageOfBook) 100f else calculatedProgress
+                                } else {
+                                    0f
+                                }
+                                lastKnownLocator = locator
+                                Timber.d("ON_PAUSE saving paginated position. Page: $pageToSave, Locator: $locator, Progress: $progress%")
+                                onSavePosition(locator, null, progress)
+                            } else {
+                                Timber.w("ON_PAUSE paginated save failed. Locator or chapter index was null.")
+                            }
+                        }
+                    }
+                }
             }
         }
 
