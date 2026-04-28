@@ -147,7 +147,35 @@ class BaseTtsSynthesizer(private val context: Context) {
         if (tts == null) return
 
         try {
-            val preferredVoiceName = loadNativeVoice(context) ?: return
+            val preferredVoiceName = loadNativeVoice(context)
+
+            if (preferredVoiceName.isNullOrBlank()) {
+                val defaultLocale = Locale.getDefault()
+                try {
+                    tts?.language = defaultLocale
+                } catch (e: Exception) {
+                    Timber.e(e, "BaseTts: Failed to restore default language")
+                }
+
+                val defaultVoice = try {
+                    tts?.defaultVoice ?: tts?.voices?.firstOrNull { voice ->
+                        voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
+                    } ?: tts?.voices?.firstOrNull { voice ->
+                        voice.locale == defaultLocale
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "BaseTts: Failed to query default voice")
+                    null
+                }
+
+                if (defaultVoice != null && tts?.voice?.name != defaultVoice.name) {
+                    Timber.d("BaseTts: Restoring system default voice to ${defaultVoice.name} (${defaultVoice.locale})")
+                    tts?.voice = defaultVoice
+                } else {
+                    Timber.d("BaseTts: Using engine default voice for locale $defaultLocale")
+                }
+                return
+            }
 
             if (tts?.voice?.name == preferredVoiceName) return
 

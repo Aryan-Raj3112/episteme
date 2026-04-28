@@ -213,6 +213,7 @@ fun TtsSessionObserver(
 fun TtsHighlightHandler(
     ttsState: TtsPlaybackManager.TtsState,
     currentRenderMode: RenderMode,
+    currentChapterIndex: Int,
     webViewRef: WebView?,
     paginator: IPaginator?,
     pagerState: PagerState,
@@ -223,14 +224,42 @@ fun TtsHighlightHandler(
         val text = ttsState.currentText
         val cfi = ttsState.sourceCfi
         val offset = ttsState.startOffsetInSource
+        val activeTtsChapterIndex = ttsState.chapterIndex ?: ttsChapterIndex
+
+        if (
+            currentRenderMode == RenderMode.VERTICAL_SCROLL &&
+            activeTtsChapterIndex != null &&
+            activeTtsChapterIndex != currentChapterIndex
+        ) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d(
+                "Vertical highlight skipped because visible chapter differs from active TTS chapter. " +
+                    "visibleChapter=$currentChapterIndex activeTtsChapter=$activeTtsChapterIndex " +
+                    "cfi=${cfi?.take(48)} offset=$offset"
+            )
+            webViewRef?.evaluateJavascript("javascript:window.removeHighlight();", null)
+            return@LaunchedEffect
+        }
 
         if (!text.isNullOrBlank() && !cfi.isNullOrBlank() && offset != -1) {
             val escapedText = escapeJsString(text)
             val escapedCfi = escapeJsString(cfi)
             val jsCommand = "javascript:window.highlightFromCfi('$escapedCfi', '$escapedText', $offset);"
+            if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d(
+                    "Applying vertical TTS highlight. visibleChapter=$currentChapterIndex " +
+                        "activeTtsChapter=$activeTtsChapterIndex cfi=${cfi.take(48)} " +
+                        "offset=$offset textLen=${text.length}"
+                )
+            }
             webViewRef?.evaluateJavascript(jsCommand, null)
         } else {
             if (!ttsState.isPlaying && !ttsState.isLoading) {
+                if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                    Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d(
+                        "Removing vertical TTS highlight because playback is idle. " +
+                            "visibleChapter=$currentChapterIndex activeTtsChapter=$activeTtsChapterIndex"
+                    )
+                }
                 webViewRef?.evaluateJavascript("javascript:window.removeHighlight();", null)
             }
         }

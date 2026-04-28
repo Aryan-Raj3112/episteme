@@ -218,6 +218,9 @@ private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
 private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
 private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
 private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
+private const val TTS_LOCATE_REASON_INITIAL_RESTORE = "initial_restore"
+private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
+private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
 
 private const val TAG_LINK_NAV = "LINK_NAV"
 
@@ -863,7 +866,11 @@ fun EpubReaderHost(
     var userStoppedTts by remember { mutableStateOf(false) }
     var ttsChapterIndex by remember { mutableStateOf<Int?>(null) }
     var pendingTtsLocateRequest by remember { mutableStateOf(false) }
+    var pendingTtsLocateReason by remember { mutableStateOf<String?>(null) }
     var hasQueuedInitialTtsLocate by remember(epubBook.title) { mutableStateOf(false) }
+    var isDetachedFromVerticalTts by remember { mutableStateOf(false) }
+    var detachedVerticalTtsChunkKey by remember { mutableStateOf<String?>(null) }
+    var suppressNextVerticalTtsDetach by remember { mutableStateOf(false) }
 
     var searchHighlightTarget by remember { mutableStateOf<SearchResult?>(null) }
     var lastHighlightClickTime by remember { mutableLongStateOf(0L) }
@@ -1166,15 +1173,63 @@ fun EpubReaderHost(
 
     fun isActiveReaderTtsForCurrentBook(): Boolean {
         val isReaderSession = ttsState.playbackSource == "READER"
-        val hasActivePosition =
-            !ttsState.currentWordSourceCfi.isNullOrBlank() ||
+        val hasReaderSessionState =
+            ttsState.isPlaying ||
+                ttsState.isLoading ||
+                ttsState.sessionFinished ||
+                ttsState.chapterIndex != null ||
+                !ttsState.currentWordSourceCfi.isNullOrBlank() ||
                 !ttsState.sourceCfi.isNullOrBlank() ||
                 !ttsState.currentText.isNullOrBlank()
         val isSameBook = ttsState.bookTitle == null || ttsState.bookTitle == epubBook.title
-        return isReaderSession && hasActivePosition && isSameBook
+        return isReaderSession && hasReaderSessionState && isSameBook
     }
 
     fun getActiveTtsChapterIndex(): Int? = ttsState.chapterIndex ?: ttsChapterIndex
+
+    fun buildTtsDiagState(): String {
+        val sourceCfiPreview = ttsState.sourceCfi?.take(48)
+        val pendingCfiPreview = cfiToLoad?.take(48)
+        return "render=$currentRenderMode currentChapter=$currentChapterIndex activeTtsChapter=${getActiveTtsChapterIndex()} " +
+            "pendingLocate=$pendingTtsLocateRequest locateReason=$pendingTtsLocateReason detached=$isDetachedFromVerticalTts suppressDetach=$suppressNextVerticalTtsDetach " +
+            "chunkOverride=$chunkTargetOverride pendingCfi=$pendingCfiPreview ttsCfi=$sourceCfiPreview offset=${ttsState.startOffsetInSource}"
+    }
+
+    fun logTtsChapterDiag(message: String) {
+        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("$message | ${buildTtsDiagState()}")
+    }
+
+    fun currentTtsChunkKey(): String? {
+        val cfi = ttsState.sourceCfi?.takeIf { it.isNotBlank() } ?: return null
+        val offset = ttsState.startOffsetInSource.takeIf { it >= 0 } ?: return null
+        return "$cfi@$offset"
+    }
+
+    fun queuePendingTtsLocate(reason: String) {
+        pendingTtsLocateReason = reason
+        pendingTtsLocateRequest = true
+    }
+
+    fun detachVerticalReaderFromTts(reason: String) {
+        logTtsChapterDiag("Detaching vertical reader from active TTS chapter. reason=$reason")
+        isDetachedFromVerticalTts = true
+        detachedVerticalTtsChunkKey = currentTtsChunkKey()
+        pendingTtsLocateRequest = false
+        pendingTtsLocateReason = null
+        isNavigatingToPosition = false
+        suppressNextVerticalTtsDetach = false
+    }
+
+    fun clearPendingTtsRelocationState(reason: String) {
+        logTtsChapterDiag("Clearing pending TTS relocation state. reason=$reason")
+        pendingTtsLocateRequest = false
+        pendingTtsLocateReason = null
+        chunkTargetOverride = null
+        cfiToLoad = null
+        fragmentToLoad = null
+        isNavigatingToPosition = false
+        suppressNextVerticalTtsDetach = false
+    }
 
     suspend fun saveResolvedLocatorPosition(locator: Locator, cfiForWebView: String?) {
         lastKnownLocator = locator
@@ -1229,31 +1284,47 @@ fun EpubReaderHost(
         val sourceCfi = (ttsState.currentWordSourceCfi ?: ttsState.sourceCfi)?.takeIf { it.isNotBlank() } ?: return false
         val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, sourceCfi) ?: return false
 
-        Timber.tag("TTS_LOCATE").d("Persisting active TTS position for $reason. chapter=$chapterIndex, cfi=$sourceCfi")
+        logTtsChapterDiag("Persisting active TTS position. reason=$reason chapter=$chapterIndex cfi=${sourceCfi.take(48)}")
         saveResolvedLocatorPosition(locator, sourceCfi)
         return true
     }
 
     suspend fun navigateToActiveTtsPosition(reason: String): Boolean {
-        if (!isActiveReaderTtsForCurrentBook()) return false
+        if (!isActiveReaderTtsForCurrentBook()) {
+            logTtsChapterDiag("navigateToActiveTtsPosition aborted: inactive reader TTS. reason=$reason")
+            return false
+        }
 
-        val chapterIndex = getActiveTtsChapterIndex() ?: return false
-        val sourceCfi = (ttsState.currentWordSourceCfi ?: ttsState.sourceCfi)?.takeIf { it.isNotBlank() } ?: return false
+        val chapterIndex = getActiveTtsChapterIndex() ?: run {
+            logTtsChapterDiag("navigateToActiveTtsPosition aborted: no active TTS chapter. reason=$reason")
+            return false
+        }
+        val sourceCfi = (ttsState.currentWordSourceCfi ?: ttsState.sourceCfi)?.takeIf { it.isNotBlank() } ?: run {
+            logTtsChapterDiag("navigateToActiveTtsPosition aborted: no active source CFI. reason=$reason")
+            return false
+        }
         val sourceOffset =
             ttsState.currentWordStartOffset.takeIf { it >= 0 }
                 ?: ttsState.startOffsetInSource.takeIf { it >= 0 }
-        val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, sourceCfi) ?: return false
+        val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, sourceCfi) ?: run {
+            logTtsChapterDiag("navigateToActiveTtsPosition aborted: locator conversion failed. reason=$reason chapter=$chapterIndex cfi=${sourceCfi.take(48)}")
+            return false
+        }
         val targetChunk = max(0, locator.blockIndex / 20)
 
         saveResolvedLocatorPosition(locator, sourceCfi)
-        Timber.tag("TTS_LOCATE").d("Navigating to active TTS position for $reason in mode=$currentRenderMode")
+        logTtsChapterDiag("Navigating to active TTS position. reason=$reason targetChapter=$chapterIndex targetChunk=$targetChunk sourceOffset=$sourceOffset")
 
         when (currentRenderMode) {
             RenderMode.VERTICAL_SCROLL -> {
                 isNavigatingToPosition = true
                 initialScrollTargetForChapter = null
+                isDetachedFromVerticalTts = false
+                detachedVerticalTtsChunkKey = null
+                suppressNextVerticalTtsDetach = true
 
                 if (chapterIndex != currentChapterIndex) {
+                    logTtsChapterDiag("Vertical locate switching chapters. reason=$reason from=$currentChapterIndex to=$chapterIndex targetChunk=$targetChunk")
                     chunkTargetOverride = targetChunk
                     cfiToLoad = sourceCfi
                     currentScrollYPosition = 0
@@ -1261,14 +1332,25 @@ fun EpubReaderHost(
                     currentChapterIndex = chapterIndex
                 } else {
                     if (webViewRefForTts == null) {
+                        logTtsChapterDiag("Vertical locate queued because WebView is null. reason=$reason targetChunk=$targetChunk")
                         chunkTargetOverride = targetChunk
                         cfiToLoad = sourceCfi
                     } else {
+                        logTtsChapterDiag("Vertical locate in current chapter. reason=$reason targetChunk=$targetChunk usingHighlight=${ttsState.currentText?.isNotBlank() == true}")
                         ensureVerticalChunksLoaded(targetChunk)
-                        webViewRefForTts?.evaluateJavascript(
-                            "javascript:window.scrollToCfi('${escapeJsString(sourceCfi)}');",
-                            null
-                        )
+                        val chunkText = ttsState.currentText?.takeIf { it.isNotBlank() }
+                        val chunkStartOffset = ttsState.startOffsetInSource.takeIf { it >= 0 }
+                        if (chunkText != null && chunkStartOffset != null) {
+                            webViewRefForTts?.evaluateJavascript(
+                                "javascript:window.highlightFromCfi('${escapeJsString(sourceCfi)}', '${escapeJsString(chunkText)}', $chunkStartOffset);",
+                                null
+                            )
+                        } else {
+                            webViewRefForTts?.evaluateJavascript(
+                                "javascript:window.scrollToCfi('${escapeJsString(sourceCfi)}');",
+                                null
+                            )
+                        }
                         scope.launch {
                             delay(3000L)
                             if (isNavigatingToPosition) {
@@ -1281,14 +1363,23 @@ fun EpubReaderHost(
             }
 
             RenderMode.PAGINATED -> {
-                if (!isPagerInitialized) return false
-                val bookPaginator = paginator as? BookPaginator ?: return false
+                if (!isPagerInitialized) {
+                    logTtsChapterDiag("Paginated locate aborted: pager not initialized. reason=$reason")
+                    return false
+                }
+                val bookPaginator = paginator as? BookPaginator ?: run {
+                    logTtsChapterDiag("Paginated locate aborted: paginator unavailable. reason=$reason")
+                    return false
+                }
                 val pageIndex =
                     sourceOffset?.let { bookPaginator.findPageForCfiAndOffset(chapterIndex, sourceCfi, it) }
                         ?: bookPaginator.findPageForLocator(locator)
-                        ?: bookPaginator.chapterStartPageIndices[chapterIndex]
-                        ?: return false
+                        ?: bookPaginator.chapterStartPageIndices[chapterIndex] ?: run {
+                            logTtsChapterDiag("Paginated locate aborted: page lookup failed. reason=$reason chapter=$chapterIndex")
+                            return false
+                        }
 
+                logTtsChapterDiag("Paginated locate scrolling to page=$pageIndex. reason=$reason")
                 isNavigatingToPosition = true
                 paginatedPagerState.scrollToPage(pageIndex)
                 isNavigatingToPosition = false
@@ -1476,6 +1567,7 @@ fun EpubReaderHost(
     TtsHighlightHandler(
         ttsState = ttsState,
         currentRenderMode = currentRenderMode,
+        currentChapterIndex = currentChapterIndex,
         webViewRef = webViewRefForTts,
         paginator = paginator,
         pagerState = paginatedPagerState,
@@ -1542,13 +1634,15 @@ fun EpubReaderHost(
 
     LaunchedEffect(ttsState.bookTitle, ttsState.chapterIndex, ttsState.sourceCfi, ttsState.playbackSource) {
         if (!hasQueuedInitialTtsLocate && isActiveReaderTtsForCurrentBook()) {
-            pendingTtsLocateRequest = true
+            logTtsChapterDiag("Queueing initial TTS locate from active session restoration")
+            queuePendingTtsLocate(TTS_LOCATE_REASON_INITIAL_RESTORE)
             hasQueuedInitialTtsLocate = true
         }
     }
 
     LaunchedEffect(
         pendingTtsLocateRequest,
+        pendingTtsLocateReason,
         currentRenderMode,
         webViewRefForTts,
         paginator,
@@ -1558,36 +1652,150 @@ fun EpubReaderHost(
         ttsChapterIndex,
         ttsState.sourceCfi,
         loadedChunkCount,
-        chapterChunks.size
+        chapterChunks.size,
+        isDetachedFromVerticalTts
     ) {
         if (!pendingTtsLocateRequest) return@LaunchedEffect
         if (!isActiveReaderTtsForCurrentBook()) {
+            logTtsChapterDiag("Dropping pending TTS locate because session is no longer active for this book")
             pendingTtsLocateRequest = false
+            pendingTtsLocateReason = null
             return@LaunchedEffect
         }
 
-        if (navigateToActiveTtsPosition("pending_request")) {
+        if (
+            currentRenderMode == RenderMode.VERTICAL_SCROLL &&
+            isDetachedFromVerticalTts &&
+            pendingTtsLocateReason != TTS_LOCATE_REASON_OVERLAY
+        ) {
+            logTtsChapterDiag("Dropping automatic TTS locate because the vertical reader is intentionally detached")
             pendingTtsLocateRequest = false
+            pendingTtsLocateReason = null
+            return@LaunchedEffect
+        }
+
+        logTtsChapterDiag("Processing pending TTS locate request")
+        if (navigateToActiveTtsPosition("pending_request")) {
+            logTtsChapterDiag("Pending TTS locate request completed successfully")
+            pendingTtsLocateRequest = false
+            pendingTtsLocateReason = null
+        } else {
+            logTtsChapterDiag("Pending TTS locate request did not navigate yet")
+        }
+    }
+
+    LaunchedEffect(
+        currentRenderMode,
+        currentChapterIndex,
+        ttsState.playbackSource,
+        ttsState.chapterIndex,
+        ttsChapterIndex
+    ) {
+        if (currentRenderMode != RenderMode.VERTICAL_SCROLL) return@LaunchedEffect
+        if (!isActiveReaderTtsForCurrentBook()) {
+            logTtsChapterDiag("Vertical detach effect resetting because active reader TTS is unavailable")
+            isDetachedFromVerticalTts = false
+            detachedVerticalTtsChunkKey = null
+            suppressNextVerticalTtsDetach = false
+            return@LaunchedEffect
+        }
+
+        val activeTtsChapterIndex = getActiveTtsChapterIndex() ?: return@LaunchedEffect
+        if (currentChapterIndex == activeTtsChapterIndex) {
+            logTtsChapterDiag("Vertical detach effect cleared because reader is back on the active TTS chapter")
+            suppressNextVerticalTtsDetach = false
+            isDetachedFromVerticalTts = false
+            detachedVerticalTtsChunkKey = null
+            return@LaunchedEffect
+        }
+
+        if (suppressNextVerticalTtsDetach) {
+            val hasPendingProgrammaticNavigation =
+                isNavigatingToPosition || chunkTargetOverride != null || !cfiToLoad.isNullOrBlank()
+            if (hasPendingProgrammaticNavigation) {
+                logTtsChapterDiag("Vertical detach suppression consumed after programmatic TTS navigation")
+                suppressNextVerticalTtsDetach = false
+                return@LaunchedEffect
+            }
+
+            logTtsChapterDiag("Ignoring stale vertical detach suppression and honoring manual chapter movement")
+            suppressNextVerticalTtsDetach = false
+        }
+
+        if (!isDetachedFromVerticalTts) {
+            detachVerticalReaderFromTts("chapter_mismatch")
+        }
+    }
+
+    LaunchedEffect(
+        currentRenderMode,
+        isDetachedFromVerticalTts,
+        ttsState.sourceCfi,
+        ttsState.startOffsetInSource,
+        ttsState.chapterIndex,
+        ttsChapterIndex
+    ) {
+        if (currentRenderMode != RenderMode.VERTICAL_SCROLL) return@LaunchedEffect
+        if (!isDetachedFromVerticalTts) return@LaunchedEffect
+        if (!isActiveReaderTtsForCurrentBook()) return@LaunchedEffect
+
+        val currentChunkKey = currentTtsChunkKey() ?: return@LaunchedEffect
+        val detachedChunkKey = detachedVerticalTtsChunkKey
+
+        if (detachedChunkKey == null) {
+            logTtsChapterDiag("Detached vertical reader recorded first observed TTS chunk key")
+            detachedVerticalTtsChunkKey = currentChunkKey
+            return@LaunchedEffect
+        }
+
+        if (currentChunkKey == detachedChunkKey) {
+            logTtsChapterDiag("Detached vertical reader waiting for next TTS chunk boundary before rejoining")
+            return@LaunchedEffect
+        }
+
+        logTtsChapterDiag("Detached vertical reader detected next TTS chunk boundary and will try to rejoin")
+        if (navigateToActiveTtsPosition("chunk_follow")) {
+            logTtsChapterDiag("Detached vertical reader rejoined active TTS chapter successfully")
+            isDetachedFromVerticalTts = false
+            detachedVerticalTtsChunkKey = null
+        } else {
+            logTtsChapterDiag("Detached vertical reader failed to rejoin on this chunk boundary")
         }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, webViewRefForTts, ttsState, ttsChapterIndex, currentRenderMode) {
+    val latestWebViewRefForTts by rememberUpdatedState(webViewRefForTts)
+    val latestIsActiveReaderTtsForCurrentBook by rememberUpdatedState(isActiveReaderTtsForCurrentBook())
+    val latestSaveActiveTtsPosition by rememberUpdatedState<suspend (String) -> Boolean>({ reason ->
+        saveActiveTtsPosition(reason)
+    })
+    val latestIsDetachedFromVerticalTts by rememberUpdatedState(isDetachedFromVerticalTts)
+    val latestCurrentRenderMode by rememberUpdatedState(currentRenderMode)
+    val latestQueueLifecycleTtsLocate by rememberUpdatedState({
+        if (latestCurrentRenderMode == RenderMode.VERTICAL_SCROLL && latestIsDetachedFromVerticalTts) {
+            logTtsChapterDiag("Lifecycle resume skipped automatic TTS locate because the vertical reader is detached")
+        } else {
+            logTtsChapterDiag("Lifecycle resume queued a TTS locate request")
+            queuePendingTtsLocate(TTS_LOCATE_REASON_LIFECYCLE_RESUME)
+        }
+    })
+
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                if (isActiveReaderTtsForCurrentBook()) {
+                if (latestIsActiveReaderTtsForCurrentBook) {
                     scope.launch {
-                        if (!saveActiveTtsPosition("lifecycle_pause")) {
+                        if (!latestSaveActiveTtsPosition("lifecycle_pause")) {
                             Timber.d("ON_PAUSE detected. Falling back to WebView CFI save.")
-                            webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                            latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                         }
                     }
                 } else {
                     Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
-                    webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                    latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                 }
-            } else if (event == Lifecycle.Event.ON_RESUME && isActiveReaderTtsForCurrentBook()) {
-                pendingTtsLocateRequest = true
+            } else if (event == Lifecycle.Event.ON_RESUME && latestIsActiveReaderTtsForCurrentBook) {
+                latestQueueLifecycleTtsLocate()
             }
         }
 
@@ -2011,6 +2219,7 @@ fun EpubReaderHost(
 
                         if (targetChapterIndex != -1) {
                             if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                                clearPendingTtsRelocationState("toc_entry_vertical")
                                 fragmentToLoad = entry.fragmentId
                                 if (targetChapterIndex != currentChapterIndex) {
                                     Timber.tag(TAG_LINK_NAV)
@@ -2019,6 +2228,7 @@ fun EpubReaderHost(
                                     currentScrollYPosition = 0
                                     currentScrollHeightValue = 0
                                     currentChapterIndex = targetChapterIndex
+                                    logTtsChapterDiag("Manual vertical chapter switch via TOC entry. targetChapter=$targetChapterIndex fragment=${entry.fragmentId}")
                                 } else {
                                     if (entry.fragmentId != null) {
                                         val js = """
@@ -2124,12 +2334,14 @@ fun EpubReaderHost(
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
                                 if (index != currentChapterIndex) {
+                                    clearPendingTtsRelocationState("sidebar_chapter_vertical")
                                     Timber.tag(TAG_LINK_NAV)
                                         .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER, from=$currentChapterIndex, to=$index")
                                     initialScrollTargetForChapter = ChapterScrollPosition.START
                                     currentScrollYPosition = 0
                                     currentScrollHeightValue = 0
                                     currentChapterIndex = index
+                                    logTtsChapterDiag("Manual vertical chapter switch via sidebar. targetChapter=$index")
                                     pullToNextProgress = 0f
                                     pullToPrevProgress = 0f
                                     if (showBars) showBars = false
@@ -2629,10 +2841,15 @@ fun EpubReaderHost(
                         },
                         onNavigateChapter = { offset, target ->
                             scope.launch {
+                                clearPendingTtsRelocationState("manual_chapter_change")
                                 initialScrollTargetForChapter = target
                                 currentScrollYPosition = 0
                                 currentScrollHeightValue = 0
                                 currentChapterIndex += offset
+                                logTtsChapterDiag(
+                                    "Manual vertical chapter switch via volume/button nav. " +
+                                        "offset=$offset target=$target newChapter=$currentChapterIndex"
+                                )
                             }
                         },
                         onNextPage = {
@@ -2848,6 +3065,7 @@ fun EpubReaderHost(
                                             onChapterInitiallyScrolled = {
                                                 val wasCfiScroll = cfiToLoad != null
                                                 Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
+                                                logTtsChapterDiag("Chapter initially scrolled. targetChapter=$targetChapterIndex wasCfiScroll=$wasCfiScroll")
                                                 initialScrollTargetForChapter = null
                                                 cfiToLoad = null
                                                 fragmentToLoad = null
@@ -2867,6 +3085,7 @@ fun EpubReaderHost(
 
                                                 if (ttsShouldStartOnChapterLoad && !hasRequestedExtractionForThisChapter) {
                                                     Timber.d("Auto-starting TTS for new chapter ($targetChapterIndex).")
+                                                    logTtsChapterDiag("Auto-starting TTS extraction for chapter load")
                                                     hasRequestedExtractionForThisChapter = true
                                                     scope.launch {
                                                         delay(200)
@@ -2924,6 +3143,7 @@ fun EpubReaderHost(
 
                                                 scope.launch {
                                                     if (currentChapterIndex < chapters.size - 1) {
+                                                        clearPendingTtsRelocationState("auto_scroll_chapter_end")
                                                         Timber.tag(TAG_LINK_NAV)
                                                             .d("[CHAPTER-NAV] source=AUTO_SCROLL_END, from=$currentChapterIndex, to=${currentChapterIndex + 1}")
                                                         Timber.d("Screen: Moving to next chapter (${currentChapterIndex + 1}).")
@@ -2931,6 +3151,7 @@ fun EpubReaderHost(
                                                         currentScrollYPosition = 0
                                                         currentScrollHeightValue = 0
                                                         currentChapterIndex++
+                                                        logTtsChapterDiag("Auto-scroll moved vertical reader to next chapter. newChapter=$currentChapterIndex")
                                                         isAutoScrollPlaying = true
                                                     } else {
                                                         Timber.d("Screen: Reached end of book. Stopping auto-scroll.")
@@ -2948,6 +3169,7 @@ fun EpubReaderHost(
                                                         isSeamlessTransitioning = true
                                                         webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                                                         scope.launch {
+                                                            clearPendingTtsRelocationState("overscroll_top_seamless")
                                                             delay(20)
                                                             initialScrollTargetForChapter = ChapterScrollPosition.END
                                                             currentScrollYPosition = 0
@@ -2955,6 +3177,7 @@ fun EpubReaderHost(
                                                             Timber.tag(TAG_LINK_NAV)
                                                                 .d("[CHAPTER-NAV] source=OVERSCROLL_TOP_SEAMLESS, from=$targetChapterIndex, to=${targetChapterIndex - 1}")
                                                             currentChapterIndex--
+                                                            logTtsChapterDiag("Seamless overscroll moved to previous chapter. newChapter=$currentChapterIndex")
                                                             if (showBars) showBars = false
                                                             delay(300)
                                                             isSeamlessTransitioning = false
@@ -2972,6 +3195,7 @@ fun EpubReaderHost(
                                                         isSeamlessTransitioning = true
                                                         webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                                                         scope.launch {
+                                                            clearPendingTtsRelocationState("overscroll_bottom_seamless")
                                                             delay(20)
                                                             initialScrollTargetForChapter = ChapterScrollPosition.START
                                                             currentScrollYPosition = 0
@@ -2979,6 +3203,7 @@ fun EpubReaderHost(
                                                             Timber.tag(TAG_LINK_NAV)
                                                                 .d("[CHAPTER-NAV] source=OVERSCROLL_BOTTOM_SEAMLESS, from=$targetChapterIndex, to=${targetChapterIndex + 1}")
                                                             currentChapterIndex++
+                                                            logTtsChapterDiag("Seamless overscroll moved to next chapter. newChapter=$currentChapterIndex")
                                                             if (showBars) showBars = false
                                                             delay(300)
                                                             isSeamlessTransitioning = false
@@ -2995,6 +3220,10 @@ fun EpubReaderHost(
                                                         null
                                                     )
                                                     scope.launch {
+                                                        clearPendingTtsRelocationState("pull_to_turn_prev")
+                                                        if (isActiveReaderTtsForCurrentBook()) {
+                                                            detachVerticalReaderFromTts("pull_to_turn_prev")
+                                                        }
                                                         delay(50)
                                                         initialScrollTargetForChapter = ChapterScrollPosition.END
                                                         currentScrollYPosition = 0
@@ -3002,6 +3231,7 @@ fun EpubReaderHost(
                                                         Timber.tag(TAG_LINK_NAV)
                                                             .d("[CHAPTER-NAV] source=PULL_TO_TURN_PREV, from=$targetChapterIndex, to=${targetChapterIndex - 1}")
                                                         currentChapterIndex--
+                                                        logTtsChapterDiag("Pull-to-turn moved to previous chapter. newChapter=$currentChapterIndex")
                                                         if (showBars) showBars = false
                                                         Timber.d("Changed to previous chapter: $currentChapterIndex, will scroll to END")
                                                     }
@@ -3017,6 +3247,10 @@ fun EpubReaderHost(
                                                         null
                                                     )
                                                     scope.launch {
+                                                        clearPendingTtsRelocationState("pull_to_turn_next")
+                                                        if (isActiveReaderTtsForCurrentBook()) {
+                                                            detachVerticalReaderFromTts("pull_to_turn_next")
+                                                        }
                                                         delay(50)
                                                         initialScrollTargetForChapter = ChapterScrollPosition.START
                                                         currentScrollYPosition = 0
@@ -3024,6 +3258,7 @@ fun EpubReaderHost(
                                                         Timber.tag(TAG_LINK_NAV)
                                                             .d("[CHAPTER-NAV] source=PULL_TO_TURN_NEXT, from=$targetChapterIndex, to=${targetChapterIndex + 1}")
                                                         currentChapterIndex++
+                                                        logTtsChapterDiag("Pull-to-turn moved to next chapter. newChapter=$currentChapterIndex")
                                                         if (showBars) showBars = false
                                                     }
                                                 }
@@ -3220,8 +3455,13 @@ fun EpubReaderHost(
                                                     }
 
                                                     Timber.d("Vertical: Final compiled TTS chunks size: ${ttsChunks.size}")
+                                                    logTtsChapterDiag(
+                                                        "Vertical TTS text ready. targetChapter=$targetChapterIndex " +
+                                                            "chunkCount=${ttsChunks.size} visibleChapter=$currentChapterIndex"
+                                                    )
 
                                                     if (ttsChunks.isNotEmpty()) {
+                                                        logTtsChapterDiag("Vertical TTS extraction produced ${ttsChunks.size} chunks for chapter $targetChapterIndex")
                                                         if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
                                                             showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
@@ -3249,6 +3489,7 @@ fun EpubReaderHost(
                                                         )
                                                     } else {
                                                         Timber.w("No TTS chunks were created from JSON, not starting TTS.")
+                                                        logTtsChapterDiag("Vertical TTS extraction produced 0 chunks for chapter $targetChapterIndex")
                                                         if (ttsShouldStartOnChapterLoad) {
                                                             Timber.d("Empty chapter detected during start. Advancing UI to next chapter.")
                                                             val nextIdx = targetChapterIndex + 1
@@ -4329,7 +4570,10 @@ fun EpubReaderHost(
                         currentTtsMode = currentTtsMode,
                         isCollapsed = isTtsCollapsed,
                         onCollapseChange = { isTtsCollapsed = it },
-                        onLocateCurrentChunk = { pendingTtsLocateRequest = true },
+                        onLocateCurrentChunk = {
+                            logTtsChapterDiag("Locate current chunk requested from TTS overlay")
+                            queuePendingTtsLocate(TTS_LOCATE_REASON_OVERLAY)
+                        },
                         onOpenTtsSettings = { showTtsSettingsSheet = true },
                         onClose = {
                             userStoppedTts = true

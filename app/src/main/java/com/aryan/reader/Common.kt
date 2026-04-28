@@ -185,6 +185,7 @@ import timber.log.Timber
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -1284,6 +1285,21 @@ fun DeviceVoicesTab(
             .clickable(enabled = !isTtsActive && isBaseMode) {
                 savedVoiceName = null
                 saveNativeVoice(context, null)
+                ttsEngine?.apply {
+                    try {
+                        val defaultLocale = Locale.getDefault()
+                        language = defaultLocale
+                        val fallbackVoice =
+                            defaultVoice ?: voices.firstOrNull { voice ->
+                                voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
+                            } ?: voices.firstOrNull { voice ->
+                                voice.locale == defaultLocale
+                            }
+                        fallbackVoice?.let { voice = it }
+                    } catch (e: Exception) {
+                        Timber.tag("TTS_DIAGNOSE").w(e, "Failed to reset preview engine to system default voice")
+                    }
+                }
             }
     ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
