@@ -1361,7 +1361,7 @@ fun DeviceVoicesTab(
                         enabled = !isTtsActive,
                         onClick = {
                             ttsEngine?.apply {
-                                language = voice.locale
+                                this.voice = voice
                                 speak("This is a voice sample.", TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
                             }
                         }
