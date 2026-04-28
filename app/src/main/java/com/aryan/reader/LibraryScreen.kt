@@ -1496,7 +1496,7 @@ private fun LibraryListItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp)
-                .height(if (item.tags.isNotEmpty()) 176.dp else 132.dp),
+                .height(132.dp),
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -1518,7 +1518,6 @@ private fun LibraryListItem(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-
                 if (isSelected) {
                     Box(
                         modifier = Modifier.matchParentSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
@@ -1572,68 +1571,63 @@ private fun LibraryListItem(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FileTypeBadge(type = item.type, overlay = false)
 
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(28.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (!item.isAvailable) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (isDownloading) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.errorContainer
-                                },
-                                contentColor = if (isDownloading) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                }
+                    if (item.tags.isNotEmpty()) {
+                        BookTagChipsRow(
+                            tags = item.tags,
+                            compact = true,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+
+                    if (!item.isAvailable) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (isDownloading) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.errorContainer
+                            },
+                            contentColor = if (isDownloading) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    if (isDownloading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(14.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Filled.Info,
-                                            contentDescription = stringResource(R.string.not_available_locally),
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                    Text(
-                                        text = if (isDownloading) {
-                                            stringResource(R.string.status_downloading)
-                                        } else {
-                                            stringResource(R.string.not_available_locally)
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Medium
+                                if (isDownloading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Filled.Info,
+                                        contentDescription = stringResource(R.string.not_available_locally),
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
+                                Text(
+                                    text = if (isDownloading) {
+                                        stringResource(R.string.status_downloading)
+                                    } else {
+                                        stringResource(R.string.not_available_locally)
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
                             }
                         }
                     }
-                }
-
-                if (item.tags.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    BookTagChipsRow(
-                        tags = item.tags,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
