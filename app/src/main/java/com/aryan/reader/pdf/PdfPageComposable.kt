@@ -192,6 +192,78 @@ data class PageLink(
     val source: LinkSource
 )
 
+private data class ExpandedBubbleRender(
+    val bitmap: Bitmap,
+    val zoomFactor: Float
+)
+
+private fun computeDynamicBubbleZoomFactor(
+    bubbleBounds: RectF,
+    viewportWidth: Float,
+    viewportHeight: Float
+): Float {
+    if (bubbleBounds.width() <= 0f || bubbleBounds.height() <= 0f) return 1.5f
+    val targetWidth = viewportWidth * 0.6f
+    val targetHeight = viewportHeight * 0.32f
+    return min(targetWidth / bubbleBounds.width(), targetHeight / bubbleBounds.height())
+        .coerceIn(1.35f, 4.25f)
+}
+
+private fun isTapInsideBubble(
+    bubble: SpeechBubble,
+    tapX: Float,
+    tapY: Float,
+    hitSlopPx: Float
+): Boolean {
+    val expandedBounds = RectF(bubble.bounds)
+    expandedBounds.inset(-hitSlopPx, -hitSlopPx)
+    if (!expandedBounds.contains(tapX, tapY)) return false
+
+    val mask = bubble.maskBitmap ?: return true
+    if (!bubble.bounds.contains(tapX, tapY)) return true
+
+    val normalizedX = ((tapX - bubble.bounds.left) / bubble.bounds.width()).coerceIn(0f, 0.999f)
+    val normalizedY = ((tapY - bubble.bounds.top) / bubble.bounds.height()).coerceIn(0f, 0.999f)
+    val maskX = (normalizedX * mask.width).toInt().coerceIn(0, mask.width - 1)
+    val maskY = (normalizedY * mask.height).toInt().coerceIn(0, mask.height - 1)
+    return AndroidColor.alpha(mask.getPixel(maskX, maskY)) > 24
+}
+
+private suspend fun renderExpandedBubbleBitmap(
+    document: ReaderDocument,
+    pageIndex: Int,
+    bubbleBounds: RectF,
+    pageWidth: Int,
+    pageHeight: Int,
+    renderScale: Float
+): Bitmap? = withContext(Dispatchers.IO) {
+    if (pageWidth <= 0 || pageHeight <= 0 || bubbleBounds.width() <= 0f || bubbleBounds.height() <= 0f) {
+        return@withContext null
+    }
+
+    document.openPage(pageIndex)?.use { page ->
+        val cropWidth = (bubbleBounds.width() * renderScale).roundToInt().coerceAtLeast(1)
+        val cropHeight = (bubbleBounds.height() * renderScale).roundToInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(cropWidth, cropHeight, Bitmap.Config.ARGB_8888)
+
+        try {
+            page.renderPageBitmap(
+                bitmap = bitmap,
+                startX = (-bubbleBounds.left * renderScale).roundToInt(),
+                startY = (-bubbleBounds.top * renderScale).roundToInt(),
+                drawSizeX = (pageWidth * renderScale).roundToInt().coerceAtLeast(cropWidth),
+                drawSizeY = (pageHeight * renderScale).roundToInt().coerceAtLeast(cropHeight),
+                renderAnnot = true
+            )
+            bitmap
+        } catch (t: Throwable) {
+            bitmap.recycle()
+            Timber.tag("BubbleZoom").w(t, "Failed to render expanded bubble bitmap for page $pageIndex")
+            null
+        }
+    }
+}
+
 object PdfInkGeometry {
     fun calculateFountainPenPoints(
         points: List<PdfPoint>, baseWidth: Float, pageWidth: Float, pageHeight: Float
@@ -463,7 +535,7 @@ internal fun PdfPageComposable(
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
     onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
-    onDetectBubbles: suspend (Bitmap) -> List<SpeechBubble> = { emptyList() },
+    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() },
     onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
@@ -650,18 +722,31 @@ internal fun PdfPageComposable(
         screenOffset
     }
 
-    var detectedBubbles by remember { mutableStateOf<List<SpeechBubble>>(emptyList()) }
-    var expandedBubbleIndex by remember { mutableIntStateOf(-1) }
-    var isDetectingBubbles by remember { mutableStateOf(false) }
+    var detectedBubbles by remember(targetPageId) { mutableStateOf<List<SpeechBubble>>(emptyList()) }
+    var expandedBubbleIndex by remember(targetPageId) { mutableIntStateOf(-1) }
+    var isDetectingBubbles by remember(targetPageId) { mutableStateOf(false) }
+    var expandedBubbleRender by remember(targetPageId) { mutableStateOf<ExpandedBubbleRender?>(null) }
+    val currentDetectedBubbles by rememberUpdatedState(detectedBubbles)
+    val currentExpandedBubbleIndex by rememberUpdatedState(expandedBubbleIndex)
+    val currentBubbleZoomModeActive by rememberUpdatedState(isBubbleZoomModeActive)
+    val bubbleTapSlopPx = with(density) { 18.dp.toPx() }
 
-    LaunchedEffect(isBubbleZoomModeActive, isActivePage, bitmapState, actualBitmapWidthPx, actualBitmapHeightPx) {
+    LaunchedEffect(
+        isBubbleZoomModeActive,
+        isActivePage,
+        isPdfPage,
+        pdfPageIndex,
+        bitmapState,
+        actualBitmapWidthPx,
+        actualBitmapHeightPx
+    ) {
         Timber.tag("BubbleZoom").d("LaunchedEffect triggered. modeActive=$isBubbleZoomModeActive, activePage=$isActivePage, hasBitmap=${bitmapState != null}, dims=${actualBitmapWidthPx}x${actualBitmapHeightPx}")
 
-        if (isBubbleZoomModeActive && isActivePage && bitmapState != null && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0) {
+        if (isBubbleZoomModeActive && isActivePage && isPdfPage && bitmapState != null && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0) {
             Timber.tag("BubbleZoom").d("Conditions met. Starting detection...")
             isDetectingBubbles = true
             try {
-                val rawBubbles = onDetectBubbles(bitmapState!!)
+                val rawBubbles = onDetectBubbles(pdfPageIndex, bitmapState!!)
                 Timber.tag("BubbleZoom").d("Detection complete. Found ${rawBubbles.size} raw bubbles.")
 
                 // NEW: Scale bubbles down from render bitmap space to logical screen space
@@ -691,6 +776,8 @@ internal fun PdfPageComposable(
             Timber.tag("BubbleZoom").d("Conditions NOT met or mode disabled. Clearing bubbles.")
             detectedBubbles = emptyList()
             expandedBubbleIndex = -1
+            expandedBubbleRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
+            expandedBubbleRender = null
             if (!isBubbleZoomModeActive && scale > 1f && !isVerticalScroll && isZoomEnabled) {
                 coroutineScope.launch {
                     Animatable(scale).animateTo(1f, tween(300)) {
@@ -703,6 +790,49 @@ internal fun PdfPageComposable(
         }
     }
 
+    LaunchedEffect(
+        expandedBubbleIndex,
+        detectedBubbles,
+        actualBitmapWidthPx,
+        actualBitmapHeightPx,
+        canvasWidthPx.floatValue,
+        canvasHeightPx.floatValue,
+        isBubbleZoomModeActive,
+        isPdfPage,
+        pdfPageIndex
+    ) {
+        val previousRender = expandedBubbleRender
+        expandedBubbleRender = null
+        previousRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
+
+        if (!isBubbleZoomModeActive || !isPdfPage || expandedBubbleIndex !in detectedBubbles.indices) {
+            return@LaunchedEffect
+        }
+
+        val bubble = detectedBubbles[expandedBubbleIndex]
+        val zoomFactor = computeDynamicBubbleZoomFactor(
+            bubbleBounds = bubble.bounds,
+            viewportWidth = canvasWidthPx.floatValue.coerceAtLeast(actualBitmapWidthPx.toFloat()),
+            viewportHeight = canvasHeightPx.floatValue.coerceAtLeast(actualBitmapHeightPx.toFloat())
+        )
+        val renderScale = (zoomFactor * 1.2f).coerceAtLeast(1.6f)
+        val renderedBubble = renderExpandedBubbleBitmap(
+            document = pdfDocumentItem,
+            pageIndex = pdfPageIndex,
+            bubbleBounds = bubble.bounds,
+            pageWidth = actualBitmapWidthPx,
+            pageHeight = actualBitmapHeightPx,
+            renderScale = renderScale
+        )
+
+        if (renderedBubble != null) {
+            expandedBubbleRender = ExpandedBubbleRender(
+                bitmap = renderedBubble,
+                zoomFactor = zoomFactor
+            )
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             val currentBitmap = bitmapState
@@ -710,6 +840,7 @@ internal fun PdfPageComposable(
             if (currentBitmap != null && !currentBitmap.isRecycled && currentBitmap !== cachedBitmap) {
                 currentBitmap.recycle()
             }
+            expandedBubbleRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
         }
     }
 
@@ -2570,7 +2701,8 @@ internal fun PdfPageComposable(
                 isEditMode,
                 selectedTool,
                 isStylusOnlyMode,
-                userHighlightScreenRects
+                userHighlightScreenRects,
+                bubbleTapSlopPx
             ) {
                 val isTapDetectionAllowed = !isEditMode ||
                         selectedTool == InkType.TEXT ||
@@ -2595,24 +2727,28 @@ internal fun PdfPageComposable(
                         return@detectTapGestures
                     }
 
-                    Timber.tag("BubbleZoom").d("Tap inside bounds. modeActive=$isBubbleZoomModeActive, detectedBubbles=${detectedBubbles.size}, tapPos=($tapXInBitmap, $tapYInBitmap)")
+                    Timber.tag("BubbleZoom").d("Tap inside bounds. modeActive=$currentBubbleZoomModeActive, detectedBubbles=${currentDetectedBubbles.size}, tapPos=($tapXInBitmap, $tapYInBitmap)")
 
-                    if (isBubbleZoomModeActive && detectedBubbles.isNotEmpty()) {
-                        val tappedBubbleIndex = detectedBubbles.indexOfFirst { bubble ->
-                            tapXInBitmap >= bubble.bounds.left && tapXInBitmap <= bubble.bounds.right &&
-                                    tapYInBitmap >= bubble.bounds.top && tapYInBitmap <= bubble.bounds.bottom
+                    if (currentBubbleZoomModeActive && currentDetectedBubbles.isNotEmpty()) {
+                        val tappedBubbleIndex = currentDetectedBubbles.indexOfFirst { bubble ->
+                            isTapInsideBubble(
+                                bubble = bubble,
+                                tapX = tapXInBitmap,
+                                tapY = tapYInBitmap,
+                                hitSlopPx = bubbleTapSlopPx
+                            )
                         }
 
-                        Timber.tag("BubbleZoom").d("Tapped bubble index: $tappedBubbleIndex (expandedIndex=$expandedBubbleIndex)")
+                        Timber.tag("BubbleZoom").d("Tapped bubble index: $tappedBubbleIndex (expandedIndex=$currentExpandedBubbleIndex)")
 
                         if (tappedBubbleIndex != -1) {
-                            if (expandedBubbleIndex == tappedBubbleIndex) {
+                            if (currentExpandedBubbleIndex == tappedBubbleIndex) {
                                 expandedBubbleIndex = -1
                             } else {
                                 expandedBubbleIndex = tappedBubbleIndex
                             }
                             return@detectTapGestures
-                        } else if (expandedBubbleIndex != -1) {
+                        } else if (currentExpandedBubbleIndex != -1) {
                             expandedBubbleIndex = -1
                             return@detectTapGestures
                         }
@@ -4053,7 +4189,8 @@ internal fun PdfPageComposable(
                         isActivePage = isActivePage,
                         isDetectingBubbles = isDetectingBubbles,
                         detectedBubbles = detectedBubbles,
-                        expandedBubbleIndex = expandedBubbleIndex
+                        expandedBubbleIndex = expandedBubbleIndex,
+                        expandedBubbleRender = expandedBubbleRender
                     )
                 }
 
@@ -4866,7 +5003,8 @@ private fun PdfPageRenderer(
     isActivePage: Boolean = true,
     isDetectingBubbles: Boolean = false,
     detectedBubbles: List<SpeechBubble> = emptyList(),
-    expandedBubbleIndex: Int = -1
+    expandedBubbleIndex: Int = -1,
+    expandedBubbleRender: ExpandedBubbleRender? = null
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -5336,7 +5474,7 @@ private fun PdfPageRenderer(
                         }
                     }
 
-                    if (expandedBubbleIndex != -1 && staticData.bitmap.item != null) {
+                    if (expandedBubbleIndex in detectedBubbles.indices && staticData.bitmap.item != null) {
                         val bubble = detectedBubbles[expandedBubbleIndex]
                         val left = bubble.bounds.left + staticData.centeringOffsetX
                         val top = bubble.bounds.top + staticData.centeringOffsetY
@@ -5344,9 +5482,15 @@ private fun PdfPageRenderer(
                         val logicalHeight = bubble.bounds.height()
                         val pivotX = left + logicalWidth / 2f
                         val pivotY = top + logicalHeight / 2f
+                        val bubbleRender = expandedBubbleRender
+                        val zoomFactor = bubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
+                            bubbleBounds = bubble.bounds,
+                            viewportWidth = staticData.canvasWidth,
+                            viewportHeight = staticData.canvasHeight
+                        )
 
                         withTransform({
-                            scale(1.5f, 1.5f, Offset(pivotX, pivotY))
+                            scale(zoomFactor, zoomFactor, Offset(pivotX, pivotY))
                         }) {
                             val dstOffset = IntOffset(left.toInt(), top.toInt())
                             val dstSize = IntSize(logicalWidth.toInt(), logicalHeight.toInt())
@@ -5389,9 +5533,13 @@ private fun PdfPageRenderer(
                                 )
                                 drawContext.canvas.saveLayer(rect, androidx.compose.ui.graphics.Paint())
                                 drawImage(
-                                    image = staticData.bitmap.item.asImageBitmap(),
-                                    srcOffset = srcOffset,
-                                    srcSize = srcSize,
+                                    image = (bubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
+                                    srcOffset = if (bubbleRender != null) IntOffset.Zero else srcOffset,
+                                    srcSize = if (bubbleRender != null) {
+                                        IntSize(bubbleRender.bitmap.width, bubbleRender.bitmap.height)
+                                    } else {
+                                        srcSize
+                                    },
                                     dstOffset = dstOffset,
                                     dstSize = dstSize,
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
@@ -5407,9 +5555,13 @@ private fun PdfPageRenderer(
                             } else {
                                 clipRect(left, top, left + logicalWidth, top + logicalHeight) {
                                     drawImage(
-                                        image = staticData.bitmap.item.asImageBitmap(),
-                                        srcOffset = srcOffset,
-                                        srcSize = srcSize,
+                                        image = (bubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
+                                        srcOffset = if (bubbleRender != null) IntOffset.Zero else srcOffset,
+                                        srcSize = if (bubbleRender != null) {
+                                            IntSize(bubbleRender.bitmap.width, bubbleRender.bitmap.height)
+                                        } else {
+                                            srcSize
+                                        },
                                         dstOffset = dstOffset,
                                         dstSize = dstSize
                                     )

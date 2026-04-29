@@ -23,6 +23,7 @@
 package com.aryan.reader.pdf
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.graphics.RectF
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -111,6 +112,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.aryan.reader.SearchResult
+import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
@@ -251,7 +253,9 @@ internal fun PdfVerticalReader(
     onPaletteClick: () -> Unit = {},
     lockedState: Triple<Float, Float, Float>? = null,
     onZoomAndPanChanged: ((Float, Offset) -> Unit)? = null,
-    resetZoomTrigger: Long = 0L
+    resetZoomTrigger: Long = 0L,
+    isBubbleZoomModeActive: Boolean = false,
+    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() }
 ) {
     SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     DisposableEffect(state) {
@@ -1836,7 +1840,9 @@ internal fun PdfVerticalReader(
                                             draggingBoxId = null
                                         }
                                     },
-                                    draggingBoxId = draggingBoxId
+                                    draggingBoxId = draggingBoxId,
+                                    isBubbleZoomModeActive = isBubbleZoomModeActive,
+                                    onDetectBubbles = onDetectBubbles
                                 )
                             }
 

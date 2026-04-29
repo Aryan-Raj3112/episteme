@@ -90,6 +90,7 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -120,6 +121,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors.newSingleThreadExecutor
 import java.util.concurrent.TimeUnit
@@ -164,6 +166,19 @@ data class UserData(
 
 data class NavigationEvent(
     val route: String, val bookId: String? = null, val uri: Uri? = null
+)
+
+private data class SpeechBubbleCacheKey(
+    val documentId: String,
+    val pageIndex: Int
+)
+
+private data class CachedSpeechBubble(
+    val leftFraction: Float,
+    val topFraction: Float,
+    val rightFraction: Float,
+    val bottomFraction: Float,
+    val maskBitmap: Bitmap?
 )
 
 enum class AddBooksSource(val displayName: String) {
@@ -368,6 +383,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var speechBubbleDetector: ISpeechBubbleDetector? = null
 
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
+    private val speechBubbleCacheMutex = Mutex()
+    private val speechBubbleCache = ConcurrentHashMap<SpeechBubbleCacheKey, List<CachedSpeechBubble>>()
+    private val speechBubbleDetectionJobs = ConcurrentHashMap<SpeechBubbleCacheKey, Deferred<List<CachedSpeechBubble>>>()
 
     private fun getOrInitDetector(context: Context): com.aryan.reader.ml.IPanelDetector? {
         if (panelDetector == null && BuildConfig.DEBUG) {
@@ -401,6 +419,57 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         return speechBubbleDetector
+    }
+
+    private fun normalizeSpeechBubbles(
+        bubbles: List<SpeechBubble>,
+        width: Int,
+        height: Int
+    ): List<CachedSpeechBubble> {
+        if (width <= 0 || height <= 0) return emptyList()
+        val widthF = width.toFloat()
+        val heightF = height.toFloat()
+        return bubbles.mapNotNull { bubble ->
+            val bounds = bubble.bounds
+            if (bounds.width() <= 0f || bounds.height() <= 0f) {
+                null
+            } else {
+                CachedSpeechBubble(
+                    leftFraction = (bounds.left / widthF).coerceIn(0f, 1f),
+                    topFraction = (bounds.top / heightF).coerceIn(0f, 1f),
+                    rightFraction = (bounds.right / widthF).coerceIn(0f, 1f),
+                    bottomFraction = (bounds.bottom / heightF).coerceIn(0f, 1f),
+                    maskBitmap = bubble.maskBitmap
+                )
+            }
+        }
+    }
+
+    private fun scaleCachedSpeechBubbles(
+        bubbles: List<CachedSpeechBubble>,
+        width: Int,
+        height: Int
+    ): List<SpeechBubble> {
+        if (width <= 0 || height <= 0) return emptyList()
+        val widthF = width.toFloat()
+        val heightF = height.toFloat()
+        return bubbles.mapNotNull { bubble ->
+            val bounds = android.graphics.RectF(
+                bubble.leftFraction * widthF,
+                bubble.topFraction * heightF,
+                bubble.rightFraction * widthF,
+                bubble.bottomFraction * heightF
+            )
+            if (bounds.width() <= 0f || bounds.height() <= 0f) {
+                null
+            } else {
+                SpeechBubble(bounds = bounds, maskBitmap = bubble.maskBitmap)
+            }
+        }
+    }
+
+    fun hasCachedSpeechBubbles(documentId: String, pageIndex: Int): Boolean {
+        return speechBubbleCache.containsKey(SpeechBubbleCacheKey(documentId, pageIndex))
     }
 
     fun testSpeechBubbleDetection(context: Context) {
@@ -5247,6 +5316,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         speechBubbleDetector?.close()
         speechBubbleDetector = null
+        speechBubbleCache.clear()
+        speechBubbleDetectionJobs.clear()
 
         Timber.d("ViewModel instance cleared (onCleared).")
     }
@@ -5563,22 +5634,75 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<SpeechBubble> {
-        Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles called")
+    private suspend fun runSpeechBubbleDetection(
+        bitmap: Bitmap,
+        context: Context,
+        confidenceThreshold: Float = 0.1f
+    ): List<SpeechBubble> {
         return withContext(mlDispatcher) {
             try {
                 val detector = getOrInitSpeechBubbleDetector(context)
                 if (detector == null) {
                     Timber.tag("BubbleZoom").w("ViewModel: Detector is null!")
+                    return@withContext emptyList()
                 }
-                val bubbles = detector?.detectBubbles(bitmap) ?: emptyList()
-                Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles returning ${bubbles.size} bubbles")
-                bubbles
+                detector.detectBubbles(bitmap, confidenceThreshold)
             } catch (e: Exception) {
                 Timber.tag("BubbleZoom").e(e, "ViewModel: Error during speech bubble detection")
                 emptyList()
             }
         }
+    }
+
+    suspend fun detectSpeechBubbles(bitmap: Bitmap, context: Context): List<SpeechBubble> {
+        Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles called")
+        val bubbles = runSpeechBubbleDetection(bitmap, context)
+        Timber.tag("BubbleZoom").d("ViewModel: detectSpeechBubbles returning ${bubbles.size} bubbles")
+        return bubbles
+    }
+
+    suspend fun detectSpeechBubblesCached(
+        documentId: String,
+        pageIndex: Int,
+        bitmap: Bitmap,
+        context: Context
+    ): List<SpeechBubble> {
+        val key = SpeechBubbleCacheKey(documentId = documentId, pageIndex = pageIndex)
+
+        val cachedBeforeLock = speechBubbleCache.get(key)
+        if (cachedBeforeLock != null) {
+            return scaleCachedSpeechBubbles(cachedBeforeLock, bitmap.width, bitmap.height)
+        }
+
+        val detectionJob: Deferred<List<CachedSpeechBubble>>
+        speechBubbleCacheMutex.withLock {
+            val cachedInsideLock = speechBubbleCache.get(key)
+            if (cachedInsideLock != null) {
+                detectionJob = CompletableDeferred(cachedInsideLock)
+            } else {
+                detectionJob = speechBubbleDetectionJobs[key] ?: viewModelScope.async {
+                    val detected = runSpeechBubbleDetection(bitmap, context)
+                    val normalized = normalizeSpeechBubbles(detected, bitmap.width, bitmap.height)
+                    speechBubbleCache.put(key, normalized)
+                    normalized
+                }.also { job ->
+                    speechBubbleDetectionJobs[key] = job
+                }
+            }
+        }
+
+        val cached = try {
+            detectionJob.await()
+        } finally {
+            speechBubbleCacheMutex.withLock {
+                val activeJob = speechBubbleDetectionJobs[key]
+                if (activeJob === detectionJob && detectionJob.isCompleted) {
+                    speechBubbleDetectionJobs.remove(key)
+                }
+            }
+        }
+
+        return scaleCachedSpeechBubbles(cached, bitmap.width, bitmap.height)
     }
 
     companion object {

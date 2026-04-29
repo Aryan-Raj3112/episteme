@@ -6,7 +6,6 @@ import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.RectF
-import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import timber.log.Timber
 import java.io.File
@@ -75,7 +74,7 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
             val resized = if (bitmap.width == inputSize && bitmap.height == inputSize) {
                 bitmap
             } else {
-                bitmap.scale(inputSize, inputSize)
+                bitmap.scale(inputSize, inputSize, false)
             }
 
             floatBuffer.clear() // Reset buffer positions for reuse
@@ -189,7 +188,7 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
                                 val cropH = mBottom - mTop
 
                                 if (cropW > 0 && cropH > 0) {
-                                    val maskBmp = createBitmap(cropW, cropH)
+                                    val maskBmp = Bitmap.createBitmap(cropW, cropH, Bitmap.Config.ALPHA_8)
                                     val maskPixels = IntArray(cropW * cropH)
                                     val offset = i * maskW * maskH
 

@@ -210,6 +210,7 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
@@ -255,6 +256,7 @@ import org.json.JSONObject
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.LinkedHashSet
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.PI
@@ -841,6 +843,144 @@ fun PdfViewerScreen(
             }
         }
     }
+    var isDocumentReady by remember { mutableStateOf(false) }
+
+    suspend fun renderSpeechBubblePrefetchBitmap(
+        document: ReaderDocument,
+        sourcePageIndex: Int
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        document.openPage(sourcePageIndex)?.use { page ->
+            val pageWidth = page.getPageWidthPoint()
+            val pageHeight = page.getPageHeightPoint()
+            if (pageWidth <= 0 || pageHeight <= 0) {
+                return@withContext null
+            }
+
+            val longEdge = max(pageWidth, pageHeight).toFloat()
+            val targetLongEdge = when (document) {
+                is PdfDocumentWrapper -> 1600f.coerceAtLeast(longEdge)
+                else -> min(longEdge, 1600f)
+            }
+            val renderScale = (targetLongEdge / longEdge).coerceAtLeast(1f)
+            val renderWidth = (pageWidth * renderScale).roundToInt().coerceAtLeast(1)
+            val renderHeight = (pageHeight * renderScale).roundToInt().coerceAtLeast(1)
+            val renderBitmap = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888)
+
+            try {
+                page.renderPageBitmap(
+                    bitmap = renderBitmap,
+                    startX = 0,
+                    startY = 0,
+                    drawSizeX = renderWidth,
+                    drawSizeY = renderHeight,
+                    renderAnnot = true
+                )
+                renderBitmap
+            } catch (t: Throwable) {
+                renderBitmap.recycle()
+                Timber.tag("BubbleZoom").w(t, "Failed to render bubble prefetch bitmap for page $sourcePageIndex")
+                null
+            }
+        }
+    }
+
+    fun buildSpeechBubblePrefetchOrder(): List<Int> {
+        if (totalDisplayPages <= 0) return emptyList()
+        val ordered = LinkedHashSet<Int>()
+        ordered += currentPage.coerceIn(0, totalDisplayPages - 1)
+        for (distance in 1 until totalDisplayPages) {
+            val next = currentPage + distance
+            val previous = currentPage - distance
+            if (next in 0 until totalDisplayPages) ordered += next
+            if (previous in 0 until totalDisplayPages) ordered += previous
+        }
+        return ordered.toList()
+    }
+
+    suspend fun detectSpeechBubblesForPage(
+        sourcePageIndex: Int,
+        fallbackBitmap: Bitmap,
+        allowHighQualityFallback: Boolean = true
+    ): List<SpeechBubble> {
+        val document = pdfDocument
+        val shouldUsePrefetchBitmap =
+            allowHighQualityFallback &&
+                document != null &&
+                !viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)
+        val detectionBitmap = if (shouldUsePrefetchBitmap) {
+            renderSpeechBubblePrefetchBitmap(document!!, sourcePageIndex) ?: fallbackBitmap
+        } else {
+            fallbackBitmap
+        }
+        val ownsBitmap = detectionBitmap !== fallbackBitmap
+
+        return try {
+            val detected = viewModel.detectSpeechBubblesCached(
+                documentId = bookId,
+                pageIndex = sourcePageIndex,
+                bitmap = detectionBitmap,
+                context = context
+            )
+            if (ownsBitmap) {
+                viewModel.detectSpeechBubblesCached(
+                    documentId = bookId,
+                    pageIndex = sourcePageIndex,
+                    bitmap = fallbackBitmap,
+                    context = context
+                )
+            } else {
+                detected
+            }
+        } finally {
+            if (ownsBitmap && !detectionBitmap.isRecycled) {
+                detectionBitmap.recycle()
+            }
+        }
+    }
+
+    LaunchedEffect(
+        isBubbleZoomModeActive,
+        isDocumentReady,
+        pdfDocument,
+        bookId,
+        currentPage,
+        totalDisplayPages,
+        virtualPages
+    ) {
+        val document = pdfDocument ?: return@LaunchedEffect
+        if (!isBubbleZoomModeActive || !isDocumentReady || totalDisplayPages <= 0) {
+            return@LaunchedEffect
+        }
+
+        for (displayPageIndex in buildSpeechBubblePrefetchOrder()) {
+            if (!isActive) break
+
+            val sourcePageIndex = when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
+                is VirtualPage.PdfPage -> virtualPage.pdfIndex
+                null -> displayPageIndex
+                else -> continue
+            }
+
+            if (viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)) {
+                continue
+            }
+
+            val prefetchBitmap = renderSpeechBubblePrefetchBitmap(document, sourcePageIndex) ?: continue
+            try {
+                detectSpeechBubblesForPage(
+                    sourcePageIndex = sourcePageIndex,
+                    fallbackBitmap = prefetchBitmap,
+                    allowHighQualityFallback = false
+                )
+            } finally {
+                if (!prefetchBitmap.isRecycled) {
+                    prefetchBitmap.recycle()
+                }
+            }
+
+            kotlinx.coroutines.yield()
+        }
+    }
 
     val jumpHistory = remember { mutableStateListOf<Int>() }
     var showJumpPill by remember { mutableStateOf(false) }
@@ -851,8 +991,6 @@ fun PdfViewerScreen(
             showJumpPill = false
         }
     }
-
-    var isDocumentReady by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentPage, isDocumentReady, totalPages, initialScrollDone) {
         if (isDocumentReady && totalPages > 0) {
@@ -3566,9 +3704,8 @@ fun PdfViewerScreen(
                                                         currentActiveOffset = newOffset
                                                     }
                                                 },
-                                                onDetectBubbles = { bitmap ->
-                                                    Toast.makeText(context, "Scanning for bubbles...", Toast.LENGTH_SHORT).show()
-                                                    viewModel.detectSpeechBubbles(bitmap, context)
+                                                onDetectBubbles = { sourcePageIndex, bitmap ->
+                                                    detectSpeechBubblesForPage(sourcePageIndex, bitmap)
                                                 },
                                                 onShowPanelPopup = { bitmapWithRects ->
                                                     poppedUpPanelBitmap = bitmapWithRects
@@ -4022,7 +4159,11 @@ fun PdfViewerScreen(
                                                 currentActiveScale = newScale
                                                 currentActiveOffset = newOffset
                                             },
-                                            resetZoomTrigger = resetZoomTrigger
+                                            resetZoomTrigger = resetZoomTrigger,
+                                            isBubbleZoomModeActive = isBubbleZoomModeActive,
+                                            onDetectBubbles = { sourcePageIndex, bitmap ->
+                                                detectSpeechBubblesForPage(sourcePageIndex, bitmap)
+                                            }
                                         )
                                     }
                                 }
