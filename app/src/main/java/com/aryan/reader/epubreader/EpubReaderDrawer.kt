@@ -243,7 +243,7 @@ fun EpubReaderDrawerSheet(
                 Tab(
                     selected = drawerPagerState.currentPage == 2,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(2) } },
-                    text = { Text("Annotations") }
+                    text = { Text(stringResource(R.string.tab_annotations)) }
                 )
             }
 
@@ -408,13 +408,13 @@ private fun ChaptersList(
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             TextButton(onClick = { expandedEntryIndices = effectiveToc.indices.toSet() }) {
-                Text("Expand All")
+                Text(stringResource(R.string.action_expand_all))
             }
             TextButton(onClick = { expandedEntryIndices = emptySet() }) {
-                Text("Collapse All")
+                Text(stringResource(R.string.action_collapse_all))
             }
             TextButton(onClick = onScrollToCurrent) {
-                Text("Locate")
+                Text(stringResource(R.string.action_locate))
             }
         }
 

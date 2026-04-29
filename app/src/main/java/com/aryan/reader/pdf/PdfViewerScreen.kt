@@ -2089,7 +2089,7 @@ fun PdfViewerScreen(
                     if (!selectedDictPackage.isNullOrEmpty()) {
                         ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
                     } else {
-                        Toast.makeText(context, "Please select a dictionary app first.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
                         showDictionarySettingsSheet = true
                     }
                 }
@@ -2102,7 +2102,7 @@ fun PdfViewerScreen(
             if (!selectedTranslatePackage.isNullOrEmpty()) {
                 ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
             } else {
-                Toast.makeText(context, "Please select a translate app first.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
                 showDictionarySettingsSheet = true
             }
         }
@@ -2113,7 +2113,7 @@ fun PdfViewerScreen(
             if (!selectedSearchPackage.isNullOrEmpty()) {
                 ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
             } else {
-                Toast.makeText(context, "Please select a search app first.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
                 showDictionarySettingsSheet = true
             }
         }
@@ -3386,7 +3386,7 @@ fun PdfViewerScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = errorMessage ?: "Failed to load PDF.",
+                                    text = errorMessage ?: stringResource(R.string.error_failed_load_pdf),
                                     color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.padding(16.dp)
                                 )
@@ -4380,7 +4380,10 @@ fun PdfViewerScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text = "Downloading ${ocrLanguage.displayName.substringBefore("(")} language pack...",
+                                text = stringResource(
+                                    R.string.msg_downloading_language_pack,
+                                    stringResource(ocrLanguage.displayNameRes).substringBefore("(").trim()
+                                ),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
                             )
@@ -4429,7 +4432,10 @@ fun PdfViewerScreen(
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text = "Downloading Bubble Zoom model... ${(progress * 100).toInt()}%",
+                                text = stringResource(
+                                    R.string.msg_downloading_bubble_zoom_model_progress,
+                                    (progress * 100).toInt()
+                                ),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
                             )
@@ -4473,7 +4479,7 @@ fun PdfViewerScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Exit slider navigation"
+                                contentDescription = stringResource(R.string.content_desc_exit_slider_navigation)
                             )
                         }
 
@@ -4913,15 +4919,23 @@ fun PdfViewerScreen(
                                 )
                                 else -1
                                 val text =
-                                    if (index >= 0) "Result ${index + 1} / ${searchData.matches.size}"
-                                    else "${searchData.matches.size} Results"
+                                    if (index >= 0) context.getString(
+                                        R.string.pdf_search_result_position,
+                                        index + 1,
+                                        searchData.matches.size
+                                    )
+                                    else context.resources.getQuantityString(
+                                        R.plurals.search_results_count,
+                                        searchData.matches.size,
+                                        searchData.matches.size
+                                    )
                                 Triple(text, index > 0, index < searchData.matches.size - 1)
                             }
 
                             is SmartSearchResult.Paged -> {
                                 val page = currentResult?.locationInSource
-                                val text = if (page != null) "Page ${page + 1}"
-                                else "${searchData.totalPageCount}+ Pages"
+                                val text = if (page != null) context.getString(R.string.pdf_page_short, page + 1)
+                                else context.getString(R.string.msg_search_pages_count, searchData.totalPageCount)
                                 Triple(text, true, true)
                             }
 
@@ -5046,9 +5060,9 @@ fun PdfViewerScreen(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Jump Back", modifier = Modifier.size(18.dp))
+                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.content_desc_jump_back), modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Back to Pg ${lastPage + 1}", style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.pdf_back_to_page_short, lastPage + 1), style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -5535,7 +5549,7 @@ fun PdfViewerScreen(
                         Icon(
                             imageVector = if (isTtsPageBelow) Icons.Default.ArrowDownward
                             else Icons.Default.ArrowUpward,
-                            contentDescription = "Scroll to reading page"
+                            contentDescription = stringResource(R.string.content_desc_scroll_to_reading_page)
                         )
                     }
                 }
@@ -5817,10 +5831,10 @@ fun PdfViewerScreen(
                                 contentDescription = null
                             )
                         },
-                        title = { Text("Unlock Page Summarization") },
+                        title = { Text(stringResource(R.string.dialog_unlock_page_summarization)) },
                         text = {
                             Text(
-                                "Get concise summaries of any page with Episteme Pro. Upgrade to start using this feature."
+                                stringResource(R.string.dialog_unlock_page_summarization_desc)
                             )
                         },
                         confirmButton = {
@@ -5841,13 +5855,13 @@ fun PdfViewerScreen(
                     AlertDialog(
                         onDismissRequest = { showInsufficientCreditsDialog = false },
                         icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
-                        title = { Text("Out of Credits") },
-                        text = { Text("You don't have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.") },
+                        title = { Text(stringResource(R.string.dialog_out_of_credits_title)) },
+                        text = { Text(stringResource(R.string.dialog_out_of_credits_desc)) },
                         confirmButton = {
                             TextButton(onClick = {
                                 showInsufficientCreditsDialog = false
                                 onNavigateToPro()
-                            }) { Text("Get Pro / Add Credits") }
+                            }) { Text(stringResource(R.string.action_get_pro_or_add_credits)) }
                         },
                         dismissButton = {
                             TextButton(onClick = { showInsufficientCreditsDialog = false }) {
@@ -5874,7 +5888,7 @@ fun PdfViewerScreen(
                     ) {
                         Image(
                             bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
-                            contentDescription = "Annotated Page",
+                            contentDescription = stringResource(R.string.content_desc_annotated_page),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp)
@@ -5894,7 +5908,7 @@ fun PdfViewerScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close Image",
+                                contentDescription = stringResource(R.string.content_desc_close_image),
                                 tint = Color.White
                             )
                         }
@@ -5913,16 +5927,16 @@ fun PdfViewerScreen(
                     AlertDialog(
                         onDismissRequest = { showBubbleZoomDownloadDialog = false },
                         icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                        title = { Text("Download Bubble Zoom Model") },
+                        title = { Text(stringResource(R.string.dialog_download_bubble_zoom_model)) },
                         text = {
-                            Text("To use the Bubble Zoom feature, an AI model needs to be downloaded (~134 MB). Do you want to download it now?")
+                            Text(stringResource(R.string.dialog_download_bubble_zoom_model_desc))
                         },
                         confirmButton = {
                             TextButton(onClick = {
                                 showBubbleZoomDownloadDialog = false
                                 viewModel.downloadSpeechBubbleModel(context)
                             }) {
-                                Text("Download")
+                                Text(stringResource(R.string.action_download))
                             }
                         },
                         dismissButton = {

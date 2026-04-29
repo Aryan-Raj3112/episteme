@@ -109,6 +109,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
@@ -2002,10 +2003,10 @@ internal fun PaginatedReaderContent(
         val urlToShow = showExternalLinkDialog!!
         AlertDialog(
             onDismissRequest = { showExternalLinkDialog = null },
-            title = { Text("External Link") },
+            title = { Text(stringResource(R.string.dialog_external_link_title)) },
             text = {
                 Text(
-                    "You clicked on an external link:\n\n$urlToShow\n\nWhat would you like to do?"
+                    stringResource(R.string.dialog_external_link_desc, urlToShow)
                 )
             },
             confirmButton = {
@@ -2014,10 +2015,10 @@ internal fun PaginatedReaderContent(
                         onClick = {
                             val clipboard =
                                 context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Copied Link", urlToShow)
+                            val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_link), urlToShow)
                             clipboard.setPrimaryClip(clip)
                             showExternalLinkDialog = null
-                        }) { Text("Copy") }
+                        }) { Text(stringResource(R.string.action_copy)) }
                     TextButton(
                         onClick = {
                             val intent = Intent(Intent.ACTION_VIEW, urlToShow.toUri())
@@ -2028,15 +2029,15 @@ internal fun PaginatedReaderContent(
                                     e, "No activity found to handle intent for URL: $urlToShow"
                                 )
                                 Toast.makeText(
-                                    context, "No browser found to open the link.", Toast.LENGTH_LONG
+                                    context, context.getString(R.string.error_no_browser), Toast.LENGTH_LONG
                                 ).show()
                             }
                             showExternalLinkDialog = null
-                        }) { Text("Open") }
+                        }) { Text(stringResource(R.string.action_open)) }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showExternalLinkDialog = null }) { Text("Cancel") }
+                TextButton(onClick = { showExternalLinkDialog = null }) { Text(stringResource(R.string.action_cancel)) }
             })
     }
 
@@ -2797,7 +2798,7 @@ internal fun PaginatedReaderContent(
 
                                                                     AsyncImage(
                                                                         model = imageRequest,
-                                                                        contentDescription = "List item marker",
+                                                                        contentDescription = stringResource(R.string.content_desc_list_item_marker),
                                                                         modifier = markerAreaModifier.height(
                                                                             imageSize
                                                                         ),
@@ -3555,7 +3556,7 @@ internal fun PaginatedReaderContent(
                                 onCopy = {
                                     val clipboardManager =
                                         context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Copied Text", sel.text)
+                                    val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), sel.text)
                                     clipboardManager.setPrimaryClip(clip)
                                     activeSelection = null
                                 },
@@ -3926,7 +3927,7 @@ internal fun PaginatedReaderContent(
                 if (showColorPickerDialog != null) {
                     AlertDialog(
                         onDismissRequest = { showColorPickerDialog = null },
-                        title = { Text("Select Color") },
+                        title = { Text(stringResource(R.string.dialog_select_color)) },
                         text = {
                             LazyVerticalGrid(
                                 columns = GridCells.Adaptive(minSize = 48.dp),
@@ -3953,7 +3954,7 @@ internal fun PaginatedReaderContent(
                         confirmButton = {
                             TextButton(onClick = {
                                 showColorPickerDialog = null
-                            }) { Text("Close") }
+                            }) { Text(stringResource(R.string.action_close)) }
                         })
                 }
 
@@ -3972,7 +3973,7 @@ internal fun PaginatedReaderContent(
         } else {
             Timber.w("Book has no pages to display.")
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("This book has no content to display.")
+                Text(stringResource(R.string.msg_book_no_content))
             }
         }
     }
@@ -4109,7 +4110,7 @@ private fun RenderFlexChildBlock(
 
                     AsyncImage(
                         model = imageRequest,
-                        contentDescription = "List item marker",
+                        contentDescription = stringResource(R.string.content_desc_list_item_marker),
                         modifier = markerAreaModifier.height(imageSize),
                         alignment = Alignment.CenterEnd,
                         contentScale = ContentScale.FillHeight

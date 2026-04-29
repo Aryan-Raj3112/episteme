@@ -246,7 +246,7 @@ fun ContextualTopAppBar(
         actions = {
             if (onTagClick != null) {
                 IconButton(onClick = onTagClick) {
-                    Icon(painterResource(id = R.drawable.tag), contentDescription = "Tag")
+                    Icon(painterResource(id = R.drawable.tag), contentDescription = stringResource(R.string.content_desc_tag))
                 }
             }
             if (onPinClick != null) {
@@ -516,14 +516,14 @@ fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (S
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tags", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    TextButton(onClick = onOpenTags) { Text("+ Add / Edit") }
+                    Text(stringResource(R.string.section_tags), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = onOpenTags) { Text(stringResource(R.string.action_add_edit)) }
                 }
 
                 if (item.tags.isNotEmpty()) {
                     BookTagChipsRow(tags = item.tags, compact = false)
                 } else {
-                    Text("No tags assigned.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.msg_no_tags_assigned), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 Row(
@@ -599,7 +599,7 @@ private fun InfoRowDetailed(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $label",
+                    contentDescription = stringResource(R.string.content_desc_copy_value, label),
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
                 )
@@ -827,7 +827,7 @@ fun EmptyState(
     ) {
         Icon(
             imageVector = Icons.Outlined.FileOpen,
-            contentDescription = "No files icon",
+            contentDescription = stringResource(R.string.content_desc_no_files_icon),
             modifier = Modifier.size(80.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1154,13 +1154,13 @@ fun TagSelectionBottomSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 500.dp)) {
-            Text("Apply Tags", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+            Text(stringResource(R.string.title_apply_tags), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
             androidx.compose.material3.OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search or create tag...") },
+                placeholder = { Text(stringResource(R.string.placeholder_search_create_tag)) },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 leadingIcon = { Icon(Icons.Default.Search, null) }
@@ -1180,7 +1180,7 @@ fun TagSelectionBottomSheet(
                         ) {
                             Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text("Create \"${searchQuery.trim()}\"", color = MaterialTheme.colorScheme.primary)
+                            Text(stringResource(R.string.action_create_tag, searchQuery.trim()), color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }

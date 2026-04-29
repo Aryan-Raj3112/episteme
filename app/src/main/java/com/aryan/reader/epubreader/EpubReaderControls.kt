@@ -225,7 +225,7 @@ fun EpubReaderTopBar(
                         description = stringResource(R.string.tooltip_back_desc),
                         onClick = onNavigateBack
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
@@ -583,7 +583,7 @@ fun EpubReaderBottomBar(
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ai),
-                                contentDescription = "AI Features"
+                                contentDescription = stringResource(R.string.ai_features_title)
                             )
                         }
                     }
@@ -1091,7 +1091,7 @@ fun AutoScrollControls(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ArrowUpward,
-                                        contentDescription = "Scroll to Top",
+                                        contentDescription = stringResource(R.string.action_scroll_to_top),
                                         modifier = Modifier.size(18.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1440,7 +1440,7 @@ fun TtsOverlayControls(
                         ) {
                             Icon(
                                 painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                "Play/Pause",
+                                stringResource(R.string.content_desc_play_pause),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -1514,10 +1514,10 @@ fun TtsOverlayControls(
                                 )
                             }
                             IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.ChevronRight, "Collapse", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.ChevronRight, stringResource(R.string.content_desc_collapse), modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.Close, "Stop TTS", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Close, stringResource(R.string.content_desc_stop_tts), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -1541,7 +1541,7 @@ fun TtsOverlayControls(
                             ) {
                                 Icon(
                                     painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                    "Play/Pause",
+                                    stringResource(R.string.content_desc_play_pause),
                                     modifier = Modifier.size(28.dp)
                                 )
                             }
@@ -1557,7 +1557,7 @@ fun TtsOverlayControls(
                         // Unified Sliders Block
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Spd: %.1fx".format(rate), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
+                                Text(stringResource(R.string.tts_speed_short, "%.1f".format(rate)), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
                                 Slider(
                                     value = rate,
                                     onValueChange = {
@@ -1571,11 +1571,11 @@ fun TtsOverlayControls(
                                     modifier = Modifier.weight(1f).height(24.dp)
                                 )
                                 IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Refresh, "Reset Speed", modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_speed), modifier = Modifier.size(16.dp))
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Ptch: %.1fx".format(pitch), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
+                                Text(stringResource(R.string.tts_pitch_short, "%.1f".format(pitch)), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
                                 Slider(
                                     value = pitch,
                                     onValueChange = {
@@ -1589,7 +1589,7 @@ fun TtsOverlayControls(
                                     modifier = Modifier.weight(1f).height(24.dp)
                                 )
                                 IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Refresh, "Reset Pitch", modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_pitch), modifier = Modifier.size(16.dp))
                                 }
                             }
                         }

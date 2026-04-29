@@ -630,7 +630,7 @@ fun LibraryScreenContent(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(onClick = { onSearchActiveChange(false) }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_desc_close_search))
                             }
                             OutlinedTextField(
                                 value = textFieldValue,
@@ -654,7 +654,7 @@ fun LibraryScreenContent(
                                 trailingIcon = {
                                     if (searchQuery.isNotEmpty()) {
                                         IconButton(onClick = { onSearchQueryChange("") }) {
-                                            Icon(Icons.Default.Close, contentDescription = "Clear query")
+                                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
                                         }
                                     }
                                 }
@@ -666,17 +666,17 @@ fun LibraryScreenContent(
                         actions = {
                             if (pagerState.currentPage == 0) {
                                 IconButton(onClick = onFilterClick) {
-                                    Icon(Icons.Default.FilterList, contentDescription = "Filter")
+                                    Icon(Icons.Default.FilterList, contentDescription = stringResource(R.string.content_desc_filter))
                                 }
                                 Box {
                                     TextButton(onClick = { showSortMenu = true }) {
                                         Icon(
                                             painter = painterResource(id = R.drawable.sort),
-                                            contentDescription = "Sort",
+                                            contentDescription = stringResource(R.string.content_desc_sort),
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(sortOrder.displayName)
+                                        Text(stringResource(sortOrder.labelRes))
                                     }
                                     DropdownMenu(
                                         expanded = showSortMenu,
@@ -684,7 +684,7 @@ fun LibraryScreenContent(
                                     ) {
                                         SortOrder.entries.forEach { order ->
                                             DropdownMenuItem(
-                                                text = { Text(order.displayName) },
+                                                text = { Text(stringResource(order.labelRes)) },
                                                 onClick = {
                                                     onSortOrderChange(order)
                                                     showSortMenu = false
@@ -693,7 +693,7 @@ fun LibraryScreenContent(
                                                     if (order == sortOrder) {
                                                         Icon(
                                                             Icons.Default.Check,
-                                                            contentDescription = "Selected"
+                                                            contentDescription = stringResource(R.string.content_desc_selected)
                                                         )
                                                     }
                                                 }
@@ -702,7 +702,7 @@ fun LibraryScreenContent(
                                     }
                                 }
                                 IconButton(onClick = { onSearchActiveChange(true) }) {
-                                    Icon(Icons.Default.Search, contentDescription = "Search")
+                                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.action_search))
                                 }
                             }
                         }
@@ -733,34 +733,34 @@ fun LibraryScreenContent(
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(fileTypes = emptySet())) },
                                     label = { Text(stringResource(R.string.filter_types, libraryFilters.fileTypes.joinToString { it.name })) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
                                 )
                             }
                             if (libraryFilters.sourceFolders.isNotEmpty()) {
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(sourceFolders = emptySet())) },
                                     label = { Text(stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
                                 )
                             }
                             if (libraryFilters.readStatus != ReadStatusFilter.ALL) {
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(readStatus = ReadStatusFilter.ALL)) },
-                                    label = { Text(stringResource(R.string.filter_status, libraryFilters.readStatus.displayName)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                    label = { Text(stringResource(R.string.filter_status, stringResource(libraryFilters.readStatus.labelRes))) },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
                                 )
                             }
                             if (libraryFilters.tagIds.isNotEmpty()) {
                                 val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
                                 val tagLabel = when {
-                                    selectedTags.isEmpty() -> "${libraryFilters.tagIds.size} tags"
+                                    selectedTags.isEmpty() -> pluralStringResource(R.plurals.tag_count, libraryFilters.tagIds.size, libraryFilters.tagIds.size)
                                     selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
-                                    else -> "${selectedTags.size} tags"
+                                    else -> pluralStringResource(R.plurals.tag_count, selectedTags.size, selectedTags.size)
                                 }
                                 AssistChip(
                                     onClick = { onRemoveFilter(libraryFilters.copy(tagIds = emptySet())) },
-                                    label = { Text("Tags: $tagLabel") },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp)) }
+                                    label = { Text(stringResource(R.string.filter_tags, tagLabel)) },
+                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
                                 )
                             }
                         }
@@ -775,7 +775,7 @@ fun LibraryScreenContent(
                         if (recentFiles.isNotEmpty()) {
                             ExtendedFloatingActionButton(
                                 text = { Text(stringResource(R.string.fab_add_file)) },
-                                icon = { Icon(Icons.Default.Add, contentDescription = "Add file") },
+                                icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.fab_add_file)) },
                                 onClick = onSelectFileClick,
                                 modifier = Modifier.padding(16.dp)
                             )
@@ -784,7 +784,7 @@ fun LibraryScreenContent(
                     1 -> {
                         ExtendedFloatingActionButton(
                             text = { Text(stringResource(R.string.fab_new_shelf)) },
-                            icon = { Icon(Icons.Default.Add, contentDescription = "New shelf") },
+                            icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.fab_new_shelf)) },
                             onClick = onNewShelfClick,
                             modifier = Modifier.padding(16.dp)
                         )
@@ -896,7 +896,7 @@ private fun ShelvesScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Browse by tag",
+                        text = stringResource(R.string.section_browse_by_tag),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -1085,7 +1085,7 @@ private fun ShelfDetailScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { closeShelfSearch() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_desc_close_search))
                         }
                         OutlinedTextField(
                             value = searchFieldValue,
@@ -1109,7 +1109,7 @@ private fun ShelfDetailScreen(
                             trailingIcon = {
                                 if (searchQuery.isNotEmpty()) {
                                     IconButton(onClick = { clearShelfSearchQuery() }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear query")
+                                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
                                     }
                                 }
                             }
@@ -1128,9 +1128,9 @@ private fun ShelfDetailScreen(
                             Text(
                                 text = when {
                                     isFolderShelf && shelf.childShelfCount > 0 && shelf.directBookCount > 0 ->
-                                        "${shelf.childShelfCount} folders • ${getBookCountString(shelf.directBookCount)}"
+                                        "${pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)} • ${getBookCountString(shelf.directBookCount)}"
                                     isFolderShelf && shelf.childShelfCount > 0 ->
-                                        "${shelf.childShelfCount} folders"
+                                        pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
                                     isFolderShelf -> getBookCountString(shelf.directBookCount)
                                     else -> getBookCountString(shelf.bookCount)
                                 },
@@ -1141,7 +1141,7 @@ private fun ShelfDetailScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                         }
                     },
                     actions = {
@@ -1149,11 +1149,11 @@ private fun ShelfDetailScreen(
                             TextButton(onClick = { showSortMenu = true }) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.sort),
-                                    contentDescription = "Sort",
+                                    contentDescription = stringResource(R.string.content_desc_sort),
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(sortOrder.displayName)
+                                Text(stringResource(sortOrder.labelRes))
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
@@ -1161,7 +1161,7 @@ private fun ShelfDetailScreen(
                             ) {
                                 SortOrder.entries.forEach { order ->
                                     DropdownMenuItem(
-                                        text = { Text(order.displayName) },
+                                        text = { Text(stringResource(order.labelRes)) },
                                         onClick = {
                                             onSortOrderChange(order)
                                             showSortMenu = false
@@ -1170,7 +1170,7 @@ private fun ShelfDetailScreen(
                                             if (order == sortOrder) {
                                                 Icon(
                                                     Icons.Default.Check,
-                                                    contentDescription = "Selected"
+                                                    contentDescription = stringResource(R.string.content_desc_selected)
                                                 )
                                             }
                                         }
@@ -1182,7 +1182,7 @@ private fun ShelfDetailScreen(
                         IconButton(onClick = { isSearchActive = true }) {
                             Icon(
                                 imageVector = Icons.Default.Search,
-                                contentDescription = "Search shelf"
+                                contentDescription = stringResource(R.string.content_desc_search_shelf)
                             )
                         }
 
@@ -1191,7 +1191,7 @@ private fun ShelfDetailScreen(
                                 IconButton(onClick = { showMoreMenu = true }) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "More options"
+                                        contentDescription = stringResource(R.string.content_desc_more_options)
                                     )
                                 }
                                 DropdownMenu(
@@ -1252,7 +1252,7 @@ private fun ShelfDetailScreen(
                         if (isFolderShelf) {
                             item {
                                 Text(
-                                    text = "Folders",
+                                    text = stringResource(R.string.section_folders),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1275,7 +1275,7 @@ private fun ShelfDetailScreen(
                         }
                         item {
                             Text(
-                                text = "Files",
+                                text = stringResource(R.string.section_files),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1321,7 +1321,7 @@ private fun AddBooksModeScreen(
                     title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                         }
                     },
                     actions = {
@@ -1329,11 +1329,11 @@ private fun AddBooksModeScreen(
                             TextButton(onClick = { showSortMenu = true }) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.sort),
-                                    contentDescription = "Sort",
+                                    contentDescription = stringResource(R.string.content_desc_sort),
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(sortOrder.displayName)
+                                Text(stringResource(sortOrder.labelRes))
                             }
                             DropdownMenu(
                                 expanded = showSortMenu,
@@ -1341,14 +1341,14 @@ private fun AddBooksModeScreen(
                             ) {
                                 SortOrder.entries.forEach { order ->
                                     DropdownMenuItem(
-                                        text = { Text(order.displayName) },
+                                        text = { Text(stringResource(order.labelRes)) },
                                         onClick = {
                                             onSortOrderChange(order)
                                             showSortMenu = false
                                         },
                                         trailingIcon = {
                                             if (order == sortOrder) {
-                                                Icon(Icons.Default.Check, contentDescription = "Selected")
+                                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected))
                                             }
                                         }
                                     )
@@ -1368,7 +1368,7 @@ private fun AddBooksModeScreen(
                         FilterChip(
                             selected = source == currentSource,
                             onClick = { onSourceChange(source) },
-                            label = { Text(source.displayName) }
+                            label = { Text(stringResource(source.labelRes)) }
                         )
                     }
                 }
@@ -1378,7 +1378,7 @@ private fun AddBooksModeScreen(
             if (selectedBookUris.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     text = { Text(stringResource(R.string.fab_add_count, selectedBookUris.size)) },
-                    icon = { Icon(Icons.Default.Check, contentDescription = "Add books") },
+                    icon = { Icon(Icons.Default.Check, contentDescription = stringResource(R.string.fab_add_books)) },
                     onClick = onAddSelectedBooks
                 )
             }
@@ -1447,7 +1447,7 @@ private fun ShelfCover(shelf: Shelf) {
                     .fallback(placeholder)
                     .crossfade(true)
                     .build(),
-                contentDescription = "${shelf.name} shelf cover",
+                contentDescription = stringResource(R.string.content_desc_shelf_cover, shelf.name),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(width = coverWidth, height = coverHeight)
@@ -1637,7 +1637,7 @@ private fun LibraryListItem(
                         modifier = Modifier.matchParentSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = "Selected", modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(6.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected), modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(6.dp), tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             }
@@ -2239,13 +2239,13 @@ fun LibraryFilterSheet(
                     FilterChip(
                         selected = currentFilters.readStatus == status,
                         onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(status.displayName) }
+                        label = { Text(stringResource(status.labelRes)) }
                     )
                 }
             }
 
             if (allTags.isNotEmpty()) {
-                Text("Tags", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.section_tags), style = MaterialTheme.typography.titleMedium)
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2740,12 +2740,12 @@ fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onEdit: (() -> Un
             }
             if (onEdit != null) {
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit")
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.label_edit))
                 }
             }
             if (onDelete != null) {
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove")
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.action_remove))
                 }
             }
         }
@@ -2997,7 +2997,7 @@ fun OpdsBookDetailsSheet(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = "Read")
+                    Icon(Icons.Default.Check, contentDescription = stringResource(R.string.action_read))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(stringResource(R.string.action_read), fontWeight = FontWeight.Bold)
                 }

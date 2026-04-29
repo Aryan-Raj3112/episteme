@@ -15,6 +15,10 @@
     <string name="action_search">Search</string>
     <string name="action_clear">Clear</string>
     <string name="action_apply">Apply</string>
+    <string name="action_enable">Enable</string>
+    <!-- Generic error label. %1$s = the error message. -->
+    <string name="error_message_format">Error: %1$s</string>
+    <string name="action_go_back">Go Back</string>
     <!-- Tab label in the multi-tab PDF reader — means the slot is available (unused), NOT "free of cost". -->
     <string name="tab_free">Free</string>
     <string name="active_tabs">Active Tabs</string>
@@ -288,6 +292,13 @@
     <!-- Fonts -->
     <string name="custom_fonts">Custom Fonts</string>
     <string name="import_font">Import Font</string>
+    <string name="google_fonts">Google Fonts</string>
+    <string name="action_browse_google_fonts">Browse Google Fonts</string>
+    <string name="google_fonts_search_placeholder">Search 1900+ fonts…</string>
+    <string name="google_fonts_popular_choices">Popular Choices</string>
+    <!-- Empty state in the Google Fonts browser. %1$s = the user-entered search query. -->
+    <string name="google_fonts_no_matches">No fonts found matching \'%1$s\'</string>
+    <string name="content_desc_already_downloaded">Already Downloaded</string>
     <string name="no_custom_fonts">No Custom Fonts</string>
     <!-- TTF and OTF are font file format names — do not translate. -->
     <string name="import_fonts_desc">Import TTF or OTF files to use them in your books.</string>
@@ -512,19 +523,20 @@
     <string name="search_in_book">Search in book…</string>
     <string name="search_no_results_simple">No results found.</string>
 
-    <!-- Common.kt: — AI feature, not translated. -->
-    <string name="generating_summary" translatable="false">Generating summary…</string>
+    <!-- Common.kt: AI feature status. -->
+    <string name="generating_summary">Generating summary…</string>
     <string name="action_stop">Stop</string>
     <string name="action_read_aloud">Read aloud</string>
     <string name="action_copy">Copy</string>
-    <string name="no_summary_generated" translatable="false">No summary could be generated.</string>
+    <string name="action_copy_thread">Copy Thread</string>
+    <string name="no_summary_generated">No summary could be generated.</string>
 
-    <!-- Common.kt: AiDefinitionPopup — AI feature, not translated. -->
-    <string name="ai_thinking" translatable="false">Thinking…</string>
+    <!-- Common.kt: AiDefinitionPopup — AI feature strings. -->
+    <string name="ai_thinking">Thinking…</string>
     <string name="content_desc_open_dictionary">Open in Dictionary App</string>
-    <string name="ai_no_definition" translatable="false">AI could not provide a definition.</string>
+    <string name="ai_no_definition">AI could not provide a definition.</string>
     <!-- AI feature string. %1$s = the word or phrase the user selected. -->
-    <string name="ai_asking_about" translatable="false">Asking AI about \'%1$s\'…</string>
+    <string name="ai_asking_about">Asking AI about \'%1$s\'…</string>
 
     <!-- Common.kt: TtsSettingsSheet -->
     <!-- TTS = Text-to-Speech. -->
@@ -534,8 +546,8 @@
     <string name="tts_synthesis_mode">Synthesis Mode</string>
     <!-- On-Device TTS mode — speech is generated locally without internet. -->
     <string name="tts_mode_on_device">On-Device</string>
-    <!-- Cloud TTS mode — speech is generated remotely for higher quality. Not translated (feature name). -->
-    <string name="tts_mode_cloud_hq" translatable="false">Cloud (HQ)</string>
+    <!-- Cloud TTS mode — speech is generated remotely for higher quality. -->
+    <string name="tts_mode_cloud_hq">Cloud (HQ)</string>
     <string name="tts_voice_selection">Voice Selection</string>
     <string name="tts_play_sample">Play Sample</string>
 
@@ -586,17 +598,17 @@
     <string name="color_g" translatable="false">G</string>
     <string name="color_b" translatable="false">B</string>
 
-    <!-- Common.kt: fetchAiDefinition — AI feature errors, not translated. -->
-    <string name="error_text_empty" translatable="false">Text is empty.</string>
-    <string name="error_ai_empty_definition" translatable="false">AI returned an empty definition.</string>
-    <string name="error_could_not_get_definition" translatable="false">Could not get definition.</string>
-    <string name="error_unknown_server" translatable="false">An unknown server error occurred.</string>
-    <string name="error_network_check_connection" translatable="false">Network error. Check connection.</string>
+    <!-- Common.kt: fetchAiDefinition — AI feature errors. -->
+    <string name="error_text_empty">Text is empty.</string>
+    <string name="error_ai_empty_definition">AI returned an empty definition.</string>
+    <string name="error_could_not_get_definition">Could not get definition.</string>
+    <string name="error_unknown_server">An unknown server error occurred.</string>
+    <string name="error_network_check_connection">Network error. Check connection.</string>
 
-    <!-- Common.kt: fetchRecap — Recap feature, not translated. -->
-    <string name="error_not_enough_context" translatable="false">Not enough context for a recap.</string>
-    <string name="error_parse_recap" translatable="false">Failed to parse recap.</string>
-    <string name="error_network_recap" translatable="false">Network error during recap generation.</string>
+    <!-- Common.kt: fetchRecap — Recap feature errors. -->
+    <string name="error_not_enough_context">Not enough context for a recap.</string>
+    <string name="error_parse_recap">Failed to parse recap.</string>
+    <string name="error_network_recap">Network error during recap generation.</string>
 
     <!-- DictionarySettingsDialog.kt -->
     <string name="dict_lookup_settings">Lookup Settings</string>
@@ -616,27 +628,27 @@
     <string name="dict_search_app_description">App used for web searches.</string>
     <string name="dict_none">None</string>
 
-    <!-- EpubReaderAi.kt — AI feature strings, not translated. -->
-    <string name="ai_error_book_content_empty" translatable="false">The book content is empty.</string>
-    <string name="ai_error_parse_summary" translatable="false">Failed to parse summary from server response.</string>
-    <string name="ai_error_fetch_summary" translatable="false">Could not fetch summary.</string>
+    <!-- EpubReaderAi.kt — AI feature strings. -->
+    <string name="ai_error_book_content_empty">The book content is empty.</string>
+    <string name="ai_error_parse_summary">Failed to parse summary from server response.</string>
+    <string name="ai_error_fetch_summary">Could not fetch summary.</string>
     <!-- %1$d = HTTP or server error code; %2$s = human-readable error message from the server. -->
-    <string name="ai_error_with_code" translatable="false">Error: %1$d. %2$s</string>
-    <string name="ai_error_network_server" translatable="false">Network error. Please check connection and server status.</string>
+    <string name="ai_error_with_code">Error: %1$d. %2$s</string>
+    <string name="ai_error_network_server">Network error. Please check connection and server status.</string>
     <!-- %1$d = chapter number being analyzed. -->
-    <string name="ai_analyzing_chapter" translatable="false">Analyzing Chapter %1$d…</string>
-    <string name="ai_reading_position" translatable="false">Reading current position…</string>
-    <string name="ai_generating_recap" translatable="false">Generating Recap…</string>
-    <string name="ai_chapter_summary" translatable="false">Chapter Summary</string>
+    <string name="ai_analyzing_chapter">Analyzing Chapter %1$d…</string>
+    <string name="ai_reading_position">Reading current position…</string>
+    <string name="ai_generating_recap">Generating Recap…</string>
+    <string name="ai_chapter_summary">Chapter Summary</string>
     <!-- "(Beta)" indicates this feature is in beta — keep the label consistent. -->
-    <string name="ai_story_recap_beta" translatable="false">Story Recap (Beta)</string>
-    <string name="ai_unlock_summarization" translatable="false">Unlock Chapter Summarization</string>
+    <string name="ai_story_recap_beta">Story Recap (Beta)</string>
+    <string name="ai_unlock_summarization">Unlock Chapter Summarization</string>
     <!-- "Episteme Pro" is the product tier name. -->
-    <string name="ai_unlock_summarization_desc" translatable="false">Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.</string>
+    <string name="ai_unlock_summarization_desc">Get concise summaries of any chapter with Episteme Pro. Upgrade to start using this feature.</string>
     <string name="action_learn_more">Learn More</string>
-    <string name="ai_unlock_smart_dict" translatable="false">Unlock Smart Dictionary</string>
+    <string name="ai_unlock_smart_dict">Unlock Smart Dictionary</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
-    <string name="ai_unlock_smart_dict_desc" translatable="false">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
+    <string name="ai_unlock_smart_dict_desc">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
 
     <!-- EpubReaderAnnotations.kt -->
     <string name="content_desc_bookmark_icon">Bookmark</string>
@@ -684,8 +696,8 @@
     <string name="content_desc_text_formatting">Text Formatting</string>
     <!-- AI chapter summarization feature menu item. -->
     <string name="menu_chapter_summarization">Chapter Summarization</string>
-    <!-- Recap is an AI feature. "(Beta)" indicates it is in beta — keep consistent. Not translated. -->
-    <string name="menu_recap_beta" translatable="false">Recap (Beta)</string>
+    <!-- Recap is an AI feature. "(Beta)" indicates it is in beta — keep consistent. -->
+    <string name="menu_recap_beta">Recap (Beta)</string>
     <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_stop_tts">Stop TTS</string>
     <!-- TTS = Text-to-Speech. Accessibility label. -->
@@ -719,6 +731,8 @@
     <string name="label_max">Max</string>
     <string name="content_desc_slower">Slower</string>
     <string name="content_desc_faster">Faster</string>
+    <string name="content_desc_decrease">Decrease</string>
+    <string name="content_desc_increase">Increase</string>
     <!-- Shown in the PDF reader header. %1$d = current page number; %2$d = total page count. -->
     <string name="page_of_pages">Page %1$d of %2$d</string>
 
@@ -726,10 +740,15 @@
     <string name="tab_chapters">Chapters</string>
     <string name="tab_bookmarks">Bookmarks</string>
     <string name="tab_highlights">Highlights</string>
+    <string name="tab_pages">Pages</string>
+    <string name="action_expand_all">Expand All</string>
+    <string name="action_collapse_all">Collapse All</string>
+    <string name="action_locate">Locate</string>
     <string name="no_bookmarks_yet">You haven\'t added any bookmarks yet.</string>
     <string name="content_desc_more_options_bookmark">More options for bookmark</string>
     <string name="dialog_rename_bookmark">Rename Bookmark</string>
     <string name="label_new_name">New Name</string>
+    <string name="label_new_title">New Title</string>
     <string name="dialog_delete_bookmark">Delete Bookmark?</string>
     <string name="dialog_delete_bookmark_desc">Are you sure you want to permanently delete this bookmark?</string>
     <string name="no_highlights_yet">No highlights yet.</string>
@@ -912,6 +931,14 @@
     <string name="content_desc_undo">Undo</string>
     <string name="content_desc_redo">Redo</string>
     <string name="content_desc_show_dock">Show Dock</string>
+    <string name="content_desc_select_font_family">Select Font Family</string>
+    <string name="content_desc_select_font_size">Select Font Size</string>
+    <string name="content_desc_font_background">Font Background</string>
+    <string name="content_desc_bold">Bold</string>
+    <string name="content_desc_italic">Italic</string>
+    <string name="content_desc_underline">Underline</string>
+    <string name="content_desc_strikethrough">Strikethrough</string>
+    <string name="content_desc_insert_text_box">Insert Text Box</string>
 
     <!-- PdfPageComposable -->
     <!-- OCR = Optical Character Recognition. %1$s = error reason string. -->
@@ -1028,6 +1055,230 @@
     <!-- Label for the highlight color picker in text annotations. -->
     <string name="label_highlight_color">Highlight</string>
 
+    <!-- Hardcoded UI String Cleanup -->
+    <!-- Home overflow menu item: enables the multi-tab reader mode. -->
+    <string name="options_enable_multi_tab_reading">Enable Multi-Tab Reading</string>
+    <!-- Home overflow menu item: uses stricter MIME filters when choosing local files. -->
+    <string name="options_use_strict_file_filter">Use Strict File Filter</string>
+    <string name="options_language">Language</string>
+    <!-- Debug-only menu item that runs local panel detection diagnostics. -->
+    <string name="options_test_panel_ml_detection">Test Panel ML Detection</string>
+    <!-- Debug-only menu item that runs local speech bubble detection diagnostics. -->
+    <string name="options_test_speech_bubble_ml_detection">Test Speech Bubble ML Detection</string>
+    <!-- Debug-only menu item. %1$d = maximum number of log lines included. -->
+    <string name="options_export_logs_last_lines">Export Logs (Last %1$d lines)</string>
+    <string name="dialog_strict_file_filter_title">Enable Strict File Filter</string>
+    <!-- Warning shown before enabling stricter Android file picker MIME filtering. File extensions should remain uppercase. -->
+    <string name="dialog_strict_file_filter_desc">If you enable this, some supported file types like AZW3, CB7, and FB2 might not show up depending on your file manager.\n\nAre you sure you want to enable this filter?</string>
+
+    <!-- App language picker. Language names are shown in their own language followed by an English hint. -->
+    <string name="language_english_default">English (Default)</string>
+    <string name="language_arabic">العربية (Arabic)</string>
+    <string name="language_german">Deutsch (German)</string>
+    <string name="language_turkish">Türkçe (Turkish)</string>
+    <string name="language_french">Français (French)</string>
+    <string name="language_russian">Русский (Russian)</string>
+
+    <!-- App-wide theme controls in HomeScreen.kt. -->
+    <string name="app_theme_title">App Theme</string>
+    <string name="app_theme_appearance">Appearance</string>
+    <string name="app_theme_contrast">Contrast</string>
+    <string name="app_theme_text_brightness">Text Brightness</string>
+    <string name="app_theme_color_scheme">Color Scheme</string>
+    <string name="app_theme_dynamic">Dynamic</string>
+    <string name="app_theme_create_title">Create App Theme</string>
+    <!-- Fallback name when the user saves a custom app theme without entering a name. -->
+    <string name="app_theme_custom_default_name">Custom Theme</string>
+    <string name="app_theme_preset_ocean">Ocean</string>
+    <string name="app_theme_preset_mint">Mint</string>
+    <string name="app_theme_preset_rose">Rose</string>
+    <string name="app_theme_preset_sepia">Sepia</string>
+    <string name="app_theme_preset_amethyst">Amethyst</string>
+    <string name="app_theme_preset_amber">Amber</string>
+    <string name="app_theme_preset_sapphire">Sapphire</string>
+    <string name="content_desc_add_custom_theme">Add Custom Theme</string>
+    <string name="content_desc_app_theme">App Theme</string>
+    <string name="content_desc_app_icon">App Icon</string>
+    <string name="content_desc_device">Device</string>
+    <string name="content_desc_open_drawer">Open Drawer</string>
+    <string name="content_desc_profile_picture">Profile picture</string>
+    <string name="content_desc_profile">Profile</string>
+    <string name="content_desc_pro_feature">Pro Feature</string>
+    <string name="content_desc_filter">Filter</string>
+    <string name="content_desc_sort">Sort</string>
+    <string name="content_desc_close_search">Close search</string>
+    <string name="content_desc_clear_query">Clear query</string>
+    <string name="content_desc_search_shelf">Search shelf</string>
+    <!-- Accessibility label. %1$s = shelf name. -->
+    <string name="content_desc_shelf_cover">%1$s shelf cover</string>
+    <string name="theme_preserve_image_colors">Preserve Image Colors</string>
+    <string name="theme_preserve_image_colors_desc">Keep original image colors when theme changes</string>
+
+    <!-- Enum labels used by library filters, sorting, and app theme controls. -->
+    <string name="add_books_source_unshelved">Unshelved</string>
+    <string name="add_books_source_all_books">All Books</string>
+    <string name="app_theme_mode_system">System</string>
+    <string name="app_theme_mode_light">Light</string>
+    <string name="app_theme_mode_dark">Dark</string>
+    <string name="app_contrast_standard">Standard</string>
+    <string name="app_contrast_medium">Medium</string>
+    <string name="app_contrast_high">High</string>
+    <string name="sort_recent">Recent</string>
+    <string name="sort_title_az">Title A-Z</string>
+    <string name="sort_author_az">Author A-Z</string>
+    <string name="sort_percent_asc">Percent complete 0-100</string>
+    <string name="sort_percent_desc">Percent complete 100-0</string>
+    <string name="sort_size_smallest">Size (Smallest)</string>
+    <string name="sort_size_biggest">Size (Biggest)</string>
+    <string name="read_status_all">All</string>
+    <string name="read_status_unread">Unread</string>
+    <string name="read_status_in_progress">In Progress</string>
+    <string name="read_status_completed">Completed</string>
+    <!-- Active tag filter chip label. %1$s = tag names or a count, already pluralized by code. -->
+    <string name="filter_tags">Tags: %1$s</string>
+    <string name="section_browse_by_tag">Browse by tag</string>
+    <string name="section_tags">Tags</string>
+    <string name="section_folders">Folders</string>
+    <string name="section_files">Files</string>
+
+    <!-- TTS settings sheet labels. TTS = Text-to-Speech. -->
+    <string name="tts_active_engine">Active TTS Engine</string>
+    <string name="tts_mode_cloud_ai">Cloud AI</string>
+    <string name="tts_mode_device_native">Device Native</string>
+    <string name="tts_tab_cloud_voices">Cloud Voices</string>
+    <string name="tts_tab_device_voices">Device Voices</string>
+    <string name="tts_tab_cloud_cache">Cloud Cache</string>
+    <string name="tts_select_cloud_voice">Select High-Quality Cloud Voice</string>
+    <string name="tts_clear_samples">Clear Samples</string>
+    <string name="tts_system_default_voice">System Default Voice</string>
+    <string name="tts_uses_device_settings">Uses device settings</string>
+    <string name="tts_language_filter">Language Filter</string>
+    <string name="tts_online">Online</string>
+    <string name="tts_offline">Offline</string>
+    <string name="tts_voice_filter">Voice Filter</string>
+    <string name="tts_no_audio_cached_for_voice">No audio cached for this voice.</string>
+    <!-- Button label. %1$s = selected cloud TTS voice identifier. -->
+    <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
+    <string name="tts_voice_sample_generic">This is a voice sample.</string>
+
+    <!-- AI hub and Pro credits. AI = Artificial Intelligence. -->
+    <string name="ai_features_title">AI Features</string>
+    <string name="ai_tab_summary">Summary</string>
+    <string name="ai_tab_recap">Recap</string>
+    <string name="ai_tab_cache">Cache</string>
+    <!-- %1$s = chapter title, lowercased by code. -->
+    <string name="ai_no_summary_for_chapter">No summary for %1$s yet.</string>
+    <!-- %1$s = chapter title. -->
+    <string name="ai_generate_summary_for_chapter">Generate Summary for %1$s</string>
+    <string name="ai_recap_desc">Get a recap of the story up to your current position.</string>
+    <string name="ai_generate_story_recap">Generate Story Recap</string>
+    <string name="ai_story_recap">Story Recap</string>
+    <string name="ai_cache_hit_free">Cache Hit • Free</string>
+    <!-- %1$d = number of free daily summaries remaining. -->
+    <string name="ai_generated_free_remaining">Generated • Free (%1$d/10 left)</string>
+    <!-- %1$s = credit cost returned by the server. -->
+    <string name="ai_generated_cost">Generated • Cost: %1$s credits</string>
+    <string name="ai_generating_cost_calculating">Generating… • Cost: Calculating</string>
+    <string name="ai_output_title">AI Output</string>
+    <string name="ai_regenerate">Regenerate</string>
+    <string name="ai_no_cached_summaries">No cached summaries for this book.</string>
+    <string name="credits_tab">Credits</string>
+    <string name="credits_title">AI &amp; Cloud Credits</string>
+    <string name="credits_available">Credits Available</string>
+    <!-- Compact account badge. %1$d = remaining credit count. -->
+    <string name="credits_count">%1$d Credits</string>
+    <string name="credits_estimated_cost_breakdown">Estimated Cost Breakdown</string>
+    <string name="credits_cloud_tts_title">Cloud TTS</string>
+    <string name="credits_cloud_tts_desc">Cost: ~3-4 credits per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
+    <string name="credits_ai_summaries_title">AI Summaries &amp; Recap</string>
+    <string name="credits_ai_summaries_desc">Cost: ~1-4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.</string>
+    <string name="legal_by_purchasing">By purchasing,</string>
+    <string name="dialog_out_of_credits_title">Out of Credits</string>
+    <string name="dialog_out_of_credits_desc">You don\'t have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.</string>
+    <string name="action_get_pro_or_add_credits">Get Pro / Add Credits</string>
+    <string name="dialog_unlock_page_summarization">Unlock Page Summarization</string>
+    <string name="dialog_unlock_page_summarization_desc">Get concise summaries of any page with Episteme Pro. Upgrade to start using this feature.</string>
+    <string name="dialog_download_bubble_zoom_model">Download Bubble Zoom Model</string>
+    <string name="dialog_download_bubble_zoom_model_desc">To use the Bubble Zoom feature, an AI model needs to be downloaded (~134 MB). Do you want to download it now?</string>
+
+    <!-- PDF and annotation helpers. -->
+    <string name="action_translate">Translate</string>
+    <string name="pdf_back_to_page_short">Back to Pg %1$d</string>
+    <!-- Compact page label used in floating PDF search/navigation controls. %1$d = 1-indexed page number. -->
+    <string name="pdf_page_short">Page %1$d</string>
+    <!-- Floating PDF search/navigation control. %1$d = current result number; %2$d = total result count. -->
+    <string name="pdf_search_result_position">Result %1$d / %2$d</string>
+    <!-- Error shown when the PDF renderer cannot open a document and did not provide a specific error message. -->
+    <string name="error_failed_load_pdf">Failed to load PDF.</string>
+    <!-- Progress banner while downloading the optional Bubble Zoom AI model. %1$d = percentage complete (0-100). -->
+    <string name="msg_downloading_bubble_zoom_model_progress">Downloading Bubble Zoom model… %1$d%%</string>
+    <string name="content_desc_exit_slider_navigation">Exit slider navigation</string>
+    <string name="content_desc_jump_back">Jump Back</string>
+    <string name="content_desc_scroll_to_reading_page">Scroll to reading page</string>
+    <string name="content_desc_annotated_page">Annotated Page</string>
+    <string name="content_desc_close_image">Close Image</string>
+    <string name="content_desc_toggle_search_highlights">Toggle search highlights</string>
+    <string name="content_desc_drag_text_box">Drag to move text box</string>
+    <string name="content_desc_no_files_icon">No files icon</string>
+    <!-- Accessibility label. %1$s = visible field label being copied. -->
+    <string name="content_desc_copy_value">Copy %1$s</string>
+    <string name="content_desc_tag">Tag</string>
+    <string name="content_desc_list_item_marker">List item marker</string>
+    <string name="content_desc_reset_zoom">Reset Zoom</string>
+    <string name="content_desc_generate_demo_annotations">Generate Demo Annotations</string>
+    <string name="tooltip_demo_annotations">Demo Annotations</string>
+    <string name="content_desc_open_pen_playground">Open Pen Playground</string>
+    <string name="content_desc_new_tab">New Tab</string>
+    <string name="content_desc_highlight_all_text">Highlight all text</string>
+    <string name="content_desc_toggle_editing_mode">Toggle Editing Mode</string>
+    <string name="content_desc_smart_comic_zoom">Smart Comic Zoom</string>
+    <string name="highlight_customize_title">Customize Highlights</string>
+    <string name="ocr_language_latin">English, Spanish, French, etc.</string>
+    <string name="ocr_language_devanagari">Hindi, Marathi, Sanskrit + English</string>
+    <string name="ocr_language_chinese">Chinese + English</string>
+    <string name="ocr_language_japanese">Japanese + English</string>
+    <string name="ocr_language_korean">Korean + English</string>
+
     <!-- UniversalDocument -->
     <string name="msg_page_unavailable">Page Unavailable</string>
+
+    <!-- ReflowWorker: generated Text View records. "Text View" is the PDF reflow feature name. -->
+    <string name="default_document_title">Document</string>
+    <string name="generated_author">Generated</string>
+    <string name="reflow_display_name_format">%1$s (Text View)</string>
+    <string name="reflow_title_format">%1$s (Reflow)</string>
+
+    <!-- Shared tag management UI. -->
+    <string name="action_add_edit">Add / Edit</string>
+    <string name="msg_no_tags_assigned">No tags assigned.</string>
+    <string name="title_apply_tags">Apply Tags</string>
+    <string name="placeholder_search_create_tag">Search or create tag…</string>
+    <!-- Tag creation row. %1$s = tag name typed by the user. -->
+    <string name="action_create_tag">Create \"%1$s\"</string>
+
+    <!-- EPUB/Paginated reader controls. -->
+    <string name="setting_pull_distance_change_chapter">Pull Distance to Change Chapter</string>
+    <string name="label_short">Short</string>
+    <string name="label_long">Long</string>
+    <!-- Compact TTS speed label. %1$s = formatted multiplier, e.g. 1.2. -->
+    <string name="tts_speed_short">Spd: %1$sx</string>
+    <!-- Compact TTS pitch label. %1$s = formatted multiplier, e.g. 1.0. -->
+    <string name="tts_pitch_short">Ptch: %1$sx</string>
+    <string name="content_desc_play_pause">Play/Pause</string>
+    <string name="content_desc_reset_speed">Reset Speed</string>
+    <string name="content_desc_reset_pitch">Reset Pitch</string>
+    <string name="dialog_select_color">Select Color</string>
+    <string name="msg_book_no_content">This book has no content to display.</string>
+    <string name="clip_label_copied_link">Copied Link</string>
+    <string name="clip_label_copied_text">Copied Text</string>
+
+    <!-- PDF toolbar labels. -->
+    <string name="content_desc_table_of_contents">Table of Contents</string>
+    <string name="content_desc_bookmark">Bookmark</string>
+    <!-- Tooltip/button text. %1$d = 1-indexed page number. -->
+    <string name="action_jump_back_to_page">Jump Back to Page %1$d</string>
+    <string name="desc_return_to_previous_page">Return to previous page</string>
+    <string name="action_exit_smart_zoom">Exit Smart Zoom</string>
+    <string name="action_smart_comic_zoom">Smart Comic Zoom</string>
+    <string name="desc_toggle_smart_comic_zoom">Toggle Smart Comic Zoom</string>
 </resources>

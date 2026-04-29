@@ -1,22 +1,3 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
 // FontsScreen.kt
 @file:Suppress("KotlinConstantConditions")
 
@@ -93,6 +74,8 @@ fun FontsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    val showGoogleFontsOption = !(BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE)
+
     // Dialog state
     var showDeleteDialog by remember { mutableStateOf(false) }
     var fontToDelete by remember { mutableStateOf<CustomFontEntity?>(null) }
@@ -116,7 +99,7 @@ fun FontsScreen(
                 title = { Text(stringResource(R.string.custom_fonts)) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }
             )
@@ -127,13 +110,15 @@ fun FontsScreen(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    ExtendedFloatingActionButton(
-                        onClick = { showGoogleFontsSheet = true },
-                        icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                        text = { Text("Google Fonts") },
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+                    if (showGoogleFontsOption) {
+                        ExtendedFloatingActionButton(
+                            onClick = { showGoogleFontsSheet = true },
+                            icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
+                            text = { Text(stringResource(R.string.google_fonts)) },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
 
                     ExtendedFloatingActionButton(
                         onClick = { pickFontLauncher.launch(fontMimeTypes) },
@@ -146,13 +131,16 @@ fun FontsScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (fonts.isEmpty()) {
+                val secondaryText = if (showGoogleFontsOption) stringResource(R.string.action_browse_google_fonts) else null
+                val secondaryClick: (() -> Unit)? = if (showGoogleFontsOption) { { showGoogleFontsSheet = true } } else null
+
                 EmptyState(
                     title = stringResource(R.string.no_custom_fonts),
                     message = stringResource(R.string.import_fonts_desc),
                     onSelectFileClick = { pickFontLauncher.launch(fontMimeTypes) },
                     modifier = Modifier.fillMaxSize(),
-                    secondaryButtonText = "Browse Google Fonts",
-                    onSecondaryClick = { showGoogleFontsSheet = true }
+                    secondaryButtonText = secondaryText,
+                    onSecondaryClick = secondaryClick
                 )
             } else {
                 LazyColumn(
@@ -254,7 +242,7 @@ fun GoogleFontsBottomSheet(
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Text(
-                text = "Browse Google Fonts",
+                text = stringResource(R.string.action_browse_google_fonts),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -264,7 +252,7 @@ fun GoogleFontsBottomSheet(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search 1900+ fonts...") },
+                placeholder = { Text(stringResource(R.string.google_fonts_search_placeholder)) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
@@ -280,7 +268,7 @@ fun GoogleFontsBottomSheet(
                 if (searchQuery.isBlank()) {
                     item {
                         Text(
-                            text = "Popular Choices",
+                            text = stringResource(R.string.google_fonts_popular_choices),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(vertical = 4.dp)
@@ -289,7 +277,7 @@ fun GoogleFontsBottomSheet(
                 } else if (displayList.isEmpty()) {
                     item {
                         Text(
-                            text = "No fonts found matching '$searchQuery'",
+                            text = stringResource(R.string.google_fonts_no_matches, searchQuery),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp)
@@ -335,7 +323,7 @@ fun GoogleFontsBottomSheet(
                                 isDownloaded -> {
                                     Icon(
                                         Icons.Default.Check,
-                                        contentDescription = "Already Downloaded",
+                                        contentDescription = stringResource(R.string.content_desc_already_downloaded),
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -350,7 +338,7 @@ fun GoogleFontsBottomSheet(
                                 else -> {
                                     Icon(
                                         Icons.Default.CloudDownload,
-                                        contentDescription = "Download",
+                                        contentDescription = stringResource(R.string.action_download),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -396,7 +384,7 @@ fun FontListItem(
                 IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
                     Icon(
                         Icons.Default.Delete,
-                        contentDescription = "Delete",
+                        contentDescription = stringResource(R.string.action_delete),
                         tint = MaterialTheme.colorScheme.error
                     )
                 }

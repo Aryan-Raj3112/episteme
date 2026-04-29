@@ -60,12 +60,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.R
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.delay
@@ -255,7 +257,9 @@ internal fun PdfTocTreeItem(
             if (hasChildren) {
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    contentDescription = stringResource(
+                        if (isExpanded) R.string.content_desc_collapse else R.string.content_desc_expand
+                    ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -301,13 +305,13 @@ internal fun PdfNavigationDrawerContent(
         ) {
             Tab(selected = drawerPagerState.currentPage == 0, onClick = {
                 drawerScope.launch { drawerPagerState.animateScrollToPage(0) }
-            }, text = { Text("Chapters") })
+            }, text = { Text(stringResource(R.string.tab_chapters)) })
             Tab(
                 selected = drawerPagerState.currentPage == 1,
                 onClick = {
                     drawerScope.launch { drawerPagerState.animateScrollToPage(1) }
                 },
-                text = { Text("Bookmarks") },
+                text = { Text(stringResource(R.string.tab_bookmarks)) },
                 modifier = Modifier.testTag("BookmarksTab")
             )
             Tab(
@@ -315,7 +319,7 @@ internal fun PdfNavigationDrawerContent(
                 onClick = {
                     drawerScope.launch { drawerPagerState.animateScrollToPage(2) }
                 },
-                text = { Text("Highlights") },
+                text = { Text(stringResource(R.string.tab_highlights)) },
                 modifier = Modifier.testTag("HighlightsTab")
             )
             Tab(
@@ -323,7 +327,7 @@ internal fun PdfNavigationDrawerContent(
                 onClick = {
                     drawerScope.launch { drawerPagerState.animateScrollToPage(3) }
                 },
-                text = { Text("Pages") },
+                text = { Text(stringResource(R.string.tab_pages)) },
                 modifier = Modifier.testTag("PagesTab")
             )
         }
@@ -340,7 +344,7 @@ internal fun PdfNavigationDrawerContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "Chapters are not available for this book.",
+                                stringResource(R.string.msg_chapters_not_available),
                                 style = MaterialTheme.typography.bodyLarge,
                                 textAlign = TextAlign.Center
                             )
@@ -434,13 +438,13 @@ internal fun PdfNavigationDrawerContent(
                                 horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
                                 TextButton(onClick = { expandedEntryIndices = flatTableOfContents.indices.toSet() }) {
-                                    Text("Expand All")
+                                    Text(stringResource(R.string.action_expand_all))
                                 }
                                 TextButton(onClick = { expandedEntryIndices = emptySet() }) {
-                                    Text("Collapse All")
+                                    Text(stringResource(R.string.action_collapse_all))
                                 }
                                 TextButton(onClick = onScrollToCurrent) {
-                                    Text("Locate")
+                                    Text(stringResource(R.string.action_locate))
                                 }
                             }
 
@@ -503,7 +507,7 @@ internal fun PdfNavigationDrawerContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "You haven't added any bookmarks yet.",
+                                stringResource(R.string.no_bookmarks_yet),
                                 style = MaterialTheme.typography.bodyLarge,
                                 textAlign = TextAlign.Center
                             )
@@ -531,7 +535,7 @@ internal fun PdfNavigationDrawerContent(
                                     )
                                 }, supportingContent = {
                                     Text(
-                                        "Page ${bookmark.pageIndex + 1} of ${bookmark.totalPages}",
+                                        stringResource(R.string.page_of_pages, bookmark.pageIndex + 1, bookmark.totalPages),
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                 }, trailingContent = {
@@ -542,7 +546,7 @@ internal fun PdfNavigationDrawerContent(
                                             }) {
                                             Icon(
                                                 imageVector = Icons.Default.MoreVert,
-                                                contentDescription = "More options for bookmark"
+                                                contentDescription = stringResource(R.string.content_desc_more_options_bookmark)
                                             )
                                         }
                                         DropdownMenu(
@@ -551,13 +555,13 @@ internal fun PdfNavigationDrawerContent(
                                                 bookmarkMenuExpandedFor = null
                                             }) {
                                             DropdownMenuItem(text = {
-                                                Text("Rename")
+                                                Text(stringResource(R.string.action_rename))
                                             }, onClick = {
                                                 showRenameBookmarkDialog = bookmark
                                                 bookmarkMenuExpandedFor = null
                                             })
                                             DropdownMenuItem(text = {
-                                                Text("Delete")
+                                                Text(stringResource(R.string.action_delete))
                                             }, onClick = {
                                                 showDeleteConfirmDialogFor = bookmark
                                                 bookmarkMenuExpandedFor = null
@@ -581,11 +585,11 @@ internal fun PdfNavigationDrawerContent(
 
                             AlertDialog(onDismissRequest = {
                                 showRenameBookmarkDialog = null
-                            }, title = { Text("Rename Bookmark") }, text = {
+                            }, title = { Text(stringResource(R.string.dialog_rename_bookmark)) }, text = {
                                 OutlinedTextField(
                                     value = newTitle,
                                     onValueChange = { newTitle = it },
-                                    label = { Text("New Title") },
+                                    label = { Text(stringResource(R.string.label_new_title)) },
                                     placeholder = {
                                         Text(
                                             text = bookmarkToRename.title,
@@ -605,33 +609,33 @@ internal fun PdfNavigationDrawerContent(
                                     onClick = {
                                         onRenameBookmark(bookmarkToRename, newTitle)
                                         showRenameBookmarkDialog = null
-                                    }) { Text("Save") }
+                                    }) { Text(stringResource(R.string.action_save)) }
                             }, dismissButton = {
                                 TextButton(
                                     onClick = {
                                         showRenameBookmarkDialog = null
-                                    }) { Text("Cancel") }
+                                    }) { Text(stringResource(R.string.action_cancel)) }
                             })
                         }
 
                         showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
                             AlertDialog(onDismissRequest = {
                                 showDeleteConfirmDialogFor = null
-                            }, title = { Text("Delete Bookmark?") }, text = {
+                            }, title = { Text(stringResource(R.string.dialog_delete_bookmark)) }, text = {
                                 Text(
-                                    "Are you sure you want to permanently delete this bookmark?"
+                                    stringResource(R.string.dialog_delete_bookmark_desc)
                                 )
                             }, confirmButton = {
                                 TextButton(
                                     onClick = {
                                         onDeleteBookmark(bookmarkToDelete)
                                         showDeleteConfirmDialogFor = null
-                                    }) { Text("Delete") }
+                                    }) { Text(stringResource(R.string.action_delete)) }
                             }, dismissButton = {
                                 TextButton(
                                     onClick = {
                                         showDeleteConfirmDialogFor = null
-                                    }) { Text("Cancel") }
+                                    }) { Text(stringResource(R.string.action_cancel)) }
                             })
                         }
                     }
@@ -645,7 +649,7 @@ internal fun PdfNavigationDrawerContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "You haven't added any highlights yet.",
+                                stringResource(R.string.no_highlights_yet),
                                 style = MaterialTheme.typography.bodyLarge,
                                 textAlign = TextAlign.Center
                             )
@@ -662,12 +666,12 @@ internal fun PdfNavigationDrawerContent(
                                 FilterChip(
                                     selected = !filterWithNotesOnly,
                                     onClick = { filterWithNotesOnly = false },
-                                    label = { Text("All") }
+                                    label = { Text(stringResource(R.string.read_status_all)) }
                                 )
                                 FilterChip(
                                     selected = filterWithNotesOnly,
                                     onClick = { filterWithNotesOnly = true },
-                                    label = { Text("With Notes") }
+                                    label = { Text(stringResource(R.string.filter_with_notes)) }
                                 )
                             }
 
@@ -689,7 +693,7 @@ internal fun PdfNavigationDrawerContent(
                                     ListItem(
                                         headlineContent = {
                                             Text(
-                                                text = highlight.text.ifBlank { "Highlighted section" },
+                                                text = highlight.text.ifBlank { stringResource(R.string.msg_highlighted_section_default) },
                                                 maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis,
                                                 fontWeight = FontWeight.SemiBold
@@ -707,7 +711,7 @@ internal fun PdfNavigationDrawerContent(
                                                     )
                                                     Spacer(Modifier.width(8.dp))
                                                     Text(
-                                                        "Page ${highlight.pageIndex + 1}",
+                                                        stringResource(R.string.pdf_page_short, highlight.pageIndex + 1),
                                                         style = MaterialTheme.typography.labelMedium,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -733,14 +737,20 @@ internal fun PdfNavigationDrawerContent(
                                             Box {
                                                 var highlightMenuExpanded by remember { mutableStateOf(false) }
                                                 IconButton(onClick = { highlightMenuExpanded = true }) {
-                                                    Icon(Icons.Default.MoreVert, contentDescription = "Options")
+                                                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_options))
                                                 }
                                                 DropdownMenu(
                                                     expanded = highlightMenuExpanded,
                                                     onDismissRequest = { highlightMenuExpanded = false }
                                                 ) {
                                                     DropdownMenuItem(
-                                                        text = { Text(if (highlight.note.isNullOrBlank()) "Add Note" else "Edit Note") },
+                                                        text = {
+                                                            Text(
+                                                                stringResource(
+                                                                    if (highlight.note.isNullOrBlank()) R.string.menu_add_note else R.string.menu_edit_note
+                                                                )
+                                                            )
+                                                        },
                                                         onClick = {
                                                             onNoteRequested(highlight.id)
                                                             highlightMenuExpanded = false
@@ -748,7 +758,7 @@ internal fun PdfNavigationDrawerContent(
                                                         }
                                                     )
                                                     DropdownMenuItem(
-                                                        text = { Text("Delete") },
+                                                        text = { Text(stringResource(R.string.action_delete)) },
                                                         onClick = {
                                                             showDeleteConfirmDialogFor = highlight
                                                             highlightMenuExpanded = false
@@ -770,20 +780,20 @@ internal fun PdfNavigationDrawerContent(
                         showDeleteConfirmDialogFor?.let { highlightToDelete ->
                             AlertDialog(
                                 onDismissRequest = { showDeleteConfirmDialogFor = null },
-                                title = { Text("Delete Highlight?") },
-                                text = { Text("Are you sure you want to permanently delete this highlight?") },
+                                title = { Text(stringResource(R.string.dialog_delete_highlight)) },
+                                text = { Text(stringResource(R.string.dialog_delete_highlight_desc)) },
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
                                             onDeleteHighlight(highlightToDelete)
                                             showDeleteConfirmDialogFor = null
                                         }
-                                    ) { Text("Delete") }
+                                    ) { Text(stringResource(R.string.action_delete)) }
                                 },
                                 dismissButton = {
                                     TextButton(
                                         onClick = { showDeleteConfirmDialogFor = null }
-                                    ) { Text("Cancel") }
+                                    ) { Text(stringResource(R.string.action_cancel)) }
                                 }
                             )
                         }
@@ -809,7 +819,7 @@ internal fun PdfNavigationDrawerContent(
                                     }
                                 }
                             ) {
-                                Text("Locate")
+                                Text(stringResource(R.string.action_locate))
                             }
                         }
 
@@ -880,7 +890,7 @@ internal fun PdfNavigationDrawerContent(
                                                 if (thumb != null) {
                                                     Image(
                                                         bitmap = thumb!!.asImageBitmap(),
-                                                        contentDescription = "Page ${pageIdx + 1}",
+                                                        contentDescription = stringResource(R.string.pdf_page_short, pageIdx + 1),
                                                         modifier = Modifier.fillMaxSize()
                                                     )
                                                 }

@@ -22,6 +22,7 @@ package com.aryan.reader.pdf
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.RectF
+import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -78,7 +79,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,12 +98,12 @@ import com.aryan.reader.pdf.ocr.OcrSymbol
 import timber.log.Timber
 import java.util.UUID
 
-enum class OcrLanguage(val displayName: String) {
-    LATIN("English, Spanish, French, etc."),
-    DEVANAGARI("Hindi, Marathi, Sanskrit + English"),
-    CHINESE("Chinese + English"),
-    JAPANESE("Japanese + English"),
-    KOREAN("Korean + English")
+enum class OcrLanguage(@StringRes val displayNameRes: Int) {
+    LATIN(R.string.ocr_language_latin),
+    DEVANAGARI(R.string.ocr_language_devanagari),
+    CHINESE(R.string.ocr_language_chinese),
+    JAPANESE(R.string.ocr_language_japanese),
+    KOREAN(R.string.ocr_language_korean)
 }
 
 internal data class OcrSymbolInfo(
@@ -232,6 +235,8 @@ internal fun PdfSelectionMenuPopup(
     onTts: (() -> Unit)? = null,
     onNote: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+
     Popup(
         popupPositionProvider = popupPositionProvider,
         onDismissRequest = onDismiss,
@@ -266,7 +271,7 @@ internal fun PdfSelectionMenuPopup(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = "Note",
+                                    contentDescription = stringResource(R.string.label_note),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(14.dp)
                                 )
@@ -321,7 +326,7 @@ internal fun PdfSelectionMenuPopup(
                     ) {
                         Icon(Icons.Default.CopyAll, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Copy Thread")
+                        Text(stringResource(R.string.action_copy_thread))
                     }
                 } else {
                     Row(
@@ -360,23 +365,23 @@ internal fun PdfSelectionMenuPopup(
                     HorizontalDivider()
 
                     val actions = mutableListOf<MenuActionItem>()
-                    actions.add(MenuActionItem(iconRes = R.drawable.copy, label = "Copy", onClick = { onCopy(menuState.selectedText) }))
+                    actions.add(MenuActionItem(iconRes = R.drawable.copy, label = context.getString(R.string.action_copy), onClick = { onCopy(menuState.selectedText) }))
                     if (onTts != null) {
-                        actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Speak", onClick = onTts))
+                        actions.add(MenuActionItem(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = context.getString(R.string.label_speak), onClick = onTts))
                     }
                     if (menuState.selectedText.length <= 2000) {
-                        actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = "Dict", onClick = { onAiDefine(menuState.selectedText) }))
-                        actions.add(MenuActionItem(iconRes = R.drawable.translate, label = "Translate", onClick = { onTranslate(menuState.selectedText) }))
-                        actions.add(MenuActionItem(imageVector = Icons.Default.Search, label = "Search", onClick = { onSearch(menuState.selectedText) }))
+                        actions.add(MenuActionItem(iconRes = R.drawable.dictionary, label = context.getString(R.string.label_dict), onClick = { onAiDefine(menuState.selectedText) }))
+                        actions.add(MenuActionItem(iconRes = R.drawable.translate, label = context.getString(R.string.action_translate), onClick = { onTranslate(menuState.selectedText) }))
+                        actions.add(MenuActionItem(imageVector = Icons.Default.Search, label = context.getString(R.string.action_search), onClick = { onSearch(menuState.selectedText) }))
                     }
 
                     if (onNote != null) {
-                        val noteLabel = if (menuState.note.isNullOrBlank()) "Note" else "Edit"
+                        val noteLabel = context.getString(if (menuState.note.isNullOrBlank()) R.string.label_note else R.string.label_edit)
                         actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = onNote))
                     }
 
                     if (!menuState.isExistingHighlight) {
-                        actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = "Select All", onClick = { onSelectAll() }))
+                        actions.add(MenuActionItem(iconRes = R.drawable.select_all, label = context.getString(R.string.select_all), onClick = { onSelectAll() }))
                     }
                     if (menuState.isExistingHighlight) {
                         actions.add(MenuActionItem(imageVector = Icons.Default.Delete, label = "Remove", onClick = { onDelete() }, isError = true))
@@ -659,7 +664,7 @@ fun PdfHighlightColorRow(
                 if (selectedColor == colorEnum) {
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = "Selected",
+                        contentDescription = stringResource(R.string.content_desc_selected),
                         tint = if (displayColor.luminance() > 0.5f) Color.Black else Color.White,
                         modifier = Modifier.size(18.dp)
                     )
@@ -752,10 +757,10 @@ fun PdfAnnotationBottomSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                PdfBottomSheetToolButton(icon = R.drawable.copy, label = "Copy", effectiveText = effectiveText, onClick = onCopy)
-                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = "Dict", effectiveText = effectiveText, onClick = onDictionary)
-                PdfBottomSheetToolButton(icon = R.drawable.translate, label = "Translate", effectiveText = effectiveText, onClick = onTranslate)
-                PdfBottomSheetToolButton(icon = R.drawable.search, label = "Search", effectiveText = effectiveText, onClick = onSearch)
+                PdfBottomSheetToolButton(icon = R.drawable.copy, label = stringResource(R.string.action_copy), effectiveText = effectiveText, onClick = onCopy)
+                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = stringResource(R.string.label_dict), effectiveText = effectiveText, onClick = onDictionary)
+                PdfBottomSheetToolButton(icon = R.drawable.translate, label = stringResource(R.string.action_translate), effectiveText = effectiveText, onClick = onTranslate)
+                PdfBottomSheetToolButton(icon = R.drawable.search, label = stringResource(R.string.action_search), effectiveText = effectiveText, onClick = onSearch)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -763,7 +768,7 @@ fun PdfAnnotationBottomSheet(
             OutlinedTextField(
                 value = noteText,
                 onValueChange = { noteText = it },
-                placeholder = { Text("Add a note...", color = effectiveText.copy(alpha = 0.5f)) },
+                placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                 maxLines = 5,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -793,7 +798,7 @@ fun PdfAnnotationBottomSheet(
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Delete")
+                    Text(stringResource(R.string.action_delete))
                 }
                 Button(
                     onClick = { onSave(noteText) },
@@ -802,7 +807,7 @@ fun PdfAnnotationBottomSheet(
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text("Save Note")
+                    Text(stringResource(R.string.action_save_note))
                 }
             }
         }

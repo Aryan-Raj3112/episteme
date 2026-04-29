@@ -4979,7 +4979,7 @@ fun EpubReaderHost(
                             },
                             onCopy = {
                                 val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Copied Text", targetHighlight.text)
+                                val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), targetHighlight.text)
                                 clipboardManager.setPrimaryClip(clip)
                                 highlightToNoteCfi = null
                             },
@@ -5188,13 +5188,13 @@ fun EpubReaderHost(
             AlertDialog(
                 onDismissRequest = { showInsufficientCreditsDialog = false },
                 icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
-                title = { Text("Out of Credits") },
-                text = { Text("You don't have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.") },
+                title = { Text(stringResource(R.string.dialog_out_of_credits_title)) },
+                text = { Text(stringResource(R.string.dialog_out_of_credits_desc)) },
                 confirmButton = {
                     TextButton(onClick = {
                         showInsufficientCreditsDialog = false
                         onNavigateToPro()
-                    }) { Text("Get Pro / Add Credits") }
+                    }) { Text(stringResource(R.string.action_get_pro_or_add_credits)) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showInsufficientCreditsDialog = false }) {

@@ -86,7 +86,7 @@ fun FeedbackScreen(
                 title = { Text(stringResource(R.string.drawer_help_feedback)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }
             )
@@ -132,7 +132,7 @@ fun FeedbackScreen(
                 icon = {
                     Icon(
                         painter = painterResource(id = R.drawable.github),
-                        contentDescription = "GitHub",
+                        contentDescription = stringResource(R.string.github_issues),
                         modifier = Modifier.size(28.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -150,7 +150,7 @@ fun FeedbackScreen(
                 icon = {
                     Icon(
                         imageVector = Icons.Outlined.Email,
-                        contentDescription = "Email",
+                        contentDescription = stringResource(R.string.email_support),
                         modifier = Modifier.size(28.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -201,7 +201,7 @@ private fun FeedbackOptionCard(
             Spacer(modifier = Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = "Open",
+                contentDescription = stringResource(R.string.action_open),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

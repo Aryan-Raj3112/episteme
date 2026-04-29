@@ -463,7 +463,7 @@ fun ChapterWebView(
                     TextButton(onClick = {
                         val clipboard =
                             context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Copied Link", urlToShow)
+                        val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_link), urlToShow)
                         clipboard.setPrimaryClip(clip)
                         showExternalLinkDialog = null
                     }) { Text(stringResource(R.string.action_copy)) }
@@ -1066,7 +1066,7 @@ fun ChapterWebView(
                                 onCopy = {
                                 val clipboard =
                                     context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Copied Text", state.selectedText)
+                                val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), state.selectedText)
                                 clipboard.setPrimaryClip(clip)
                                 state.finishActionModeCallback()
                                 localWebViewRef?.clearFocus()

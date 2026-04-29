@@ -409,7 +409,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = activePopup == ActivePopup.FONT_FAMILY,
                             iconRes = R.drawable.fonts,
-                            contentDescription = "Select Font Family",
+                            contentDescription = stringResource(R.string.content_desc_select_font_family),
                             onClick = {
                                 activePopup =
                                     if (activePopup == ActivePopup.FONT_FAMILY) ActivePopup.NONE else ActivePopup.FONT_FAMILY
@@ -481,7 +481,7 @@ fun TextAnnotationDock(
                             )
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Select Font Size",
+                                contentDescription = stringResource(R.string.content_desc_select_font_size),
                                 tint = Color.Gray,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -561,7 +561,7 @@ fun TextAnnotationDock(
                             ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.font_background),
-                                    contentDescription = "Font Background",
+                                    contentDescription = stringResource(R.string.content_desc_font_background),
                                     modifier = Modifier.size(17.dp),
                                     tint = Color.Black
                                 )
@@ -587,7 +587,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = isBold,
                             iconRes = R.drawable.format_bold,
-                            contentDescription = "Bold",
+                            contentDescription = stringResource(R.string.content_desc_bold),
                             onClick = {
                                 val newW = if (isBold) FontWeight.Normal else FontWeight.Bold
                                 onUpdateStyle(currentStyle.copy(fontWeight = newW, fontFamily = currentStyle.fontFamily))
@@ -605,7 +605,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = isItalic,
                             iconRes = R.drawable.format_italic,
-                            contentDescription = "Italic",
+                            contentDescription = stringResource(R.string.content_desc_italic),
                             onClick = {
                                 val newStyle = if (isItalic) FontStyle.Normal else FontStyle.Italic
                                 onUpdateStyle(currentStyle.copy(fontStyle = newStyle, fontFamily = currentStyle.fontFamily))
@@ -625,7 +625,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = isUnderline,
                             iconRes = R.drawable.format_underlined,
-                            contentDescription = "Underline",
+                            contentDescription = stringResource(R.string.content_desc_underline),
                             onClick = {
                                 val hasStrike = currentDec.contains(TextDecoration.LineThrough)
                                 val newDec = if (isUnderline) {
@@ -654,7 +654,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = isStrike,
                             iconRes = R.drawable.format_strikethrough,
-                            contentDescription = "Strikethrough",
+                            contentDescription = stringResource(R.string.content_desc_strikethrough),
                             onClick = {
                                 val hasUnd = currentDec.contains(TextDecoration.Underline)
                                 val newDec = if (isStrike) {
@@ -682,7 +682,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = false,
                             iconRes = R.drawable.text_box,
-                            contentDescription = "Insert Text Box",
+                            contentDescription = stringResource(R.string.content_desc_insert_text_box),
                             onClick = {
                                 Timber.tag("PdfTextBoxDebug").d("Dock: Insert Text Box icon clicked")
                                 onInsertTextBox()
@@ -698,7 +698,7 @@ fun TextAnnotationDock(
                         FormattingIconButton(
                             isSelected = false,
                             iconVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.action_close),
                             onClick = {
                                 focusManager.clearFocus()
                                 onClearTextBoxSelection()
@@ -739,7 +739,7 @@ private fun FontItem(
         if (isSelected) {
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.content_desc_selected),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(16.dp)
             )
@@ -814,7 +814,7 @@ private fun ColorPickerBubble(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
+                        contentDescription = stringResource(R.string.action_close),
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
@@ -1193,12 +1193,12 @@ private fun ColorPickerSpectrumContent(
                 IconButton(onClick = onBack, modifier = Modifier.size(24.dp)) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.action_back),
                         tint = Color.White
                     )
                 }
                 Text(
-                    text = "Spectrum",
+                    text = stringResource(R.string.label_spectrum),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
@@ -1264,7 +1264,7 @@ private fun ColorPickerSpectrumContent(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "Hex",
+                        stringResource(R.string.theme_color_hex),
                         color = Color.Gray,
                         fontSize = 11.sp,
                         maxLines = 1
@@ -1282,19 +1282,19 @@ private fun ColorPickerSpectrumContent(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     RgbInputColumn(
-                        label = "R",
+                        label = stringResource(R.string.color_r),
                         value = currentColor.red,
                         onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                         modifier = Modifier.weight(1f)
                     )
                     RgbInputColumn(
-                        label = "G",
+                        label = stringResource(R.string.color_g),
                         value = currentColor.green,
                         onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                         modifier = Modifier.weight(1f)
                     )
                     RgbInputColumn(
-                        label = "B",
+                        label = stringResource(R.string.color_b),
                         value = currentColor.blue,
                         onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                         modifier = Modifier.weight(1f)
@@ -1313,7 +1313,7 @@ private fun ColorPickerSpectrumContent(
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 contentPadding = PaddingValues(0.dp)
             ) {
-                Text("Done", fontSize = 14.sp)
+                Text(stringResource(R.string.action_done), fontSize = 14.sp)
             }
         }
     }

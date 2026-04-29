@@ -1126,10 +1126,13 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
                 DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE)
             } else {
-                Text("Active TTS Engine", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.tts_active_engine), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(24.dp)).padding(4.dp)) {
-                    val modes = listOf(TtsPlaybackManager.TtsMode.CLOUD to "Cloud AI", TtsPlaybackManager.TtsMode.BASE to "Device Native")
+                    val modes = listOf(
+                        TtsPlaybackManager.TtsMode.CLOUD to stringResource(R.string.tts_mode_cloud_ai),
+                        TtsPlaybackManager.TtsMode.BASE to stringResource(R.string.tts_mode_device_native)
+                    )
                     modes.forEach { (mode, title) ->
                         val isSelected = currentMode == mode
                         Box(
@@ -1150,9 +1153,9 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
 
                 TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
-                    Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text("Cloud Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
-                    Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text("Device Voices", maxLines = 1, overflow = TextOverflow.Ellipsis) })
-                    Tab(selected = selectedTabIndex == 2, onClick = { selectedTabIndex = 2 }, text = { Text("Cloud Cache", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }, text = { Text(stringResource(R.string.tts_tab_cloud_voices), maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }, text = { Text(stringResource(R.string.tts_tab_device_voices), maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    Tab(selected = selectedTabIndex == 2, onClick = { selectedTabIndex = 2 }, text = { Text(stringResource(R.string.tts_tab_cloud_cache), maxLines = 1, overflow = TextOverflow.Ellipsis) })
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -1180,10 +1183,10 @@ fun AiVoicesTab(
     val isCloudMode = currentMode == TtsPlaybackManager.TtsMode.CLOUD
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("Select High-Quality Cloud Voice", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(stringResource(R.string.tts_select_cloud_voice), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         if (samplePlayer.cachedSpeakers.isNotEmpty()) {
             TextButton(onClick = { samplePlayer.clearSamples() }, modifier = Modifier.heightIn(min = 24.dp)) {
-                Text("Clear Samples", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.tts_clear_samples), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -1244,7 +1247,8 @@ fun DeviceVoicesTab(
     var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
     var isTtsLoading by remember { mutableStateOf(true) }
 
-    var selectedLanguage by remember { mutableStateOf("All") }
+    val allLanguagesLabel = stringResource(R.string.filter_all)
+    var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
     var languageMenuExpanded by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -1264,13 +1268,13 @@ fun DeviceVoicesTab(
     }
 
     val languages = remember(allVoices) {
-        val list = listOf("All") + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+        val list = listOf(allLanguagesLabel) + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
         Timber.tag("TTS_DIAGNOSE").d("Languages list updated: size=${list.size}, items=$list")
         list
     }
 
     val filteredVoices = remember(allVoices, selectedLanguage) {
-        if (selectedLanguage == "All") allVoices
+        if (selectedLanguage == allLanguagesLabel) allVoices
         else allVoices.filter { it.locale.displayLanguage == selectedLanguage }
     }
 
@@ -1310,8 +1314,8 @@ fun DeviceVoicesTab(
             )
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("System Default Voice", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Uses device settings", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.tts_system_default_voice), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.tts_uses_device_settings), style = MaterialTheme.typography.bodySmall)
             }
             if (isBaseMode && savedVoiceName == null) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
         }
@@ -1326,7 +1330,7 @@ fun DeviceVoicesTab(
             value = selectedLanguage,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Language Filter") },
+            label = { Text(stringResource(R.string.tts_language_filter)) },
             trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
             colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
             modifier = Modifier.fillMaxWidth().menuAnchor(),
@@ -1359,7 +1363,7 @@ fun DeviceVoicesTab(
 
             ListItem(
                 headlineContent = { Text(voice.locale.displayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                supportingContent = { Text(if (voice.isNetworkConnectionRequired) "Online" else "Offline") },
+                supportingContent = { Text(if (voice.isNetworkConnectionRequired) stringResource(R.string.tts_online) else stringResource(R.string.tts_offline)) },
                 leadingContent = {
                     if (isSelected) {
                         Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
@@ -1378,11 +1382,11 @@ fun DeviceVoicesTab(
                         onClick = {
                             ttsEngine?.apply {
                                 this.voice = voice
-                                speak("This is a voice sample.", TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
+                                speak(context.getString(R.string.tts_voice_sample_generic), TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
                             }
                         }
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Play Sample", tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.tts_play_sample), tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             )
@@ -1415,7 +1419,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Cloud TTS Cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(R.string.tts_tab_cloud_cache), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp)) {
                 Text(formatBytes(totalSize), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             }
@@ -1431,7 +1435,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                     value = selectedSpeakerFilter,
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Voice Filter") },
+                    label = { Text(stringResource(R.string.tts_voice_filter)) },
                     trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterMenuExpanded) },
                     colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().menuAnchor()
@@ -1459,7 +1463,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
 
         if (chapters.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                Text("No audio cached for this voice.", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.tts_no_audio_cached_for_voice), style = MaterialTheme.typography.bodyMedium)
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))) {
@@ -1467,7 +1471,16 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                     val chapter = chapters[index]
                     ListItem(
                         headlineContent = {
-                            Text("${chapter.chapterTitle} (${chapter.chunkCount} chunks)", fontWeight = FontWeight.Medium)
+                            Text(
+                                "${chapter.chapterTitle} ${
+                                    context.resources.getQuantityString(
+                                        R.plurals.tts_cache_chunk_count_parenthetical,
+                                        chapter.chunkCount,
+                                        chapter.chunkCount
+                                    )
+                                }",
+                                fontWeight = FontWeight.Medium
+                            )
                         },
                         supportingContent = { Text(formatBytes(chapter.sizeBytes)) },
                         trailingContent = {
@@ -1475,7 +1488,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
                                 cacheManager.deleteSpecificFiles(chapter.matchingFiles, chapter.directory)
                                 chapters = cacheManager.getChapterCaches(bookTitle, selectedSpeakerFilter)
                             }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.action_delete), tint = MaterialTheme.colorScheme.error)
                             }
                         }
                     )
@@ -1495,7 +1508,7 @@ fun TtsCacheTab(bookTitle: String, context: Context, currentSpeakerId: String) {
             ) {
                 Icon(Icons.Default.Delete, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Clear Cache for $selectedSpeakerFilter")
+                Text(stringResource(R.string.tts_clear_cache_for_voice, selectedSpeakerFilter))
             }
         }
     }
@@ -1958,8 +1971,8 @@ fun ReaderThemePanel(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Preserve Image Colors", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                                Text("Keep original image colors when theme changes", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                Text(stringResource(R.string.theme_preserve_image_colors), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.theme_preserve_image_colors_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
                             androidx.compose.material3.Switch(
                                 checked = excludeImages,
@@ -1980,7 +1993,7 @@ fun ReaderThemePanel(
                     ) {
                         Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         IconButton(onClick = { editingTheme = null; showBuilder = true }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Add, contentDescription = "Create Theme", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new), tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -2462,7 +2475,7 @@ fun HighlightColorPickerDialog(
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = "Customize Highlights",
+                        text = stringResource(R.string.highlight_customize_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
@@ -2494,7 +2507,7 @@ fun HighlightColorPickerDialog(
                             if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected",
+                                    contentDescription = stringResource(R.string.content_desc_selected),
                                     tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White
                                 )
                             }
@@ -2539,7 +2552,7 @@ fun HighlightColorPickerDialog(
                         modifier = Modifier.weight(1.6f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("HEX", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
                         HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
                     }
@@ -2548,15 +2561,15 @@ fun HighlightColorPickerDialog(
                         modifier = Modifier.weight(2.4f),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        RgbInputColumn(label = "R", value = currentColor.red,
+                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = "G", value = currentColor.green,
+                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = "B", value = currentColor.blue,
+                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
                         )
@@ -2571,11 +2584,11 @@ fun HighlightColorPickerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = { updateFromColor(selectedSlot.color) }) {
-                        Text("Reset", color = Color(0xFFFF5252))
+                        Text(stringResource(R.string.action_reset), color = Color(0xFFFF5252))
                     }
                     Row {
                         TextButton(onClick = onDismiss) {
-                            Text("Cancel", color = Color.Gray)
+                            Text(stringResource(R.string.action_cancel), color = Color.Gray)
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
@@ -2584,7 +2597,7 @@ fun HighlightColorPickerDialog(
                                 containerColor = Color.White
                             )
                         ) {
-                            Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.action_save), color = Color.Black, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2647,7 +2660,7 @@ fun AiHubBottomSheet(
             ) {
                 Box(modifier = Modifier.weight(1f))
                 Text(
-                    text = "AI Features",
+                    text = stringResource(R.string.ai_features_title),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
@@ -2671,9 +2684,12 @@ fun AiHubBottomSheet(
                 }
             }
 
-            val tabs = mutableListOf("Summary")
-            if (onGenerateRecap != null) tabs.add("Recap")
-            if (summaryCacheManager != null) tabs.add("Cache")
+            val summaryTab = stringResource(R.string.ai_tab_summary)
+            val recapTab = stringResource(R.string.ai_tab_recap)
+            val cacheTab = stringResource(R.string.ai_tab_cache)
+            val tabs = mutableListOf(summaryTab)
+            if (onGenerateRecap != null) tabs.add(recapTab)
+            if (summaryCacheManager != null) tabs.add(cacheTab)
 
             TabRow(selectedTabIndex = selectedTabIndex, modifier = Modifier.padding(bottom = 16.dp)) {
                 tabs.forEachIndexed { index, title ->
@@ -2683,11 +2699,11 @@ fun AiHubBottomSheet(
                 }
             }
 
-            val activeTab = tabs.getOrNull(selectedTabIndex) ?: "Summary"
+            val activeTab = tabs.getOrNull(selectedTabIndex) ?: summaryTab
             var cacheRefreshTrigger by remember { mutableIntStateOf(0) }
 
             when (activeTab) {
-                "Summary" -> {
+                summaryTab -> {
                     val cachedSummary = remember(currentChapterIndex, cacheRefreshTrigger) { summaryCacheManager?.getSummary(bookTitle, currentChapterIndex) }
                     val effectiveResult = summarizationResult ?: if (cachedSummary != null) SummarizationResult(summary = cachedSummary, isCacheHit = true) else null
 
@@ -2696,7 +2712,7 @@ fun AiHubBottomSheet(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(painterResource(R.drawable.summarize), contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.height(16.dp))
-                                Text("No summary for ${chapterTitle.lowercase()} yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.ai_no_summary_for_chapter, chapterTitle.lowercase()), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(16.dp))
                                 Button(
                                     onClick = { onGenerateSummary(false) },
@@ -2704,7 +2720,7 @@ fun AiHubBottomSheet(
                                 ) {
                                     Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Generate Summary for $chapterTitle")
+                                    Text(stringResource(R.string.ai_generate_summary_for_chapter, chapterTitle))
                                 }
                             }
                         }
@@ -2721,14 +2737,14 @@ fun AiHubBottomSheet(
                         )
                     }
                 }
-                "Recap" -> {
+                recapTab -> {
                     // Recap Tab
                     if (recapResult == null && !isRecapLoading) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.height(16.dp))
-                                Text("Get a recap of the story up to your current position.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                Text(stringResource(R.string.ai_recap_desc), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                                 Spacer(Modifier.height(16.dp))
                                 Button(
                                     onClick = { onGenerateRecap?.invoke() },
@@ -2736,13 +2752,13 @@ fun AiHubBottomSheet(
                                 ) {
                                     Icon(painterResource(R.drawable.ai), contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Generate Story Recap")
+                                    Text(stringResource(R.string.ai_generate_story_recap))
                                 }
                             }
                         }
                     } else {
                         AiResultContentView(
-                            title = "Story Recap",
+                            title = stringResource(R.string.ai_story_recap),
                             result = recapResult,
                             isLoading = isRecapLoading,
                             isMainTtsActive = isMainTtsActive,
@@ -2754,7 +2770,7 @@ fun AiHubBottomSheet(
                         )
                     }
                 }
-                "Cache" -> {
+                cacheTab -> {
                     if (summaryCacheManager != null) {
                         ManageCacheTab(bookTitle, summaryCacheManager, onCacheChanged = {
                             cacheRefreshTrigger++
@@ -2804,15 +2820,15 @@ fun AiResultContentView(
                 ) {
                     Text(
                         text = if (result.isCacheHit) {
-                            "⚡ Cache Hit • Free"
+                            stringResource(R.string.ai_cache_hit_free)
                         } else if (result.cost != null) {
                             if (result.cost == 0.0 && result.freeRemaining != null) {
-                                "✨ Generated • Free (${result.freeRemaining}/10 left)"
+                                stringResource(R.string.ai_generated_free_remaining, result.freeRemaining ?: 0)
                             } else {
-                                "✨ Generated • Cost: ${result.cost} credits"
+                                stringResource(R.string.ai_generated_cost, result.cost.toString())
                             }
                         } else {
-                            "✨ Generating... • Cost: Calculating"
+                            stringResource(R.string.ai_generating_cost_calculating)
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
@@ -2828,7 +2844,7 @@ fun AiResultContentView(
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator()
-                    Text("Thinking...", modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.ai_thinking), modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
                 }
             }
         } else if (result != null) {
@@ -2856,7 +2872,7 @@ fun AiResultContentView(
                         IconButton(onClick = onClear) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = "Clear",
+                                contentDescription = stringResource(R.string.action_clear),
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
@@ -2865,7 +2881,7 @@ fun AiResultContentView(
 
                     if (onRegenerate != null) {
                         TextButton(onClick = onRegenerate) {
-                            Text("Regenerate")
+                            Text(stringResource(R.string.ai_regenerate))
                         }
                     }
 
@@ -2881,7 +2897,7 @@ fun AiResultContentView(
                                         ttsController.start(
                                             chunks = chunks,
                                             bookTitle = title,
-                                            chapterTitle = "AI Output",
+                                            chapterTitle = context.getString(R.string.ai_output_title),
                                             coverImageUri = null,
                                             ttsMode = loadTtsMode(context),
                                             playbackSource = "POPUP",
@@ -2895,7 +2911,7 @@ fun AiResultContentView(
                     ) {
                         Icon(
                             imageVector = if (isTtsSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
-                            contentDescription = "Read Aloud"
+                            contentDescription = stringResource(R.string.action_read_aloud)
                         )
                     }
                     IconButton(onClick = {
@@ -2903,7 +2919,7 @@ fun AiResultContentView(
                     }) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy"
+                            contentDescription = stringResource(R.string.action_copy)
                         )
                     }
                 }
@@ -2964,7 +2980,7 @@ fun ManageCacheTab(bookTitle: String, summaryCacheManager: SummaryCacheManager, 
 
     if (cachedItems.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text("No cached summaries for this book.", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.ai_no_cached_summaries), style = MaterialTheme.typography.bodyMedium)
         }
     } else {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -2990,7 +3006,7 @@ fun ManageCacheTab(bookTitle: String, summaryCacheManager: SummaryCacheManager, 
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete",
+                                        contentDescription = stringResource(R.string.action_delete),
                                         tint = MaterialTheme.colorScheme.error
                                     )
                                 }
@@ -3016,7 +3032,7 @@ fun ManageCacheTab(bookTitle: String, summaryCacheManager: SummaryCacheManager, 
                 },
                 modifier = Modifier.align(Alignment.End)
             ) {
-                Text("Clear All", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.clear_all), color = MaterialTheme.colorScheme.error)
             }
         }
     }

@@ -136,14 +136,14 @@ internal fun PdfTopBar(
                             description = stringResource(R.string.tooltip_back_desc),
                             onClick = onNavigateBack
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                         }
                         val titleText = when {
                             isLoadingDocument -> stringResource(R.string.loading_pdf)
                             errorMessage != null -> stringResource(R.string.error_loading_pdf)
-                            totalPages > 0 && pagerStatePageCount > 0 -> "Page ${currentPageForDisplay + 1} of $totalPages"
+                            totalPages > 0 && pagerStatePageCount > 0 -> stringResource(R.string.page_of_pages, currentPageForDisplay + 1, totalPages)
                             totalPages > 0 && pagerStatePageCount == 0 -> stringResource(R.string.loading_page)
-                            else -> "PDF Viewer"
+                            else -> stringResource(R.string.pdf_viewer)
                         }
                         Text(
                             text = titleText,
@@ -179,16 +179,16 @@ internal fun PdfTopBar(
                                 description = stringResource(R.string.tooltip_dictionary_desc),
                                 onClick = onShowDictionarySettings
                             ) {
-                                Icon(painterResource(id = R.drawable.dictionary), contentDescription = "Dictionary Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(painterResource(id = R.drawable.dictionary), contentDescription = stringResource(R.string.content_desc_dictionary_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
 
                         if (BuildConfig.DEBUG) {
-                            TooltipIconButton(text = "Demo Annotations", onClick = onGenerateDemoAnnotations) {
-                                Icon(Icons.Default.BugReport, contentDescription = "Generate Demo Annotations", tint = MaterialTheme.colorScheme.secondary)
+                            TooltipIconButton(text = stringResource(R.string.tooltip_demo_annotations), onClick = onGenerateDemoAnnotations) {
+                                Icon(Icons.Default.BugReport, contentDescription = stringResource(R.string.content_desc_generate_demo_annotations), tint = MaterialTheme.colorScheme.secondary)
                             }
                             TooltipIconButton(text = stringResource(R.string.pen_playground), onClick = onShowPenPlayground) {
-                                Icon(Icons.Default.Star, contentDescription = "Open Pen Playground", tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Default.Star, contentDescription = stringResource(R.string.content_desc_open_pen_playground), tint = MaterialTheme.colorScheme.primary)
                             }
                             TooltipIconButton(text = stringResource(R.string.import_svg), onClick = onImportSvg) {
                                 Icon(Icons.Default.Brush, contentDescription = stringResource(R.string.import_svg), tint = Color(0xFFE91E63))
@@ -392,7 +392,7 @@ internal fun PdfTopBar(
 
                         item {
                             IconButton(onClick = onNewTabClick, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp).size(36.dp)) {
-                                Icon(Icons.Default.Add, contentDescription = "New Tab", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_new_tab), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -492,8 +492,8 @@ fun PdfBottomBar(
             ) {
                 if (jumpBackPage != null) {
                     TooltipIconButton(
-                        text = "Jump Back to Page ${jumpBackPage + 1}",
-                        description = "Return to previous page",
+                        text = stringResource(R.string.action_jump_back_to_page, jumpBackPage + 1),
+                        description = stringResource(R.string.desc_return_to_previous_page),
                         onClick = onJumpBack
                     ) {
                         Column(
@@ -502,7 +502,7 @@ fun PdfBottomBar(
                         ) {
                             Icon(
                                 Icons.AutoMirrored.Filled.Undo,
-                                contentDescription = "Jump Back",
+                                contentDescription = stringResource(R.string.content_desc_jump_back),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -535,7 +535,7 @@ fun PdfBottomBar(
                         enabled = !isTtsPlayingOrLoading,
                         modifier = Modifier.testTag("TocButton")
                     ) {
-                        Icon(Icons.Default.Menu, contentDescription = "Table of Contents")
+                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.content_desc_table_of_contents))
                     }
                 }
 
@@ -557,7 +557,7 @@ fun PdfBottomBar(
                         onClick = onToggleHighlights
                     ) {
                         if (isHighlightingLoading) CircularProgressIndicator(Modifier.size(24.dp))
-                        else Icon(painterResource(id = R.drawable.highlight_text), contentDescription = "Highlight all text", tint = if (showAllTextHighlights) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        else Icon(painterResource(id = R.drawable.highlight_text), contentDescription = stringResource(R.string.content_desc_highlight_all_text), tint = if (showAllTextHighlights) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -577,7 +577,7 @@ fun PdfBottomBar(
                         description = if (isEditMode) stringResource(R.string.tooltip_edit_mode_exit_desc) else stringResource(R.string.tooltip_edit_mode_desc),
                         onClick = onToggleEditMode
                     ) {
-                        Icon(Icons.Default.Edit, contentDescription = "Toggle Editing Mode", tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.content_desc_toggle_editing_mode), tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -587,19 +587,19 @@ fun PdfBottomBar(
                         description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc) else stringResource(R.string.tooltip_tts_start_desc),
                         onClick = onToggleTts
                     ) {
-                        Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = if (isTtsSessionActive) "Stop TTS" else "Start TTS", tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts), tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
                 if (BuildConfig.FLAVOR != "oss") {
                     TooltipIconButton(
-                        text = if (isBubbleZoomModeActive) "Exit Smart Zoom" else "Smart Comic Zoom",
-                        description = "Toggle Smart Comic Zoom",
+                        text = if (isBubbleZoomModeActive) stringResource(R.string.action_exit_smart_zoom) else stringResource(R.string.action_smart_comic_zoom),
+                        description = stringResource(R.string.desc_toggle_smart_comic_zoom),
                         onClick = onToggleBubbleZoom
                     ) {
                         Icon(
                             painterResource(R.drawable.comic_bubble),
-                            contentDescription = "Smart Comic Zoom",
+                            contentDescription = stringResource(R.string.content_desc_smart_comic_zoom),
                             tint = if (isBubbleZoomModeActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }

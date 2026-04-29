@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -258,12 +259,12 @@ fun AppNavigation(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("Error: $errorMessage", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.error_message_format, errorMessage), color = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(onClick = {
                             viewModel.clearSelectedFile()
                         }) {
-                            Text("Go Back")
+                            Text(stringResource(R.string.action_go_back))
                         }
                     }
                 }

@@ -33,6 +33,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 import androidx.core.graphics.createBitmap
@@ -181,20 +182,21 @@ private data class CachedSpeechBubble(
     val maskBitmap: Bitmap?
 )
 
-enum class AddBooksSource(val displayName: String) {
-    UNSHELVED("Unshelved"), ALL_BOOKS("All Books")
+enum class AddBooksSource(@StringRes val labelRes: Int) {
+    UNSHELVED(R.string.add_books_source_unshelved),
+    ALL_BOOKS(R.string.add_books_source_all_books)
 }
 
-enum class AppThemeMode(val displayName: String) {
-    SYSTEM("System"),
-    LIGHT("Light"),
-    DARK("Dark")
+enum class AppThemeMode(@StringRes val labelRes: Int) {
+    SYSTEM(R.string.app_theme_mode_system),
+    LIGHT(R.string.app_theme_mode_light),
+    DARK(R.string.app_theme_mode_dark)
 }
 
-enum class AppContrastOption(val displayName: String, val value: Double) {
-    STANDARD("Standard", 0.0),
-    MEDIUM("Medium", 0.5),
-    HIGH("High", 1.0)
+enum class AppContrastOption(@StringRes val labelRes: Int, val value: Double) {
+    STANDARD(R.string.app_contrast_standard, 0.0),
+    MEDIUM(R.string.app_contrast_medium, 0.5),
+    HIGH(R.string.app_contrast_high, 1.0)
 }
 
 data class CustomAppTheme(
@@ -240,18 +242,21 @@ data class Shelf(
     val childShelfCount: Int get() = childShelfIds.size
 }
 
-enum class SortOrder(val displayName: String) {
-    RECENT("Recent"),
-    TITLE_ASC("Title A-Z"),
-    AUTHOR_ASC("Author A-Z"),
-    PERCENT_ASC("Percent complete 0-100"),
-    PERCENT_DESC("Percent complete 100-0"),
-    SIZE_ASC("Size (Smallest)"),
-    SIZE_DESC("Size (Biggest)")
+enum class SortOrder(@StringRes val labelRes: Int) {
+    RECENT(R.string.sort_recent),
+    TITLE_ASC(R.string.sort_title_az),
+    AUTHOR_ASC(R.string.sort_author_az),
+    PERCENT_ASC(R.string.sort_percent_asc),
+    PERCENT_DESC(R.string.sort_percent_desc),
+    SIZE_ASC(R.string.sort_size_smallest),
+    SIZE_DESC(R.string.sort_size_biggest)
 }
 
-enum class ReadStatusFilter(val displayName: String) {
-    ALL("All"), UNREAD("Unread"), IN_PROGRESS("In Progress"), COMPLETED("Completed")
+enum class ReadStatusFilter(@StringRes val labelRes: Int) {
+    ALL(R.string.read_status_all),
+    UNREAD(R.string.read_status_unread),
+    IN_PROGRESS(R.string.read_status_in_progress),
+    COMPLETED(R.string.read_status_completed)
 }
 
 data class LibraryFilters(

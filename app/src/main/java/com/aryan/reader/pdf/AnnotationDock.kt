@@ -395,7 +395,7 @@ fun PenPlayground(onClose: () -> Unit) {
                         painter = painterResource(
                             id = R.drawable.close
                         ),
-                        contentDescription = "Close", tint = Color.Gray
+                        contentDescription = stringResource(R.string.action_close), tint = Color.Gray
                     )
                 }
             }

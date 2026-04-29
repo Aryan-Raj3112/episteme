@@ -33,7 +33,7 @@ android {
         versionCode = 46
         versionName = "1.0.46"
 
-        resourceConfigurations += setOf("en", "ar", "de", "tr")
+        resourceConfigurations += setOf("en", "ar", "de", "tr", "fr", "ru")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {

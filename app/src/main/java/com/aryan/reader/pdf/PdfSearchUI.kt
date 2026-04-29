@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,7 +74,7 @@ internal fun SearchNavigationPill(
                 Icon(
                     imageVector = if (mode == SearchHighlightMode.ALL) Icons.Default.Visibility
                     else Icons.Default.VisibilityOff,
-                    contentDescription = "Toggle Highlights",
+                    contentDescription = stringResource(R.string.content_desc_toggle_search_highlights),
                     tint = if (mode == SearchHighlightMode.ALL) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -95,7 +96,7 @@ internal fun SearchNavigationPill(
             IconButton(onClick = onPrev, enabled = isPrevEnabled) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Previous",
+                    contentDescription = stringResource(R.string.tooltip_prev_result),
                     tint = if (isPrevEnabled) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
@@ -122,7 +123,7 @@ internal fun SearchNavigationPill(
             IconButton(onClick = onNext, enabled = isNextEnabled) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Next",
+                    contentDescription = stringResource(R.string.tooltip_next_result),
                     tint = if (isNextEnabled) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
@@ -141,12 +142,12 @@ fun PdfSearchResultsPanel(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         if (lazyResults.itemCount == 0 && lazyResults.loadState.refresh !is LoadState.Loading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No results found.", style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
             }
         } else {
             Column {
                 Text(
-                    text = stringResource(R.string.msg_results_found_pages),
+                    text = stringResource(R.string.msg_results_found_pages, totalPageCount),
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )
@@ -195,6 +196,7 @@ fun PdfSearchResultsList(
     onResultClick: (SearchResult) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         if (results.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -203,7 +205,11 @@ fun PdfSearchResultsList(
         } else {
             Column {
                 Text(
-                    text = "${results.size} matches found",
+                    text = context.resources.getQuantityString(
+                        R.plurals.search_matches_count,
+                        results.size,
+                        results.size
+                    ),
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )

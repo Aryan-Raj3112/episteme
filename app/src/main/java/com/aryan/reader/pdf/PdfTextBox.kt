@@ -61,6 +61,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -450,7 +451,7 @@ private fun DragPill(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 painter = painterResource(id = R.drawable.drag_handle),
-                contentDescription = "Drag to move text box",
+                contentDescription = stringResource(R.string.content_desc_drag_text_box),
                 modifier = Modifier.size((20f / scale).dp)
             )
         }

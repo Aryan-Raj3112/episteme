@@ -133,7 +133,7 @@ fun ProScreen(
                 title = { },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -179,7 +179,7 @@ fun ProScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 painter = painterResource(id = R.drawable.crown),
-                                contentDescription = "Pro",
+                                contentDescription = stringResource(R.string.drawer_pro_unlocked),
                                 modifier = Modifier.size(16.dp),
                                 tint = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -209,7 +209,7 @@ fun ProScreen(
                                 shape = CircleShape
                             ),
                         text = {
-                            AutoSizeText("Credits",
+                            AutoSizeText(stringResource(R.string.credits_tab),
                                 style = LocalTextStyle.current.copy(
                                     color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.SemiBold
@@ -312,7 +312,7 @@ private fun ProTierCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     painter = painterResource(id = R.drawable.crown),
-                    contentDescription = "Pro Badge",
+                    contentDescription = stringResource(R.string.drawer_pro_unlocked),
                     modifier = Modifier.size(24.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
@@ -422,7 +422,7 @@ private fun ProTierCard(
                 ) {
                     Icon(
                         painter = painterResource(id = R.drawable.crown),
-                        contentDescription = "Unlocked",
+                        contentDescription = stringResource(R.string.pro_unlocked),
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -477,7 +477,7 @@ private fun ProTierCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Info,
-                                contentDescription = "Info",
+                                contentDescription = stringResource(R.string.info),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -499,7 +499,7 @@ private fun ProTierCard(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.crown),
-                                    contentDescription = "Pro",
+                                    contentDescription = stringResource(R.string.drawer_pro_unlocked),
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -539,7 +539,7 @@ private fun ProTierCard(
                         )
                     }
                     else -> {
-                        LegalText(prefixText = "By purchasing,")
+                        LegalText(prefixText = stringResource(R.string.legal_by_purchasing))
                     }
                 }
             }
@@ -631,7 +631,7 @@ private fun CreditTierCard(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("AI & Cloud Credits", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.credits_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "$credits",
@@ -639,7 +639,7 @@ private fun CreditTierCard(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
-            Text("Credits Available", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.credits_available), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -698,7 +698,7 @@ private fun CreditTierCard(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                "Estimated Cost Breakdown",
+                stringResource(R.string.credits_estimated_cost_breakdown),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.Start)
@@ -707,13 +707,13 @@ private fun CreditTierCard(
 
             CostBreakdownItem(
                 iconRes = R.drawable.text_to_speech,
-                title = "Cloud TTS",
-                description = "Cost: ~3-4 credits per minute of audio generated.\nTo enable: Reader Screen > More > TTS Voice Settings."
+                title = stringResource(R.string.credits_cloud_tts_title),
+                description = stringResource(R.string.credits_cloud_tts_desc)
             )
             CostBreakdownItem(
                 iconRes = R.drawable.summarize,
-                title = "AI Summaries & Recap",
-                description = "Cost: ~1-4 credits per request based on chapter length.\nPro Users get 10 free summaries daily."
+                title = stringResource(R.string.credits_ai_summaries_title),
+                description = stringResource(R.string.credits_ai_summaries_desc)
             )
             Spacer(modifier = Modifier.height(24.dp))
         }

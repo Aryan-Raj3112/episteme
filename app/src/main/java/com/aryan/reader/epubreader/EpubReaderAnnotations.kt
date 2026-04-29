@@ -577,7 +577,7 @@ fun AnnotationBottomSheet(
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Delete")
+                    Text(stringResource(R.string.action_delete))
                 }
                 Button(
                     onClick = { onSave(noteText) },
@@ -586,7 +586,7 @@ fun AnnotationBottomSheet(
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text("Save Note")
+                    Text(stringResource(R.string.action_save_note))
                 }
             }
         }

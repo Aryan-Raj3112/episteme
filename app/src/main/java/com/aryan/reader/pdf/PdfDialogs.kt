@@ -138,7 +138,7 @@ internal fun OcrLanguageSelectionDialog(
                 ) {
                     RadioButton(selected = (language == currentLanguage), onClick = null)
                     Text(
-                        text = language.displayName,
+                        text = stringResource(language.displayNameRes),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(start = 16.dp)
                     )

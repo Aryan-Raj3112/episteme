@@ -24,6 +24,12 @@
         <item quantity="other">%1$d results found</item>
     </plurals>
 
+    <!-- Shown in the PDF search results summary bar. %1$d = total number of matches found. -->
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d match found</item>
+        <item quantity="other">%1$d matches found</item>
+    </plurals>
+
     <plurals name="dialog_delete_permanently">
         <item quantity="one">Delete File Permanently</item>
         <item quantity="other">Delete Files Permanently</item>
@@ -51,5 +57,23 @@
     <plurals name="banner_books_removed_library">
         <item quantity="one">%1$d book removed from library.</item>
         <item quantity="other">%1$d books removed from library.</item>
+    </plurals>
+
+    <!-- Word count for folders shown in shelf subtitles. %1$d = number of folders. -->
+    <plurals name="folder_count">
+        <item quantity="one">%1$d folder</item>
+        <item quantity="other">%1$d folders</item>
+    </plurals>
+
+    <!-- Word count for tags shown in filter chips. %1$d = number of tags. -->
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="other">%1$d tags</item>
+    </plurals>
+
+    <!-- Parenthetical cache chunk count in TTS cache entries. %1$d = number of cached audio chunks. -->
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d chunk)</item>
+        <item quantity="other">(%1$d chunks)</item>
     </plurals>
 </resources>

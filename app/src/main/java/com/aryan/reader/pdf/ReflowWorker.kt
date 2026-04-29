@@ -7,6 +7,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.aryan.reader.FileType
+import com.aryan.reader.R
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +33,8 @@ class ReflowWorker(
             Timber.tag("PdfToHtmlPerf").e("FAILURE: KEY_PDF_URI is null | bookId=$bookId")
             return@withContext Result.failure()
         }
-        val originalTitle = inputData.getString(KEY_ORIGINAL_TITLE) ?: "Document"
+        val originalTitle = inputData.getString(KEY_ORIGINAL_TITLE)
+            ?: applicationContext.getString(R.string.default_document_title)
         val reflowBookId = "${bookId}_reflow"
 
         Timber.tag("PdfToHtmlPerf").d(
@@ -67,11 +69,11 @@ class ReflowWorker(
                 bookId               = reflowBookId,
                 uriString            = destFile.toUri().toString(),
                 type                 = FileType.HTML,
-                displayName          = "$originalTitle (Text View)",
+                displayName          = applicationContext.getString(R.string.reflow_display_name_format, originalTitle),
                 timestamp            = System.currentTimeMillis(),
                 coverImagePath       = null,
-                title                = "$originalTitle (Reflow)",
-                author               = "Generated",
+                title                = applicationContext.getString(R.string.reflow_title_format, originalTitle),
+                author               = applicationContext.getString(R.string.generated_author),
                 isAvailable          = true,
                 isRecent             = true,
                 lastModifiedTimestamp = System.currentTimeMillis(),

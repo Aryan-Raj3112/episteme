@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import com.aryan.reader.FileType
+import com.aryan.reader.R
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
@@ -452,7 +453,7 @@ class OpdsStreamDocumentWrapper(
             textSize = 40f
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("Page Unavailable", 400f, 600f, paint)
+        canvas.drawText(context.getString(R.string.msg_page_unavailable), 400f, 600f, paint)
         val stream = java.io.ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
         return stream.toByteArray()

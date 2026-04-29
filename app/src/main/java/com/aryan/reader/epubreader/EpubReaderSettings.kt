@@ -912,9 +912,9 @@ fun VisualOptionsSheet(
                     AnimatedVisibility(visible = pullToTurnEnabled) {
                         Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                             HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
-                            Text("Pull Distance to Change Chapter", style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.setting_pull_distance_change_chapter), style = MaterialTheme.typography.titleSmall)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Short", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.label_short), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Slider(
                                     value = pullToTurnMultiplier,
                                     onValueChange = onPullToTurnMultiplierChange,
@@ -922,7 +922,7 @@ fun VisualOptionsSheet(
                                     steps = 14,
                                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
                                 )
-                                Text("Long", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.label_long), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -1079,7 +1079,7 @@ fun FormatSlider(
                 },
                 modifier = Modifier.size(32.dp) // Slimmer buttons
             ) {
-                Icon(Icons.Default.Remove, contentDescription = "Decrease", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.content_desc_decrease), tint = MaterialTheme.colorScheme.primary)
             }
 
             // Using our new CustomCanvasSlider here!
@@ -1097,7 +1097,7 @@ fun FormatSlider(
                 },
                 modifier = Modifier.size(32.dp) // Slimmer buttons
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Increase", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_increase), tint = MaterialTheme.colorScheme.primary)
             }
         }
     }

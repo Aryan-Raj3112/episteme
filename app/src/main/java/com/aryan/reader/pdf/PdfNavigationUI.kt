@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -199,7 +200,7 @@ internal fun ThumbnailWithIndicator(
         ) {
             Image(
                 bitmap = thumbnail.asImageBitmap(),
-                contentDescription = "Start page thumbnail",
+                contentDescription = stringResource(R.string.content_desc_start_page_thumbnail),
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier.fillMaxSize()
             )
@@ -230,7 +231,7 @@ internal fun BookmarkButton(
         AnimatedVisibility(visible = isBookmarked, enter = fadeIn(), exit = fadeOut()) {
             Icon(
                 painter = painterResource(id = R.drawable.bookmark),
-                contentDescription = "Bookmark",
+                contentDescription = stringResource(R.string.content_desc_bookmark),
                 modifier = Modifier.size(24.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -271,7 +272,7 @@ internal fun ZoomPercentageIndicator(
             // Reset Zoom Button
             Icon(
                 painter = painterResource(id = R.drawable.zoom_out),
-                contentDescription = "Reset Zoom",
+                contentDescription = stringResource(R.string.content_desc_reset_zoom),
                 tint = Color.White,
                 modifier = Modifier
                     .size(20.dp)
