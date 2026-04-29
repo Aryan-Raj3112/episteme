@@ -244,7 +244,7 @@ private suspend fun renderExpandedBubbleBitmap(
     document.openPage(pageIndex)?.use { page ->
         val cropWidth = (bubbleBounds.width() * renderScale).roundToInt().coerceAtLeast(1)
         val cropHeight = (bubbleBounds.height() * renderScale).roundToInt().coerceAtLeast(1)
-        val bitmap = Bitmap.createBitmap(cropWidth, cropHeight, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(cropWidth, cropHeight)
 
         try {
             page.renderPageBitmap(
@@ -724,12 +724,27 @@ internal fun PdfPageComposable(
 
     var detectedBubbles by remember(targetPageId) { mutableStateOf<List<SpeechBubble>>(emptyList()) }
     var expandedBubbleIndex by remember(targetPageId) { mutableIntStateOf(-1) }
+    var animatingBubbleIndex by remember(targetPageId) { mutableIntStateOf(-1) }
+    val bubbleExpansionProgress = remember(targetPageId) { Animatable(0f) }
     var isDetectingBubbles by remember(targetPageId) { mutableStateOf(false) }
     var expandedBubbleRender by remember(targetPageId) { mutableStateOf<ExpandedBubbleRender?>(null) }
     val currentDetectedBubbles by rememberUpdatedState(detectedBubbles)
     val currentExpandedBubbleIndex by rememberUpdatedState(expandedBubbleIndex)
     val currentBubbleZoomModeActive by rememberUpdatedState(isBubbleZoomModeActive)
     val bubbleTapSlopPx = with(density) { 18.dp.toPx() }
+
+    LaunchedEffect(expandedBubbleIndex) {
+        if (expandedBubbleIndex != -1) {
+            if (animatingBubbleIndex != -1 && animatingBubbleIndex != expandedBubbleIndex) {
+                bubbleExpansionProgress.animateTo(0f, tween(150))
+            }
+            animatingBubbleIndex = expandedBubbleIndex
+            bubbleExpansionProgress.animateTo(1f, tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        } else {
+            bubbleExpansionProgress.animateTo(0f, tween(200, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+            animatingBubbleIndex = -1
+        }
+    }
 
     LaunchedEffect(
         isBubbleZoomModeActive,
@@ -791,7 +806,7 @@ internal fun PdfPageComposable(
     }
 
     LaunchedEffect(
-        expandedBubbleIndex,
+        animatingBubbleIndex,
         detectedBubbles,
         actualBitmapWidthPx,
         actualBitmapHeightPx,
@@ -805,11 +820,11 @@ internal fun PdfPageComposable(
         expandedBubbleRender = null
         previousRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
 
-        if (!isBubbleZoomModeActive || !isPdfPage || expandedBubbleIndex !in detectedBubbles.indices) {
+        if (!isBubbleZoomModeActive || !isPdfPage || animatingBubbleIndex !in detectedBubbles.indices) {
             return@LaunchedEffect
         }
 
-        val bubble = detectedBubbles[expandedBubbleIndex]
+        val bubble = detectedBubbles[animatingBubbleIndex]
         val zoomFactor = computeDynamicBubbleZoomFactor(
             bubbleBounds = bubble.bounds,
             viewportWidth = canvasWidthPx.floatValue.coerceAtLeast(actualBitmapWidthPx.toFloat()),
@@ -2742,10 +2757,10 @@ internal fun PdfPageComposable(
                         Timber.tag("BubbleZoom").d("Tapped bubble index: $tappedBubbleIndex (expandedIndex=$currentExpandedBubbleIndex)")
 
                         if (tappedBubbleIndex != -1) {
-                            if (currentExpandedBubbleIndex == tappedBubbleIndex) {
-                                expandedBubbleIndex = -1
+                            expandedBubbleIndex = if (currentExpandedBubbleIndex == tappedBubbleIndex) {
+                                -1
                             } else {
-                                expandedBubbleIndex = tappedBubbleIndex
+                                tappedBubbleIndex
                             }
                             return@detectTapGestures
                         } else if (currentExpandedBubbleIndex != -1) {
@@ -4189,7 +4204,8 @@ internal fun PdfPageComposable(
                         isActivePage = isActivePage,
                         isDetectingBubbles = isDetectingBubbles,
                         detectedBubbles = detectedBubbles,
-                        expandedBubbleIndex = expandedBubbleIndex,
+                        animatingBubbleIndex = animatingBubbleIndex,
+                        bubbleExpansionProgress = bubbleExpansionProgress.value,
                         expandedBubbleRender = expandedBubbleRender
                     )
                 }
@@ -5003,7 +5019,8 @@ private fun PdfPageRenderer(
     isActivePage: Boolean = true,
     isDetectingBubbles: Boolean = false,
     detectedBubbles: List<SpeechBubble> = emptyList(),
-    expandedBubbleIndex: Int = -1,
+    animatingBubbleIndex: Int = -1,
+    bubbleExpansionProgress: Float = 0f,
     expandedBubbleRender: ExpandedBubbleRender? = null
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -5449,9 +5466,10 @@ private fun PdfPageRenderer(
                 Canvas(modifier = Modifier.fillMaxSize().zIndex(20f)) {
                     // Draw shadow-like hints for unexpanded bubbles
                     detectedBubbles.forEachIndexed { index, bubble ->
-                        if (index != expandedBubbleIndex) {
-                            val left = bubble.bounds.left + staticData.centeringOffsetX // Prefix with staticData
-                            val top = bubble.bounds.top + staticData.centeringOffsetY   // Prefix with staticData
+                        val hintAlpha = if (index == animatingBubbleIndex) 0.35f * (1f - bubbleExpansionProgress) else 0.35f
+                        if (hintAlpha > 0f) {
+                            val left = bubble.bounds.left + staticData.centeringOffsetX
+                            val top = bubble.bounds.top + staticData.centeringOffsetY
                             val width = bubble.bounds.width()
                             val height = bubble.bounds.height()
 
@@ -5460,12 +5478,12 @@ private fun PdfPageRenderer(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(left.toInt(), top.toInt()),
                                     dstSize = IntSize(width.toInt(), height.toInt()),
-                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.35f)),
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = hintAlpha)),
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             } else {
                                 drawRoundRect(
-                                    color = Color.Black.copy(alpha = 0.35f),
+                                    color = Color.Black.copy(alpha = hintAlpha),
                                     topLeft = Offset(left, top),
                                     size = Size(width, height),
                                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f)
@@ -5474,8 +5492,8 @@ private fun PdfPageRenderer(
                         }
                     }
 
-                    if (expandedBubbleIndex in detectedBubbles.indices && staticData.bitmap.item != null) {
-                        val bubble = detectedBubbles[expandedBubbleIndex]
+                    if (animatingBubbleIndex in detectedBubbles.indices && staticData.bitmap.item != null && bubbleExpansionProgress > 0f) {
+                        val bubble = detectedBubbles[animatingBubbleIndex]
                         val left = bubble.bounds.left + staticData.centeringOffsetX
                         val top = bubble.bounds.top + staticData.centeringOffsetY
                         val logicalWidth = bubble.bounds.width()
@@ -5483,11 +5501,13 @@ private fun PdfPageRenderer(
                         val pivotX = left + logicalWidth / 2f
                         val pivotY = top + logicalHeight / 2f
                         val bubbleRender = expandedBubbleRender
-                        val zoomFactor = bubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
+                        val targetZoomFactor = bubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
                             bubbleBounds = bubble.bounds,
                             viewportWidth = staticData.canvasWidth,
                             viewportHeight = staticData.canvasHeight
                         )
+                        val zoomFactor = androidx.compose.ui.util.lerp(1f, targetZoomFactor, bubbleExpansionProgress)
+                        val alpha = bubbleExpansionProgress
 
                         withTransform({
                             scale(zoomFactor, zoomFactor, Offset(pivotX, pivotY))
@@ -5512,12 +5532,12 @@ private fun PdfPageRenderer(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(left.toInt() + 12, top.toInt() + 12),
                                     dstSize = dstSize,
-                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f)),
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f * alpha)),
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             } else {
                                 drawRoundRect(
-                                    color = Color.Black.copy(alpha = 0.5f),
+                                    color = Color.Black.copy(alpha = 0.5f * alpha),
                                     topLeft = Offset(left + 12f, top + 12f),
                                     size = Size(logicalWidth, logicalHeight),
                                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f)
@@ -5567,7 +5587,7 @@ private fun PdfPageRenderer(
                                     )
                                 }
                                 drawRect(
-                                    color = Color.White.copy(alpha = 0.5f),
+                                    color = Color.White.copy(alpha = 0.5f * alpha),
                                     topLeft = Offset(left, top),
                                     size = Size(logicalWidth, logicalHeight),
                                     style = Stroke(width = 4f)
