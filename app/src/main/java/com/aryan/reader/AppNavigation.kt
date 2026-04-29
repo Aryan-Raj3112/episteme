@@ -59,6 +59,16 @@ object AppDestinations {
     const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
 }
 
+private fun NavHostController.navigateSingleTopTo(route: String) {
+    navigate(route) {
+        launchSingleTop = true
+        restoreState = true
+        popUpTo(graph.startDestinationId) {
+            saveState = true
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
@@ -77,25 +87,21 @@ fun AppNavigation(
                     FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
                         if (uiState.selectedPdfUri != null) {
                             if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
-                                navController.navigate(AppDestinations.PDF_VIEWER_ROUTE) {
-                                    popUpTo(AppDestinations.MAIN_ROUTE)
-                                }
+                                navController.navigateSingleTopTo(AppDestinations.PDF_VIEWER_ROUTE)
                             }
                         }
                     }
                     FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
                         if (uiState.selectedEpubBook != null) {
                             if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
-                                navController.navigate(AppDestinations.EPUB_READER_ROUTE) {
-                                    popUpTo(AppDestinations.MAIN_ROUTE)
-                                }
+                                navController.navigateSingleTopTo(AppDestinations.EPUB_READER_ROUTE)
                             }
                         }
                     }
                     null -> {
                         val currentRoute = navController.currentBackStackEntry?.destination?.route
                         if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
-                            navController.popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)
+                            navController.navigateSingleTopTo(AppDestinations.MAIN_ROUTE)
                         }
                     }
                 }

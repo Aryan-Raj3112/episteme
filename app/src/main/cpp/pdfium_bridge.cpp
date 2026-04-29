@@ -300,14 +300,18 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectCount(JNIEnv *env, jcl
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectType(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
-    if (!init_pdfium() || !get_object_func || !get_object_type_func) return 0;
+    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_type_func || pagePtr == 0 || index < 0) return 0;
+    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
+    if (index >= object_count) return 0;
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     return obj ? get_object_type_func(obj) : 0;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectBoundingBox(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jfloatArray outRect) {
-    if (!init_pdfium() || !get_object_func || !get_object_bounds_func) return JNI_FALSE;
+    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_bounds_func || pagePtr == 0 || index < 0 || outRect == nullptr) return JNI_FALSE;
+    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
+    if (index >= object_count) return JNI_FALSE;
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     if (!obj) return JNI_FALSE;
 
@@ -322,7 +326,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectBoundingBox(JNIEnv *en
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jintArray dimens) {
-    if (!init_pdfium() || !get_object_func || !get_image_bitmap_func || !bitmap_get_buffer_func) return nullptr;
+    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_type_func || !get_image_bitmap_func || !bitmap_get_buffer_func || pagePtr == 0 || index < 0 || dimens == nullptr) return nullptr;
+    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
+    if (index >= object_count) return nullptr;
 
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     if (!obj || get_object_type_func(obj) != 3) return nullptr; // 3 = FPDF_PAGEOBJ_IMAGE

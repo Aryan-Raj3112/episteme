@@ -577,6 +577,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private suspend fun prepareBookForImport(externalUri: Uri): ImportResult? {
+        val displayName = getFileNameFromUri(externalUri, appContext)
         var type = getFileTypeFromUri(externalUri, appContext)
 
         val hash = FileHasher.calculateSha256 {
@@ -593,7 +594,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return null
         }
 
-        val fileName = getFileNameFromUri(externalUri, appContext) ?: ""
+        val fileName = displayName ?: ""
         if (fileName.endsWith(".zip", ignoreCase = true) || type == FileType.CBZ) {
             val bundleResult = CalibreBundleExtractor.processZip(appContext, externalUri, hash, bookImporter, recentFilesRepository)
 
@@ -3624,14 +3625,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private fun getFileNameFromUri(uri: Uri, context: Context): String? {
         var fileName: String? = null
         if (uri.scheme == "content") {
-            val cursor: Cursor? = context.contentResolver.query(uri, null, null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex != -1) {
-                        fileName = it.getString(nameIndex)
+            try {
+                val cursor: Cursor? = context.contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) {
+                            fileName = it.getString(nameIndex)
+                        }
                     }
                 }
+            } catch (e: SecurityException) {
+                Timber.w(e, "Permission denied while resolving display name for URI: $uri")
+            } catch (e: IllegalArgumentException) {
+                Timber.w(e, "Provider rejected display-name query for URI: $uri")
+            } catch (e: RuntimeException) {
+                Timber.w(e, "Unexpected failure while resolving display name for URI: $uri")
             }
         }
         if (fileName == null) {
@@ -3729,31 +3738,48 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         viewModelScope.launch {
-            val importResult = prepareBookForImport(externalUri)
+            try {
+                val importResult = prepareBookForImport(externalUri)
 
-            if (importResult != null) {
-                val (internalUri, bookId, type) = importResult
-                if (isExternalIntent) {
-                    externalOpenedBookId = bookId
-                }
-                val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
-                openBook(
-                    importResult.internalUri, bookId = importResult.bookId, type = importResult.type,
-                    originalDisplayName = displayName, bundleResult = importResult.bundleResult
-                )
-            } else {
-                val hash = FileHasher.calculateSha256 {
-                    appContext.contentResolver.openInputStream(externalUri)
-                }
-                if (hash != null) {
-                    val existingItem = recentFilesRepository.getFileByBookId(hash)
-                    if (existingItem != null) {
-                        Timber.i("Re-selected an existing book. Opening it.")
-                        onRecentFileClicked(existingItem)
-                        _internalState.update { it.copy(isLoading = false) }
-                        return@launch
+                if (importResult != null) {
+                    val (internalUri, bookId, type) = importResult
+                    if (isExternalIntent) {
+                        externalOpenedBookId = bookId
+                    }
+                    val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
+                    openBook(
+                        internalUri, bookId = bookId, type = type,
+                        originalDisplayName = displayName, bundleResult = importResult.bundleResult
+                    )
+                } else {
+                    val hash = FileHasher.calculateSha256 {
+                        appContext.contentResolver.openInputStream(externalUri)
+                    }
+                    if (hash != null) {
+                        val existingItem = recentFilesRepository.getFileByBookId(hash)
+                        if (existingItem != null) {
+                            Timber.i("Re-selected an existing book. Opening it.")
+                            onRecentFileClicked(existingItem)
+                            _internalState.update { it.copy(isLoading = false) }
+                            return@launch
+                        }
+                    }
+                    _internalState.update {
+                        it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
                     }
                 }
+            } catch (e: SecurityException) {
+                Timber.e(e, "Permission denied while importing URI: $externalUri")
+                _internalState.update {
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
+                }
+            } catch (e: IllegalArgumentException) {
+                Timber.e(e, "Provider rejected URI import for: $externalUri")
+                _internalState.update {
+                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
+                }
+            } catch (e: RuntimeException) {
+                Timber.e(e, "Unexpected import failure for URI: $externalUri")
                 _internalState.update {
                     it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
                 }
@@ -3836,15 +3862,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             } else {
                 persistReaderSession(bookId, type)
-                val epubBook = withContext(Dispatchers.IO) {
-                    appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
-                        singleFileImporter.importSingleFile(
-                            inputStream, type, item.displayName, bookId
-                        )
-                    }
-                }
-
-                if (epubBook != null) {
+                try {
+                    val epubBook = restoreEpubReaderBook(type, bookId, item.displayName, uri)
                     _internalState.update {
                         it.copy(
                             selectedPdfUri = null,
@@ -3877,11 +3896,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.tag("FileSwitch").d("EPUB state updated, emitting navigation event")
                     _navigationEvent.send(NavigationEvent("epub_reader", bookId, uri))
                     stateUpdateDeferred.complete(true)
-                } else {
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to switch seamlessly to $type book: $bookId")
                     _internalState.update {
                         it.copy(
                             isLoading = false,
-                            errorMessage = appContext.getString(R.string.error_load_generated_text_view),
+                            errorMessage = appContext.getString(R.string.error_load_file, e.message),
                             selectedFileType = null
                         )
                     }
@@ -4273,7 +4293,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun getFileTypeFromUri(uri: Uri, context: Context): FileType? {
-        val mimeType = context.contentResolver.getType(uri)
+        val mimeType = try {
+            context.contentResolver.getType(uri)
+        } catch (e: SecurityException) {
+            Timber.w(e, "Permission denied while resolving MIME type for URI: $uri")
+            null
+        } catch (e: IllegalArgumentException) {
+            Timber.w(e, "Provider rejected MIME type lookup for URI: $uri")
+            null
+        } catch (e: RuntimeException) {
+            Timber.w(e, "Unexpected failure while resolving MIME type for URI: $uri")
+            null
+        }
         val fileName = getFileNameFromUri(uri, context)
 
         Timber.d("Determining type for: $uri | Mime: $mimeType | Name: $fileName")

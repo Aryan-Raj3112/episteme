@@ -591,14 +591,14 @@ fun PdfBottomBar(
                     }
                 }
 
-                if (BuildConfig.DEBUG) {
+                if (BuildConfig.FLAVOR != "oss") {
                     TooltipIconButton(
                         text = if (isBubbleZoomModeActive) "Exit Smart Zoom" else "Smart Comic Zoom",
                         description = "Toggle Smart Comic Zoom",
                         onClick = onToggleBubbleZoom
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Chat,
+                            painterResource(R.drawable.comic_bubble),
                             contentDescription = "Smart Comic Zoom",
                             tint = if (isBubbleZoomModeActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )

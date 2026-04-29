@@ -41,10 +41,16 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.UUID
+import java.util.zip.ZipFile
 
 class SingleFileImporter(private val context: Context) {
 
     private val jsonSerializer = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    companion object {
+        private const val MAX_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
+        private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
+    }
 
     suspend fun importSingleFile(
         inputStream: InputStream,
@@ -104,14 +110,19 @@ class SingleFileImporter(private val context: Context) {
                             var inQuotes = false
 
                             for (char in line) {
-                                if (char == '\"') {
-                                    inQuotes = !inQuotes
-                                } else if (char == delimiter && !inQuotes) {
-                                    val escaped = current.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                                    writer.write("<td>$escaped</td>")
-                                    current.clear()
-                                } else {
-                                    current.append(char)
+                                when (char) {
+                                    '\"' -> {
+                                        inQuotes = !inQuotes
+                                    }
+                                    delimiter if !inQuotes -> {
+                                        val escaped =
+                                            current.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                                        writer.write("<td>$escaped</td>")
+                                        current.clear()
+                                    }
+                                    else -> {
+                                        current.append(char)
+                                    }
                                 }
                             }
                             val escapedFinal = current.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -663,15 +674,29 @@ class SingleFileImporter(private val context: Context) {
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")
 
-        val htmlContent = inputStream.use { stream ->
-            val converter = DocumentConverter()
-            converter.convertToHtml(stream).value ?: ""
-        }
-
-        Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
-
+        val sourceDocxFile = File(context.cacheDir, "temp_docx_source_${UUID.randomUUID()}.docx")
         val tempFile = File(context.cacheDir, "temp_docx_${UUID.randomUUID()}.html")
         try {
+            inputStream.use { stream ->
+                FileOutputStream(sourceDocxFile).use { output ->
+                    stream.copyTo(output)
+                }
+            }
+
+            validateDocxForImport(sourceDocxFile, originalBookNameHint)
+
+            val htmlContent = sourceDocxFile.inputStream().use { stream ->
+                try {
+                    val converter = DocumentConverter()
+                    converter.convertToHtml(stream).value ?: ""
+                } catch (oom: OutOfMemoryError) {
+                    Timber.e(oom, "DOCX conversion ran out of memory for $originalBookNameHint")
+                    throw IllegalStateException("This DOCX file is too large to open safely on this device.")
+                }
+            }
+
+            Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
+
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
                 val title = originalBookNameHint.substringBeforeLast(".")
                 writer.write("<!DOCTYPE html>\n<html>\n<head>\n<title>$title</title>\n</head>\n<body>\n")
@@ -683,8 +708,37 @@ class SingleFileImporter(private val context: Context) {
                 return@withContext parseHtml(tempStream, originalBookNameHint, bookId, parseContent)
             }
         } finally {
+            if (sourceDocxFile.exists()) {
+                sourceDocxFile.delete()
+            }
             if (tempFile.exists()) {
                 tempFile.delete()
+            }
+        }
+    }
+
+    private fun validateDocxForImport(sourceDocxFile: File, originalBookNameHint: String) {
+        val archiveBytes = sourceDocxFile.length()
+        if (archiveBytes > MAX_DOCX_ARCHIVE_BYTES) {
+            throw IllegalStateException("This DOCX file is too large to open safely on this device.")
+        }
+
+        ZipFile(sourceDocxFile).use { zip ->
+            var totalXmlBytes = 0L
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                if (entry.name.endsWith(".xml", ignoreCase = true)) {
+                    val entrySize = entry.size
+                    if (entrySize > 0) {
+                        totalXmlBytes += entrySize
+                    }
+                    if (totalXmlBytes > MAX_DOCX_XML_BYTES) {
+                        Timber.w("DOCX XML payload too large for import: file=$originalBookNameHint xmlBytes=$totalXmlBytes")
+                        throw IllegalStateException("This DOCX file is too large to open safely on this device.")
+                    }
+                }
             }
         }
     }

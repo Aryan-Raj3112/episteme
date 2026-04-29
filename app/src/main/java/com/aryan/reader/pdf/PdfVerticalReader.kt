@@ -1952,6 +1952,7 @@ internal fun PdfVerticalReader(
             animationSpec = tween(durationMillis = 300),
             label = "scrollbarAlpha"
         )
+        val safeCurrentPage = if (totalPages > 0) state.currentPage.coerceIn(0, totalPages - 1) else 0
 
         val samsungBlue = Color(0xFF4285F4)
         val samsungBlueDark = Color(0xFF1976D2)
@@ -2011,7 +2012,7 @@ internal fun PdfVerticalReader(
                 .alpha(scrollbarAlpha)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AnimatedVisibility(
-                        visible = isDraggingScrollbar,
+                        visible = isDraggingScrollbar && totalPages > 0,
                         enter = fadeIn() + androidx.compose.animation.slideInHorizontally {
                             it / 2
                         },
@@ -2025,7 +2026,7 @@ internal fun PdfVerticalReader(
                             modifier = Modifier.padding(end = 12.dp)
                         ) {
                             Text(
-                                text = "${state.currentPage + 1}/${totalPages}",
+                                text = "${safeCurrentPage + 1}/$totalPages",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontSize = 16.sp, fontWeight = FontWeight.Bold
                                 ),
