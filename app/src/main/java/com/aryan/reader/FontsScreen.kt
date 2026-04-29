@@ -17,6 +17,9 @@
  *
  * mail: epistemereader@gmail.com
  */
+// FontsScreen.kt
+@file:Suppress("KotlinConstantConditions")
+
 package com.aryan.reader
 
 import androidx.compose.foundation.background
