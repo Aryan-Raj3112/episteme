@@ -4326,15 +4326,10 @@ private fun PdfBitmapLayer(
 
                                 if (excludeImages && colorFilter != null && imageRects.isNotEmpty()) {
                                     imageRects.forEach { imgRect ->
-                                        val scaledImgRectLeft = (imgRect.left * effectiveScale).roundToInt()
-                                        val scaledImgRectTop = (imgRect.top * effectiveScale).roundToInt()
-                                        val scaledImgRectRight = (imgRect.right * effectiveScale).roundToInt()
-                                        val scaledImgRectBottom = (imgRect.bottom * effectiveScale).roundToInt()
-
-                                        val intersectLeft = max(scaledImgRectLeft, tile.renderRect.left)
-                                        val intersectTop = max(scaledImgRectTop, tile.renderRect.top)
-                                        val intersectRight = min(scaledImgRectRight, tile.renderRect.right)
-                                        val intersectBottom = min(scaledImgRectBottom, tile.renderRect.bottom)
+                                        val intersectLeft = max(imgRect.left, tile.renderRect.left)
+                                        val intersectTop = max(imgRect.top, tile.renderRect.top)
+                                        val intersectRight = min(imgRect.right, tile.renderRect.right)
+                                        val intersectBottom = min(imgRect.bottom, tile.renderRect.bottom)
 
                                         val iw = intersectRight - intersectLeft
                                         val ih = intersectBottom - intersectTop
@@ -5500,14 +5495,12 @@ private fun PdfPageRenderer(
                         val logicalHeight = bubble.bounds.height()
                         val pivotX = left + logicalWidth / 2f
                         val pivotY = top + logicalHeight / 2f
-                        val bubbleRender = expandedBubbleRender
-                        val targetZoomFactor = bubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
+                        val targetZoomFactor = expandedBubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
                             bubbleBounds = bubble.bounds,
                             viewportWidth = staticData.canvasWidth,
                             viewportHeight = staticData.canvasHeight
                         )
                         val zoomFactor = androidx.compose.ui.util.lerp(1f, targetZoomFactor, bubbleExpansionProgress)
-                        val alpha = bubbleExpansionProgress
 
                         withTransform({
                             scale(zoomFactor, zoomFactor, Offset(pivotX, pivotY))
@@ -5532,12 +5525,12 @@ private fun PdfPageRenderer(
                                     image = bubble.maskBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(left.toInt() + 12, top.toInt() + 12),
                                     dstSize = dstSize,
-                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f * alpha)),
+                                    colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.5f * bubbleExpansionProgress)),
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
                                 )
                             } else {
                                 drawRoundRect(
-                                    color = Color.Black.copy(alpha = 0.5f * alpha),
+                                    color = Color.Black.copy(alpha = 0.5f * bubbleExpansionProgress),
                                     topLeft = Offset(left + 12f, top + 12f),
                                     size = Size(logicalWidth, logicalHeight),
                                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f)
@@ -5553,10 +5546,12 @@ private fun PdfPageRenderer(
                                 )
                                 drawContext.canvas.saveLayer(rect, androidx.compose.ui.graphics.Paint())
                                 drawImage(
-                                    image = (bubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
-                                    srcOffset = if (bubbleRender != null) IntOffset.Zero else srcOffset,
-                                    srcSize = if (bubbleRender != null) {
-                                        IntSize(bubbleRender.bitmap.width, bubbleRender.bitmap.height)
+                                    image = (expandedBubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
+                                    srcOffset = if (expandedBubbleRender != null) IntOffset.Zero else srcOffset,
+                                    srcSize = if (expandedBubbleRender != null) {
+                                        IntSize(
+                                            expandedBubbleRender.bitmap.width,
+                                            expandedBubbleRender.bitmap.height)
                                     } else {
                                         srcSize
                                     },
@@ -5575,10 +5570,12 @@ private fun PdfPageRenderer(
                             } else {
                                 clipRect(left, top, left + logicalWidth, top + logicalHeight) {
                                     drawImage(
-                                        image = (bubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
-                                        srcOffset = if (bubbleRender != null) IntOffset.Zero else srcOffset,
-                                        srcSize = if (bubbleRender != null) {
-                                            IntSize(bubbleRender.bitmap.width, bubbleRender.bitmap.height)
+                                        image = (expandedBubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
+                                        srcOffset = if (expandedBubbleRender != null) IntOffset.Zero else srcOffset,
+                                        srcSize = if (expandedBubbleRender != null) {
+                                            IntSize(
+                                                expandedBubbleRender.bitmap.width,
+                                                expandedBubbleRender.bitmap.height)
                                         } else {
                                             srcSize
                                         },
@@ -5587,7 +5584,7 @@ private fun PdfPageRenderer(
                                     )
                                 }
                                 drawRect(
-                                    color = Color.White.copy(alpha = 0.5f * alpha),
+                                    color = Color.White.copy(alpha = 0.5f * bubbleExpansionProgress),
                                     topLeft = Offset(left, top),
                                     size = Size(logicalWidth, logicalHeight),
                                     style = Stroke(width = 4f)
