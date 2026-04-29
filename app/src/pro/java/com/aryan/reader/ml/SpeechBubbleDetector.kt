@@ -1,35 +1,27 @@
 package com.aryan.reader.ml
 
-import android.graphics.Bitmap
-import android.graphics.RectF
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.RectF
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
 import timber.log.Timber
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Collections
 import kotlin.math.min
-import androidx.core.graphics.scale
-import androidx.core.graphics.createBitmap
-
-data class SpeechBubble(
-    val bounds: RectF,
-    val maskBitmap: Bitmap? = null
-)
-
-interface ISpeechBubbleDetector : AutoCloseable {
-    fun detectBubbles(bitmap: Bitmap, confidenceThreshold: Float = 0.1f): List<SpeechBubble>
-}
 
 class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
     private var env: OrtEnvironment? = null
     private var session: OrtSession? = null
     private val inputSize = 504
 
-    private val byteBuffer = ByteBuffer.allocateDirect(3 * inputSize * inputSize * 4).order(ByteOrder.nativeOrder())
+    private val byteBuffer = ByteBuffer.allocateDirect(3 * inputSize * inputSize * 4).order(
+        ByteOrder.nativeOrder())
     private val floatBuffer = byteBuffer.asFloatBuffer()
     private val pixels = IntArray(inputSize * inputSize)
 
@@ -45,7 +37,7 @@ class SpeechBubbleDetector(modelFile: File) : ISpeechBubbleDetector {
                 // 1. Thread spinning keeps CPU threads active between operations (reduces latency)
                 try {
                     addConfigEntry("session.intra_op.allow_spinning", "1")
-                } catch (t: Throwable) {
+                } catch (_: Throwable) {
                     Timber.w("Could not set intra_op.allow_spinning config")
                 }
 
