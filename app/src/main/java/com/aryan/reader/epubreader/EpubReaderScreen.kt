@@ -905,7 +905,7 @@ fun EpubReaderHost(
     })
     var isPagerInitialized by remember(initialLocator) { mutableStateOf(initialLocator == null) }
 
-    val ttsController = rememberTtsController()
+    val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsState()
 
     val totalBookLengthChars = remember(chapters) {
