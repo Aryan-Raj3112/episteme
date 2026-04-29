@@ -593,6 +593,8 @@ fun PdfViewerScreen(
     var showHighlightColorPicker by remember { mutableStateOf(false) }
     var highlightColorPickerInitialSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
     var isBubbleZoomModeActive by remember { mutableStateOf(false) }
+    var showBubbleZoomDownloadDialog by remember { mutableStateOf(false) }
+    val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsState()
 
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
@@ -4386,6 +4388,55 @@ fun PdfViewerScreen(
                     }
                 }
 
+                AnimatedVisibility(
+                    visible = bubbleZoomDownloadProgress != null,
+                    enter = slideInVertically() + fadeIn(),
+                    exit = slideOutVertically() + fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        // shift down slightly if the OCR indicator is also showing
+                        .padding(top = topOverlayInset + if (isOcrModelDownloading) 64.dp else 0.dp)
+                        .padding(8.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = RoundedCornerShape(8.dp),
+                        shadowElevation = 4.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            val progress = bubbleZoomDownloadProgress ?: 0f
+                            if (progress > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    trackColor = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Downloading Bubble Zoom model... ${(progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+                }
+
                 // --- Slider UI Overlay ---
                 AnimatedVisibility(
                     visible = isPageSliderVisible,
@@ -5082,7 +5133,13 @@ fun PdfViewerScreen(
                     },
                     isBubbleZoomModeActive = isBubbleZoomModeActive,
                     onToggleBubbleZoom = {
-                        isBubbleZoomModeActive = !isBubbleZoomModeActive
+                        if (isOss) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("Bubble Zoom is only available in Playstore version of Episteme") }
+                        } else if (!isBubbleZoomModeActive && !viewModel.isSpeechBubbleModelAvailable(context)) {
+                            showBubbleZoomDownloadDialog = true
+                        } else {
+                            isBubbleZoomModeActive = !isBubbleZoomModeActive
+                        }
                     }
                 )
 
@@ -5850,6 +5907,30 @@ fun PdfViewerScreen(
                         isError = isPasswordError,
                         onDismiss = { onNavigateBack() },
                         onConfirm = { password -> documentPassword = password })
+                }
+
+                if (showBubbleZoomDownloadDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showBubbleZoomDownloadDialog = false },
+                        icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                        title = { Text("Download Bubble Zoom Model") },
+                        text = {
+                            Text("To use the Bubble Zoom feature, an AI model needs to be downloaded (~134 MB). Do you want to download it now?")
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showBubbleZoomDownloadDialog = false
+                                viewModel.downloadSpeechBubbleModel(context)
+                            }) {
+                                Text("Download")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showBubbleZoomDownloadDialog = false }) {
+                                Text(stringResource(R.string.action_cancel))
+                            }
+                        }
+                    )
                 }
 
                 if (showNewTabSheet) {

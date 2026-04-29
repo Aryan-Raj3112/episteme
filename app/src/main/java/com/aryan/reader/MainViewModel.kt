@@ -405,14 +405,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun getOrInitSpeechBubbleDetector(context: Context): ISpeechBubbleDetector? {
-        if (speechBubbleDetector == null && BuildConfig.DEBUG) {
+        if (speechBubbleDetector == null && BuildConfig.FLAVOR != "oss") {
             val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
             if (modelFile.exists()) {
                 try {
                     val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
                     speechBubbleDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as ISpeechBubbleDetector
                 } catch (t: Throwable) {
-                    Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection")
+                    Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection. Deleting corrupted model.")
+                    modelFile.delete()
                 }
             } else {
                 Timber.e("Model file manga_speech_bubble_v3.ort not found in external files dir")
@@ -551,6 +552,94 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } catch (t: Throwable) {
                 Timber.e(t, "Fatal error during bubble test")
+            }
+        }
+    }
+
+    val speechBubbleModelDownloadProgress = MutableStateFlow<Float?>(null)
+
+    fun isSpeechBubbleModelAvailable(context: Context): Boolean {
+        return File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort").exists()
+    }
+
+    fun downloadSpeechBubbleModel(context: Context) {
+        if (speechBubbleModelDownloadProgress.value != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            speechBubbleModelDownloadProgress.value = 0f
+            var success = false
+            val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
+            val tempFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort.tmp")
+            val urlString = "https://huggingface.co/1m4ryan/speech-bubble-detector/resolve/main/manga_speech_bubble_v3.ort"
+
+            var downloadedBytes = if (tempFile.exists()) tempFile.length() else 0L
+            val maxRetries = 3
+            var retryCount = 0
+
+            while (retryCount < maxRetries && !success) {
+                try {
+                    val url = java.net.URL(urlString)
+                    val connection = url.openConnection() as java.net.HttpURLConnection
+
+                    if (downloadedBytes > 0) {
+                        connection.setRequestProperty("Range", "bytes=$downloadedBytes-")
+                    }
+
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 15000
+                    connection.connect()
+
+                    val responseCode = connection.responseCode
+                    val isPartial = responseCode == java.net.HttpURLConnection.HTTP_PARTIAL
+
+                    if (responseCode == java.net.HttpURLConnection.HTTP_OK && downloadedBytes > 0) {
+                        downloadedBytes = 0L
+                    } else if (responseCode != java.net.HttpURLConnection.HTTP_OK && !isPartial) {
+                        throw Exception("HTTP error code: $responseCode")
+                    }
+
+                    val contentLength = connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+                    val totalFileLength = if (contentLength != -1L) downloadedBytes + contentLength else -1L
+
+                    val input = connection.inputStream
+                    val output = java.io.FileOutputStream(tempFile, isPartial)
+                    val data = ByteArray(16 * 1024)
+                    var count: Int
+
+                    while (input.read(data).also { count = it } != -1) {
+                        output.write(data, 0, count)
+                        downloadedBytes += count
+                        if (totalFileLength > 0) {
+                            speechBubbleModelDownloadProgress.value = (downloadedBytes.toFloat() / totalFileLength).coerceIn(0f, 1f)
+                        }
+                    }
+                    output.flush()
+                    output.close()
+                    input.close()
+
+                    if (tempFile.exists() && tempFile.length() > 0) {
+                        if (modelFile.exists()) modelFile.delete()
+                        if (tempFile.renameTo(modelFile)) {
+                            success = true
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to download Bubble Zoom model, attempt ${retryCount + 1}")
+                    retryCount++
+                    if (retryCount >= maxRetries) break
+                    delay(2000)
+                    downloadedBytes = if (tempFile.exists()) tempFile.length() else 0L
+                }
+            }
+
+            speechBubbleModelDownloadProgress.value = null
+            withContext(Dispatchers.Main) {
+                if (success) {
+                    showBanner("Bubble Zoom model downloaded successfully!")
+                } else {
+                    showBanner("Download failed. Please keep the app open during download.", isError = true)
+                }
             }
         }
     }
@@ -5669,21 +5758,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ): List<SpeechBubble> {
         val key = SpeechBubbleCacheKey(documentId = documentId, pageIndex = pageIndex)
 
-        val cachedBeforeLock = speechBubbleCache.get(key)
+        val cachedBeforeLock = speechBubbleCache[key]
         if (cachedBeforeLock != null) {
             return scaleCachedSpeechBubbles(cachedBeforeLock, bitmap.width, bitmap.height)
         }
 
         val detectionJob: Deferred<List<CachedSpeechBubble>>
         speechBubbleCacheMutex.withLock {
-            val cachedInsideLock = speechBubbleCache.get(key)
+            val cachedInsideLock = speechBubbleCache[key]
             if (cachedInsideLock != null) {
                 detectionJob = CompletableDeferred(cachedInsideLock)
             } else {
                 detectionJob = speechBubbleDetectionJobs[key] ?: viewModelScope.async {
                     val detected = runSpeechBubbleDetection(bitmap, context)
                     val normalized = normalizeSpeechBubbles(detected, bitmap.width, bitmap.height)
-                    speechBubbleCache.put(key, normalized)
+                    speechBubbleCache[key] = normalized
                     normalized
                 }.also { job ->
                     speechBubbleDetectionJobs[key] = job
