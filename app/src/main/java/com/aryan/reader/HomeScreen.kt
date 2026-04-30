@@ -156,6 +156,10 @@ internal fun Context.findActivity(): Activity? = when (this) {
 fun HomeScreen(
     viewModel: MainViewModel, windowSizeClass: WindowSizeClass, navController: NavHostController
 ) {
+    val compStart = remember { System.currentTimeMillis() }
+    LaunchedEffect(Unit) {
+        Timber.tag("AppPerfDebug").d("HomeComp: HomeScreen initial composition completed in ${System.currentTimeMillis() - compStart}ms")
+    }
     val context = LocalContext.current
     val customTabUriHandler = remember { CustomTabUriHandler(context) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }

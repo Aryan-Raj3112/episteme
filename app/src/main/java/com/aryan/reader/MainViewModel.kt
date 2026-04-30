@@ -38,6 +38,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import androidx.annotation.OptIn
 import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
@@ -48,6 +49,7 @@ import androidx.credentials.exceptions.NoCredentialException
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.util.UnstableApi
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -347,6 +349,7 @@ data class ReaderScreenState(
     val showTagSelectionDialogFor: Set<String> = emptySet(),
 )
 
+@UnstableApi
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext: Context = application.applicationContext
     private val authRepository = AuthRepository(appContext)
@@ -611,7 +614,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val totalFileLength = if (contentLength != -1L) downloadedBytes + contentLength else -1L
 
                     val input = connection.inputStream
-                    val output = java.io.FileOutputStream(tempFile, isPartial)
+                    val output = FileOutputStream(tempFile, isPartial)
                     val data = ByteArray(16 * 1024)
                     var count: Int
 
@@ -4274,6 +4277,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false, bundleResult: CalibreBundleResult? = null
     ) {
         val openBookStartTime = System.currentTimeMillis()
+        Timber.tag("AppPerfDebug").d("FileOpenProcess: openBook started for $bookId at $openBookStartTime")
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
 
@@ -4357,6 +4361,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             isLoading = false
                         )
                     }
+                    Timber.tag("AppPerfDebug").d("FileOpenReady: PDF/Archive state updated in ${System.currentTimeMillis() - openBookStartTime}ms")
                     persistReaderSession(bookId, type)
                     addFileToRecent(
                         uri,
@@ -4405,6 +4410,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             initialHighlightsJson = recentItem?.highlightsJson,
                         )
                     }
+                    Timber.tag("AppPerfDebug").d("FileOpenReady: EPUB/Text state updated in ${System.currentTimeMillis() - openBookStartTime}ms")
                     persistReaderSession(bookId, type)
 
                     if (!suppressNavigation) {
@@ -4945,6 +4951,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun onRecentFileClicked(item: RecentFileItem) {
+        Timber.tag("AppPerfDebug").d("FileOpenStart: User clicked book ${item.bookId} (${item.displayName})")
         val currentSelection = _internalState.value.contextualActionItems
         if (currentSelection.isNotEmpty()) {
             Timber.d("Toggling selection for: ${item.displayName}")

@@ -988,7 +988,7 @@ internal fun PdfVerticalReader(
                 }
 
                 val buttons = currentEvent.buttons
-                Timber.tag("StylusEraserDiagnostic").d(
+                Timber.tag("StylusDebug").d(
                     "VerticalReader | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
                 )
 

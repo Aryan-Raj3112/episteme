@@ -22,6 +22,7 @@ package com.aryan.reader
 
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -42,8 +43,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 sealed class BottomBarScreen(val route: String, val stringResId: Int, val iconResId: Int) {
     object Home : BottomBarScreen("home", R.string.nav_home, R.drawable.home)
@@ -55,6 +58,7 @@ private val bottomBarItems = listOf(
     BottomBarScreen.Library,
 )
 
+@OptIn(UnstableApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
@@ -100,7 +104,14 @@ fun MainScreen(
                                 icon = { Icon(painterResource(id = screen.iconResId), contentDescription = stringResource(screen.stringResId)) },
                                 label = { Text(stringResource(screen.stringResId)) },
                                 selected = pagerState.currentPage == index,
-                                onClick = { scope.launch { pagerState.animateScrollToPage(index) } }
+                                onClick = {
+                                    Timber.tag("AppPerfDebug").d("NavTabClick: BottomBar clicked for page $index (Route: ${screen.route})")
+                                    scope.launch {
+                                        val animStart = System.currentTimeMillis()
+                                        pagerState.animateScrollToPage(index)
+                                        Timber.tag("AppPerfDebug").d("NavTabTransition: Pager settled on $index in ${System.currentTimeMillis() - animStart}ms")
+                                    }
+                                }
                             )
                         }
                     }

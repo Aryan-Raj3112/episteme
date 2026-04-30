@@ -3329,7 +3329,33 @@ fun PdfViewerScreen(
                 )
             }
         ) { _ ->
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                event.changes.forEach { change ->
+                                    if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus ||
+                                        change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                        val buttons = event.buttons
+                                        Timber.tag("StylusDebug").d(
+                                            "GlobalPointer | type=${change.type}, pressed=${change.pressed}, " +
+                                                    "primary=${buttons.isPrimaryPressed}, secondary=${buttons.isSecondaryPressed}, " +
+                                                    "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackButtonPressed}, " +
+                                                    "forward=${buttons.isForwardButtonPressed}"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .androidx.compose.ui.input.key.onPreviewKeyEvent { keyEvent ->
+                        Timber.tag("StylusDebug").d("GlobalKey | key=${keyEvent.key}, type=${keyEvent.type}")
+                        false
+                    }
+            ) {
                 IntSize(constraints.maxWidth, constraints.maxHeight)
                 val boxConstraints = constraints
                 val boxMaxWidthFloat = boxConstraints.maxWidth.toFloat()

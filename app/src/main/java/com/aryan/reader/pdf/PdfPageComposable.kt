@@ -3256,7 +3256,7 @@ internal fun PdfPageComposable(
                         }
 
                         val buttons = currentEvent.buttons
-                        Timber.tag("StylusEraserDiagnostic").d(
+                        Timber.tag("StylusDebug").d(
                             "Page $pageIndex | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
                         )
 

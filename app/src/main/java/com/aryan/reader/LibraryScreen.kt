@@ -159,6 +159,10 @@ private fun getBookCountString(count: Int): String {
 fun LibraryScreen(
     viewModel: MainViewModel,
 ) {
+    val compStart = remember { System.currentTimeMillis() }
+    LaunchedEffect(Unit) {
+        Timber.tag("AppPerfDebug").d("LibComp: LibraryScreen initial composition completed in ${System.currentTimeMillis() - compStart}ms")
+    }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedItems = uiState.contextualActionItems
