@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,6 +25,9 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.NavigateBefore
+import androidx.compose.material.icons.filled.NavigateNext
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AssistChip
@@ -41,6 +45,7 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -60,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.aryan.reader.shared.BookItem
@@ -72,9 +78,14 @@ import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.sampleLibraryState
+import com.aryan.reader.shared.reader.PaginatedReaderState
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SampleReaderBooks
+import com.aryan.reader.shared.reader.SimplePaginator
 import kotlinx.coroutines.launch
 import java.awt.FileDialog
 import java.awt.Frame
+import java.io.File
 
 fun main() = application {
     Window(
@@ -85,16 +96,46 @@ fun main() = application {
     }
 }
 
-private enum class DesktopTab { HOME, LIBRARY, SHELVES }
+private enum class DesktopTab { HOME, LIBRARY, SHELVES, READER }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EpistemeDesktopApp() {
     val projector = remember { LibraryProjector() }
+    val paginator = remember { SimplePaginator() }
     var state by remember { mutableStateOf(sampleLibraryState()) }
     var selectedTab by remember { mutableStateOf(DesktopTab.HOME) }
+    var readerState by remember {
+        val book = SampleReaderBooks.desktopWelcomeBook()
+        mutableStateOf(PaginatedReaderState(book = book, pages = paginator.paginate(book, ReaderSettings())))
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    fun openReader(book: BookItem) {
+        if (book.type != FileType.EPUB) {
+            state = state.copy(message = "${book.type.name} reader support comes later. EPUB is the first desktop reader target.")
+            return
+        }
+
+        val loadedBook = runCatching {
+            val path = book.path
+            if (path.isNullOrBlank()) {
+                SampleReaderBooks.desktopWelcomeBook()
+            } else {
+                DesktopEpubLoader.load(File(path))
+            }
+        }.getOrElse { error ->
+            state = state.copy(message = "Could not open EPUB: ${error.message ?: "unknown error"}")
+            return
+        }
+
+        readerState = PaginatedReaderState(
+            book = loadedBook,
+            pages = paginator.paginate(loadedBook, readerState.settings)
+        )
+        selectedTab = DesktopTab.READER
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let { message ->
@@ -137,6 +178,12 @@ private fun EpistemeDesktopApp() {
                         icon = { Icon(Icons.Default.Folder, contentDescription = null) },
                         label = { Text("Shelves") }
                     )
+                    NavigationRailItem(
+                        selected = selectedTab == DesktopTab.READER,
+                        onClick = { selectedTab = DesktopTab.READER },
+                        icon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                        label = { Text("Reader") }
+                    )
                     Spacer(Modifier.weight(1f))
                     IconButton(
                         onClick = {
@@ -161,9 +208,7 @@ private fun EpistemeDesktopApp() {
                         DesktopTab.HOME -> HomeScreen(
                             state = state,
                             projector = projector,
-                            onRead = {
-                                state = state.copy(message = "Reader screens are intentionally skipped in this desktop shell.")
-                            },
+                            onRead = ::openReader,
                             onSelect = { id -> state = state.toggleSelection(id) }
                         )
 
@@ -171,18 +216,20 @@ private fun EpistemeDesktopApp() {
                             state = state,
                             projector = projector,
                             onStateChange = { state = it },
-                            onRead = {
-                                state = state.copy(message = "Reader screens are intentionally skipped in this desktop shell.")
-                            }
+                            onRead = ::openReader
                         )
 
                         DesktopTab.SHELVES -> ShelvesScreen(
                             shelves = projector.library(state).shelves,
-                            onRead = {
-                                state = state.copy(message = "Reader screens are intentionally skipped in this desktop shell.")
-                            },
+                            onRead = ::openReader,
                             onSelect = { id -> state = state.toggleSelection(id) },
                             selectedBookIds = state.selectedBookIds
+                        )
+
+                        DesktopTab.READER -> ReaderScreen(
+                            readerState = readerState,
+                            paginator = paginator,
+                            onReaderStateChange = { readerState = it }
                         )
                     }
                 }
@@ -311,6 +358,100 @@ private fun ShelvesScreen(
 }
 
 @Composable
+private fun ReaderScreen(
+    readerState: PaginatedReaderState,
+    paginator: SimplePaginator,
+    onReaderStateChange: (PaginatedReaderState) -> Unit
+) {
+    val page = readerState.currentPage
+    val settings = readerState.settings
+    val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+    val foreground = if (settings.darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
+
+    ScreenScaffold(
+        title = readerState.book.title,
+        subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
+        trailing = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${readerState.progress.toInt()}%")
+                TextButton(
+                    onClick = {
+                        onReaderStateChange(readerState.copy(settings = settings.copy(darkMode = !settings.darkMode)))
+                    }
+                ) {
+                    Text(if (settings.darkMode) "Light" else "Dark")
+                }
+            }
+        }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Font ${settings.fontSize}")
+                Slider(
+                    value = settings.fontSize.toFloat(),
+                    onValueChange = { value ->
+                        onReaderStateChange(paginator.repaginate(readerState, settings.copy(fontSize = value.toInt())))
+                    },
+                    valueRange = 14f..28f,
+                    modifier = Modifier.width(180.dp)
+                )
+                Text("Margin ${settings.margin}")
+                Slider(
+                    value = settings.margin.toFloat(),
+                    onValueChange = { value ->
+                        onReaderStateChange(paginator.repaginate(readerState, settings.copy(margin = value.toInt())))
+                    },
+                    valueRange = 24f..96f,
+                    modifier = Modifier.width(180.dp)
+                )
+            }
+
+            Surface(
+                color = background,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier.padding(PaddingValues(settings.margin.dp)),
+                    contentAlignment = Alignment.TopStart
+                ) {
+                    Text(
+                        text = page?.text.orEmpty(),
+                        color = foreground,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = settings.fontSize.sp,
+                            lineHeight = (settings.fontSize * settings.lineSpacing).sp
+                        )
+                    )
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    enabled = readerState.canGoPrevious,
+                    onClick = { onReaderStateChange(readerState.copy(currentPageIndex = readerState.currentPageIndex - 1)) }
+                ) {
+                    Icon(Icons.Default.NavigateBefore, contentDescription = null)
+                    Text("Previous")
+                }
+                Spacer(Modifier.weight(1f))
+                Text("Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}")
+                Spacer(Modifier.weight(1f))
+                Button(
+                    enabled = readerState.canGoNext,
+                    onClick = { onReaderStateChange(readerState.copy(currentPageIndex = readerState.currentPageIndex + 1)) }
+                ) {
+                    Text("Next")
+                    Icon(Icons.Default.NavigateNext, contentDescription = null)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ScreenScaffold(
     title: String,
     subtitle: String,
@@ -387,7 +528,7 @@ private fun BookRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(book.title ?: book.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    listOfNotNull(book.author, book.type.name, book.progressPercentage?.let { "${it.toInt()}%" }).joinToString(" • "),
+                    listOfNotNull(book.author, book.type.name, book.progressPercentage?.let { "${it.toInt()}%" }).joinToString(" - "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
