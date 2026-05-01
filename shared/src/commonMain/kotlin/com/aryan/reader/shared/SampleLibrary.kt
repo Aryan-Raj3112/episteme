@@ -48,3 +48,19 @@ fun sampleLibraryState(): LibraryState {
         )
     )
 }
+
+fun sampleReaderScreenState(): SharedReaderScreenState {
+    val library = sampleLibraryState()
+    val tags = library.books.flatMap { it.tags }.distinctBy { it.id }
+    return SharedReaderScreenState(
+        rawLibraryBooks = library.books,
+        recentBooks = library.books.filter { it.isRecent },
+        libraryBooks = library.books,
+        selectedBookIds = library.selectedBookIds,
+        searchQuery = library.searchQuery,
+        sortOrder = library.sortOrder,
+        libraryFilters = library.filters,
+        recentFilesLimit = library.recentLimit,
+        allTags = tags
+    )
+}

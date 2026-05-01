@@ -4,6 +4,30 @@ enum class FileType {
     PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT, UNKNOWN
 }
 
+val PDF_VIEWER_FILE_TYPES = setOf(FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7)
+
+val EPUB_READER_FILE_TYPES = setOf(
+    FileType.EPUB,
+    FileType.MOBI,
+    FileType.MD,
+    FileType.TXT,
+    FileType.HTML,
+    FileType.FB2,
+    FileType.DOCX,
+    FileType.ODT,
+    FileType.FODT
+)
+
+enum class AddBooksSource {
+    UNSHELVED,
+    ALL_BOOKS
+}
+
+enum class RenderMode {
+    VERTICAL_SCROLL,
+    PAGINATED
+}
+
 enum class SortOrder {
     RECENT,
     TITLE_ASC,
@@ -35,6 +59,13 @@ data class Tag(
     val color: Int? = null
 )
 
+data class SyncedFolder(
+    val uriString: String,
+    val name: String,
+    val lastScanTime: Long,
+    val allowedFileTypes: Set<FileType> = FileType.entries.toSet()
+)
+
 data class BookItem(
     val id: String,
     val path: String?,
@@ -57,10 +88,16 @@ data class Shelf(
     val name: String,
     val type: ShelfType,
     val books: List<BookItem>,
-    val directBooks: List<BookItem> = books
+    val directBooks: List<BookItem> = books,
+    val parentShelfId: String? = null,
+    val childShelfIds: List<String> = emptyList(),
+    val depth: Int = 0,
+    val sortKey: String = name.lowercase()
 ) {
     val bookCount: Int get() = books.size
     val topBook: BookItem? get() = books.maxByOrNull { it.timestamp }
+    val directBookCount: Int get() = directBooks.size
+    val childShelfCount: Int get() = childShelfIds.size
 }
 
 data class LibraryFilters(

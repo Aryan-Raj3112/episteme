@@ -74,13 +74,18 @@ import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
-import com.aryan.reader.shared.LibraryProjector
-import com.aryan.reader.shared.LibraryState
+import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SortOrder
-import kotlin.math.roundToInt
+import com.aryan.reader.shared.cardAuthor
+import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.isOpdsStream
+import com.aryan.reader.shared.progressPercentValue
+import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.toHomeScreenModel
 
 enum class NonReaderLibraryTab {
     BOOKS,
@@ -90,8 +95,7 @@ enum class NonReaderLibraryTab {
 
 @Composable
 fun SharedHomeScreen(
-    state: LibraryState,
-    projector: LibraryProjector,
+    state: SharedReaderScreenState,
     onImportBooks: () -> Unit,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -99,7 +103,7 @@ fun SharedHomeScreen(
     onRemoveSelected: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val model = projector.home(state)
+    val model = state.toHomeScreenModel()
     NonReaderScreenScaffold(
         title = "Home",
         subtitle = "Recent books and quick access",
@@ -112,9 +116,9 @@ fun SharedHomeScreen(
             }
         }
     ) {
-        if (state.selectedBookIds.isNotEmpty()) {
+        if (model.isContextualModeActive) {
             SelectionToolbar(
-                count = state.selectedBookIds.size,
+                count = model.selectedBooks.size,
                 onClear = onClearSelection,
                 onRemove = onRemoveSelected
             )
@@ -124,7 +128,7 @@ fun SharedHomeScreen(
             SharedEmptyState(
                 icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
                 title = "No recent files",
-                body = if (state.books.isEmpty()) "Import a few books to populate your library." else "Open books from the library and they will appear here.",
+                body = if (model.isLibraryEmpty) "Import a few books to populate your library." else "Open books from the library and they will appear here.",
                 actionLabel = "Import books",
                 onAction = onImportBooks,
                 modifier = Modifier.weight(1f)
@@ -143,11 +147,10 @@ fun SharedHomeScreen(
 
 @Composable
 fun SharedLibraryScreen(
-    state: LibraryState,
-    projector: LibraryProjector,
+    state: SharedReaderScreenState,
     selectedTab: NonReaderLibraryTab,
     onTabChange: (NonReaderLibraryTab) -> Unit,
-    onStateChange: (LibraryState) -> Unit,
+    onStateChange: (SharedReaderScreenState) -> Unit,
     onImportBooks: () -> Unit,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -155,15 +158,16 @@ fun SharedLibraryScreen(
     onRemoveSelected: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val model = projector.library(state)
-    val folderShelves = remember(model.shelves) { model.shelves.filter { it.type == ShelfType.FOLDER } }
+    val books = state.libraryBooks
+    val shelves = state.shelves
+    val folderShelves = remember(shelves) { shelves.filter { it.type == ShelfType.FOLDER } }
     NonReaderScreenScaffold(
         title = "Library",
         subtitle = "Search, sort, filter, and organize local metadata",
         modifier = modifier,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                SortMenu(sortOrder = state.sortOrder, onSortOrderChange = { onStateChange(state.copy(sortOrder = it)) })
+                SortMenu(sortOrder = state.sortOrder, onSortOrderChange = { onStateChange(state.reduce(LibraryAction.SortChanged(it))) })
                 Button(onClick = onImportBooks) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -208,20 +212,24 @@ fun SharedLibraryScreen(
                     onStateChange = onStateChange
                 )
 
-                if (model.books.isEmpty()) {
+                if (books.isEmpty()) {
                     SharedEmptyState(
                         icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                        title = if (state.books.isEmpty()) "Your library is empty" else "No books match",
-                        body = if (state.books.isEmpty()) "Import books to begin building your desktop library." else "Adjust search, sort, or filters to see more books.",
-                        actionLabel = if (state.books.isEmpty()) "Import books" else "Clear filters",
+                        title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
+                        body = if (state.rawLibraryBooks.isEmpty()) "Import books to begin building your desktop library." else "Adjust search, sort, or filters to see more books.",
+                        actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import books" else "Clear filters",
                         onAction = {
-                            if (state.books.isEmpty()) onImportBooks() else onStateChange(state.copy(searchQuery = "", filters = LibraryFilters()))
+                            if (state.rawLibraryBooks.isEmpty()) {
+                                onImportBooks()
+                            } else {
+                                onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters())))
+                            }
                         },
                         modifier = Modifier.weight(1f)
                     )
                 } else {
                     BookGrid(
-                        books = model.books,
+                        books = books,
                         selectedBookIds = state.selectedBookIds,
                         onOpenBook = onOpenBook,
                         onToggleSelection = onToggleSelection,
@@ -231,7 +239,7 @@ fun SharedLibraryScreen(
             }
 
             NonReaderLibraryTab.SHELVES -> ShelfCollection(
-                shelves = model.shelves,
+                shelves = shelves,
                 selectedBookIds = state.selectedBookIds,
                 onOpenBook = onOpenBook,
                 onToggleSelection = onToggleSelection,
@@ -335,13 +343,13 @@ private fun SelectionToolbar(
 
 @Composable
 private fun LibrarySearchAndFilters(
-    state: LibraryState,
-    onStateChange: (LibraryState) -> Unit
+    state: SharedReaderScreenState,
+    onStateChange: (SharedReaderScreenState) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(
             value = state.searchQuery,
-            onValueChange = { onStateChange(state.copy(searchQuery = it)) },
+            onValueChange = { onStateChange(state.reduce(LibraryAction.SearchChanged(it))) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             label = { Text("Search books, authors, or tags") },
             singleLine = true,
@@ -360,22 +368,24 @@ private fun LibrarySearchAndFilters(
             )
             listOf(FileType.PDF, FileType.EPUB, FileType.MOBI, FileType.DOCX, FileType.TXT).forEach { type ->
                 FilterChip(
-                    selected = type in state.filters.fileTypes,
+                    selected = type in state.libraryFilters.fileTypes,
                     onClick = {
-                        val updated = if (type in state.filters.fileTypes) state.filters.fileTypes - type else state.filters.fileTypes + type
-                        onStateChange(state.copy(filters = state.filters.copy(fileTypes = updated)))
+                        val updated = if (type in state.libraryFilters.fileTypes) state.libraryFilters.fileTypes - type else state.libraryFilters.fileTypes + type
+                        onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(fileTypes = updated))))
                     },
                     label = { Text(type.name) }
                 )
             }
             ReadStatusFilter.entries.filterNot { it == ReadStatusFilter.ALL }.forEach { status ->
                 FilterChip(
-                    selected = state.filters.readStatus == status,
+                    selected = state.libraryFilters.readStatus == status,
                     onClick = {
                         onStateChange(
-                            state.copy(
-                                filters = state.filters.copy(
-                                    readStatus = if (state.filters.readStatus == status) ReadStatusFilter.ALL else status
+                            state.reduce(
+                                LibraryAction.FiltersChanged(
+                                    state.libraryFilters.copy(
+                                        readStatus = if (state.libraryFilters.readStatus == status) ReadStatusFilter.ALL else status
+                                    )
                                 )
                             )
                         )
@@ -383,8 +393,8 @@ private fun LibrarySearchAndFilters(
                     label = { Text(status.label) }
                 )
             }
-            if (state.filters.isActive || state.searchQuery.isNotBlank()) {
-                TextButton(onClick = { onStateChange(state.copy(searchQuery = "", filters = LibraryFilters())) }) {
+            if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {
+                TextButton(onClick = { onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters()))) }) {
                     Text("Clear")
                 }
             }
@@ -448,14 +458,14 @@ private fun BookCard(
                 Row(verticalAlignment = Alignment.Top) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
+                            text = book.cardTitle(),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = book.author?.takeIf { it.isNotBlank() } ?: "No author listed",
+                            text = book.cardAuthor(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -475,7 +485,7 @@ private fun BookCard(
                     if (book.sourceFolder != null) {
                         StatusBadge(Icons.Default.Folder, "Folder")
                     }
-                    if (book.path?.startsWith("opds-pse") == true) {
+                    if (book.isOpdsStream()) {
                         StatusBadge(Icons.Default.Cloud, "Stream")
                     }
                 }
@@ -575,7 +585,7 @@ private fun TagChip(name: String, color: Int?) {
 
 @Composable
 private fun ProgressSection(progressPercentage: Float?) {
-    val percent = (progressPercentage ?: 0f).coerceIn(0f, 100f).roundToInt()
+    val percent = progressPercentValue(progressPercentage)
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Progress", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
