@@ -167,14 +167,15 @@ fun HomeScreen(
 
     CompositionLocalProvider(LocalUriHandler provides customTabUriHandler) {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-        val recentFilesForHome = uiState.recentFiles.filter { it.isRecent }
-        val openTabs = uiState.openTabs
-        val selectedContextItems = uiState.contextualActionItems
-        val isContextualModeActive = selectedContextItems.isNotEmpty()
+        val screenModel = remember(uiState) { uiState.toHomeScreenModel() }
+        val recentFilesForHome = screenModel.recentFiles
+        val openTabs = screenModel.openTabs
+        val selectedContextItems = screenModel.selectedItems
+        val isContextualModeActive = screenModel.isContextualModeActive
         val scope = rememberCoroutineScope()
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
         val snackbarHostState = remember { SnackbarHostState() }
-        val deviceLimitState = uiState.deviceLimitState
+        val deviceLimitState = screenModel.deviceLimitState
 
         var showDeleteConfirmDialog by remember { mutableStateOf(false) }
         var showClearCloudDataDialog by remember { mutableStateOf(false) }
@@ -371,8 +372,8 @@ fun HomeScreen(
                                 .fillMaxSize()
                                 .padding(paddingValues)
                         ) {
-                            if (recentFilesForHome.isEmpty() && (!uiState.isTabsEnabled || openTabs.isEmpty())) {
-                                if (uiState.recentFiles.isEmpty()) {
+                            if (screenModel.isEmpty) {
+                                if (screenModel.isLibraryEmpty) {
                                     EmptyState(
                                         title = stringResource(R.string.your_library_empty),
                                         message = stringResource(R.string.your_library_empty_desc),

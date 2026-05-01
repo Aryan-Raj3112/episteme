@@ -65,8 +65,8 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.RemoteConfigRepository
 import com.aryan.reader.data.ShelfMetadata
-import com.aryan.reader.data.SmartCollectionEngine
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.data.getUri
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
 import com.aryan.reader.epub.CalibreBundleExtractor
@@ -179,6 +179,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _prefsUpdateFlow = MutableStateFlow(0L)
     private val prefsListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val feedbackRepository = FeedbackRepository(appContext)
+    private val libraryStateProjector = LibraryStateProjector(AndroidFolderPathResolver(appContext))
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
     private val epubRecoveryMutex = Mutex()
@@ -607,298 +608,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     open val uiState: StateFlow<ReaderScreenState> = combine(
         _internalState, libraryFlow, tagFlow
     ) { internalState, (recentFilesFromDb, dbShelves, shelfRefs), (dbTags, tagRefs) ->
-        val tagsById = dbTags.associateBy { it.id }
-        val bookTagsMap = tagRefs.groupBy { it.bookId }.mapValues { entry ->
-            entry.value.mapNotNull { tagsById[it.tagId] }
-        }
-
-        val allLibraryFiles = recentFilesFromDb
-            .filterNot { it.bookId.endsWith("_reflow") }
-            .map { item ->
-            item.copy(tags = bookTagsMap[item.bookId] ?: emptyList())
-        }
-
-        val query = internalState.searchQuery.trim()
-        val rawFilteredByQuery = if (query.isBlank()) {
-            allLibraryFiles
-        } else {
-            allLibraryFiles.filter { item ->
-                item.displayName.contains(query, ignoreCase = true) ||
-                    item.title?.contains(query, ignoreCase = true) == true ||
-                    item.author?.contains(query, ignoreCase = true) == true ||
-                    item.tags.any { tag -> tag.name.contains(query, ignoreCase = true) }
-            }
-        }
-
-        val filters = internalState.libraryFilters
-        val libraryFiltered = rawFilteredByQuery.filter { item ->
-            val matchType = if (filters.fileTypes.isNotEmpty()) item.type in filters.fileTypes else true
-            val matchFolder = if (filters.sourceFolders.isNotEmpty()) {
-                val matchesInApp = filters.sourceFolders.contains("IN_APP_STORAGE") && item.sourceFolderUri == null && item.uriString?.startsWith("opds-pse") != true
-                val matchesSynced = item.sourceFolderUri in filters.sourceFolders
-                matchesInApp || matchesSynced
-            } else true
-            val progress = item.progressPercentage ?: 0f
-            val matchStatus = when (filters.readStatus) {
-                ReadStatusFilter.ALL -> true
-                ReadStatusFilter.UNREAD -> progress == 0f
-                ReadStatusFilter.IN_PROGRESS -> progress > 0f && progress < 100f
-                ReadStatusFilter.COMPLETED -> progress >= 100f
-            }
-            val matchTags = if (filters.tagIds.isNotEmpty()) {
-                item.tags.any { it.id in filters.tagIds }
-            } else true
-            matchType && matchFolder && matchStatus && matchTags
-        }
-
-        fun sortFiles(files: List<RecentFileItem>): List<RecentFileItem> {
-            return when (internalState.sortOrder) {
-                SortOrder.RECENT -> files.sortedByDescending { it.timestamp }
-                SortOrder.TITLE_ASC -> files.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
-                SortOrder.AUTHOR_ASC -> files.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
-                SortOrder.PERCENT_ASC -> files.sortedBy { it.progressPercentage ?: 0f }
-                SortOrder.PERCENT_DESC -> files.sortedByDescending { it.progressPercentage ?: 0f }
-                SortOrder.SIZE_ASC -> files.sortedBy { it.fileSize }
-                SortOrder.SIZE_DESC -> files.sortedByDescending { it.fileSize }
-            }
-        }
-
-        val sortedLibraryFiles = sortFiles(libraryFiltered)
-        val visibleRecentFiles = sortFiles(allLibraryFiles.filter { it.isRecent }).take(
-            if (internalState.recentFilesLimit > 0) internalState.recentFilesLimit else Int.MAX_VALUE
-        )
-        val openTabsList = internalState.openTabIds.mapNotNull { tabId -> allLibraryFiles.find { it.bookId == tabId } }
-        val allShelves = mutableListOf<Shelf>()
-        val shelvedBookIds = mutableSetOf<String>()
-        val baseFilesMap = allLibraryFiles.associateBy { it.bookId }
-
-        dbShelves.forEach { shelfEntity ->
-            if (shelfEntity.isSmart && shelfEntity.smartRulesJson != null) {
-                val rules = SmartCollectionEngine.fromJson(shelfEntity.smartRulesJson)
-                if (rules != null) {
-                    val matchingBooks = allLibraryFiles.filter { SmartCollectionEngine.evaluate(it, rules) }
-                    allShelves.add(Shelf(shelfEntity.id, shelfEntity.name, ShelfType.SMART, sortFiles(matchingBooks)))
-                    shelvedBookIds.addAll(matchingBooks.map { it.bookId })
-                }
-            } else {
-                val bookIdsInShelf = shelfRefs.filter { it.shelfId == shelfEntity.id }.sortedBy { it.addedAt }.map { it.bookId }
-                val booksInShelf = bookIdsInShelf.mapNotNull { baseFilesMap[it] }
-                allShelves.add(Shelf(shelfEntity.id, shelfEntity.name, ShelfType.MANUAL, sortFiles(booksInShelf)))
-                shelvedBookIds.addAll(bookIdsInShelf)
-            }
-        }
-
-        val tagShelves = dbTags.mapNotNull { tag ->
-            val taggedBooks = allLibraryFiles.filter { item -> item.tags.any { it.id == tag.id } }
-            if (taggedBooks.isEmpty()) {
-                null
-            } else {
-                Shelf("tag_${tag.id}", tag.name, ShelfType.TAG, sortFiles(taggedBooks))
-            }
-        }
-        allShelves.addAll(tagShelves)
-
-        val seriesShelves = allLibraryFiles
-            .filter { !it.seriesName.isNullOrBlank() }
-            .groupBy { it.seriesName!! }
-            .filter { it.value.size >= 2 }
-            .map { (series, books) ->
-                val sortedSeries = books.sortedBy { it.seriesIndex ?: 999.0 }
-                shelvedBookIds.addAll(books.map { it.bookId })
-                Shelf("series_$series", series, ShelfType.SERIES, sortedSeries)
-            }
-        allShelves.addAll(seriesShelves)
-
-        val folderShelves = buildFolderShelves(
-            allLibraryFiles = allLibraryFiles,
-            syncedFolders = internalState.syncedFolders,
-            sortFiles = ::sortFiles
-        ).also { shelves ->
-            shelves.forEach { shelf ->
-                shelvedBookIds.addAll(shelf.books.map { it.bookId })
-            }
-        }
-        allShelves.addAll(folderShelves)
-
-        val unshelvedBooks = allLibraryFiles.filter { it.bookId !in shelvedBookIds }
-        allShelves.add(Shelf("unshelved", "Unshelved", ShelfType.MANUAL, sortFiles(unshelvedBooks)))
-
-        allShelves.sortWith(compareBy({ it.type.ordinal }, { it.sortKey }))
-
-        val validShelfIds = allShelves.mapTo(mutableSetOf()) { it.id }
-        val viewingShelfId = internalState.viewingShelfId?.takeIf { it in validShelfIds }
-        val selectedShelfIds = internalState.contextualActionShelfIds.filterTo(mutableSetOf()) { it in validShelfIds }
-
-        val booksAvailableForAdding = if (internalState.isAddingBooksToShelf && viewingShelfId != null) {
-            val currentShelfBookIds = allShelves
-                .find { it.id == viewingShelfId }
-                ?.books
-                ?.map { it.bookId }
-                ?.toSet()
-                ?: emptySet()
-            when (internalState.addBooksSource) {
-                AddBooksSource.UNSHELVED -> unshelvedBooks
-                AddBooksSource.ALL_BOOKS -> allLibraryFiles.filter { it.bookId !in currentShelfBookIds }
-            }
-        } else emptyList()
-
-        internalState.copy(
-            recentFiles = visibleRecentFiles,
-            allRecentFiles = sortedLibraryFiles,
-            rawLibraryFiles = allLibraryFiles,
-            viewingShelfId = viewingShelfId,
-            isAddingBooksToShelf = internalState.isAddingBooksToShelf && viewingShelfId != null,
-            contextualActionShelfIds = selectedShelfIds,
-            contextualActionItems = internalState.contextualActionItems.mapNotNull { ctx -> allLibraryFiles.find { it.bookId == ctx.bookId } }.toSet(),
-            shelves = allShelves,
-            openTabs = openTabsList,
-            booksAvailableForAdding = booksAvailableForAdding,
-            allTags = dbTags
+        libraryStateProjector.project(
+            LibraryProjectionInput(
+                state = internalState,
+                recentFilesFromDb = recentFilesFromDb,
+                dbShelves = dbShelves,
+                shelfRefs = shelfRefs,
+                dbTags = dbTags,
+                tagRefs = tagRefs
+            )
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = _internalState.value
     )
-
-    private data class FolderShelfAccumulator(
-        val id: String,
-        val name: String,
-        val depth: Int,
-        val parentShelfId: String?,
-        val sortPath: String,
-        val books: MutableList<RecentFileItem> = mutableListOf(),
-        val directBooks: MutableList<RecentFileItem> = mutableListOf(),
-        val childShelfIds: MutableList<String> = mutableListOf()
-    )
-
-    private fun buildFolderShelves(
-        allLibraryFiles: List<RecentFileItem>,
-        syncedFolders: List<SyncedFolder>,
-        sortFiles: (List<RecentFileItem>) -> List<RecentFileItem>
-    ): List<Shelf> {
-        val folderNamesByUri = syncedFolders.associate { it.uriString to it.name }
-
-        return allLibraryFiles
-            .filter { it.sourceFolderUri != null }
-            .groupBy { it.sourceFolderUri!! }
-            .flatMap { (folderUri, books) ->
-                val rootName = folderNamesByUri[folderUri] ?: "Local Folder"
-                val rootShelfId = "folder_$folderUri"
-                val rootAccumulator = FolderShelfAccumulator(
-                    id = rootShelfId,
-                    name = rootName,
-                    depth = 0,
-                    parentShelfId = null,
-                    sortPath = ""
-                )
-                val rootShelf = Shelf(
-                    id = rootShelfId,
-                    name = rootName,
-                    type = ShelfType.FOLDER,
-                    books = sortFiles(books),
-                    directBooks = mutableListOf<RecentFileItem>().also { direct ->
-                        direct.addAll(books.filter { getRelativeFolderSegments(it).isEmpty() })
-                    },
-                    childShelfIds = emptyList(),
-                    depth = 0,
-                    sortKey = "folder:${rootName.lowercase()}:"
-                )
-
-                val nestedShelves = linkedMapOf<String, FolderShelfAccumulator>()
-                books.forEach { book ->
-                    rootAccumulator.books.add(book)
-                    val segments = getRelativeFolderSegments(book)
-                    if (segments.isEmpty()) {
-                        rootAccumulator.directBooks.add(book)
-                    }
-                    var currentPath = ""
-                    var parentShelfId = rootShelfId
-                    segments.forEachIndexed { index, segment ->
-                        currentPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
-                        val shelfId = "folder_$folderUri::$currentPath"
-                        val accumulator = nestedShelves.getOrPut(currentPath) {
-                            val newShelf = FolderShelfAccumulator(
-                                id = shelfId,
-                                name = segment,
-                                depth = index + 1,
-                                parentShelfId = parentShelfId,
-                                sortPath = currentPath.lowercase()
-                            )
-                            if (parentShelfId == rootShelfId) {
-                                rootAccumulator.childShelfIds.add(shelfId)
-                            } else {
-                                nestedShelves.values.find { it.id == parentShelfId }?.childShelfIds?.add(shelfId)
-                            }
-                            newShelf
-                        }
-                        accumulator.books.add(book)
-                        if (index == segments.lastIndex) {
-                            accumulator.directBooks.add(book)
-                        }
-                        parentShelfId = shelfId
-                    }
-                }
-
-                val sortedNestedShelves = nestedShelves
-                    .values
-                    .sortedBy { it.sortPath }
-                    .map { shelf ->
-                        Shelf(
-                            id = shelf.id,
-                            name = shelf.name,
-                            type = ShelfType.FOLDER,
-                            books = sortFiles(shelf.books),
-                            directBooks = sortFiles(shelf.directBooks),
-                            parentShelfId = shelf.parentShelfId,
-                            childShelfIds = shelf.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
-                            depth = shelf.depth,
-                            sortKey = "folder:${rootName.lowercase()}:${shelf.sortPath}"
-                        )
-                    }
-
-                listOf(
-                    rootShelf.copy(
-                        directBooks = sortFiles(rootAccumulator.directBooks),
-                        childShelfIds = rootAccumulator.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() }
-                    )
-                ) + sortedNestedShelves
-            }
-    }
-
-    private fun getRelativeFolderSegments(item: RecentFileItem): List<String> {
-        val documentUriString = item.uriString ?: return emptyList()
-        val rootFolderUriString = item.sourceFolderUri ?: return emptyList()
-
-        return try {
-            val documentUri = documentUriString.toUri()
-            val rootFolderUri = rootFolderUriString.toUri()
-            val rootDocId = DocumentsContract.getTreeDocumentId(rootFolderUri)
-            val documentId = when {
-                DocumentsContract.isDocumentUri(appContext, documentUri) -> DocumentsContract.getDocumentId(documentUri)
-                DocumentsContract.isTreeUri(documentUri) -> DocumentsContract.getTreeDocumentId(documentUri)
-                else -> return emptyList()
-            }
-
-            val rootPath = rootDocId.substringAfter(':', "")
-            val documentPath = documentId.substringAfter(':', "")
-            val relativeDocumentPath = when {
-                rootPath.isBlank() -> documentPath
-                documentPath == rootPath -> ""
-                documentPath.startsWith("$rootPath/") -> documentPath.removePrefix("$rootPath/")
-                else -> documentPath
-            }
-
-            relativeDocumentPath
-                .substringBeforeLast('/', "")
-                .split('/')
-                .map { Uri.decode(it).trim() }
-                .filter { it.isNotEmpty() }
-        } catch (e: Exception) {
-            Timber.tag("FolderShelves").w(e, "Failed to derive relative folder path for ${item.displayName}")
-            emptyList()
-        }
-    }
 
     fun setTabsEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }

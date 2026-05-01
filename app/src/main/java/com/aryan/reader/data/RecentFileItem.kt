@@ -19,9 +19,7 @@
  */
 package com.aryan.reader.data
 
-import android.net.Uri
 import com.aryan.reader.FileType
-import androidx.core.net.toUri
 
 data class RecentFileItem(
     val bookId: String,
@@ -52,9 +50,7 @@ data class RecentFileItem(
     val seriesIndex: Double? = null,
     val description: String? = null,
     val tags: List<TagEntity> = emptyList()
-) {
-    fun getUri(): Uri? = uriString?.toUri()
-}
+)
 
 fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
     return RecentFileItem(
