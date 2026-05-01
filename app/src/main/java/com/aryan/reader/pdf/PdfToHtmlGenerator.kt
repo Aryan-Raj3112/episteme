@@ -137,14 +137,14 @@ object PdfToHtmlGenerator {
                     val textPagePtr = getNativePointer(textPage)
 
                     val imageElements = mutableListOf<ImageElement>()
-                    val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
+                    val objCount = PdfiumEngineProvider.bridge.getPageObjectCount(pagePtr)
                     for (i in 0 until objCount) {
-                        if (NativePdfiumBridge.getPageObjectType(pagePtr, i) == 3) {
+                        if (PdfiumEngineProvider.bridge.getPageObjectType(pagePtr, i) == 3) {
                             val bbox = FloatArray(4)
-                            if (NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, i, bbox)) {
+                            if (PdfiumEngineProvider.bridge.getPageObjectBoundingBox(pagePtr, i, bbox)) {
                                 val topY = bbox[3]
                                 val dimens = IntArray(2)
-                                val pixels = NativePdfiumBridge.extractImagePixels(pagePtr, i, dimens)
+                                val pixels = PdfiumEngineProvider.bridge.extractImagePixels(pagePtr, i, dimens)
                                 if (pixels != null && dimens[0] > 0 && dimens[1] > 0) {
                                     try {
                                         val bmp = Bitmap.createBitmap(pixels, dimens[0], dimens[1], Bitmap.Config.ARGB_8888)
@@ -175,11 +175,11 @@ object PdfToHtmlGenerator {
                     val flags: IntArray?
                     val charBoxes: FloatArray?
 
-                    synchronized(NativePdfiumBridge::class.java) {
-                        sizes     = NativePdfiumBridge.getPageFontSizes(textPagePtr, actualCount)
-                        weights   = NativePdfiumBridge.getPageFontWeights(textPagePtr, actualCount)
-                        flags     = NativePdfiumBridge.getPageFontFlags(textPagePtr, actualCount)
-                        charBoxes = NativePdfiumBridge.getPageCharBoxes(textPagePtr, actualCount)
+                    synchronized(PdfiumEngineProvider.lock) {
+                        sizes     = PdfiumEngineProvider.bridge.getPageFontSizes(textPagePtr, actualCount)
+                        weights   = PdfiumEngineProvider.bridge.getPageFontWeights(textPagePtr, actualCount)
+                        flags     = PdfiumEngineProvider.bridge.getPageFontFlags(textPagePtr, actualCount)
+                        charBoxes = PdfiumEngineProvider.bridge.getPageCharBoxes(textPagePtr, actualCount)
                     }
 
                     if (sizes == null || weights == null || flags == null) {

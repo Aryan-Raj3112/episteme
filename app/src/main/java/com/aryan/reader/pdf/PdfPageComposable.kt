@@ -1146,13 +1146,13 @@ internal fun PdfPageComposable(
                     try {
                         val pagePtr = pageWrapper.getNativePointer()
                         if (pagePtr != 0L) {
-                            val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
+                            val objCount = PdfiumEngineProvider.bridge.getPageObjectCount(pagePtr)
                             val imgRects = mutableListOf<android.graphics.Rect>()
                             val outRect = FloatArray(4)
 
                             for (i in 0 until objCount) {
-                                if (NativePdfiumBridge.getPageObjectType(pagePtr, i) == 3) { // 3 = FPDF_PAGEOBJ_IMAGE
-                                    if (NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, i, outRect)) {
+                                if (PdfiumEngineProvider.bridge.getPageObjectType(pagePtr, i) == 3) { // 3 = FPDF_PAGEOBJ_IMAGE
+                                    if (PdfiumEngineProvider.bridge.getPageObjectBoundingBox(pagePtr, i, outRect)) {
                                         val pdfRectF = android.graphics.RectF(
                                             min(outRect[0], outRect[2]),
                                             max(outRect[1], outRect[3]),
@@ -1180,26 +1180,26 @@ internal fun PdfPageComposable(
                         val pagePtr = pageWrapper.getNativePointer()
 
                         if (pagePtr != 0L) {
-                            val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+                            val count = PdfiumEngineProvider.bridge.getAnnotCount(pagePtr)
                             Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
                             if (count > 0) {
-                                val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+                                val count = PdfiumEngineProvider.bridge.getAnnotCount(pagePtr)
                                 Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
                                 if (count > 0) {
                                     val allAnnots = (0 until count).mapNotNull { i ->
-                                        val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, i)
+                                        val subtype = PdfiumEngineProvider.bridge.getAnnotSubtype(pagePtr, i)
                                         if (subtype == annotLink) return@mapNotNull null
 
-                                        var contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "Contents")
+                                        var contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "Contents")
                                         if (contents.isNullOrBlank()) {
-                                            contents = NativePdfiumBridge.getAnnotString(pagePtr, i, "RC")
+                                            contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "RC")
                                         }
 
-                                        val name = NativePdfiumBridge.getAnnotString(pagePtr, i, "NM")
-                                        val irt = NativePdfiumBridge.getAnnotString(pagePtr, i, "IRT")
-                                        val author = NativePdfiumBridge.getAnnotString(pagePtr, i, "T")
+                                        val name = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "NM")
+                                        val irt = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "IRT")
+                                        val author = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "T")
 
-                                        val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, i)
+                                        val pdfRectArray = PdfiumEngineProvider.bridge.getAnnotRect(pagePtr, i)
                                         val pdfRectF = if (pdfRectArray != null) {
                                             android.graphics.RectF(
                                                 min(pdfRectArray[0], pdfRectArray[2]),
@@ -2799,7 +2799,7 @@ internal fun PdfPageComposable(
 
                                     Timber.tag("PdfLinkDiagnostic").i("Extracted docPtr: $docPtr | pagePtr: $pagePtr")
 
-                                    val linkInfo = NativePdfiumBridge.getLinkInfoAtPoint(
+                                    val linkInfo = PdfiumEngineProvider.bridge.getLinkInfoAtPoint(
                                         docPtr, pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble()
                                     )
 
@@ -2818,7 +2818,7 @@ internal fun PdfPageComposable(
                                         }
                                     }
 
-                                    val clickHandled = NativePdfiumBridge.performClick(pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble())
+                                    val clickHandled = PdfiumEngineProvider.bridge.performClick(pagePtr, pdfCoords.x.toDouble(), pdfCoords.y.toDouble())
                                     if (clickHandled) {
                                         return@withContext 2
                                     }

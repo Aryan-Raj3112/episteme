@@ -19,3 +19,5 @@ google-services.json
 .kotlin/
 .idea/
 .gradle/
+third_party/pdfium/
+*.tgz

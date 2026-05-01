@@ -3,6 +3,7 @@ package com.aryan.reader.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +121,8 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -142,12 +147,34 @@ private fun EpistemeDesktopApp() {
     var selectedTab by remember { mutableStateOf(DesktopTab.HOME) }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
+    var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     fun openReader(book: BookItem) {
+        if (book.type == FileType.PDF) {
+            val path = book.path
+            if (path.isNullOrBlank()) {
+                state = state.copy(message = "This PDF does not have a local path.")
+                return
+            }
+            activePdfDocument?.close()
+            activePdfDocument = null
+            val pdf = runCatching {
+                DesktopPdfium.load(File(path))
+            }.getOrElse { error ->
+                state = state.copy(message = "Could not open PDF: ${error.message ?: "unknown error"}")
+                return
+            }
+
+            activePdfDocument = pdf
+            activeReaderBookId = book.id
+            selectedTab = DesktopTab.READER
+            return
+        }
+
         if (book.type != FileType.EPUB) {
-            state = state.copy(message = "${book.type.name} reader support comes later. EPUB is the first desktop reader target.")
+            state = state.copy(message = "${book.type.name} reader support comes later. EPUB and PDF are available on desktop.")
             return
         }
 
@@ -163,6 +190,8 @@ private fun EpistemeDesktopApp() {
             return
         }
 
+        activePdfDocument?.close()
+        activePdfDocument = null
         readerSession = readerEngine.createSession(loadedBook, readerSession.reader.settings)
         activeReaderBookId = book.id
         selectedTab = DesktopTab.READER
@@ -183,6 +212,29 @@ private fun EpistemeDesktopApp() {
                 fileSize = file.length()
             )
         )
+    }
+
+    fun importAndOpenPdf() {
+        val file = choosePdfFile() ?: return
+        val imported = ImportedFile(name = file.name, path = file.absolutePath, size = file.length())
+        state = projector.withImportedFiles(state, listOf(imported))
+        openReader(
+            BookItem(
+                id = file.absolutePath,
+                path = file.absolutePath,
+                type = FileType.PDF,
+                displayName = file.name,
+                timestamp = System.currentTimeMillis(),
+                title = file.nameWithoutExtension,
+                fileSize = file.length()
+            )
+        )
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            activePdfDocument?.close()
+        }
     }
 
     LaunchedEffect(state.message) {
@@ -274,25 +326,50 @@ private fun EpistemeDesktopApp() {
                             selectedBookIds = state.selectedBookIds
                         )
 
-                        DesktopTab.READER -> ReaderScreen(
-                            session = readerSession,
-                            readerEngine = readerEngine,
-                            onSessionChange = { updated ->
-                                readerSession = updated
-                                activeReaderBookId?.let { bookId ->
-                                    state = state.copy(
-                                        books = state.books.map { book ->
-                                            if (book.id == bookId) {
-                                                book.copy(progressPercentage = updated.reader.progress, timestamp = System.currentTimeMillis())
-                                            } else {
-                                                book
-                                            }
+                        DesktopTab.READER -> {
+                            val pdfDocument = activePdfDocument
+                            if (pdfDocument != null) {
+                                PdfReaderScreen(
+                                    document = pdfDocument,
+                                    onOpenPdf = ::importAndOpenPdf,
+                                    onOpenEpub = ::importAndOpenEpub,
+                                    onProgressChange = { progress ->
+                                        activeReaderBookId?.let { bookId ->
+                                            state = state.copy(
+                                                books = state.books.map { book ->
+                                                    if (book.id == bookId) {
+                                                        book.copy(progressPercentage = progress, timestamp = System.currentTimeMillis())
+                                                    } else {
+                                                        book
+                                                    }
+                                                }
+                                            )
                                         }
-                                    )
-                                }
-                            },
-                            onOpenEpub = ::importAndOpenEpub
-                        )
+                                    }
+                                )
+                            } else {
+                                ReaderScreen(
+                                    session = readerSession,
+                                    readerEngine = readerEngine,
+                                    onSessionChange = { updated ->
+                                        readerSession = updated
+                                        activeReaderBookId?.let { bookId ->
+                                            state = state.copy(
+                                                books = state.books.map { book ->
+                                                    if (book.id == bookId) {
+                                                        book.copy(progressPercentage = updated.reader.progress, timestamp = System.currentTimeMillis())
+                                                    } else {
+                                                        book
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    },
+                                    onOpenEpub = ::importAndOpenEpub,
+                                    onOpenPdf = ::importAndOpenPdf
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -420,11 +497,201 @@ private fun ShelvesScreen(
 }
 
 @Composable
+private fun PdfReaderScreen(
+    document: DesktopPdfDocument,
+    onOpenPdf: () -> Unit,
+    onOpenEpub: () -> Unit,
+    onProgressChange: (Float) -> Unit
+) {
+    var pageIndex by remember(document.path) { mutableStateOf(0) }
+    var scale by remember(document.path) { mutableStateOf(1.35f) }
+    var searchQuery by remember(document.path) { mutableStateOf("") }
+    var activeSearchIndex by remember(document.path) { mutableStateOf(-1) }
+    var renderedPage by remember(document.path) { mutableStateOf<DesktopPdfPageRender?>(null) }
+    var renderError by remember(document.path) { mutableStateOf<String?>(null) }
+    var isRendering by remember(document.path) { mutableStateOf(false) }
+
+    val searchResults = remember(document.path, searchQuery) {
+        val normalized = searchQuery.trim()
+        if (normalized.isBlank()) {
+            emptyList()
+        } else {
+            document.textPages.mapIndexedNotNull { index, text ->
+                val matchIndex = text.indexOf(normalized, ignoreCase = true)
+                if (matchIndex < 0) {
+                    null
+                } else {
+                    ReaderPdfSearchResult(index, text.previewAround(matchIndex, normalized.length))
+                }
+            }
+        }
+    }
+
+    fun goToPage(target: Int) {
+        pageIndex = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
+    }
+
+    fun goToSearchResult(targetIndex: Int) {
+        if (searchResults.isEmpty()) return
+        val normalizedIndex = when {
+            targetIndex < 0 -> searchResults.lastIndex
+            targetIndex > searchResults.lastIndex -> 0
+            else -> targetIndex
+        }
+        activeSearchIndex = normalizedIndex
+        goToPage(searchResults[normalizedIndex].pageIndex)
+    }
+
+    LaunchedEffect(document.path, pageIndex) {
+        onProgressChange(((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f)
+    }
+
+    LaunchedEffect(document.path, pageIndex, scale) {
+        isRendering = true
+        renderError = null
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                DesktopPdfium.renderPage(document, pageIndex, scale)
+            }
+        }
+        renderedPage = result.getOrNull()
+        renderError = result.exceptionOrNull()?.message
+            ?: if (renderedPage == null) "Failed to render page." else null
+        isRendering = false
+    }
+
+    ScreenScaffold(
+        title = document.title,
+        subtitle = "PDF - Page ${pageIndex + 1} of ${document.pageCount}",
+        trailing = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onOpenPdf) {
+                    Text("Open PDF")
+                }
+                TextButton(onClick = onOpenEpub) {
+                    Text("Open EPUB")
+                }
+                Text("${(((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f).toInt()}%")
+            }
+        }
+    ) {
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Surface(
+                modifier = Modifier
+                    .width(300.dp)
+                    .fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                LazyColumn(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        Text("Pages", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = pageIndex > 0) {
+                                Text("Prev")
+                            }
+                            TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = pageIndex < document.pageCount - 1) {
+                                Text("Next")
+                            }
+                        }
+                    }
+                    item {
+                        Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Slider(
+                            value = scale,
+                            onValueChange = { scale = it },
+                            valueRange = 0.65f..3.0f
+                        )
+                    }
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = {
+                                searchQuery = it
+                                activeSearchIndex = -1
+                            },
+                            label = { Text("Find in PDF") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (searchQuery.isNotBlank()) {
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (searchResults.isEmpty()) "No matches" else "${(activeSearchIndex + 1).coerceAtLeast(0)} of ${searchResults.size}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { goToSearchResult(activeSearchIndex - 1) }, enabled = searchResults.isNotEmpty()) {
+                                    Text("Prev")
+                                }
+                                TextButton(onClick = { goToSearchResult(activeSearchIndex + 1) }, enabled = searchResults.isNotEmpty()) {
+                                    Text("Next")
+                                }
+                            }
+                        }
+                    }
+                    items(searchResults, key = { "${it.pageIndex}_${it.preview}" }) { result ->
+                        Surface(
+                            color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                activeSearchIndex = searchResults.indexOf(result)
+                                goToPage(result.pageIndex)
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text("Page ${result.pageIndex + 1}", fontWeight = FontWeight.SemiBold)
+                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(Color(0xFFE8E5DC), RoundedCornerShape(8.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                when {
+                    isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
+                    renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
+                    renderedPage != null -> Image(
+                        bitmap = renderedPage!!.image,
+                        contentDescription = "PDF page ${pageIndex + 1}"
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class ReaderPdfSearchResult(
+    val pageIndex: Int,
+    val preview: String
+)
+
+@Composable
 private fun ReaderScreen(
     session: ReaderSessionState,
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
-    onOpenEpub: () -> Unit
+    onOpenEpub: () -> Unit,
+    onOpenPdf: () -> Unit
 ) {
     val readerState = session.reader
     val page = readerState.currentPage
@@ -449,6 +716,9 @@ private fun ReaderScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onOpenEpub) {
                     Text("Open EPUB")
+                }
+                TextButton(onClick = onOpenPdf) {
+                    Text("Open PDF")
                 }
                 Text("${readerState.progress.toInt()}%")
                 IconButton(onClick = { onSessionChange(readerEngine.toggleBookmark(session)) }) {
@@ -1255,9 +1525,27 @@ private fun chooseEpubFile(): File? {
     return File(directory, file)
 }
 
+private fun choosePdfFile(): File? {
+    val dialog = FileDialog(null as Frame?, "Open PDF", FileDialog.LOAD).apply {
+        file = "*.pdf"
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
 private fun LibraryState.toggleSelection(bookId: String): LibraryState {
     val selected = if (bookId in selectedBookIds) selectedBookIds - bookId else selectedBookIds + bookId
     return copy(selectedBookIds = selected)
+}
+
+private fun String.previewAround(index: Int, queryLength: Int): String {
+    val start = (index - 70).coerceAtLeast(0)
+    val end = (index + queryLength + 100).coerceAtMost(length)
+    val prefix = if (start > 0) "..." else ""
+    val suffix = if (end < length) "..." else ""
+    return prefix + substring(start, end).replace(Regex("\\s+"), " ").trim() + suffix
 }
 
 private val SortOrder.label: String

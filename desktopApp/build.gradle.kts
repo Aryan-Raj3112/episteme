@@ -17,6 +17,7 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
                 implementation(compose.materialIconsExtended)
+                implementation("net.java.dev.jna:jna:5.17.0")
             }
         }
     }
