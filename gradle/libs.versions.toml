@@ -21,7 +21,7 @@ androidxAnnotationJvm = "1.9.1"
 androidxTestRunner = "1.6.2"
 material3WindowSizeClassAndroid = "1.3.2"
 credentials = "1.5.0"
-
+composeMultiplatform = "1.8.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -59,8 +59,10 @@ androidx-credentials = { group = "androidx.credentials", name = "credentials", v
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-ksp = { id = "com.google.devtools.ksp", version = "2.3.2" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 
 # Add plugins required by pdfiumandroid
 android-library = { id = "com.android.library", version.ref = "agp" }
