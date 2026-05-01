@@ -19,10 +19,6 @@
  */
 package com.aryan.reader.paginatedreader
 
-import android.graphics.BitmapFactory
-import android.os.Build
-import timber.log.Timber
-import androidx.annotation.RequiresApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.ParagraphStyle
@@ -40,11 +36,34 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 import org.jsoup.select.Selector
-import java.io.File
-import java.net.URLDecoder
-import java.nio.file.Paths
 
 private val unsupportedPseudoElementRegex = Regex("::?(before|after|first-letter|first-line|marker|selection)", RegexOption.IGNORE_CASE)
+
+interface HtmlResourceResolver {
+    fun resolvePath(chapterAbsPath: String, extractionBasePath: String, src: String): String?
+    fun readText(path: String): String?
+    fun imageDimensions(path: String): Pair<Float?, Float?>?
+}
+
+interface HtmlFontFamilyLoader {
+    fun load(fontFaces: List<FontFaceInfo>, extractionBasePath: String): Map<String, FontFamily>
+}
+
+object NoOpHtmlResourceResolver : HtmlResourceResolver {
+    override fun resolvePath(chapterAbsPath: String, extractionBasePath: String, src: String): String? = null
+    override fun readText(path: String): String? = null
+    override fun imageDimensions(path: String): Pair<Float?, Float?>? = null
+}
+
+object NoOpHtmlFontFamilyLoader : HtmlFontFamilyLoader {
+    override fun load(fontFaces: List<FontFaceInfo>, extractionBasePath: String): Map<String, FontFamily> = emptyMap()
+}
+
+private object HtmlParserLog {
+    fun d(@Suppress("UNUSED_PARAMETER") message: String) = Unit
+    fun w(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
+    fun e(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
+}
 
 private fun Element.getCfiPath(): String {
     val path = mutableListOf<Int>()
@@ -76,7 +95,6 @@ private fun String.capitalizeWords(): String =
  * The public entry point for converting HTML to a list of [SemanticBlock]s.
  * This function sets up a parsing context and delegates the work to a [SemanticHtmlParser] instance.
  */
-@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 fun htmlToSemanticBlocks(
     html: String,
     cssRules: OptimizedCssRules,
@@ -87,7 +105,9 @@ fun htmlToSemanticBlocks(
     fontFamilyMap: Map<String, FontFamily>,
     constraints: Constraints,
     imageDimensionsCache: Map<String, Pair<Float, Float>> = emptyMap(),
-    mathSvgCache: Map<String, String> = emptyMap()
+    mathSvgCache: Map<String, String> = emptyMap(),
+    resourceResolver: HtmlResourceResolver = NoOpHtmlResourceResolver,
+    fontFamilyLoader: HtmlFontFamilyLoader = NoOpHtmlFontFamilyLoader
 ): List<SemanticBlock> {
     return SemanticHtmlParser(
         cssRules,
@@ -98,14 +118,15 @@ fun htmlToSemanticBlocks(
         fontFamilyMap,
         constraints,
         imageDimensionsCache,
-        mathSvgCache
+        mathSvgCache,
+        resourceResolver,
+        fontFamilyLoader
     ).parse(html)
 }
 
 /**
  * A stateful parser that holds the context for a single HTML-to-SemanticBlock conversion.
  */
-@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 private class SemanticHtmlParser(
     cssRules: OptimizedCssRules,
     private val textStyle: TextStyle,
@@ -115,7 +136,9 @@ private class SemanticHtmlParser(
     fontFamilyMap: Map<String, FontFamily>,
     private val constraints: Constraints,
     private val imageDimensionsCache: Map<String, Pair<Float, Float>>,
-    private val mathSvgCache: Map<String, String>
+    private val mathSvgCache: Map<String, String>,
+    private val resourceResolver: HtmlResourceResolver,
+    private val fontFamilyLoader: HtmlFontFamilyLoader
 ) {
     private val styleCache = mutableMapOf<String, CssStyle>()
     private var combinedRules: OptimizedCssRules = cssRules
@@ -127,7 +150,7 @@ private class SemanticHtmlParser(
         val inlineCssContent = document.head().select("style").joinToString(separator = "\n") { it.data() }
 
         if (inlineCssContent.isNotBlank()) {
-            Timber.d("Found inline <style> content in $chapterAbsPath. Parsing...")
+            HtmlParserLog.d("Found inline <style> content in $chapterAbsPath. Parsing...")
             val inlineParseResult = CssParser.parse(
                 cssContent = inlineCssContent,
                 cssPath = chapterAbsPath,
@@ -138,7 +161,7 @@ private class SemanticHtmlParser(
             )
 
             if (inlineParseResult.fontFaces.isNotEmpty()) {
-                val newFonts = loadFontFamilies(inlineParseResult.fontFaces, extractionBasePath)
+                val newFonts = fontFamilyLoader.load(inlineParseResult.fontFaces, extractionBasePath)
                 if (newFonts.isNotEmpty()) {
                     currentFontFamilyMap.putAll(newFonts)
                 }
@@ -206,7 +229,7 @@ private class SemanticHtmlParser(
                 try {
                     element.`is`(rule.selector.selector)
                 } catch (e: Selector.SelectorParseException) {
-                    Timber.w(e, "Jsoup failed to parse selector '${rule.selector.selector}'.")
+                    HtmlParserLog.w(e, "Jsoup failed to parse selector '${rule.selector.selector}'.")
                     false
                 }
             }
@@ -517,28 +540,18 @@ private class SemanticHtmlParser(
         val imageElement = children.firstOrNull()?.takeIf { children.size == 1 && it.tagName() == "image" }
 
         if (imageElement != null) {
-            Timber.d("Detected SVG acting as a wrapper for an image. Parsing as SemanticImage.")
+            HtmlParserLog.d("Detected SVG acting as a wrapper for an image. Parsing as SemanticImage.")
             val href = imageElement.attr("href").ifBlank { imageElement.attr("xlink:href") }
             if (href.isBlank()) return null
 
-            val imageFile = resolveImagePath(href) ?: return null
+            val imagePath = resolveImagePath(href) ?: return null
 
-            val (width, height) = imageDimensionsCache[imageFile.absolutePath] ?: run {
-                try {
-                    BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        .also { BitmapFactory.decodeFile(imageFile.absolutePath, it) }
-                        .let {
-                            Timber.tag("IMAGE_DIAG").d("Parsed file bounds: ${it.outWidth}x${it.outHeight} for ${imageFile.name}")
-                            Pair(it.outWidth.toFloat(), it.outHeight.toFloat())
-                        }
-                } catch (e: Exception) {
-                    Timber.tag("IMAGE_DIAG").e(e, "Failed to parse image bounds for ${imageFile.name}")
-                    Pair(null, null)
-                }
-            }
+            val (width, height) = imageDimensionsCache[imagePath]
+                ?: resourceResolver.imageDimensions(imagePath)
+                ?: Pair(null, null)
 
             return SemanticImage(
-                path = imageFile.absolutePath,
+                path = imagePath,
                 altText = svgElement.selectFirst("title")?.text() ?: "Cover Image",
                 intrinsicWidth = width,
                 intrinsicHeight = height,
@@ -549,7 +562,7 @@ private class SemanticHtmlParser(
             )
         }
 
-        Timber.d("Parsing genuine SVG content into SemanticMath block.")
+        HtmlParserLog.d("Parsing genuine SVG content into SemanticMath block.")
         val title = svgElement.selectFirst("title")?.text()
         val desc = svgElement.selectFirst("desc")?.text()
         val altText = title ?: desc ?: "SVG Image"
@@ -572,31 +585,25 @@ private class SemanticHtmlParser(
         val src = element.attr("src")
         if (src.isBlank()) return null
 
-        val imageFile = resolveImagePath(src) ?: return null
+        val imagePath = resolveImagePath(src) ?: return null
 
-        if (imageFile.extension.equals("svg", ignoreCase = true)) {
+        if (imagePath.substringAfterLast('.', "").equals("svg", ignoreCase = true)) {
             return try {
-                val svgContent = imageFile.readText()
+                val svgContent = resourceResolver.readText(imagePath) ?: return null
                 val svgElement = Jsoup.parseBodyFragment(svgContent).body().children().firstOrNull()
                 svgElement?.let { parseSvgElementToSemantic(it, style) }
             } catch (e: Exception) {
-                Timber.e(e, "Failed to read SVG from <img> tag: ${imageFile.path}")
+                HtmlParserLog.e(e, "Failed to read SVG from <img> tag: $imagePath")
                 null
             }
         }
 
-        val (width, height) = imageDimensionsCache[imageFile.absolutePath] ?: run {
-            try {
-                BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    .also { BitmapFactory.decodeFile(imageFile.absolutePath, it) }
-                    .let { Pair(it.outWidth.toFloat(), it.outHeight.toFloat()) }
-            } catch (_: Exception) {
-                Pair(null, null)
-            }
-        }
+        val (width, height) = imageDimensionsCache[imagePath]
+            ?: resourceResolver.imageDimensions(imagePath)
+            ?: Pair(null, null)
 
         return SemanticImage(
-            path = imageFile.absolutePath,
+            path = imagePath,
             altText = element.attr("alt"),
             intrinsicWidth = width,
             intrinsicHeight = height,
@@ -607,22 +614,9 @@ private class SemanticHtmlParser(
         )
     }
 
-    private fun resolveImagePath(src: String): File? {
+    private fun resolveImagePath(src: String): String? {
         if (src.isBlank()) return null
-        val decodedSrc = try { URLDecoder.decode(src, "UTF-8") } catch (_: Exception) { src }
-        val parentPath = File(chapterAbsPath).parent ?: ""
-        val relativePath = Paths.get(parentPath, decodedSrc).normalize().toString()
-        val fromRelativeFile = File(extractionBasePath, relativePath)
-        try {
-            if (fromRelativeFile.exists()) return fromRelativeFile.canonicalFile
-            val fromRootFile = File(extractionBasePath, decodedSrc)
-            if (fromRootFile.exists()) return fromRootFile.canonicalFile
-        } catch (e: java.io.IOException) {
-            Timber.e(e, "Could not get canonical path for image at $src")
-            return null
-        }
-        Timber.w("Image not found. Tried: ${fromRelativeFile.absolutePath} and ${File(extractionBasePath, decodedSrc).absolutePath}")
-        return null
+        return resourceResolver.resolvePath(chapterAbsPath, extractionBasePath, src)
     }
 
     private fun parseListElementToSemantic(listElement: Element, listStyle: CssStyle): List<SemanticBlock> {
@@ -631,7 +625,7 @@ private class SemanticHtmlParser(
             if (child.tagName().lowercase() != "li") return@mapNotNull null
             val itemStyle = listStyle.merge(getElementStyle(child))
             val (text, spans) = buildSemanticTextAndSpans(child, itemStyle)
-            val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it)?.absolutePath }
+            val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) }
             SemanticListItem(text, spans, itemStyle, child.id().ifBlank { null }, child.getCfiPath(), 0, imageSrc, blockIndex = nextBlockIndex++)
         }
         return listOf(SemanticList(items, isOrdered, listStyle, listElement.id().ifBlank { null }, listElement.getCfiPath(), blockIndex = nextBlockIndex++))

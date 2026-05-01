@@ -3403,7 +3403,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     } else if (ImportedFileCache.isActiveBookDir(name)) {
                         val bookId = name.removePrefix("imported_file_")
-                        if (bookId !in allDbIds) {
+                        if (bookId !in allDbIds && file.lastModified() < oneHourAgo) {
                             val deleted = file.deleteRecursively()
                             if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache for: $bookId")
                         }

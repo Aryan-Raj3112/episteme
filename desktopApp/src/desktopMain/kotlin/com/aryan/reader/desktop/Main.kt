@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -65,12 +70,38 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticHeader
+import com.aryan.reader.paginatedreader.SemanticImage
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticListItem
+import com.aryan.reader.paginatedreader.SemanticMath
+import com.aryan.reader.paginatedreader.SemanticParagraph
+import com.aryan.reader.paginatedreader.SemanticSpacer
+import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedFile
@@ -82,7 +113,9 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.sampleLibraryState
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import kotlinx.coroutines.launch
 import java.awt.FileDialog
@@ -398,6 +431,16 @@ private fun ReaderScreen(
     val settings = readerState.settings
     val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
     val foreground = if (settings.darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
+    val searchHighlight = if (settings.darkMode) Color(0xFF675A00) else Color(0xFFFFE36E)
+    val textAlign = settings.textAlign.toComposeTextAlign()
+    val fontFamily = settings.fontFamily.toComposeFontFamily()
+    val verticalListState = rememberLazyListState()
+
+    LaunchedEffect(settings.readingMode, page?.chapterIndex) {
+        if (settings.readingMode == ReaderReadingMode.VERTICAL && page != null) {
+            verticalListState.animateScrollToItem(page.chapterIndex)
+        }
+    }
 
     ScreenScaffold(
         title = readerState.book.title,
@@ -424,44 +467,58 @@ private fun ReaderScreen(
             }
         }
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.DirectionRight || event.key == Key.PageDown -> {
+                            onSessionChange(readerEngine.next(session))
+                            true
+                        }
+
+                        event.key == Key.DirectionLeft || event.key == Key.PageUp -> {
+                            onSessionChange(readerEngine.previous(session))
+                            true
+                        }
+
+                        event.key == Key.MoveHome -> {
+                            onSessionChange(readerEngine.goToPage(session, 0))
+                            true
+                        }
+
+                        event.key == Key.MoveEnd -> {
+                            onSessionChange(readerEngine.goToPage(session, readerState.pages.lastIndex))
+                            true
+                        }
+
+                        event.isCtrlPressed && event.key == Key.G -> {
+                            onSessionChange(readerEngine.nextSearchResult(session))
+                            true
+                        }
+
+                        else -> false
+                    }
+                }
+                .focusable()
+        ) {
             ReaderSidebar(
                 session = session,
                 onSearchChange = { onSessionChange(readerEngine.search(session, it)) },
+                onPreviousSearchResult = { onSessionChange(readerEngine.previousSearchResult(session)) },
+                onNextSearchResult = { onSessionChange(readerEngine.nextSearchResult(session)) },
                 onGoToChapter = { onSessionChange(readerEngine.goToChapter(session, it)) },
                 onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) }
             )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Font ${settings.fontSize}")
-                    Slider(
-                        value = settings.fontSize.toFloat(),
-                        onValueChange = { value ->
-                            onSessionChange(readerEngine.updateSettings(session, settings.copy(fontSize = value.toInt())))
-                        },
-                        valueRange = 14f..28f,
-                        modifier = Modifier.width(160.dp)
-                    )
-                    Text("Margin ${settings.margin}")
-                    Slider(
-                        value = settings.margin.toFloat(),
-                        onValueChange = { value ->
-                            onSessionChange(readerEngine.updateSettings(session, settings.copy(margin = value.toInt())))
-                        },
-                        valueRange = 24f..96f,
-                        modifier = Modifier.width(160.dp)
-                    )
-                    Text("Spacing ${settings.lineSpacing}")
-                    Slider(
-                        value = settings.lineSpacing,
-                        onValueChange = { value ->
-                            onSessionChange(readerEngine.updateSettings(session, settings.copy(lineSpacing = value)))
-                        },
-                        valueRange = 1.1f..1.9f,
-                        modifier = Modifier.width(160.dp)
-                    )
-                }
+                ReaderSettingsBar(
+                    session = session,
+                    readerEngine = readerEngine,
+                    onSessionChange = onSessionChange
+                )
 
                 Surface(
                     color = background,
@@ -470,38 +527,113 @@ private fun ReaderScreen(
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    Box(
-                        modifier = Modifier.padding(PaddingValues(settings.margin.dp)),
-                        contentAlignment = Alignment.TopStart
-                    ) {
-                        Text(
-                            text = page?.text.orEmpty(),
-                            color = foreground,
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = settings.fontSize.sp,
-                                lineHeight = (settings.fontSize * settings.lineSpacing).sp
-                            )
-                        )
+                    SelectionContainer {
+                        if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                            LazyColumn(
+                                state = verticalListState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(PaddingValues(settings.margin.dp)),
+                                verticalArrangement = Arrangement.spacedBy(28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                items(readerState.book.chapters.indices.toList()) { index ->
+                                    val chapter = readerState.book.chapters[index]
+                                    Column(
+                                        modifier = Modifier
+                                            .width(settings.pageWidth.dp)
+                                            .fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Text(
+                                            chapter.title,
+                                            color = foreground,
+                                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = fontFamily),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        if (chapter.semanticBlocks.isNotEmpty()) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                chapter.semanticBlocks.forEach { block ->
+                                                    SemanticBlockView(
+                                                        block = block,
+                                                        foreground = foreground,
+                                                        searchQuery = session.searchQuery,
+                                                        searchHighlight = searchHighlight,
+                                                        fallbackTextAlign = textAlign,
+                                                        fallbackFontFamily = fontFamily,
+                                                        settings = settings
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            Text(
+                                                text = chapter.plainText.highlightQuery(session.searchQuery, searchHighlight),
+                                                color = foreground,
+                                                textAlign = textAlign,
+                                                style = MaterialTheme.typography.bodyLarge.copy(
+                                                    fontSize = settings.fontSize.sp,
+                                                    lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                                                    fontFamily = fontFamily
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(PaddingValues(settings.margin.dp)),
+                                contentAlignment = Alignment.TopCenter
+                            ) {
+                                Text(
+                                    text = page?.text.orEmpty().highlightQuery(session.searchQuery, searchHighlight),
+                                    color = foreground,
+                                    textAlign = textAlign,
+                                    modifier = Modifier.width(settings.pageWidth.dp),
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = settings.fontSize.sp,
+                                        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                                        fontFamily = fontFamily
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
 
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        enabled = readerState.canGoPrevious,
-                        onClick = { onSessionChange(readerEngine.previous(session)) }
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
-                        Text("Previous")
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Text("Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}")
-                    Spacer(Modifier.weight(1f))
-                    Button(
-                        enabled = readerState.canGoNext,
-                        onClick = { onSessionChange(readerEngine.next(session)) }
-                    ) {
-                        Text("Next")
-                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Slider(
+                        value = if (readerState.pages.size <= 1) 0f else readerState.currentPageIndex.toFloat() / readerState.pages.lastIndex,
+                        onValueChange = { progress -> onSessionChange(readerEngine.goToProgress(session, progress)) },
+                        enabled = readerState.pages.size > 1
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Button(
+                            enabled = readerState.canGoPrevious,
+                            onClick = { onSessionChange(readerEngine.previous(session)) }
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
+                            Text("Previous")
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                                "Continuous mode - page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
+                            } else {
+                                "Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
+                            }
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Button(
+                            enabled = readerState.canGoNext,
+                            onClick = { onSessionChange(readerEngine.next(session)) }
+                        ) {
+                            Text("Next")
+                            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
+                        }
                     }
                 }
             }
@@ -510,9 +642,322 @@ private fun ReaderScreen(
 }
 
 @Composable
+private fun ReaderSettingsBar(
+    session: ReaderSessionState,
+    readerEngine: ReaderEngine,
+    onSessionChange: (ReaderSessionState) -> Unit
+) {
+    val settings = session.reader.settings
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FilterChip(
+                selected = settings.readingMode == ReaderReadingMode.PAGINATED,
+                onClick = {
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
+                },
+                label = { Text("Pages") }
+            )
+            FilterChip(
+                selected = settings.readingMode == ReaderReadingMode.VERTICAL,
+                onClick = {
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
+                },
+                label = { Text("Vertical") }
+            )
+            FilterChip(
+                selected = settings.textAlign == SharedReaderTextAlign.START,
+                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.START))) },
+                label = { Text("Left") }
+            )
+            FilterChip(
+                selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
+                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY))) },
+                label = { Text("Justify") }
+            )
+            FilterChip(
+                selected = settings.textAlign == SharedReaderTextAlign.CENTER,
+                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.CENTER))) },
+                label = { Text("Center") }
+            )
+            listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
+                FilterChip(
+                    selected = settings.fontFamily == family,
+                    onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(fontFamily = family))) },
+                    label = { Text(family) }
+                )
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Font ${settings.fontSize}")
+            Slider(
+                value = settings.fontSize.toFloat(),
+                onValueChange = { value ->
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(fontSize = value.toInt())))
+                },
+                valueRange = 14f..30f,
+                modifier = Modifier.width(140.dp)
+            )
+            Text("Margin ${settings.margin}")
+            Slider(
+                value = settings.margin.toFloat(),
+                onValueChange = { value ->
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(margin = value.toInt())))
+                },
+                valueRange = 16f..112f,
+                modifier = Modifier.width(140.dp)
+            )
+            Text("Spacing ${String.format("%.2f", settings.lineSpacing)}")
+            Slider(
+                value = settings.lineSpacing,
+                onValueChange = { value ->
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(lineSpacing = value)))
+                },
+                valueRange = 1.1f..2.1f,
+                modifier = Modifier.width(140.dp)
+            )
+            Text("Width ${settings.pageWidth}")
+            Slider(
+                value = settings.pageWidth.toFloat(),
+                onValueChange = { value ->
+                    onSessionChange(readerEngine.updateSettings(session, settings.copy(pageWidth = value.toInt())))
+                },
+                valueRange = 520f..1100f,
+                modifier = Modifier.width(140.dp)
+            )
+        }
+    }
+}
+
+private fun String.highlightQuery(query: String, color: Color): AnnotatedString {
+    val normalized = query.trim()
+    if (normalized.length < 2) return AnnotatedString(this)
+
+    return buildAnnotatedString {
+        append(this@highlightQuery)
+        var startIndex = 0
+        while (startIndex < this@highlightQuery.length) {
+            val index = this@highlightQuery.indexOf(normalized, startIndex, ignoreCase = true)
+            if (index < 0) break
+            addStyle(
+                style = SpanStyle(background = color),
+                start = index,
+                end = index + normalized.length
+            )
+            startIndex = index + normalized.length
+        }
+    }
+}
+
+@Composable
+private fun SemanticBlockView(
+    block: SemanticBlock,
+    foreground: Color,
+    searchQuery: String,
+    searchHighlight: Color,
+    fallbackTextAlign: TextAlign,
+    fallbackFontFamily: FontFamily,
+    settings: com.aryan.reader.shared.reader.ReaderSettings
+) {
+    val modifier = Modifier
+        .fillMaxWidth()
+        .padding(
+            start = block.style.blockStyle.margin.left.safeDp(),
+            top = block.style.blockStyle.margin.top.safeDp(),
+            end = block.style.blockStyle.margin.right.safeDp(),
+            bottom = block.style.blockStyle.margin.bottom.safeDp()
+        )
+        .then(
+            if (block.style.blockStyle.backgroundColor.isSpecified) {
+                Modifier.background(block.style.blockStyle.backgroundColor, RoundedCornerShape(4.dp))
+            } else {
+                Modifier
+            }
+        )
+        .padding(
+            start = block.style.blockStyle.padding.left.safeDp(),
+            top = block.style.blockStyle.padding.top.safeDp(),
+            end = block.style.blockStyle.padding.right.safeDp(),
+            bottom = block.style.blockStyle.padding.bottom.safeDp()
+        )
+
+    when (block) {
+        is SemanticHeader -> {
+            Text(
+                text = block.toAnnotatedString(searchQuery, searchHighlight),
+                color = foreground,
+                modifier = modifier,
+                textAlign = block.style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: fallbackTextAlign,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = (settings.fontSize * headerScale(block.level)).sp,
+                    lineHeight = (settings.fontSize * headerScale(block.level) * settings.lineSpacing).sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = fallbackFontFamily
+                )
+            )
+        }
+
+        is SemanticParagraph -> SemanticTextView(block, modifier, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+        is SemanticListItem -> SemanticTextView(block, modifier, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+        is SemanticTextBlock -> SemanticTextView(block, modifier, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+
+        is SemanticList -> {
+            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                block.items.forEachIndexed { index, item ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (block.isOrdered) "${index + 1}." else "•", color = foreground)
+                        SemanticTextView(
+                            block = item,
+                            modifier = Modifier.weight(1f),
+                            foreground = foreground,
+                            searchQuery = searchQuery,
+                            searchHighlight = searchHighlight,
+                            fallbackTextAlign = fallbackTextAlign,
+                            fallbackFontFamily = fallbackFontFamily,
+                            settings = settings
+                        )
+                    }
+                }
+            }
+        }
+
+        is SemanticFlexContainer -> {
+            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                block.children.forEach {
+                    SemanticBlockView(it, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+                }
+            }
+        }
+
+        is SemanticWrappingBlock -> {
+            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SemanticBlockView(block.floatedImage, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+                block.paragraphsToWrap.forEach {
+                    SemanticBlockView(it, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+                }
+            }
+        }
+
+        is SemanticTable -> {
+            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                block.rows.forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { cell ->
+                            Column(modifier = Modifier.weight(cell.colspan.toFloat().coerceAtLeast(1f))) {
+                                cell.content.forEach {
+                                    SemanticBlockView(it, foreground, searchQuery, searchHighlight, fallbackTextAlign, fallbackFontFamily, settings)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        is SemanticImage -> {
+            Text(
+                text = block.altText?.takeIf { it.isNotBlank() } ?: block.path.substringAfterLast('/').substringAfterLast('\\'),
+                color = foreground.copy(alpha = 0.7f),
+                modifier = modifier,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        is SemanticMath -> {
+            Text(
+                text = block.altText ?: "Equation",
+                color = foreground,
+                modifier = modifier,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        is SemanticSpacer -> Spacer(modifier.height(if (block.isExplicitLineBreak) 8.dp else 16.dp))
+    }
+}
+
+@Composable
+private fun SemanticTextView(
+    block: SemanticTextBlock,
+    modifier: Modifier,
+    foreground: Color,
+    searchQuery: String,
+    searchHighlight: Color,
+    fallbackTextAlign: TextAlign,
+    fallbackFontFamily: FontFamily,
+    settings: com.aryan.reader.shared.reader.ReaderSettings
+) {
+    Text(
+        text = block.toAnnotatedString(searchQuery, searchHighlight),
+        color = foreground,
+        modifier = modifier,
+        textAlign = block.style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: fallbackTextAlign,
+        style = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = settings.fontSize.sp,
+            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+            fontFamily = fallbackFontFamily
+        )
+    )
+}
+
+private fun SemanticTextBlock.toAnnotatedString(query: String, highlightColor: Color): AnnotatedString {
+    val normalized = query.trim()
+    return buildAnnotatedString {
+        append(text)
+        spans.forEach { span ->
+            val start = span.start.coerceIn(0, text.length)
+            val end = span.end.coerceIn(start, text.length)
+            if (start < end) {
+                addStyle(span.style.spanStyle, start, end)
+            }
+        }
+        if (normalized.length >= 2) {
+            var startIndex = 0
+            while (startIndex < text.length) {
+                val index = text.indexOf(normalized, startIndex, ignoreCase = true)
+                if (index < 0) break
+                addStyle(SpanStyle(background = highlightColor), index, index + normalized.length)
+                startIndex = index + normalized.length
+            }
+        }
+    }
+}
+
+private fun headerScale(level: Int): Float {
+    return when (level) {
+        1 -> 1.5f
+        2 -> 1.35f
+        3 -> 1.2f
+        4 -> 1.1f
+        else -> 1f
+    }
+}
+
+private fun Dp.safeDp(): Dp = if (isSpecified) this else 0.dp
+
+private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
+    return when (this) {
+        SharedReaderTextAlign.START -> TextAlign.Start
+        SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
+        SharedReaderTextAlign.CENTER -> TextAlign.Center
+    }
+}
+
+private fun String.toComposeFontFamily(): FontFamily {
+    return when (this) {
+        "Serif" -> FontFamily.Serif
+        "Sans" -> FontFamily.SansSerif
+        "Mono" -> FontFamily.Monospace
+        else -> FontFamily.Default
+    }
+}
+
+@Composable
 private fun ReaderSidebar(
     session: ReaderSessionState,
     onSearchChange: (String) -> Unit,
+    onPreviousSearchResult: () -> Unit,
+    onNextSearchResult: () -> Unit,
     onGoToChapter: (Int) -> Unit,
     onGoToPage: (Int) -> Unit
 ) {
@@ -581,6 +1026,25 @@ private fun ReaderSidebar(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (session.searchQuery.isNotBlank() && session.searchResults.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${session.activeSearchResultIndex + 1} of ${session.searchResults.size}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onPreviousSearchResult) {
+                            Text("Prev")
+                        }
+                        TextButton(onClick = onNextSearchResult) {
+                            Text("Next")
+                        }
+                    }
+                }
             }
             if (session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
                 item {

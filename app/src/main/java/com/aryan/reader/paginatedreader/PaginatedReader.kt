@@ -2784,12 +2784,14 @@ internal fun PaginatedReaderContent(
                                                                 val markerAreaModifier =
                                                                     Modifier.width(32.dp)
                                                                         .padding(end = 8.dp)
+                                                                val itemMarkerImage = block.itemMarkerImage
+                                                                val itemMarker = block.itemMarker
 
-                                                                if (block.itemMarkerImage != null) {
+                                                                if (itemMarkerImage != null) {
                                                                     val imageRequest =
                                                                         Builder(LocalContext.current).data(
                                                                             File(
-                                                                                block.itemMarkerImage
+                                                                                itemMarkerImage
                                                                             )
                                                                         ).crossfade(true).build()
                                                                     val imageSize = with(density) {
@@ -2805,9 +2807,9 @@ internal fun PaginatedReaderContent(
                                                                         alignment = Alignment.CenterEnd,
                                                                         contentScale = ContentScale.FillHeight
                                                                     )
-                                                                } else if (block.itemMarker != null) {
+                                                                } else if (itemMarker != null) {
                                                                     Text(
-                                                                        text = block.itemMarker,
+                                                                        text = itemMarker,
                                                                         style = textStyle.copy(
                                                                             textAlign = TextAlign.End
                                                                         ),
@@ -3017,10 +3019,12 @@ internal fun PaginatedReaderContent(
                                                         }
 
                                                         is MathBlock -> {
+                                                            val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
                                                             Timber.d(
-                                                                "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${!block.svgContent.isNullOrBlank()}"
+                                                                "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${svgContent != null}"
                                                             )
-                                                            if (!block.svgContent.isNullOrBlank()) {
+                                                            if (svgContent != null) {
+                                                                val nonBlankSvgContent = svgContent
                                                                 BoxWithConstraints(
                                                                     modifier = paddingModifier
                                                                 ) {
@@ -3104,7 +3108,7 @@ internal fun PaginatedReaderContent(
                                                                     val imageRequest =
                                                                         Builder(LocalContext.current).data(
                                                                             SvgData(
-                                                                                block.svgContent
+                                                                                nonBlankSvgContent
                                                                             )
                                                                         ).listener(
                                                                             onError = { _, result ->
@@ -3357,9 +3361,10 @@ internal fun PaginatedReaderContent(
                                                                                             Row(
                                                                                                 verticalAlignment = Alignment.Top
                                                                                             ) {
-                                                                                                if (blockInCell.itemMarker != null) {
+                                                                                                val itemMarker = blockInCell.itemMarker
+                                                                                                if (itemMarker != null) {
                                                                                                     Text(
-                                                                                                        text = blockInCell.itemMarker,
+                                                                                                        text = itemMarker,
                                                                                                         style = cellTextStyle,
                                                                                                         modifier = Modifier.padding(
                                                                                                             end = 4.dp
@@ -4101,10 +4106,12 @@ private fun RenderFlexChildBlock(
                 val markerAreaModifier = Modifier
                     .width(32.dp)
                     .padding(end = 8.dp)
+                val itemMarkerImage = childBlock.itemMarkerImage
+                val itemMarker = childBlock.itemMarker
 
-                if (childBlock.itemMarkerImage != null) {
+                if (itemMarkerImage != null) {
                     val imageRequest =
-                        Builder(LocalContext.current).data(File(childBlock.itemMarkerImage))
+                        Builder(LocalContext.current).data(File(itemMarkerImage))
                             .crossfade(true).build()
                     val imageSize = with(density) { (textStyle.fontSize.value * 0.8f).sp.toDp() }
 
@@ -4115,9 +4122,9 @@ private fun RenderFlexChildBlock(
                         alignment = Alignment.CenterEnd,
                         contentScale = ContentScale.FillHeight
                     )
-                } else if (childBlock.itemMarker != null) {
+                } else if (itemMarker != null) {
                     Text(
-                        text = childBlock.itemMarker,
+                        text = itemMarker,
                         style = textStyle.copy(textAlign = TextAlign.End),
                         modifier = markerAreaModifier
                     )
@@ -4515,10 +4522,14 @@ fun Modifier.drawCssBorders(
     blockStyle: BlockStyle,
     @Suppress("unused") density: Density
 ): Modifier = this.drawBehind {
-    val topWidth = blockStyle.borderTop?.width?.toPx() ?: 0f
-    val rightWidth = blockStyle.borderRight?.width?.toPx() ?: 0f
-    val bottomWidth = blockStyle.borderBottom?.width?.toPx() ?: 0f
-    val leftWidth = blockStyle.borderLeft?.width?.toPx() ?: 0f
+    val borderTop = blockStyle.borderTop
+    val borderRight = blockStyle.borderRight
+    val borderBottom = blockStyle.borderBottom
+    val borderLeft = blockStyle.borderLeft
+    val topWidth = borderTop?.width?.toPx() ?: 0f
+    val rightWidth = borderRight?.width?.toPx() ?: 0f
+    val bottomWidth = borderBottom?.width?.toPx() ?: 0f
+    val leftWidth = borderLeft?.width?.toPx() ?: 0f
 
     val tlRadius = blockStyle.borderTopLeftRadius.toPx()
     val trRadius = blockStyle.borderTopRightRadius.toPx()
@@ -4550,9 +4561,9 @@ fun Modifier.drawCssBorders(
     }
 
     // TOP
-    if (topWidth > 0f && blockStyle.borderTop != null) {
-        val color = blockStyle.borderTop.color
-        val effect = getPathEffect(blockStyle.borderTop.style, topWidth)
+    if (topWidth > 0f && borderTop != null) {
+        val color = borderTop.color
+        val effect = getPathEffect(borderTop.style, topWidth)
         val offset = topWidth / 2f
 
         val startX = if (tlRadius > 0) tlRadius else 0f
@@ -4568,9 +4579,9 @@ fun Modifier.drawCssBorders(
     }
 
     // BOTTOM
-    if (bottomWidth > 0f && blockStyle.borderBottom != null) {
-        val color = blockStyle.borderBottom.color
-        val effect = getPathEffect(blockStyle.borderBottom.style, bottomWidth)
+    if (bottomWidth > 0f && borderBottom != null) {
+        val color = borderBottom.color
+        val effect = getPathEffect(borderBottom.style, bottomWidth)
         val offset = size.height - (bottomWidth / 2f)
 
         val startX = if (blRadius > 0) blRadius else 0f
@@ -4586,9 +4597,9 @@ fun Modifier.drawCssBorders(
     }
 
     // LEFT
-    if (leftWidth > 0f && blockStyle.borderLeft != null) {
-        val color = blockStyle.borderLeft.color
-        val effect = getPathEffect(blockStyle.borderLeft.style, leftWidth)
+    if (leftWidth > 0f && borderLeft != null) {
+        val color = borderLeft.color
+        val effect = getPathEffect(borderLeft.style, leftWidth)
         val offset = leftWidth / 2f
 
         val startY = if (tlRadius > 0) tlRadius else 0f
@@ -4604,9 +4615,9 @@ fun Modifier.drawCssBorders(
     }
 
     // RIGHT
-    if (rightWidth > 0f && blockStyle.borderRight != null) {
-        val color = blockStyle.borderRight.color
-        val effect = getPathEffect(blockStyle.borderRight.style, rightWidth)
+    if (rightWidth > 0f && borderRight != null) {
+        val color = borderRight.color
+        val effect = getPathEffect(borderRight.style, rightWidth)
         val offset = size.width - (rightWidth / 2f)
 
         val startY = if (trRadius > 0) trRadius else 0f
@@ -4621,9 +4632,9 @@ fun Modifier.drawCssBorders(
         )
     }
 
-    if (tlRadius > 0f && topWidth > 0f && leftWidth > 0f && blockStyle.borderTop != null) {
+    if (tlRadius > 0f && topWidth > 0f && leftWidth > 0f && borderTop != null) {
         drawArc(
-            color = blockStyle.borderTop.color,
+            color = borderTop.color,
             startAngle = 180f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(leftWidth/2f, topWidth/2f),
@@ -4632,9 +4643,9 @@ fun Modifier.drawCssBorders(
         )
     }
 
-    if (trRadius > 0f && topWidth > 0f && rightWidth > 0f && blockStyle.borderTop != null) {
+    if (trRadius > 0f && topWidth > 0f && rightWidth > 0f && borderTop != null) {
         drawArc(
-            color = blockStyle.borderTop.color,
+            color = borderTop.color,
             startAngle = 270f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(size.width - (trRadius * 2) + (rightWidth/2f), topWidth/2f),
@@ -4643,9 +4654,9 @@ fun Modifier.drawCssBorders(
         )
     }
 
-    if (brRadius > 0f && bottomWidth > 0f && rightWidth > 0f && blockStyle.borderBottom != null) {
+    if (brRadius > 0f && bottomWidth > 0f && rightWidth > 0f && borderBottom != null) {
         drawArc(
-            color = blockStyle.borderBottom.color,
+            color = borderBottom.color,
             startAngle = 0f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(size.width - (brRadius * 2) + (rightWidth/2f), size.height - (brRadius * 2) + (bottomWidth/2f)),
@@ -4654,9 +4665,9 @@ fun Modifier.drawCssBorders(
         )
     }
 
-    if (blRadius > 0f && bottomWidth > 0f && leftWidth > 0f && blockStyle.borderBottom != null) {
+    if (blRadius > 0f && bottomWidth > 0f && leftWidth > 0f && borderBottom != null) {
         drawArc(
-            color = blockStyle.borderBottom.color,
+            color = borderBottom.color,
             startAngle = 90f, sweepAngle = 90f,
             useCenter = false,
             topLeft = Offset(leftWidth/2f, size.height - (blRadius * 2) + (bottomWidth/2f)),

@@ -163,10 +163,12 @@ class ContentStyler(
             }
 
             is SemanticMath -> {
+                val svgContent = block.svgContent
+                val nonBlankSvgContent = svgContent?.takeIf { it.isNotBlank() }
                 val finalSvgContent = when {
-                    block.isFromMathJax || block.svgContent.isNullOrBlank() -> block.svgContent
+                    block.isFromMathJax || nonBlankSvgContent == null -> svgContent
                     else -> {
-                        val themedSvg = applyThemeToSvg(block.svgContent)
+                        val themedSvg = applyThemeToSvg(nonBlankSvgContent)
                         embedImagesInSvg(themedSvg)
                     }
                 }
@@ -452,11 +454,11 @@ class ContentStyler(
                             }
                         }
 
-                        if (span.linkHref != null) {
-                            addStringAnnotation("URL", span.linkHref, span.start, span.end)
+                        span.linkHref?.let { linkHref ->
+                            addStringAnnotation("URL", linkHref, span.start, span.end)
                         }
-                        if (span.elementId != null) {
-                            addStringAnnotation("ID", span.elementId, span.start, span.end)
+                        span.elementId?.let { elementId ->
+                            addStringAnnotation("ID", elementId, span.start, span.end)
                         }
                     }
                 }

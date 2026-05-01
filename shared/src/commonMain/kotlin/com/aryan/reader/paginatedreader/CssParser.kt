@@ -21,7 +21,6 @@ package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -35,23 +34,45 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
-import timber.log.Timber
-import java.io.File
-import java.util.regex.Pattern
 import kotlin.math.roundToInt
 
 private const val IMPORTANT_SPECIFICITY_BOOST = 10_000
+
+private object ReaderCssLog {
+    fun d(@Suppress("UNUSED_PARAMETER") message: String) = Unit
+    fun w(@Suppress("UNUSED_PARAMETER") message: String) = Unit
+    fun w(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
+    fun e(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
+}
+
 private fun Color.luminance(): Float {
     if (!this.isSpecified) return 0f
     return (0.299f * red + 0.587f * green + 0.114f * blue)
 }
 
+private fun resolveCssRelativePath(cssPath: String, rawSrc: String): String {
+    if (rawSrc.startsWith("/") || rawSrc.contains("://")) return rawSrc
+    val normalizedBase = cssPath.replace('\\', '/').substringBeforeLast('/', "")
+    val parts = ArrayDeque<String>()
+    (if (normalizedBase.isBlank()) rawSrc else "$normalizedBase/$rawSrc")
+        .replace('\\', '/')
+        .split('/')
+        .forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (parts.isNotEmpty()) parts.removeLast()
+                else -> parts.addLast(part)
+            }
+        }
+    return parts.joinToString("/")
+}
+
 object CssParser {
     private val FONT_FACE_REGEX = "@font-face\\s*\\{([^}]+)\\}".toRegex(RegexOption.DOT_MATCHES_ALL)
     private val URL_REGEX = "url\\((['\"]?)(.*?)\\1\\)".toRegex()
-    private val ID_SELECTOR_PATTERN = Pattern.compile("#[^\\s,]+")
-    private val CLASS_ATTRIBUTE_SELECTOR_PATTERN = Pattern.compile("\\.[^\\s,]+|\\[[^]]+]|:(?!:)[^\\s,]+")
-    private val TYPE_PSEUDO_ELEMENT_SELECTOR_PATTERN = Pattern.compile("(?<![.#\\[])\\b[a-zA-Z-]+|::[a-zA-Z-]+")
+    private val ID_SELECTOR_REGEX = Regex("#[^\\s,]+")
+    private val CLASS_ATTRIBUTE_SELECTOR_REGEX = Regex("\\.[^\\s,]+|\\[[^]]+]|:(?!:)[^\\s,]+")
+    private val TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX = Regex("(?<![.#\\[])\\b[a-zA-Z-]+|::[a-zA-Z-]+")
     private data class FontSource(val url: String, val format: String?)
 
     // Regex to identify simple, single-part selectors for fast categorization
@@ -65,7 +86,7 @@ object CssParser {
         "thick" to 5.dp
     )
 
-    internal fun adaptColorForTheme(
+    fun adaptColorForTheme(
         color: Color,
         isDarkTheme: Boolean,
         isBackground: Boolean,
@@ -113,16 +134,7 @@ object CssParser {
                 return color
             }
 
-            val hsl = FloatArray(3)
-            androidx.core.graphics.ColorUtils.colorToHSL(color.toArgb(), hsl)
-
-            if (bgLuminance < 0.5f) {
-                hsl[2] = hsl[2].coerceAtLeast(0.7f)
-            } else {
-                hsl[2] = hsl[2].coerceAtMost(0.3f)
-            }
-
-            return Color(androidx.core.graphics.ColorUtils.HSLToColor(hsl))
+            return themeText.takeIf { it.isSpecified } ?: color
         }
     }
 
@@ -143,7 +155,7 @@ object CssParser {
                 reassembled = true
             }
             if (reassembled) {
-                Timber.d("Reassembled declaration. Original: '$originalCurrent'. Final: '$current'")
+                ReaderCssLog.d("Reassembled declaration. Original: '$originalCurrent'. Final: '$current'")
             }
             result.add(current)
         }
@@ -151,21 +163,9 @@ object CssParser {
     }
 
     private fun calculateSpecificity(selector: String): Int {
-        val ids = ID_SELECTOR_PATTERN.matcher(selector).run {
-            var count = 0
-            while (find()) count++
-            count
-        }
-        val classesAndAttributes = CLASS_ATTRIBUTE_SELECTOR_PATTERN.matcher(selector).run {
-            var count = 0
-            while (find()) count++
-            count
-        }
-        val elementsAndPseudos = TYPE_PSEUDO_ELEMENT_SELECTOR_PATTERN.matcher(selector).run {
-            var count = 0
-            while (find()) count++
-            count
-        }
+        val ids = ID_SELECTOR_REGEX.findAll(selector).count()
+        val classesAndAttributes = CLASS_ATTRIBUTE_SELECTOR_REGEX.findAll(selector).count()
+        val elementsAndPseudos = TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX.findAll(selector).count()
         val specificity = ids * 100 + classesAndAttributes * 10 + elementsAndPseudos
         return specificity
     }
@@ -200,13 +200,13 @@ object CssParser {
         }
         cleanedCss = mediaQueryRegex.replace(cleanedCss, "")
 
-        Timber.d("CssParser: Checking for @font-face rules...")
+        ReaderCssLog.d("CssParser: Checking for @font-face rules...")
         val fontFaceMatches = FONT_FACE_REGEX.findAll(cleanedCss)
         if (!fontFaceMatches.any()) {
-            Timber.d("CssParser: No @font-face rules found by regex.")
+            ReaderCssLog.d("CssParser: No @font-face rules found by regex.")
         }
         fontFaceMatches.forEach { match ->
-            Timber.d("CssParser: Found a @font-face block. Parsing its properties.")
+            ReaderCssLog.d("CssParser: Found a @font-face block. Parsing its properties.")
             val properties = match.groupValues[1]
             parseFontFace(properties, cssPath)?.let { fontFaces.add(it) }
         }
@@ -269,10 +269,10 @@ object CssParser {
 
         val fontFamily = propsMap["font-family"]?.removeSurrounding("\"")?.removeSurrounding("'")?.lowercase()
         val srcString = propsMap["src"]
-        Timber.d("Parsing font-face for family: $fontFamily. Raw src string: $srcString")
+        ReaderCssLog.d("Parsing font-face for family: $fontFamily. Raw src string: $srcString")
 
         if (fontFamily == null || srcString == null) {
-            Timber.w("Incomplete @font-face rule: missing font-family or src.")
+            ReaderCssLog.w("Incomplete @font-face rule: missing font-family or src.")
             return null
         }
 
@@ -280,25 +280,25 @@ object CssParser {
 
         val sources = srcString.split(Regex(",(?=\\s*url\\()")).mapNotNull { part ->
             val trimmedPart = part.trim()
-            Timber.d("Processing src part: '$trimmedPart'")
+            ReaderCssLog.d("Processing src part: '$trimmedPart'")
 
             urlWithFormatRegex.find(trimmedPart)?.let {
-                Timber.d("Matched url with format(). URL: ${it.groupValues[2]}, Format: ${it.groupValues[4]}")
+                ReaderCssLog.d("Matched url with format(). URL: ${it.groupValues[2]}, Format: ${it.groupValues[4]}")
                 FontSource(url = it.groupValues[2], format = it.groupValues[4].lowercase().removeSurrounding("'"))
             } ?: URL_REGEX.find(trimmedPart)?.let {
                 val url = it.groupValues[2]
-                Timber.d("Matched url() only. URL: '$url'")
+                ReaderCssLog.d("Matched url() only. URL: '$url'")
                 val format = when {
                     url.startsWith("data:", ignoreCase = true) -> {
                         val mediaType = url.substringAfter("data:").substringBefore(';')
-                        Timber.d("Data URI detected. Media type: '$mediaType'")
+                        ReaderCssLog.d("Data URI detected. Media type: '$mediaType'")
                         when {
                             mediaType.contains("opentype") -> "opentype"
                             mediaType.contains("truetype") -> "truetype"
                             mediaType.contains("woff2") -> "woff2"
                             mediaType.contains("woff") -> "woff"
                             else -> {
-                                Timber.w("Unknown data URI media type: $mediaType")
+                                ReaderCssLog.w("Unknown data URI media type: $mediaType")
                                 null
                             }
                         }
@@ -308,11 +308,11 @@ object CssParser {
                     url.endsWith(".otf", ignoreCase = true) -> "opentype"
                     url.endsWith(".ttf", ignoreCase = true) -> "truetype"
                     else -> {
-                        Timber.w("Could not determine format from URL: $url")
+                        ReaderCssLog.w("Could not determine format from URL: $url")
                         null
                     }
                 }
-                Timber.d("Determined format: '$format'")
+                ReaderCssLog.d("Determined format: '$format'")
                 if (format != null) {
                     FontSource(url = url, format = format)
                 } else {
@@ -322,7 +322,7 @@ object CssParser {
         }
 
         if (sources.isEmpty()) {
-            Timber.w("Could not parse any valid source from @font-face src: $srcString")
+            ReaderCssLog.w("Could not parse any valid source from @font-face src: $srcString")
             return null
         }
 
@@ -337,14 +337,13 @@ object CssParser {
         }!!
 
         val rawSrc = preferredSource.url
-        Timber.d("Selected font source for '$fontFamily': '${preferredSource.url}' with format '${preferredSource.format}'")
+        ReaderCssLog.d("Selected font source for '$fontFamily': '${preferredSource.url}' with format '${preferredSource.format}'")
 
         val finalSrc = if (cssPath != null && !rawSrc.startsWith("data:")) {
             try {
-                val cssParentDir = File(cssPath).parent ?: ""
-                File(cssParentDir, rawSrc).normalize().path
+                resolveCssRelativePath(cssPath, rawSrc)
             } catch (e: Exception) {
-                Timber.e(e, "Could not resolve font path for src '$rawSrc' in css '$cssPath'")
+                ReaderCssLog.e(e, "Could not resolve font path for src '$rawSrc' in css '$cssPath'")
                 rawSrc // Fallback to the raw path on error
             }
         } else {
@@ -1038,10 +1037,20 @@ object CssParser {
                         val r = (colorLong and 0xF00) shr 8
                         val g = (colorLong and 0x0F0) shr 4
                         val b = colorLong and 0x00F
-                        Color(Color(0xFF000000 or ((r * 17) shl 16) or ((g * 17) shl 8) or (b * 17)).toArgb())
+                        Color((r * 17).toInt(), (g * 17).toInt(), (b * 17).toInt(), 255)
                     }
-                    6 -> Color(Color(0xFF000000 or colorLong).toArgb()) // #RRGGBB
-                    8 -> Color(Color(colorLong).toArgb()) // #AARRGGBB
+                    6 -> Color(
+                        ((colorLong shr 16) and 0xFF).toInt(),
+                        ((colorLong shr 8) and 0xFF).toInt(),
+                        (colorLong and 0xFF).toInt(),
+                        255
+                    ) // #RRGGBB
+                    8 -> Color(
+                        ((colorLong shr 16) and 0xFF).toInt(),
+                        ((colorLong shr 8) and 0xFF).toInt(),
+                        (colorLong and 0xFF).toInt(),
+                        ((colorLong shr 24) and 0xFF).toInt()
+                    ) // #AARRGGBB
                     else -> null
                 }
             }

@@ -39,7 +39,7 @@ import com.aryan.reader.paginatedreader.FontFaceInfo
 import com.aryan.reader.paginatedreader.MathMLRenderer
 import com.aryan.reader.paginatedreader.OptimizedCssRules
 import com.aryan.reader.paginatedreader.RenderResult
-import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
+import com.aryan.reader.paginatedreader.androidHtmlToSemanticBlocks
 import com.aryan.reader.paginatedreader.loadFontFamilies
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import kotlinx.coroutines.Dispatchers
@@ -277,7 +277,7 @@ class BookProcessingWorker(
                             Timber.d("Chapter $index (Background Worker): Processed HTML contains <math-placeholder>: ${processedHtml.contains("math-placeholder")}")
 
 
-                            val semanticBlocks = htmlToSemanticBlocks(
+                            val semanticBlocks = androidHtmlToSemanticBlocks(
                                 html = processedHtml,
                                 cssRules = lightThemeCssRules,
                                 textStyle = textStyle,

@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.SemanticBlock
+
 data class SharedEpubBook(
     val id: String,
     val fileName: String,
@@ -11,7 +13,8 @@ data class SharedEpubBook(
 data class SharedEpubChapter(
     val id: String,
     val title: String,
-    val plainText: String
+    val plainText: String,
+    val semanticBlocks: List<SemanticBlock> = emptyList()
 )
 
 data class ReaderLocator(
@@ -19,11 +22,26 @@ data class ReaderLocator(
     val charOffset: Int = 0
 )
 
+enum class ReaderReadingMode {
+    PAGINATED,
+    VERTICAL
+}
+
+enum class SharedReaderTextAlign {
+    START,
+    JUSTIFY,
+    CENTER
+}
+
 data class ReaderSettings(
     val fontSize: Int = 18,
     val lineSpacing: Float = 1.45f,
     val margin: Int = 48,
-    val darkMode: Boolean = false
+    val darkMode: Boolean = false,
+    val readingMode: ReaderReadingMode = ReaderReadingMode.PAGINATED,
+    val textAlign: SharedReaderTextAlign = SharedReaderTextAlign.START,
+    val pageWidth: Int = 760,
+    val fontFamily: String = "Default"
 )
 
 data class ReaderPage(

@@ -1,5 +1,13 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.CssParser
+import com.aryan.reader.paginatedreader.OptimizedCssRules
+import com.aryan.reader.paginatedreader.UserAgentStylesheet
+import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import java.io.File
@@ -21,6 +29,7 @@ object DesktopEpubLoader {
             val title = opf.tagText("title").ifBlank { file.nameWithoutExtension }
             val author = opf.tagText("creator").ifBlank { null }
             val manifest = parseManifest(opf)
+            val cssRules = parseCssRules(zip, manifest, basePath)
             val spine = Regex("<itemref[^>]*idref=[\"']([^\"']+)[\"'][^>]*/?>")
                 .findAll(opf)
                 .mapNotNull { match -> manifest[match.groupValues[1]] }
@@ -34,6 +43,18 @@ object DesktopEpubLoader {
                 val path = normalizeZipPath(basePath + href)
                 val html = zip.readTextOrNull(path) ?: return@mapIndexedNotNull null
                 val text = htmlToText(html)
+                val semanticBlocks = runCatching {
+                    htmlToSemanticBlocks(
+                        html = html,
+                        cssRules = cssRules,
+                        textStyle = TextStyle(fontSize = 18.sp),
+                        chapterAbsPath = path,
+                        extractionBasePath = "",
+                        density = Density(1f),
+                        fontFamilyMap = emptyMap(),
+                        constraints = Constraints(maxWidth = 980, maxHeight = 720)
+                    )
+                }.getOrElse { emptyList() }
                 if (text.isBlank()) {
                     null
                 } else {
@@ -43,7 +64,8 @@ object DesktopEpubLoader {
                             .ifBlank { html.tagText("h2") }
                             .ifBlank { html.tagText("title") }
                             .ifBlank { "Chapter ${index + 1}" },
-                        plainText = text
+                        plainText = text,
+                        semanticBlocks = semanticBlocks
                     )
                 }
             }
@@ -73,6 +95,39 @@ object DesktopEpubLoader {
             val href = item.attr("href")
             if (id.isBlank() || href.isBlank()) null else id to href
         }.toMap()
+    }
+
+    private fun parseCssRules(zip: ZipFile, manifest: Map<String, String>, basePath: String): OptimizedCssRules {
+        val constraints = Constraints(maxWidth = 980, maxHeight = 720)
+        val baseRules = CssParser.parse(
+            cssContent = UserAgentStylesheet.default,
+            cssPath = null,
+            baseFontSizeSp = 18f,
+            density = 1f,
+            constraints = constraints,
+            isDarkTheme = false
+        ).rules
+
+        return manifest.values
+            .filter { it.endsWith(".css", ignoreCase = true) }
+            .fold(baseRules) { rules, href ->
+                val path = normalizeZipPath(basePath + href)
+                val css = zip.readTextOrNull(path).orEmpty()
+                if (css.isBlank()) {
+                    rules
+                } else {
+                    rules.merge(
+                        CssParser.parse(
+                            cssContent = css,
+                            cssPath = path,
+                            baseFontSizeSp = 18f,
+                            density = 1f,
+                            constraints = constraints,
+                            isDarkTheme = false
+                        ).rules
+                    )
+                }
+            }
     }
 
     private fun ZipFile.readText(path: String): String {

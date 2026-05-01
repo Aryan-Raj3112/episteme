@@ -184,7 +184,6 @@ import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
-import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -381,6 +380,7 @@ private fun saveExternalSearchPackage(context: Context, packageName: String) {
 const val PREF_READER_THEME = "reader_theme_id"
 const val PREF_CUSTOM_THEMES = "custom_themes_json"
 
+@UnstableApi
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun EpubReaderScreen(
@@ -1581,18 +1581,6 @@ fun EpubReaderHost(
         currentChapterIndex = currentChapterIndex,
         focusRequester = searchFocusRequester
     )
-
-    if (epubBook.extractionBasePath.isBlank() || !File(epubBook.extractionBasePath).exists()) {
-        Timber.e("Extraction base path is blank or does not exist: ${epubBook.extractionBasePath}"
-        )
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "Error: Book content not found. Path: ${epubBook.extractionBasePath}",
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-        return
-    }
 
     val totalPagesInCurrentChapter = remember(currentScrollHeightValue, currentClientHeightValue) {
         if (currentClientHeightValue > 0) {

@@ -503,7 +503,7 @@ class BookPaginator(
             parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
         }
 
-        val semanticBlocks = htmlToSemanticBlocks(
+        val semanticBlocks = androidHtmlToSemanticBlocks(
             html = processedHtml,
             cssRules = parsingCssRules,
             textStyle = textStyle.copy(color = Color.Black),

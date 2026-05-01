@@ -27,47 +27,6 @@ import androidx.compose.ui.text.font.FontWeight
 import java.io.File
 import java.security.MessageDigest
 
-/**
- * A centralized mapper for handling conversions between generic CSS font family names
- * and Compose's FontFamily objects.
- */
-object FontFamilyMapper {
-    private val genericFontMap = mapOf(
-        "serif" to FontFamily.Serif,
-        "sans-serif" to FontFamily.SansSerif,
-        "monospace" to FontFamily.Monospace,
-        "cursive" to FontFamily.Cursive,
-        "default" to FontFamily.Default,
-        "system-ui" to FontFamily.Default,
-        "ui-sans-serif" to FontFamily.Default,
-        "ui-serif" to FontFamily.Default,
-        "ui-monospace" to FontFamily.Default,
-        "ui-rounded" to FontFamily.Default
-    )
-
-    /**
-     * Converts a string name (e.g., "serif") to a Compose [FontFamily].
-     */
-    fun nameToFontFamily(name: String): FontFamily? {
-        return genericFontMap[name.trim().lowercase()]
-    }
-
-    /**
-     * Converts a Compose [FontFamily] back to its primary string name for serialization.
-     * Custom fonts are not serialized by name and will return null.
-     */
-    fun fontFamilyToName(fontFamily: FontFamily): String? {
-        return when (fontFamily) {
-            FontFamily.Serif -> "serif"
-            FontFamily.SansSerif -> "sans-serif"
-            FontFamily.Monospace -> "monospace"
-            FontFamily.Cursive -> "cursive"
-            FontFamily.Default -> "default"
-            else -> null
-        }
-    }
-}
-
 private fun getCacheKeyForFont(bookId: String, fontPath: String): String {
     val identifier = "$bookId:$fontPath"
     val digest = MessageDigest.getInstance("MD5").digest(identifier.toByteArray())

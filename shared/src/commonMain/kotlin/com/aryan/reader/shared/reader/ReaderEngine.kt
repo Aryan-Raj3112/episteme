@@ -17,10 +17,14 @@ data class ReaderSessionState(
     val reader: PaginatedReaderState,
     val bookmarks: List<ReaderBookmark> = emptyList(),
     val searchQuery: String = "",
-    val searchResults: List<ReaderSearchResult> = emptyList()
+    val searchResults: List<ReaderSearchResult> = emptyList(),
+    val activeSearchResultIndex: Int = -1
 ) {
     val currentBookmark: ReaderBookmark?
         get() = bookmarks.firstOrNull { it.pageIndex == reader.currentPageIndex }
+
+    val activeSearchResult: ReaderSearchResult?
+        get() = searchResults.getOrNull(activeSearchResultIndex)
 }
 
 class ReaderEngine(
@@ -51,7 +55,16 @@ class ReaderEngine(
 
     fun goToPage(state: ReaderSessionState, pageIndex: Int): ReaderSessionState {
         val target = pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
-        return state.copy(reader = state.reader.copy(currentPageIndex = target))
+        return state.copy(
+            reader = state.reader.copy(currentPageIndex = target),
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target }
+        )
+    }
+
+    fun goToProgress(state: ReaderSessionState, progress: Float): ReaderSessionState {
+        if (state.reader.pages.isEmpty()) return state
+        val target = ((state.reader.pages.lastIndex) * progress.coerceIn(0f, 1f)).toInt()
+        return goToPage(state, target)
     }
 
     fun goToChapter(state: ReaderSessionState, chapterIndex: Int): ReaderSessionState {
@@ -97,7 +110,41 @@ class ReaderEngine(
                 }
             }
         }
-        return state.copy(searchQuery = query, searchResults = results)
+        val activeIndex = results.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }
+            .takeIf { it >= 0 }
+            ?: if (results.isNotEmpty()) 0 else -1
+        val updated = state.copy(
+            searchQuery = query,
+            searchResults = results,
+            activeSearchResultIndex = activeIndex
+        )
+        return updated.activeSearchResult?.let { goToPage(updated, it.pageIndex) } ?: updated
+    }
+
+    fun nextSearchResult(state: ReaderSessionState): ReaderSessionState {
+        if (state.searchResults.isEmpty()) return state
+        val nextIndex = if (state.activeSearchResultIndex < state.searchResults.lastIndex) {
+            state.activeSearchResultIndex + 1
+        } else {
+            0
+        }
+        return state.copy(
+            reader = state.reader.copy(currentPageIndex = state.searchResults[nextIndex].pageIndex),
+            activeSearchResultIndex = nextIndex
+        )
+    }
+
+    fun previousSearchResult(state: ReaderSessionState): ReaderSessionState {
+        if (state.searchResults.isEmpty()) return state
+        val nextIndex = if (state.activeSearchResultIndex > 0) {
+            state.activeSearchResultIndex - 1
+        } else {
+            state.searchResults.lastIndex
+        }
+        return state.copy(
+            reader = state.reader.copy(currentPageIndex = state.searchResults[nextIndex].pageIndex),
+            activeSearchResultIndex = nextIndex
+        )
     }
 }
 

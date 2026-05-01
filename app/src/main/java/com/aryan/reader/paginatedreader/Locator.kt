@@ -115,7 +115,7 @@ class LocatorConverter(
                 otherComplex = mergedOtherComplex
             )
 
-            val semanticBlocks = htmlToSemanticBlocks(
+            val semanticBlocks = androidHtmlToSemanticBlocks(
                 html = htmlToParse,
                 cssRules = parsingCssRules,
                 textStyle = TextStyle(),
