@@ -39,7 +39,10 @@ object DesktopEpubLoader {
                 } else {
                     SharedEpubChapter(
                         id = "chapter_$index",
-                        title = html.tagText("title").ifBlank { "Chapter ${index + 1}" },
+                        title = html.tagText("h1")
+                            .ifBlank { html.tagText("h2") }
+                            .ifBlank { html.tagText("title") }
+                            .ifBlank { "Chapter ${index + 1}" },
                         plainText = text
                     )
                 }
@@ -129,6 +132,9 @@ object DesktopEpubLoader {
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
             .replace("&#39;", "'")
+            .replace(Regex("&#x([0-9a-fA-F]+);")) { match ->
+                match.groupValues[1].toIntOrNull(16)?.toChar()?.toString().orEmpty()
+            }
             .replace(Regex("&#(\\d+);")) { match ->
                 match.groupValues[1].toIntOrNull()?.toChar()?.toString().orEmpty()
             }

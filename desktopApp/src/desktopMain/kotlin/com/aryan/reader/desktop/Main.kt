@@ -19,15 +19,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
-import androidx.compose.material.icons.filled.LibraryBooks
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.NavigateBefore
-import androidx.compose.material.icons.filled.NavigateNext
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AssistChip
@@ -38,6 +40,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,10 +81,9 @@ import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.sampleLibraryState
-import com.aryan.reader.shared.reader.PaginatedReaderState
-import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
-import com.aryan.reader.shared.reader.SimplePaginator
 import kotlinx.coroutines.launch
 import java.awt.FileDialog
 import java.awt.Frame
@@ -102,13 +104,11 @@ private enum class DesktopTab { HOME, LIBRARY, SHELVES, READER }
 @Composable
 private fun EpistemeDesktopApp() {
     val projector = remember { LibraryProjector() }
-    val paginator = remember { SimplePaginator() }
+    val readerEngine = remember { ReaderEngine() }
     var state by remember { mutableStateOf(sampleLibraryState()) }
     var selectedTab by remember { mutableStateOf(DesktopTab.HOME) }
-    var readerState by remember {
-        val book = SampleReaderBooks.desktopWelcomeBook()
-        mutableStateOf(PaginatedReaderState(book = book, pages = paginator.paginate(book, ReaderSettings())))
-    }
+    var activeReaderBookId by remember { mutableStateOf<String?>(null) }
+    var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -130,11 +130,26 @@ private fun EpistemeDesktopApp() {
             return
         }
 
-        readerState = PaginatedReaderState(
-            book = loadedBook,
-            pages = paginator.paginate(loadedBook, readerState.settings)
-        )
+        readerSession = readerEngine.createSession(loadedBook, readerSession.reader.settings)
+        activeReaderBookId = book.id
         selectedTab = DesktopTab.READER
+    }
+
+    fun importAndOpenEpub() {
+        val file = chooseEpubFile() ?: return
+        val imported = ImportedFile(name = file.name, path = file.absolutePath, size = file.length())
+        state = projector.withImportedFiles(state, listOf(imported))
+        openReader(
+            BookItem(
+                id = file.absolutePath,
+                path = file.absolutePath,
+                type = FileType.EPUB,
+                displayName = file.name,
+                timestamp = System.currentTimeMillis(),
+                title = file.nameWithoutExtension,
+                fileSize = file.length()
+            )
+        )
     }
 
     LaunchedEffect(state.message) {
@@ -169,7 +184,7 @@ private fun EpistemeDesktopApp() {
                     NavigationRailItem(
                         selected = selectedTab == DesktopTab.LIBRARY,
                         onClick = { selectedTab = DesktopTab.LIBRARY },
-                        icon = { Icon(Icons.Default.LibraryBooks, contentDescription = null) },
+                        icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null) },
                         label = { Text("Library") }
                     )
                     NavigationRailItem(
@@ -181,7 +196,7 @@ private fun EpistemeDesktopApp() {
                     NavigationRailItem(
                         selected = selectedTab == DesktopTab.READER,
                         onClick = { selectedTab = DesktopTab.READER },
-                        icon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                        icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
                         label = { Text("Reader") }
                     )
                     Spacer(Modifier.weight(1f))
@@ -227,9 +242,23 @@ private fun EpistemeDesktopApp() {
                         )
 
                         DesktopTab.READER -> ReaderScreen(
-                            readerState = readerState,
-                            paginator = paginator,
-                            onReaderStateChange = { readerState = it }
+                            session = readerSession,
+                            readerEngine = readerEngine,
+                            onSessionChange = { updated ->
+                                readerSession = updated
+                                activeReaderBookId?.let { bookId ->
+                                    state = state.copy(
+                                        books = state.books.map { book ->
+                                            if (book.id == bookId) {
+                                                book.copy(progressPercentage = updated.reader.progress, timestamp = System.currentTimeMillis())
+                                            } else {
+                                                book
+                                            }
+                                        }
+                                    )
+                                }
+                            },
+                            onOpenEpub = ::importAndOpenEpub
                         )
                     }
                 }
@@ -359,10 +388,12 @@ private fun ShelvesScreen(
 
 @Composable
 private fun ReaderScreen(
-    readerState: PaginatedReaderState,
-    paginator: SimplePaginator,
-    onReaderStateChange: (PaginatedReaderState) -> Unit
+    session: ReaderSessionState,
+    readerEngine: ReaderEngine,
+    onSessionChange: (ReaderSessionState) -> Unit,
+    onOpenEpub: () -> Unit
 ) {
+    val readerState = session.reader
     val page = readerState.currentPage
     val settings = readerState.settings
     val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
@@ -373,10 +404,19 @@ private fun ReaderScreen(
         subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onOpenEpub) {
+                    Text("Open EPUB")
+                }
                 Text("${readerState.progress.toInt()}%")
+                IconButton(onClick = { onSessionChange(readerEngine.toggleBookmark(session)) }) {
+                    Icon(
+                        if (session.currentBookmark == null) Icons.Default.BookmarkBorder else Icons.Default.Bookmark,
+                        contentDescription = "Bookmark"
+                    )
+                }
                 TextButton(
                     onClick = {
-                        onReaderStateChange(readerState.copy(settings = settings.copy(darkMode = !settings.darkMode)))
+                        onSessionChange(session.copy(reader = readerState.copy(settings = settings.copy(darkMode = !settings.darkMode))))
                     }
                 ) {
                     Text(if (settings.darkMode) "Light" else "Dark")
@@ -384,67 +424,180 @@ private fun ReaderScreen(
             }
         }
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Font ${settings.fontSize}")
-                Slider(
-                    value = settings.fontSize.toFloat(),
-                    onValueChange = { value ->
-                        onReaderStateChange(paginator.repaginate(readerState, settings.copy(fontSize = value.toInt())))
-                    },
-                    valueRange = 14f..28f,
-                    modifier = Modifier.width(180.dp)
-                )
-                Text("Margin ${settings.margin}")
-                Slider(
-                    value = settings.margin.toFloat(),
-                    onValueChange = { value ->
-                        onReaderStateChange(paginator.repaginate(readerState, settings.copy(margin = value.toInt())))
-                    },
-                    valueRange = 24f..96f,
-                    modifier = Modifier.width(180.dp)
-                )
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ReaderSidebar(
+                session = session,
+                onSearchChange = { onSessionChange(readerEngine.search(session, it)) },
+                onGoToChapter = { onSessionChange(readerEngine.goToChapter(session, it)) },
+                onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) }
+            )
 
-            Surface(
-                color = background,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
-                Box(
-                    modifier = Modifier.padding(PaddingValues(settings.margin.dp)),
-                    contentAlignment = Alignment.TopStart
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Font ${settings.fontSize}")
+                    Slider(
+                        value = settings.fontSize.toFloat(),
+                        onValueChange = { value ->
+                            onSessionChange(readerEngine.updateSettings(session, settings.copy(fontSize = value.toInt())))
+                        },
+                        valueRange = 14f..28f,
+                        modifier = Modifier.width(160.dp)
+                    )
+                    Text("Margin ${settings.margin}")
+                    Slider(
+                        value = settings.margin.toFloat(),
+                        onValueChange = { value ->
+                            onSessionChange(readerEngine.updateSettings(session, settings.copy(margin = value.toInt())))
+                        },
+                        valueRange = 24f..96f,
+                        modifier = Modifier.width(160.dp)
+                    )
+                    Text("Spacing ${settings.lineSpacing}")
+                    Slider(
+                        value = settings.lineSpacing,
+                        onValueChange = { value ->
+                            onSessionChange(readerEngine.updateSettings(session, settings.copy(lineSpacing = value)))
+                        },
+                        valueRange = 1.1f..1.9f,
+                        modifier = Modifier.width(160.dp)
+                    )
+                }
+
+                Surface(
+                    color = background,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier.padding(PaddingValues(settings.margin.dp)),
+                        contentAlignment = Alignment.TopStart
+                    ) {
+                        Text(
+                            text = page?.text.orEmpty(),
+                            color = foreground,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = settings.fontSize.sp,
+                                lineHeight = (settings.fontSize * settings.lineSpacing).sp
+                            )
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        enabled = readerState.canGoPrevious,
+                        onClick = { onSessionChange(readerEngine.previous(session)) }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
+                        Text("Previous")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}")
+                    Spacer(Modifier.weight(1f))
+                    Button(
+                        enabled = readerState.canGoNext,
+                        onClick = { onSessionChange(readerEngine.next(session)) }
+                    ) {
+                        Text("Next")
+                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderSidebar(
+    session: ReaderSessionState,
+    onSearchChange: (String) -> Unit,
+    onGoToChapter: (Int) -> Unit,
+    onGoToPage: (Int) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .width(280.dp)
+            .fillMaxHeight(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        LazyColumn(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            items(session.reader.book.chapters.indices.toList()) { index ->
+                val chapter = session.reader.book.chapters[index]
+                val selected = session.reader.currentPage?.chapterIndex == index
+                Surface(
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onGoToChapter(index) }
                 ) {
                     Text(
-                        text = page?.text.orEmpty(),
-                        color = foreground,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = settings.fontSize.sp,
-                            lineHeight = (settings.fontSize * settings.lineSpacing).sp
-                        )
+                        chapter.title,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    enabled = readerState.canGoPrevious,
-                    onClick = { onReaderStateChange(readerState.copy(currentPageIndex = readerState.currentPageIndex - 1)) }
-                ) {
-                    Icon(Icons.Default.NavigateBefore, contentDescription = null)
-                    Text("Previous")
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            if (session.bookmarks.isEmpty()) {
+                item {
+                    Text("No bookmarks yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Spacer(Modifier.weight(1f))
-                Text("Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}")
-                Spacer(Modifier.weight(1f))
-                Button(
-                    enabled = readerState.canGoNext,
-                    onClick = { onReaderStateChange(readerState.copy(currentPageIndex = readerState.currentPageIndex + 1)) }
-                ) {
-                    Text("Next")
-                    Icon(Icons.Default.NavigateNext, contentDescription = null)
+            } else {
+                items(session.bookmarks, key = { it.id }) { bookmark ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onGoToPage(bookmark.pageIndex) }
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = session.searchQuery,
+                    onValueChange = onSearchChange,
+                    label = { Text("Find in book") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
+                item {
+                    Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                items(session.searchResults, key = { "${it.pageIndex}_${it.preview}" }) { result ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onGoToPage(result.pageIndex) }
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text("Page ${result.pageIndex + 1} - ${result.chapterTitle}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
@@ -626,6 +779,16 @@ private fun chooseFiles(): List<ImportedFile> {
     return dialog.files.orEmpty().map { file ->
         ImportedFile(name = file.name, path = file.absolutePath, size = file.length())
     }
+}
+
+private fun chooseEpubFile(): File? {
+    val dialog = FileDialog(null as Frame?, "Open EPUB", FileDialog.LOAD).apply {
+        file = "*.epub"
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
 }
 
 private fun LibraryState.toggleSelection(bookId: String): LibraryState {

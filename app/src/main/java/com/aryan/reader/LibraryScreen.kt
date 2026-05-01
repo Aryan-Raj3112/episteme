@@ -131,6 +131,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
@@ -154,6 +155,7 @@ private fun getBookCountString(count: Int): String {
     return pluralStringResource(id = R.plurals.book_count, count, count)
 }
 
+@UnstableApi
 @SuppressLint("LocalContextGetResourceValueCall")
 @Composable
 fun LibraryScreen(
@@ -404,6 +406,7 @@ fun LibraryScreen(
     }
 }
 
+@UnstableApi
 @Composable
 fun ShelfScreen(
     viewModel: MainViewModel,
