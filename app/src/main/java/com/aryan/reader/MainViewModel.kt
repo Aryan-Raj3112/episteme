@@ -39,7 +39,6 @@ import com.aryan.reader.paginatedreader.semanticBlockModule
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.annotation.OptIn
-import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 import androidx.core.graphics.createBitmap
@@ -127,54 +126,11 @@ import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Date
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors.newSingleThreadExecutor
 import java.util.concurrent.TimeUnit
-
-private const val KEY_RENDER_MODE = "render_mode"
-private const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
-private const val KEY_MAIN_SCREEN_START_PAGE = "main_screen_start_page"
-private const val KEY_LIBRARY_SCREEN_START_PAGE = "library_screen_start_page"
-private const val KEY_LAST_VIEWING_SHELF_ID = "last_viewing_shelf_id"
-private const val KEY_LAST_ADDING_BOOKS_TO_SHELF = "last_adding_books_to_shelf"
-
-private const val KEY_FILTER_FILE_TYPES = "filter_file_types"
-private const val KEY_FILTER_FOLDERS = "filter_folders"
-private const val KEY_FILTER_READ_STATUS = "filter_read_status"
-private const val KEY_FILTER_TAG_IDS = "filter_tag_ids"
-private const val KEY_DEFAULT_TAGS_SEEDED = "default_tags_seeded"
-private val PDF_VIEWER_FILE_TYPES = setOf(FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7)
-private val EPUB_READER_FILE_TYPES = setOf(
-    FileType.EPUB,
-    FileType.MOBI,
-    FileType.MD,
-    FileType.TXT,
-    FileType.HTML,
-    FileType.FB2,
-    FileType.DOCX,
-    FileType.ODT,
-    FileType.FODT
-)
-
-data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
-
-data class ImportResult(
-    val internalUri: Uri,
-    val bookId: String,
-    val type: FileType,
-    val bundleResult: CalibreBundleResult? = null
-)
-
-data class UserData(
-    val uid: String, val displayName: String?, val photoUrl: String?, val email: String?
-)
-
-data class NavigationEvent(
-    val route: String, val bookId: String? = null, val uri: Uri? = null
-)
 
 private data class SpeechBubbleCacheKey(
     val documentId: String,
@@ -187,166 +143,6 @@ private data class CachedSpeechBubble(
     val rightFraction: Float,
     val bottomFraction: Float,
     val maskBitmap: Bitmap?
-)
-
-enum class AddBooksSource(@StringRes val labelRes: Int) {
-    UNSHELVED(R.string.add_books_source_unshelved),
-    ALL_BOOKS(R.string.add_books_source_all_books)
-}
-
-enum class AppThemeMode(@StringRes val labelRes: Int) {
-    SYSTEM(R.string.app_theme_mode_system),
-    LIGHT(R.string.app_theme_mode_light),
-    DARK(R.string.app_theme_mode_dark)
-}
-
-enum class AppContrastOption(@StringRes val labelRes: Int, val value: Double) {
-    STANDARD(R.string.app_contrast_standard, 0.0),
-    MEDIUM(R.string.app_contrast_medium, 0.5),
-    HIGH(R.string.app_contrast_high, 1.0)
-}
-
-data class CustomAppTheme(
-    val id: String,
-    val name: String,
-    val seedColor: androidx.compose.ui.graphics.Color
-)
-
-enum class FileType {
-    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT
-}
-
-enum class RenderMode {
-    VERTICAL_SCROLL, PAGINATED
-}
-
-data class DeviceItem(val deviceId: String, val deviceName: String, val lastSeen: Date?)
-
-data class DeviceLimitReachedState(
-    val isLimitReached: Boolean = false, val registeredDevices: List<DeviceItem> = emptyList()
-)
-
-data class SyncedFolder(
-    val uriString: String, val name: String, val lastScanTime: Long, val allowedFileTypes: Set<FileType> = FileType.entries.toSet()
-)
-
-enum class ShelfType { MANUAL, SMART, TAG, SERIES, FOLDER }
-
-data class Shelf(
-    val id: String,
-    val name: String,
-    val type: ShelfType,
-    val books: List<RecentFileItem>,
-    val directBooks: List<RecentFileItem> = books,
-    val parentShelfId: String? = null,
-    val childShelfIds: List<String> = emptyList(),
-    val depth: Int = 0,
-    val sortKey: String = name.lowercase()
-) {
-    val bookCount: Int get() = books.size
-    val topBook: RecentFileItem? get() = books.maxByOrNull { it.timestamp }
-    val directBookCount: Int get() = directBooks.size
-    val childShelfCount: Int get() = childShelfIds.size
-}
-
-enum class SortOrder(@StringRes val labelRes: Int) {
-    RECENT(R.string.sort_recent),
-    TITLE_ASC(R.string.sort_title_az),
-    AUTHOR_ASC(R.string.sort_author_az),
-    PERCENT_ASC(R.string.sort_percent_asc),
-    PERCENT_DESC(R.string.sort_percent_desc),
-    SIZE_ASC(R.string.sort_size_smallest),
-    SIZE_DESC(R.string.sort_size_biggest)
-}
-
-enum class ReadStatusFilter(@StringRes val labelRes: Int) {
-    ALL(R.string.read_status_all),
-    UNREAD(R.string.read_status_unread),
-    IN_PROGRESS(R.string.read_status_in_progress),
-    COMPLETED(R.string.read_status_completed)
-}
-
-data class LibraryFilters(
-    val fileTypes: Set<FileType> = emptySet(),
-    val sourceFolders: Set<String> = emptySet(),
-    val readStatus: ReadStatusFilter = ReadStatusFilter.ALL,
-    val tagIds: Set<String> = emptySet()
-) {
-    val isActive: Boolean
-        get() = fileTypes.isNotEmpty() ||
-            sourceFolders.isNotEmpty() ||
-            readStatus != ReadStatusFilter.ALL ||
-            tagIds.isNotEmpty()
-}
-
-data class ReaderScreenState(
-    val selectedPdfUri: Uri? = null,
-    val selectedBookId: String? = null,
-    val selectedEpubBook: EpubBook? = null,
-    val selectedEpubUri: Uri? = null,
-    val selectedFileType: FileType? = null,
-    val isLoading: Boolean = false,
-    val errorMessage: String? = null,
-    val contextualActionItems: Set<RecentFileItem> = emptySet(),
-    val renderMode: RenderMode = RenderMode.VERTICAL_SCROLL,
-    val sortOrder: SortOrder = SortOrder.RECENT,
-    val initialLocator: Locator? = null,
-    val initialCfi: String? = null,
-    val initialBookmarksJson: String? = null,
-    val initialHighlightsJson: String? = null,
-    val initialPageInBook: Int? = null,
-    val shelves: List<Shelf> = emptyList(),
-    val viewingShelfId: String? = null,
-    val isAddingBooksToShelf: Boolean = false,
-    val showCreateShelfDialog: Boolean = false,
-    val mainScreenStartPage: Int = 0,
-    val libraryScreenStartPage: Int = 0,
-    val showRenameShelfDialogFor: String? = null,
-    val showDeleteShelfDialogFor: String? = null,
-    val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
-    val booksSelectedForAdding: Set<String> = emptySet(),
-    val booksAvailableForAdding: List<RecentFileItem> = emptyList(),
-    val contextualActionShelfIds: Set<String> = emptySet(),
-    val currentUser: UserData? = null,
-    val isAuthMenuExpanded: Boolean = false,
-    val isProUser: Boolean = false,
-    val credits: Int = 0,
-    val isSyncEnabled: Boolean = false,
-    val isFolderSyncEnabled: Boolean = false,
-    val bannerMessage: BannerMessage? = null,
-    val deviceLimitState: DeviceLimitReachedState = DeviceLimitReachedState(),
-    val isReplacingDevice: Boolean = false,
-    val isRequestingDrivePermission: Boolean = false,
-    val downloadingBookIds: Set<String> = emptySet(),
-    val uploadingBookIds: Set<String> = emptySet(),
-    val syncedFolders: List<SyncedFolder> = emptyList(),
-    val lastFolderScanTime: Long? = null,
-    val hasUnreadFeedback: Boolean = false,
-    val searchQuery: String = "",
-    val isSearchActive: Boolean = false,
-    val isRefreshing: Boolean = false,
-    val reflowProgress: Float? = null,
-    val recentFiles: List<RecentFileItem> = emptyList(),
-    val allRecentFiles: List<RecentFileItem> = emptyList(),
-    val rawLibraryFiles: List<RecentFileItem> = emptyList(),
-    val pinnedHomeBookIds: Set<String> = emptySet(),
-    val pinnedLibraryBookIds: Set<String> = emptySet(),
-    val libraryFilters: LibraryFilters = LibraryFilters(),
-    val recentFilesLimit: Int = 0,
-    val isTabsEnabled: Boolean = false,
-    val openTabIds: List<String> = emptyList(),
-    val openTabs: List<RecentFileItem> = emptyList(),
-    val activeTabBookId: String? = null,
-    val showExternalFileSavePromptFor: String? = null,
-    val externalFileBehavior: String = "ASK",
-    val useStrictFileFilter: Boolean = false,
-    val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
-    val appTextDimFactor: Float = 1.0f,
-    val appSeedColor: androidx.compose.ui.graphics.Color? = null,
-    val customAppThemes: List<CustomAppTheme> = emptyList(),
-    val allTags: List<TagEntity> = emptyList(),
-    val showTagSelectionDialogFor: Set<String> = emptySet(),
 )
 
 @UnstableApi

@@ -265,6 +265,12 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.isBackPressed
+import androidx.compose.ui.input.pointer.isForwardPressed
 
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
@@ -3343,15 +3349,15 @@ fun PdfViewerScreen(
                                         Timber.tag("StylusDebug").d(
                                             "GlobalPointer | type=${change.type}, pressed=${change.pressed}, " +
                                                     "primary=${buttons.isPrimaryPressed}, secondary=${buttons.isSecondaryPressed}, " +
-                                                    "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackButtonPressed}, " +
-                                                    "forward=${buttons.isForwardButtonPressed}"
+                                                    "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackPressed}, " +
+                                                    "forward=${buttons.isForwardPressed}"
                                         )
                                     }
                                 }
                             }
                         }
                     }
-                    .androidx.compose.ui.input.key.onPreviewKeyEvent { keyEvent ->
+                    .onPreviewKeyEvent { keyEvent ->
                         Timber.tag("StylusDebug").d("GlobalKey | key=${keyEvent.key}, type=${keyEvent.type}")
                         false
                     }
