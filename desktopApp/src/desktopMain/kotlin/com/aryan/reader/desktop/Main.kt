@@ -1,9 +1,11 @@
 package com.aryan.reader.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -31,10 +35,19 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.FormatColorText
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,13 +72,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -73,6 +92,8 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -81,6 +102,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
@@ -123,12 +145,23 @@ import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedShelvesScreen
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.PdfZoomSpec
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import kotlin.math.abs
 
 fun main() = application {
     Window(
@@ -990,12 +1023,50 @@ private fun PdfReaderScreen(
     onProgressChange: (Float) -> Unit
 ) {
     var pageIndex by remember(document.path) { mutableStateOf(0) }
-    var scale by remember(document.path) { mutableStateOf(1.35f) }
+    val zoomSpec = remember { PdfZoomSpec() }
+    var scale by remember(document.path) { mutableStateOf(zoomSpec.default) }
     var searchQuery by remember(document.path) { mutableStateOf("") }
     var activeSearchIndex by remember(document.path) { mutableStateOf(-1) }
     var renderedPage by remember(document.path) { mutableStateOf<DesktopPdfPageRender?>(null) }
     var renderError by remember(document.path) { mutableStateOf<String?>(null) }
     var isRendering by remember(document.path) { mutableStateOf(false) }
+    var renderJob by remember(document.path) { mutableStateOf<Job?>(null) }
+    var selectedTool by remember(document.path) { mutableStateOf(PdfInkTool.PEN) }
+    var selectedColor by remember(document.path) { mutableStateOf(SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).colorArgb) }
+    var strokeWidth by remember(document.path) { mutableStateOf(SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth) }
+    var textDraft by remember(document.path) { mutableStateOf("") }
+    var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
+    var activeStroke by remember(document.path, pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    val annotations = remember(document.path) { mutableStateListOf<SharedPdfAnnotation>() }
+    val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
+
+    LaunchedEffect(document.path) {
+        annotations.clear()
+        if (annotationFile.exists()) {
+            annotations.addAll(
+                withContext(Dispatchers.IO) {
+                    SharedPdfAnnotationSerializer.decode(annotationFile.readText())
+                }
+            )
+        }
+    }
+
+    LaunchedEffect(document.path, annotations.size) {
+        val snapshot = annotations.toList()
+        withContext(Dispatchers.IO) {
+            runCatching {
+                annotationFile.parentFile?.mkdirs()
+                annotationFile.writeText(SharedPdfAnnotationSerializer.encode(snapshot))
+            }
+        }
+    }
+
+    fun applyTool(tool: PdfInkTool) {
+        selectedTool = tool
+        val config = SharedPdfAnnotationDefaults.configFor(tool)
+        selectedColor = config.colorArgb
+        strokeWidth = config.strokeWidth
+    }
 
     val searchResults = remember(document.path, searchQuery) {
         val normalized = searchQuery.trim()
@@ -1015,6 +1086,7 @@ private fun PdfReaderScreen(
 
     fun goToPage(target: Int) {
         pageIndex = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
+        activeStroke = emptyList()
     }
 
     fun goToSearchResult(targetIndex: Int) {
@@ -1033,17 +1105,26 @@ private fun PdfReaderScreen(
     }
 
     LaunchedEffect(document.path, pageIndex, scale) {
-        isRendering = true
-        renderError = null
-        val result = withContext(Dispatchers.IO) {
-            runCatching {
-                DesktopPdfium.renderPage(document, pageIndex, scale)
+        renderJob?.cancel()
+        renderJob = launch {
+            delay(90)
+            isRendering = true
+            renderError = null
+            val safeScale = zoomSpec.safeRenderScale(
+                document.pageSizes[pageIndex].width,
+                document.pageSizes[pageIndex].height,
+                scale
+            )
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    DesktopPdfium.renderPage(document, pageIndex, safeScale)
+                }
             }
+            renderedPage = result.getOrNull()
+            renderError = result.exceptionOrNull()?.message
+                ?: if (renderedPage == null) "Failed to render page." else null
+            isRendering = false
         }
-        renderedPage = result.getOrNull()
-        renderError = result.exceptionOrNull()?.message
-            ?: if (renderedPage == null) "Failed to render page." else null
-        isRendering = false
     }
 
     ScreenScaffold(
@@ -1061,7 +1142,34 @@ private fun PdfReaderScreen(
             }
         }
     ) {
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.DirectionLeft -> {
+                            goToPage(pageIndex - 1)
+                            true
+                        }
+                        event.key == Key.DirectionRight -> {
+                            goToPage(pageIndex + 1)
+                            true
+                        }
+                        event.isCtrlPressed && event.key == Key.Equals -> {
+                            scale = zoomSpec.clamp(scale + 0.15f)
+                            true
+                        }
+                        event.isCtrlPressed && event.key == Key.Minus -> {
+                            scale = zoomSpec.clamp(scale - 0.15f)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .focusable(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
             Surface(
                 modifier = Modifier
                     .width(300.dp)
@@ -1088,11 +1196,56 @@ private fun PdfReaderScreen(
                     }
                     item {
                         Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { scale = zoomSpec.clamp(scale - 0.15f) }) {
+                                Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
+                            }
+                            Text("${(scale * 100).toInt()}%", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                            IconButton(onClick = { scale = zoomSpec.clamp(scale + 0.15f) }) {
+                                Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                            }
+                        }
                         Slider(
                             value = scale,
-                            onValueChange = { scale = it },
-                            valueRange = 0.65f..3.0f
+                            onValueChange = { scale = zoomSpec.clamp(it) },
+                            valueRange = zoomSpec.min..zoomSpec.max
                         )
+                    }
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Annotations", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        PdfAnnotationToolDock(
+                            selectedTool = selectedTool,
+                            selectedColor = selectedColor,
+                            strokeWidth = strokeWidth,
+                            onToolSelected = ::applyTool,
+                            onColorSelected = { selectedColor = it },
+                            onStrokeWidthChange = { strokeWidth = it },
+                            onUndo = {
+                                annotations.indexOfLast { it.pageIndex == pageIndex }.takeIf { it >= 0 }?.let {
+                                    annotations.removeAt(it)
+                                }
+                            },
+                            onClearPage = {
+                                annotations.removeAll { it.pageIndex == pageIndex }
+                            }
+                        )
+                    }
+                    if (selectedTool == PdfInkTool.TEXT) {
+                        item {
+                            OutlinedTextField(
+                                value = textDraft,
+                                onValueChange = { textDraft = it },
+                                label = { Text("Text note") },
+                                minLines = 2,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                "Click the page to place the note.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                     item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1156,11 +1309,286 @@ private fun PdfReaderScreen(
                 when {
                     isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
                     renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
-                    renderedPage != null -> Image(
-                        bitmap = renderedPage!!.image,
-                        contentDescription = "PDF page ${pageIndex + 1}"
+                    renderedPage != null -> {
+                        val pageRender = renderedPage!!
+                        Box(
+                            modifier = Modifier
+                                .size(pageRender.width.dp, pageRender.height.dp)
+                                .onSizeChanged { pageCanvasSize = it }
+                                .pointerInput(pageIndex, selectedTool, selectedColor, strokeWidth, textDraft) {
+                                    if (selectedTool == PdfInkTool.TEXT) {
+                                        detectTapGestures(
+                                            onTap = { start ->
+                                                val text = textDraft.trim()
+                                                if (text.isNotEmpty()) {
+                                                    val bounds = pageBoundsFromPoint(start, pageCanvasSize)
+                                                    annotations.add(
+                                                        SharedPdfAnnotation(
+                                                            id = "text_${System.currentTimeMillis()}",
+                                                            pageIndex = pageIndex,
+                                                            kind = PdfAnnotationKind.TEXT,
+                                                            tool = PdfInkTool.TEXT,
+                                                            bounds = bounds,
+                                                            text = text,
+                                                            colorArgb = selectedColor,
+                                                            fontSize = 18f,
+                                                            createdAt = System.currentTimeMillis()
+                                                        )
+                                                    )
+                                                    textDraft = ""
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        detectDragGestures(
+                                            onDragStart = { start ->
+                                                if (selectedTool != PdfInkTool.ERASER) {
+                                                activeStroke = listOf(start.toPdfPoint(pageCanvasSize))
+                                            }
+                                            },
+                                            onDrag = { change, _ ->
+                                                if (selectedTool == PdfInkTool.ERASER) {
+                                                    val point = change.position
+                                                    annotations.removeAll { it.pageIndex == pageIndex && it.hitTest(point, pageCanvasSize) }
+                                                } else {
+                                                    activeStroke = activeStroke + change.position.toPdfPoint(pageCanvasSize)
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                if (activeStroke.size > 1) {
+                                                    annotations.add(
+                                                        SharedPdfAnnotation(
+                                                            id = "ink_${System.currentTimeMillis()}",
+                                                            pageIndex = pageIndex,
+                                                            kind = PdfAnnotationKind.INK,
+                                                            tool = selectedTool,
+                                                            points = activeStroke,
+                                                            colorArgb = selectedColor,
+                                                            strokeWidth = strokeWidth,
+                                                            createdAt = System.currentTimeMillis()
+                                                        )
+                                                    )
+                                                }
+                                                activeStroke = emptyList()
+                                            },
+                                            onDragCancel = { activeStroke = emptyList() }
+                                        )
+                                    }
+                                }
+                        ) {
+                            Image(
+                                bitmap = pageRender.image,
+                                contentDescription = "PDF page ${pageIndex + 1}"
+                            )
+                            PdfAnnotationOverlay(
+                                annotations = annotations.filter { it.pageIndex == pageIndex },
+                                activeStroke = activeStroke,
+                                canvasSize = pageCanvasSize
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfAnnotationToolDock(
+    selectedTool: PdfInkTool,
+    selectedColor: Int,
+    strokeWidth: Float,
+    onToolSelected: (PdfInkTool) -> Unit,
+    onColorSelected: (Int) -> Unit,
+    onStrokeWidthChange: (Float) -> Unit,
+    onUndo: () -> Unit,
+    onClearPage: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PdfToolButton(PdfInkTool.PEN, selectedTool, onToolSelected)
+            PdfToolButton(PdfInkTool.HIGHLIGHTER, selectedTool, onToolSelected)
+            PdfToolButton(PdfInkTool.PENCIL, selectedTool, onToolSelected)
+            PdfToolButton(PdfInkTool.FOUNTAIN_PEN, selectedTool, onToolSelected)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PdfToolButton(PdfInkTool.HIGHLIGHTER_ROUND, selectedTool, onToolSelected)
+            PdfToolButton(PdfInkTool.TEXT, selectedTool, onToolSelected)
+            PdfToolButton(PdfInkTool.ERASER, selectedTool, onToolSelected)
+            IconButton(onClick = onUndo) {
+                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Undo annotation")
+            }
+            IconButton(onClick = onClearPage) {
+                Icon(Icons.Default.Delete, contentDescription = "Clear page annotations")
+            }
+        }
+        Text("Color", style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val palette = if (selectedTool == PdfInkTool.HIGHLIGHTER || selectedTool == PdfInkTool.HIGHLIGHTER_ROUND) {
+                SharedPdfAnnotationDefaults.highlighterPalette
+            } else {
+                SharedPdfAnnotationDefaults.penPalette
+            }
+            palette.forEach { argb ->
+                Surface(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .border(
+                            width = if (argb == selectedColor) 3.dp else 1.dp,
+                            color = if (argb == selectedColor) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .clickable { onColorSelected(argb) },
+                    color = Color(argb),
+                    shape = RoundedCornerShape(14.dp),
+                    content = {}
+                )
+            }
+        }
+        Text("Thickness ${String.format("%.1f", strokeWidth)}", style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = strokeWidth,
+            onValueChange = onStrokeWidthChange,
+            valueRange = 1f..28f
+        )
+    }
+}
+
+@Composable
+private fun PdfToolButton(
+    tool: PdfInkTool,
+    selectedTool: PdfInkTool,
+    onToolSelected: (PdfInkTool) -> Unit
+) {
+    val selected = tool == selectedTool
+    val icon = when (tool) {
+        PdfInkTool.PEN -> Icons.Default.Draw
+        PdfInkTool.HIGHLIGHTER -> Icons.Default.Brush
+        PdfInkTool.HIGHLIGHTER_ROUND -> Icons.Default.FormatColorText
+        PdfInkTool.ERASER -> Icons.Default.Remove
+        PdfInkTool.FOUNTAIN_PEN -> Icons.Default.EditNote
+        PdfInkTool.PENCIL -> Icons.Default.Brush
+        PdfInkTool.TEXT -> Icons.Default.TextFields
+    }
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        IconButton(onClick = { onToolSelected(tool) }) {
+            Icon(icon, contentDescription = tool.name.lowercase().replace('_', ' '))
+        }
+    }
+}
+
+@Composable
+private fun PdfAnnotationOverlay(
+    annotations: List<SharedPdfAnnotation>,
+    activeStroke: List<PdfPagePoint>,
+    canvasSize: IntSize
+) {
+    Canvas(Modifier.fillMaxSize()) {
+        annotations.forEach { annotation ->
+            when (annotation.kind) {
+                PdfAnnotationKind.INK -> {
+                    if (annotation.points.size > 1) {
+                        drawPath(
+                            path = annotation.points.toPath(canvasSize),
+                            color = Color(annotation.colorArgb),
+                            style = Stroke(
+                                width = annotation.strokeWidth,
+                                cap = StrokeCap.Round
+                            )
+                        )
+                    }
+                }
+                PdfAnnotationKind.TEXT -> {
+                    val bounds = annotation.bounds ?: return@forEach
+                    drawRect(
+                        color = Color(annotation.backgroundArgb).copy(alpha = 0.18f),
+                        topLeft = Offset(bounds.left * canvasSize.width, bounds.top * canvasSize.height),
+                        size = androidx.compose.ui.geometry.Size(
+                            (bounds.right - bounds.left) * canvasSize.width,
+                            (bounds.bottom - bounds.top) * canvasSize.height
+                        )
                     )
                 }
+            }
+        }
+        if (activeStroke.size > 1) {
+            drawPath(
+                path = activeStroke.toPath(canvasSize),
+                color = Color(0xFF1976D2),
+                style = Stroke(width = 2.5f, cap = StrokeCap.Round)
+            )
+        }
+    }
+    annotations.filter { it.kind == PdfAnnotationKind.TEXT && it.text.isNotBlank() }.forEach { annotation ->
+        val bounds = annotation.bounds ?: return@forEach
+        Text(
+            text = annotation.text,
+            color = Color(annotation.colorArgb),
+            fontSize = annotation.fontSize.sp,
+            fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier
+                .padding(
+                    start = (bounds.left * canvasSize.width).dp,
+                    top = (bounds.top * canvasSize.height).dp
+                )
+                .background(Color(annotation.backgroundArgb).copy(alpha = 0.18f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+        )
+    }
+}
+
+private fun Offset.toPdfPoint(size: IntSize): PdfPagePoint {
+    val width = size.width.coerceAtLeast(1)
+    val height = size.height.coerceAtLeast(1)
+    return PdfPagePoint(
+        x = (x / width).coerceIn(0f, 1f),
+        y = (y / height).coerceIn(0f, 1f),
+        timestamp = System.currentTimeMillis()
+    )
+}
+
+private fun List<PdfPagePoint>.toPath(size: IntSize): Path {
+    val path = Path()
+    forEachIndexed { index, point ->
+        val x = point.x * size.width
+        val y = point.y * size.height
+        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    return path
+}
+
+private fun pageBoundsFromPoint(point: Offset, size: IntSize): PdfPageBounds {
+    val width = size.width.coerceAtLeast(1)
+    val height = size.height.coerceAtLeast(1)
+    val left = (point.x / width).coerceIn(0f, 0.92f)
+    val top = (point.y / height).coerceIn(0f, 0.95f)
+    return PdfPageBounds(
+        left = left,
+        top = top,
+        right = (left + 0.32f).coerceAtMost(1f),
+        bottom = (top + 0.08f).coerceAtMost(1f)
+    )
+}
+
+private fun SharedPdfAnnotation.hitTest(point: Offset, size: IntSize): Boolean {
+    return when (kind) {
+        PdfAnnotationKind.TEXT -> {
+            val bounds = bounds ?: return false
+            val rect = Rect(
+                bounds.left * size.width,
+                bounds.top * size.height,
+                bounds.right * size.width,
+                bounds.bottom * size.height
+            )
+            rect.contains(point)
+        }
+        PdfAnnotationKind.INK -> {
+            points.any {
+                abs((it.x * size.width) - point.x) <= strokeWidth + 8f &&
+                    abs((it.y * size.height) - point.y) <= strokeWidth + 8f
             }
         }
     }
@@ -1170,6 +1598,13 @@ private data class ReaderPdfSearchResult(
     val pageIndex: Int,
     val preview: String
 )
+
+private fun desktopPdfAnnotationFile(documentPath: String): File {
+    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
+        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
+    val safeName = documentPath.hashCode().toString().replace("-", "n")
+    return File(baseDir, "Episteme/annotations/pdf_$safeName.json")
+}
 
 @Composable
 private fun ReaderScreen(

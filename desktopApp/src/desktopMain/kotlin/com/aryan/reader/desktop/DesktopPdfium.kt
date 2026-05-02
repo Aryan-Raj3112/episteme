@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
@@ -41,6 +42,7 @@ object DesktopPdfium {
     private const val FPDF_BITMAP_BGRA = 4
 
     private val pdfiumDll: File by lazy(::resolvePdfiumDll)
+    private val zoomSpec = PdfZoomSpec()
     private val api: PdfiumLibrary by lazy {
         require(pdfiumDll.exists()) {
             "Missing Pdfium DLL. Expected pdfium-v8-win-x64 under third_party/pdfium/win-x64-v8/bin/pdfium.dll."
@@ -94,8 +96,9 @@ object DesktopPdfium {
     ): DesktopPdfPageRender {
         val nativeDocument = openDocuments[document.path] ?: error("PDF document is not open.")
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
-        val width = (pageSize.width * scale).roundToInt().coerceAtLeast(1)
-        val height = (pageSize.height * scale).roundToInt().coerceAtLeast(1)
+        val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
+        val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
+        val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
         val stride = width * 4
         val memory = Memory((stride * height).toLong())
         memory.clear(memory.size())
