@@ -608,16 +608,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     open val uiState: StateFlow<ReaderScreenState> = combine(
         _internalState, libraryFlow, tagFlow
     ) { internalState, (recentFilesFromDb, dbShelves, shelfRefs), (dbTags, tagRefs) ->
-        libraryStateProjector.project(
-            LibraryProjectionInput(
-                state = internalState,
-                recentFilesFromDb = recentFilesFromDb,
-                dbShelves = dbShelves,
-                shelfRefs = shelfRefs,
-                dbTags = dbTags,
-                tagRefs = tagRefs
+        withContext(Dispatchers.Default) {
+            libraryStateProjector.project(
+                LibraryProjectionInput(
+                    state = internalState,
+                    recentFilesFromDb = recentFilesFromDb,
+                    dbShelves = dbShelves,
+                    shelfRefs = shelfRefs,
+                    dbTags = dbTags,
+                    tagRefs = tagRefs
+                )
             )
-        )
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -4652,6 +4654,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setMainScreenPage(page: Int) {
         val sanitizedPage = page.coerceIn(0, 1)
+        if (_internalState.value.mainScreenStartPage == sanitizedPage) return
         _internalState.update { it.copy(mainScreenStartPage = sanitizedPage) }
         persistLibraryLandingState()
     }
@@ -4659,6 +4662,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun setLibraryScreenPage(page: Int) {
         val maxLibraryPage = if (BuildConfig.IS_OFFLINE) 2 else 3
         val sanitizedPage = page.coerceIn(0, maxLibraryPage)
+        if (_internalState.value.libraryScreenStartPage == sanitizedPage) return
         _internalState.update {
             it.copy(libraryScreenStartPage = sanitizedPage)
         }

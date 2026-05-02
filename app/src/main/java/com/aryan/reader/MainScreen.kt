@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -45,6 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -87,12 +89,16 @@ fun MainScreen(
 
             LaunchedEffect(uiState.mainScreenStartPage) {
                 if (pagerState.currentPage != uiState.mainScreenStartPage) {
-                    pagerState.animateScrollToPage(uiState.mainScreenStartPage)
+                    pagerState.scrollToPage(uiState.mainScreenStartPage)
                 }
             }
 
-            LaunchedEffect(pagerState.currentPage) {
-                viewModel.setMainScreenPage(pagerState.currentPage)
+            LaunchedEffect(pagerState) {
+                snapshotFlow { pagerState.settledPage }
+                    .distinctUntilChanged()
+                    .collect { page ->
+                        viewModel.setMainScreenPage(page)
+                    }
             }
 
             Scaffold(
@@ -108,7 +114,7 @@ fun MainScreen(
                                     Timber.tag("AppPerfDebug").d("NavTabClick: BottomBar clicked for page $index (Route: ${screen.route})")
                                     scope.launch {
                                         val animStart = System.currentTimeMillis()
-                                        pagerState.animateScrollToPage(index)
+                                        pagerState.scrollToPage(index)
                                         Timber.tag("AppPerfDebug").d("NavTabTransition: Pager settled on $index in ${System.currentTimeMillis() - animStart}ms")
                                     }
                                 }

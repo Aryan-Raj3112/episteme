@@ -63,9 +63,19 @@ object AppDestinations {
 private fun NavHostController.navigateSingleTopTo(route: String) {
     navigate(route) {
         launchSingleTop = true
-        restoreState = true
         popUpTo(graph.startDestinationId) {
-            saveState = true
+            saveState = false
+        }
+    }
+}
+
+private fun NavHostController.returnToMain() {
+    if (!popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)) {
+        navigate(AppDestinations.MAIN_ROUTE) {
+            launchSingleTop = true
+            popUpTo(graph.startDestinationId) {
+                saveState = false
+            }
         }
     }
 }
@@ -102,7 +112,7 @@ fun AppNavigation(
                     null -> {
                         val currentRoute = navController.currentBackStackEntry?.destination?.route
                         if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
-                            navController.navigateSingleTopTo(AppDestinations.MAIN_ROUTE)
+                            navController.returnToMain()
                         }
                     }
                 }
