@@ -56,6 +56,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -72,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,6 +139,7 @@ import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.withImportedFiles
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -153,6 +156,10 @@ import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import dev.datlag.kcef.KCEF
+import com.multiplatform.webview.web.LoadingState
+import com.multiplatform.webview.web.WebView
+import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -162,6 +169,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.max
 
 fun main() = application {
     Window(
@@ -174,6 +182,13 @@ fun main() = application {
 
 private enum class DesktopTab { HOME, LIBRARY, SHELVES, READER }
 
+private data class DesktopWebViewRuntimeState(
+    val initialized: Boolean = false,
+    val restartRequired: Boolean = false,
+    val downloadProgress: Float = -1f,
+    val errorMessage: String? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EpistemeDesktopApp() {
@@ -182,6 +197,41 @@ private fun EpistemeDesktopApp() {
     val libraryDatabase = remember { DesktopLibraryDatabase() }
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
+    var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            KCEF.init(
+                builder = {
+                    installDir(File("kcef-bundle"))
+                    progress {
+                        onDownloading {
+                            webViewRuntimeState = webViewRuntimeState.copy(downloadProgress = max(it, 0f))
+                        }
+                        onInitialized {
+                            webViewRuntimeState = webViewRuntimeState.copy(initialized = true, errorMessage = null)
+                        }
+                    }
+                    settings {
+                        cachePath = File("cache").absolutePath
+                    }
+                },
+                onError = { error ->
+                    webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error?.message ?: error.toString())
+                },
+                onRestartRequired = {
+                    webViewRuntimeState = webViewRuntimeState.copy(restartRequired = true)
+                }
+            )
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            KCEF.disposeBlocking()
+        }
+    }
+
     var shelfRecords by remember { mutableStateOf(initialLibrarySnapshot.shelfRecords) }
     var shelfRefs by remember { mutableStateOf(initialLibrarySnapshot.shelfRefs) }
     var state by remember {
@@ -604,7 +654,8 @@ private fun EpistemeDesktopApp() {
                                         }
                                     },
                                     onOpenEpub = ::importAndOpenEpub,
-                                    onOpenPdf = ::importAndOpenPdf
+                                    onOpenPdf = ::importAndOpenPdf,
+                                    webViewRuntimeState = webViewRuntimeState
                                 )
                             }
                         }
@@ -1612,7 +1663,8 @@ private fun ReaderScreen(
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
     onOpenEpub: () -> Unit,
-    onOpenPdf: () -> Unit
+    onOpenPdf: () -> Unit,
+    webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     val readerState = session.reader
     val page = readerState.currentPage
@@ -1718,80 +1770,30 @@ private fun ReaderScreen(
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    SelectionContainer {
-                        if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                            LazyColumn(
-                                state = verticalListState,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(PaddingValues(settings.margin.dp)),
-                                verticalArrangement = Arrangement.spacedBy(28.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                items(readerState.book.chapters.indices.toList()) { index ->
-                                    val chapter = readerState.book.chapters[index]
-                                    Column(
-                                        modifier = Modifier
-                                            .width(settings.pageWidth.dp)
-                                            .fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(
-                                            chapter.title,
-                                            color = foreground,
-                                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = fontFamily),
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        if (chapter.semanticBlocks.isNotEmpty()) {
-                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                chapter.semanticBlocks.forEach { block ->
-                                                    SemanticBlockView(
-                                                        block = block,
-                                                        foreground = foreground,
-                                                        searchQuery = session.searchQuery,
-                                                        searchHighlight = searchHighlight,
-                                                        fallbackTextAlign = textAlign,
-                                                        fallbackFontFamily = fontFamily,
-                                                        settings = settings
-                                                    )
-                                                }
-                                            }
-                                        } else {
-                                            Text(
-                                                text = chapter.plainText.highlightQuery(session.searchQuery, searchHighlight),
-                                                color = foreground,
-                                                textAlign = textAlign,
-                                                style = MaterialTheme.typography.bodyLarge.copy(
-                                                    fontSize = settings.fontSize.sp,
-                                                    lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-                                                    fontFamily = fontFamily
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(PaddingValues(settings.margin.dp)),
-                                contentAlignment = Alignment.TopCenter
-                            ) {
-                                Text(
-                                    text = page?.text.orEmpty().highlightQuery(session.searchQuery, searchHighlight),
-                                    color = foreground,
-                                    textAlign = textAlign,
-                                    modifier = Modifier.width(settings.pageWidth.dp),
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = settings.fontSize.sp,
-                                        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-                                        fontFamily = fontFamily
-                                    )
-                                )
-                            }
-                        }
+                    val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                        ReaderHtmlDocumentBuilder.verticalDocument(
+                            book = readerState.book,
+                            settings = settings,
+                            searchQuery = session.searchQuery
+                        )
+                    } else {
+                        ReaderHtmlDocumentBuilder.pageDocument(
+                            book = readerState.book,
+                            page = page,
+                            settings = settings,
+                            searchQuery = session.searchQuery
+                        )
+                    }
+                    if (webViewRuntimeState.initialized) {
+                        DesktopEpubWebView(
+                            html = html,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        DesktopWebViewRuntimeIndicator(
+                            state = webViewRuntimeState,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
 
@@ -1827,6 +1829,76 @@ private fun ReaderScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopEpubWebView(
+    html: String,
+    modifier: Modifier = Modifier
+) {
+    key(html) {
+        val state = rememberWebViewStateWithHTMLData(
+            data = html,
+            baseUrl = null,
+            encoding = "utf-8",
+            mimeType = "text/html",
+            historyUrl = null
+        )
+
+        Box(modifier = modifier) {
+            WebView(
+                state = state,
+                modifier = Modifier.fillMaxSize(),
+                captureBackPresses = false
+            )
+
+            val loadingState = state.loadingState
+            if (loadingState is LoadingState.Loading) {
+                LinearProgressIndicator(
+                    progress = { loadingState.progress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopWebViewRuntimeIndicator(
+    state: DesktopWebViewRuntimeState,
+    modifier: Modifier = Modifier
+) {
+    val message = when {
+        state.errorMessage != null -> "Embedded webview could not start: ${state.errorMessage}"
+        state.restartRequired -> "Embedded webview installed. Restart Episteme to finish setup."
+        state.downloadProgress >= 0f -> "Downloading embedded webview ${state.downloadProgress.toInt()}%"
+        else -> "Preparing embedded webview..."
+    }
+
+    Box(
+        modifier = modifier.padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (state.errorMessage == null && !state.restartRequired) {
+                CircularProgressIndicator()
+            }
+            Text(
+                text = message,
+                color = if (state.errorMessage == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center
+            )
+            if (state.downloadProgress in 0f..100f) {
+                LinearProgressIndicator(
+                    progress = { state.downloadProgress / 100f },
+                    modifier = Modifier.width(260.dp)
+                )
             }
         }
     }

@@ -11,6 +11,7 @@ import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import java.io.File
+import java.util.Base64
 import java.util.UUID
 import java.util.zip.ZipFile
 
@@ -29,7 +30,8 @@ object DesktopEpubLoader {
             val title = opf.tagText("title").ifBlank { file.nameWithoutExtension }
             val author = opf.tagText("creator").ifBlank { null }
             val manifest = parseManifest(opf)
-            val cssRules = parseCssRules(zip, manifest, basePath)
+            val cssByPath = loadCss(zip, manifest, basePath)
+            val cssRules = parseCssRules(cssByPath)
             val spine = Regex("<itemref[^>]*idref=[\"']([^\"']+)[\"'][^>]*/?>")
                 .findAll(opf)
                 .mapNotNull { match -> manifest[match.groupValues[1]] }
@@ -42,10 +44,11 @@ object DesktopEpubLoader {
             val chapters = chapterPaths.mapIndexedNotNull { index, href ->
                 val path = normalizeZipPath(basePath + href)
                 val html = zip.readTextOrNull(path) ?: return@mapIndexedNotNull null
+                val resourceReadyHtml = html.sanitizeReaderHtml().withEmbeddedResources(zip, path)
                 val text = htmlToText(html)
                 val semanticBlocks = runCatching {
                     htmlToSemanticBlocks(
-                        html = html,
+                        html = resourceReadyHtml,
                         cssRules = cssRules,
                         textStyle = TextStyle(fontSize = 18.sp),
                         chapterAbsPath = path,
@@ -65,7 +68,9 @@ object DesktopEpubLoader {
                             .ifBlank { html.tagText("title") }
                             .ifBlank { "Chapter ${index + 1}" },
                         plainText = text,
-                        semanticBlocks = semanticBlocks
+                        semanticBlocks = semanticBlocks,
+                        htmlContent = resourceReadyHtml.extractBodyOrSelf(),
+                        baseHref = path.substringBeforeLast('/', missingDelimiterValue = "")
                     )
                 }
             }
@@ -75,6 +80,7 @@ object DesktopEpubLoader {
                 fileName = file.name,
                 title = title,
                 author = author,
+                css = cssByPath,
                 chapters = chapters.ifEmpty {
                     listOf(
                         SharedEpubChapter(
@@ -97,7 +103,18 @@ object DesktopEpubLoader {
         }.toMap()
     }
 
-    private fun parseCssRules(zip: ZipFile, manifest: Map<String, String>, basePath: String): OptimizedCssRules {
+    private fun loadCss(zip: ZipFile, manifest: Map<String, String>, basePath: String): Map<String, String> {
+        return manifest.values
+            .filter { it.endsWith(".css", ignoreCase = true) }
+            .mapNotNull { href ->
+                val path = normalizeZipPath(basePath + href)
+                val css = zip.readTextOrNull(path)?.withEmbeddedCssResources(zip, path).orEmpty()
+                if (css.isBlank()) null else path to css
+            }
+            .toMap()
+    }
+
+    private fun parseCssRules(cssByPath: Map<String, String>): OptimizedCssRules {
         val constraints = Constraints(maxWidth = 980, maxHeight = 720)
         val baseRules = CssParser.parse(
             cssContent = UserAgentStylesheet.default,
@@ -108,11 +125,8 @@ object DesktopEpubLoader {
             isDarkTheme = false
         ).rules
 
-        return manifest.values
-            .filter { it.endsWith(".css", ignoreCase = true) }
-            .fold(baseRules) { rules, href ->
-                val path = normalizeZipPath(basePath + href)
-                val css = zip.readTextOrNull(path).orEmpty()
+        return cssByPath.entries
+            .fold(baseRules) { rules, (path, css) ->
                 if (css.isBlank()) {
                     rules
                 } else {
@@ -163,6 +177,77 @@ object DesktopEpubLoader {
             }
         }
         return parts.joinToString("/")
+    }
+
+    private fun String.withEmbeddedResources(zip: ZipFile, chapterPath: String): String {
+        return replace(Regex("""(?i)\b(src|href)=["']([^"']+)["']""")) { match ->
+            val attr = match.groupValues[1]
+            val raw = match.groupValues[2]
+            if (attr.equals("href", ignoreCase = true) && !raw.looksLikeEmbeddableResource()) {
+                return@replace match.value
+            }
+            val dataUri = zip.toDataUri(raw, chapterPath)
+            if (dataUri != null) "$attr=\"$dataUri\"" else match.value
+        }
+    }
+
+    private fun String.looksLikeEmbeddableResource(): Boolean {
+        return substringBefore('#')
+            .substringBefore('?')
+            .substringAfterLast('.', "")
+            .lowercase() in setOf("css", "jpg", "jpeg", "png", "gif", "svg", "webp", "ttf", "otf", "woff", "woff2")
+    }
+
+    private fun String.sanitizeReaderHtml(): String {
+        return replace(Regex("(?is)<script\\b.*?</script>"), "")
+            .replace(Regex("(?is)<object\\b.*?</object>"), "")
+            .replace(Regex("(?is)<embed\\b[^>]*>"), "")
+            .replace(Regex("""(?i)\s+on[a-z]+\s*=\s*(['"]).*?\1"""), "")
+    }
+
+    private fun String.withEmbeddedCssResources(zip: ZipFile, cssPath: String): String {
+        return replace(Regex("""url\((['"]?)([^)'"]+)\1\)""", RegexOption.IGNORE_CASE)) { match ->
+            val raw = match.groupValues[2].trim()
+            val dataUri = zip.toDataUri(raw, cssPath)
+            if (dataUri != null) "url('$dataUri')" else match.value
+        }
+    }
+
+    private fun ZipFile.toDataUri(rawRef: String, ownerPath: String): String? {
+        val ref = rawRef.substringBefore('#').trim()
+        if (ref.isBlank() || ref.startsWith("data:", ignoreCase = true)) return null
+        if (ref.startsWith("http://", ignoreCase = true) || ref.startsWith("https://", ignoreCase = true)) return null
+        val base = ownerPath.substringBeforeLast('/', missingDelimiterValue = "")
+        val path = normalizeZipPath(if (base.isBlank()) ref else "$base/$ref")
+        val entry = getEntry(path) ?: return null
+        val bytes = getInputStream(entry).use { it.readBytes() }
+        return "data:${mimeType(path)};base64,${Base64.getEncoder().encodeToString(bytes)}"
+    }
+
+    private fun mimeType(path: String): String {
+        return when (path.substringAfterLast('.', "").lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "svg" -> "image/svg+xml"
+            "webp" -> "image/webp"
+            "ttf" -> "font/ttf"
+            "otf" -> "font/otf"
+            "woff" -> "font/woff"
+            "woff2" -> "font/woff2"
+            "css" -> "text/css"
+            "js" -> "text/javascript"
+            else -> "application/octet-stream"
+        }
+    }
+
+    private fun String.extractBodyOrSelf(): String {
+        return Regex("(?is)<body\\b[^>]*>(.*?)</body>")
+            .find(this)
+            ?.groupValues
+            ?.get(1)
+            ?.trim()
+            ?: this
     }
 
     private fun htmlToText(html: String): String {

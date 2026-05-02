@@ -7,14 +7,17 @@ data class SharedEpubBook(
     val fileName: String,
     val title: String,
     val author: String? = null,
-    val chapters: List<SharedEpubChapter>
+    val chapters: List<SharedEpubChapter>,
+    val css: Map<String, String> = emptyMap()
 )
 
 data class SharedEpubChapter(
     val id: String,
     val title: String,
     val plainText: String,
-    val semanticBlocks: List<SemanticBlock> = emptyList()
+    val semanticBlocks: List<SemanticBlock> = emptyList(),
+    val htmlContent: String = "",
+    val baseHref: String? = null
 )
 
 data class ReaderLocator(
