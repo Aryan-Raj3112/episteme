@@ -150,7 +150,7 @@ class SharedLibraryStateProjector(
             .filter { it.sourceFolder != null }
             .groupBy { it.sourceFolder.orEmpty() }
             .flatMap { (folderUri, books) ->
-                val rootName = folderNamesByUri[folderUri] ?: "Local Folder"
+                val rootName = folderNamesByUri[folderUri] ?: folderUri.folderDisplayName()
                 val rootShelfId = "folder_$folderUri"
                 val rootAccumulator = FolderShelfAccumulator(
                     id = rootShelfId,
@@ -236,6 +236,10 @@ class SharedLibraryStateProjector(
     )
 }
 
+private fun String.folderDisplayName(): String {
+    return replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
+}
+
 fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {
     val query = searchQuery.trim()
     return if (query.isBlank()) {
@@ -296,7 +300,8 @@ fun SharedReaderScreenState.withImportedFiles(
                 displayName = file.name,
                 timestamp = now + index,
                 title = file.name.substringBeforeLast('.'),
-                fileSize = file.size
+                fileSize = file.size,
+                sourceFolder = file.localPath?.parentPath()
             )
         }
     }
@@ -310,4 +315,10 @@ fun SharedReaderScreenState.withImportedFiles(
             }
         )
     )
+}
+
+private fun String.parentPath(): String? {
+    val normalized = replace('\\', '/')
+    val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
+    return parent.ifBlank { null }
 }

@@ -32,15 +32,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -101,6 +103,10 @@ fun SharedHomeScreen(
     onToggleSelection: (String) -> Unit,
     onClearSelection: () -> Unit,
     onRemoveSelected: () -> Unit,
+    onShowBookInfo: (BookItem) -> Unit = {},
+    onEditBook: (BookItem) -> Unit = {},
+    onTagSelectedBooks: () -> Unit = {},
+    onAddSelectedBooksToShelf: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val model = state.toHomeScreenModel()
@@ -120,7 +126,9 @@ fun SharedHomeScreen(
             SelectionToolbar(
                 count = model.selectedBooks.size,
                 onClear = onClearSelection,
-                onRemove = onRemoveSelected
+                onRemove = onRemoveSelected,
+                onTag = onTagSelectedBooks,
+                onAddToShelf = onAddSelectedBooksToShelf
             )
         }
 
@@ -139,6 +147,8 @@ fun SharedHomeScreen(
                 selectedBookIds = state.selectedBookIds,
                 onOpenBook = onOpenBook,
                 onToggleSelection = onToggleSelection,
+                onShowBookInfo = onShowBookInfo,
+                onEditBook = onEditBook,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -156,6 +166,13 @@ fun SharedLibraryScreen(
     onToggleSelection: (String) -> Unit,
     onClearSelection: () -> Unit,
     onRemoveSelected: () -> Unit,
+    onShowBookInfo: (BookItem) -> Unit = {},
+    onEditBook: (BookItem) -> Unit = {},
+    onCreateShelf: () -> Unit = {},
+    onRenameShelf: (Shelf) -> Unit = {},
+    onDeleteShelf: (Shelf) -> Unit = {},
+    onTagSelectedBooks: () -> Unit = {},
+    onAddSelectedBooksToShelf: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val books = state.libraryBooks
@@ -168,6 +185,11 @@ fun SharedLibraryScreen(
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 SortMenu(sortOrder = state.sortOrder, onSortOrderChange = { onStateChange(state.reduce(LibraryAction.SortChanged(it))) })
+                Button(onClick = onCreateShelf) {
+                    Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Shelf")
+                }
                 Button(onClick = onImportBooks) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -180,7 +202,9 @@ fun SharedLibraryScreen(
             SelectionToolbar(
                 count = state.selectedBookIds.size,
                 onClear = onClearSelection,
-                onRemove = onRemoveSelected
+                onRemove = onRemoveSelected,
+                onTag = onTagSelectedBooks,
+                onAddToShelf = onAddSelectedBooksToShelf
             )
         }
 
@@ -233,6 +257,8 @@ fun SharedLibraryScreen(
                         selectedBookIds = state.selectedBookIds,
                         onOpenBook = onOpenBook,
                         onToggleSelection = onToggleSelection,
+                        onShowBookInfo = onShowBookInfo,
+                        onEditBook = onEditBook,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -243,6 +269,10 @@ fun SharedLibraryScreen(
                 selectedBookIds = state.selectedBookIds,
                 onOpenBook = onOpenBook,
                 onToggleSelection = onToggleSelection,
+                onShowBookInfo = onShowBookInfo,
+                onEditBook = onEditBook,
+                onRenameShelf = onRenameShelf,
+                onDeleteShelf = onDeleteShelf,
                 emptyTitle = "No shelves yet",
                 emptyBody = "Series, tags, and imported metadata will appear here.",
                 modifier = Modifier.weight(1f)
@@ -253,6 +283,8 @@ fun SharedLibraryScreen(
                 selectedBookIds = state.selectedBookIds,
                 onOpenBook = onOpenBook,
                 onToggleSelection = onToggleSelection,
+                onShowBookInfo = onShowBookInfo,
+                onEditBook = onEditBook,
                 emptyTitle = "No folders yet",
                 emptyBody = "Imported folder metadata will appear here when available.",
                 modifier = Modifier.weight(1f)
@@ -267,18 +299,34 @@ fun SharedShelvesScreen(
     selectedBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit = {},
+    onEditBook: (BookItem) -> Unit = {},
+    onCreateShelf: () -> Unit = {},
+    onRenameShelf: (Shelf) -> Unit = {},
+    onDeleteShelf: (Shelf) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     NonReaderScreenScaffold(
         title = "Shelves",
         subtitle = "Series, folders, and tags from library metadata",
-        modifier = modifier
+        modifier = modifier,
+        trailing = {
+            Button(onClick = onCreateShelf) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Shelf")
+            }
+        }
     ) {
         ShelfCollection(
             shelves = shelves,
             selectedBookIds = selectedBookIds,
             onOpenBook = onOpenBook,
             onToggleSelection = onToggleSelection,
+            onShowBookInfo = onShowBookInfo,
+            onEditBook = onEditBook,
+            onRenameShelf = onRenameShelf,
+            onDeleteShelf = onDeleteShelf,
             emptyTitle = "No shelves yet",
             emptyBody = "Add metadata or import folders later to populate shelves.",
             modifier = Modifier.weight(1f)
@@ -316,7 +364,9 @@ private fun NonReaderScreenScaffold(
 private fun SelectionToolbar(
     count: Int,
     onClear: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onTag: () -> Unit = {},
+    onAddToShelf: () -> Unit = {}
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -329,6 +379,16 @@ private fun SelectionToolbar(
         ) {
             Text("$count selected", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
+            TextButton(onClick = onTag) {
+                Icon(Icons.Default.Tag, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Tag")
+            }
+            TextButton(onClick = onAddToShelf) {
+                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Shelf")
+            }
             TextButton(onClick = onClear) {
                 Text("Clear")
             }
@@ -393,6 +453,17 @@ private fun LibrarySearchAndFilters(
                     label = { Text(status.label) }
                 )
             }
+            state.allTags.forEach { tag ->
+                FilterChip(
+                    selected = tag.id in state.libraryFilters.tagIds,
+                    onClick = {
+                        val updated = if (tag.id in state.libraryFilters.tagIds) state.libraryFilters.tagIds - tag.id else state.libraryFilters.tagIds + tag.id
+                        onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(tagIds = updated))))
+                    },
+                    leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    label = { Text(tag.name) }
+                )
+            }
             if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {
                 TextButton(onClick = { onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters()))) }) {
                     Text("Clear")
@@ -409,6 +480,8 @@ private fun BookGrid(
     selectedBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyVerticalGrid(
@@ -423,7 +496,9 @@ private fun BookGrid(
                 book = book,
                 selected = book.id in selectedBookIds,
                 onOpen = { onOpenBook(book) },
-                onToggleSelection = { onToggleSelection(book.id) }
+                onToggleSelection = { onToggleSelection(book.id) },
+                onShowInfo = { onShowBookInfo(book) },
+                onEdit = { onEditBook(book) }
             )
         }
     }
@@ -435,7 +510,9 @@ private fun BookCard(
     book: BookItem,
     selected: Boolean,
     onOpen: () -> Unit,
-    onToggleSelection: () -> Unit
+    onToggleSelection: () -> Unit,
+    onShowInfo: () -> Unit,
+    onEdit: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(
@@ -472,11 +549,19 @@ private fun BookCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    IconButton(onClick = onToggleSelection, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            imageVector = if (selected) Icons.Default.Check else Icons.AutoMirrored.Filled.List,
-                            contentDescription = if (selected) "Clear selection" else "Select"
-                        )
+                    Row {
+                        IconButton(onClick = onShowInfo, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Info, contentDescription = "Info")
+                        }
+                        IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit")
+                        }
+                        IconButton(onClick = onToggleSelection, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                imageVector = if (selected) Icons.Default.Check else Icons.AutoMirrored.Filled.List,
+                                contentDescription = if (selected) "Clear selection" else "Select"
+                            )
+                        }
                     }
                 }
 
@@ -607,6 +692,10 @@ private fun ShelfCollection(
     selectedBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onRenameShelf: (Shelf) -> Unit = {},
+    onDeleteShelf: (Shelf) -> Unit = {},
     emptyTitle: String,
     emptyBody: String,
     modifier: Modifier = Modifier
@@ -631,7 +720,11 @@ private fun ShelfCollection(
                 shelf = shelf,
                 selectedBookIds = selectedBookIds,
                 onOpenBook = onOpenBook,
-                onToggleSelection = onToggleSelection
+                onToggleSelection = onToggleSelection,
+                onShowBookInfo = onShowBookInfo,
+                onEditBook = onEditBook,
+                onRenameShelf = onRenameShelf,
+                onDeleteShelf = onDeleteShelf
             )
         }
     }
@@ -642,7 +735,11 @@ private fun ShelfSection(
     shelf: Shelf,
     selectedBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
-    onToggleSelection: (String) -> Unit
+    onToggleSelection: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onRenameShelf: (Shelf) -> Unit,
+    onDeleteShelf: (Shelf) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -659,6 +756,15 @@ private fun ShelfSection(
             Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.width(8.dp))
             AssistChip(onClick = {}, label = { Text("${shelf.bookCount}") })
+            if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { onRenameShelf(shelf) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Edit, contentDescription = "Rename shelf", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { onDeleteShelf(shelf) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete shelf", modifier = Modifier.size(18.dp))
+                }
+            }
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(shelf.books, key = { it.id }) { book ->
@@ -667,7 +773,9 @@ private fun ShelfSection(
                         book = book,
                         selected = book.id in selectedBookIds,
                         onOpen = { onOpenBook(book) },
-                        onToggleSelection = { onToggleSelection(book.id) }
+                        onToggleSelection = { onToggleSelection(book.id) },
+                        onShowInfo = { onShowBookInfo(book) },
+                        onEdit = { onEditBook(book) }
                     )
                 }
             }
@@ -683,7 +791,7 @@ private fun SortMenu(
     var expanded by remember { mutableStateOf(false) }
     Box {
         Button(onClick = { expanded = true }) {
-            Icon(Icons.Default.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(sortOrder.label)
         }

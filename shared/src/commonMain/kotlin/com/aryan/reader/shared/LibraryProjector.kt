@@ -42,7 +42,8 @@ class LibraryProjector {
                     displayName = file.name,
                     timestamp = now + index,
                     title = file.name.substringBeforeLast('.'),
-                    fileSize = file.size
+                    fileSize = file.size,
+                    sourceFolder = file.path?.parentPath()
                 )
             }
         }
@@ -111,7 +112,7 @@ class LibraryProjector {
             .map { (folder, folderBooks) ->
                 Shelf(
                     id = "folder_$folder",
-                    name = folder.substringAfterLast('/').ifBlank { folder },
+                    name = folder.folderDisplayName(),
                     type = ShelfType.FOLDER,
                     books = sortBooks(folderBooks, SortOrder.TITLE_ASC)
                 )
@@ -132,6 +133,16 @@ class LibraryProjector {
         return (seriesShelves + folderShelves + tagShelves)
             .sortedWith(compareBy({ it.type.ordinal }, { it.name.lowercase() }))
     }
+}
+
+private fun String.parentPath(): String? {
+    val normalized = replace('\\', '/')
+    val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
+    return parent.ifBlank { null }
+}
+
+private fun String.folderDisplayName(): String {
+    return replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
 }
 
 data class ImportedFile(

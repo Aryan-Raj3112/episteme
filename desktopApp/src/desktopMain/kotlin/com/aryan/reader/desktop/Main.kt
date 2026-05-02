@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,6 +101,7 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.BookShelfRef
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
@@ -106,9 +109,11 @@ import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
-import com.aryan.reader.shared.reduce
-import com.aryan.reader.shared.sampleReaderScreenState
+import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.withImportedFiles
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
@@ -119,6 +124,7 @@ import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.awt.Frame
@@ -140,15 +146,26 @@ private enum class DesktopTab { HOME, LIBRARY, SHELVES, READER }
 private fun EpistemeDesktopApp() {
     val libraryProjector = remember { SharedLibraryStateProjector() }
     val readerEngine = remember { ReaderEngine() }
+    val libraryDatabase = remember { DesktopLibraryDatabase() }
+    val initialLibrarySnapshot = remember { libraryDatabase.load() }
+    val scope = rememberCoroutineScope()
+    var shelfRecords by remember { mutableStateOf(initialLibrarySnapshot.shelfRecords) }
+    var shelfRefs by remember { mutableStateOf(initialLibrarySnapshot.shelfRefs) }
     var state by remember {
-        val initialState = sampleReaderScreenState()
+        val initialBooks = initialLibrarySnapshot.books
+        val initialTags = initialLibrarySnapshot.tags.ifEmpty { initialBooks.collectTags() }
+        val initialState = SharedReaderScreenState(
+            rawLibraryBooks = initialBooks,
+            recentFilesLimit = 12,
+            allTags = initialTags
+        )
         mutableStateOf(
             libraryProjector.project(
                 SharedLibraryProjectionInput(
                     state = initialState,
                     booksFromStore = initialState.rawLibraryBooks,
-                    shelfRecords = emptyList(),
-                    shelfRefs = emptyList(),
+                    shelfRecords = shelfRecords,
+                    shelfRefs = shelfRefs,
                     tags = initialState.allTags
                 )
             )
@@ -159,26 +176,161 @@ private fun EpistemeDesktopApp() {
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
+    var showCreateShelfDialog by remember { mutableStateOf(false) }
+    var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
+    var shelfToDelete by remember { mutableStateOf<Shelf?>(null) }
+    var showAddToShelfDialog by remember { mutableStateOf(false) }
+    var showTagSelectionDialog by remember { mutableStateOf(false) }
+    var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
+    var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    fun projectState(next: SharedReaderScreenState): SharedReaderScreenState {
+    fun projectState(
+        next: SharedReaderScreenState,
+        records: List<ShelfRecord> = shelfRecords,
+        refs: List<BookShelfRef> = shelfRefs
+    ): SharedReaderScreenState {
         return libraryProjector.project(
             SharedLibraryProjectionInput(
                 state = next,
                 booksFromStore = next.rawLibraryBooks,
-                shelfRecords = emptyList(),
-                shelfRefs = emptyList(),
-                tags = next.allTags
+                shelfRecords = records,
+                shelfRefs = refs,
+                tags = next.allTags.ifEmpty { next.rawLibraryBooks.collectTags() }
             )
         )
     }
 
+    fun persistSnapshot(projected: SharedReaderScreenState, records: List<ShelfRecord> = shelfRecords, refs: List<BookShelfRef> = shelfRefs) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                libraryDatabase.save(
+                    DesktopLibrarySnapshot(
+                        books = projected.rawLibraryBooks,
+                        shelfRecords = records,
+                        shelfRefs = refs,
+                        tags = projected.allTags
+                    )
+                )
+            }
+        }
+    }
+
+    fun replaceLibrary(
+        next: SharedReaderScreenState,
+        records: List<ShelfRecord> = shelfRecords,
+        refs: List<BookShelfRef> = shelfRefs
+    ) {
+        shelfRecords = records
+        shelfRefs = refs
+        val projected = projectState(next, records, refs)
+        state = projected
+        persistSnapshot(projected, records, refs)
+    }
+
     fun updateState(next: SharedReaderScreenState) {
-        state = projectState(next)
+        val projected = projectState(next)
+        state = projected
+        persistSnapshot(projected)
     }
 
     fun importFiles(files: List<ImportedBookFile>) {
         updateState(state.withImportedFiles(files))
+    }
+
+    fun removeSelectedBooks() {
+        if (state.selectedBookIds.isEmpty()) return
+        val selected = state.selectedBookIds
+        replaceLibrary(
+            state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in selected },
+                selectedBookIds = emptySet(),
+                bannerMessage = BannerMessage("Removed ${selected.size} book(s) from the desktop library.")
+            ),
+            refs = shelfRefs.filterNot { it.bookId in selected }
+        )
+    }
+
+    fun createShelf(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val id = "shelf_${System.currentTimeMillis()}"
+        replaceLibrary(
+            state.copy(bannerMessage = BannerMessage("Created shelf \"$trimmed\".")),
+            records = shelfRecords + ShelfRecord(id = id, name = trimmed)
+        )
+    }
+
+    fun renameShelf(shelf: Shelf, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        replaceLibrary(
+            state.copy(bannerMessage = BannerMessage("Renamed shelf to \"$trimmed\".")),
+            records = shelfRecords.map { if (it.id == shelf.id) it.copy(name = trimmed) else it }
+        )
+    }
+
+    fun deleteShelf(shelf: Shelf) {
+        replaceLibrary(
+            state.copy(bannerMessage = BannerMessage("Deleted shelf \"${shelf.name}\".")),
+            records = shelfRecords.filterNot { it.id == shelf.id },
+            refs = shelfRefs.filterNot { it.shelfId == shelf.id }
+        )
+    }
+
+    fun addSelectedBooksToShelf(shelfId: String) {
+        val selected = state.selectedBookIds
+        if (selected.isEmpty()) return
+        val existing = shelfRefs.mapTo(mutableSetOf()) { it.bookId to it.shelfId }
+        val now = System.currentTimeMillis()
+        val additions = selected.mapNotNull { bookId ->
+            if (!existing.add(bookId to shelfId)) null else BookShelfRef(bookId = bookId, shelfId = shelfId, addedAt = now)
+        }
+        replaceLibrary(
+            state.copy(
+                selectedBookIds = emptySet(),
+                bannerMessage = BannerMessage("Added ${additions.size} book(s) to shelf.")
+            ),
+            refs = shelfRefs + additions
+        )
+    }
+
+    fun tagSelectedBooks(tagName: String) {
+        val selected = state.selectedBookIds
+        val trimmed = tagName.trim()
+        if (selected.isEmpty() || trimmed.isBlank()) return
+        val existingTag = state.allTags.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
+        val tag = existingTag ?: Tag(
+            id = trimmed.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "tag_${System.currentTimeMillis()}" },
+            name = trimmed,
+            color = 0xFF64B5F6.toInt()
+        )
+        val allTags = (state.allTags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+        val books = state.rawLibraryBooks.map { book ->
+            if (book.id in selected && book.tags.none { it.id == tag.id }) {
+                book.copy(tags = (book.tags + tag).sortedBy { it.name.lowercase() })
+            } else {
+                book
+            }
+        }
+        replaceLibrary(
+            state.copy(
+                rawLibraryBooks = books,
+                allTags = allTags,
+                selectedBookIds = emptySet(),
+                bannerMessage = BannerMessage("Tagged ${selected.size} book(s) with \"${tag.name}\".")
+            )
+        )
+    }
+
+    fun updateBookMetadata(updated: BookItem) {
+        replaceLibrary(
+            state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.map { if (it.id == updated.id) updated.copy(timestamp = System.currentTimeMillis()) else it },
+                allTags = (state.allTags + updated.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
+                bannerMessage = BannerMessage("Updated \"${updated.cardTitleForMessage()}\".")
+            )
+        )
     }
 
     fun openReader(book: BookItem) {
@@ -339,7 +491,11 @@ private fun EpistemeDesktopApp() {
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
-                            onRemoveSelected = { updateState(state.removeSelectedBooks()) }
+                            onRemoveSelected = ::removeSelectedBooks,
+                            onShowBookInfo = { bookInfoDialogFor = it },
+                            onEditBook = { bookEditDialogFor = it },
+                            onTagSelectedBooks = { showTagSelectionDialog = true },
+                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
                         )
 
                         DesktopTab.LIBRARY -> LibraryScreen(
@@ -353,14 +509,26 @@ private fun EpistemeDesktopApp() {
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
-                            onRemoveSelected = { updateState(state.removeSelectedBooks()) }
+                            onRemoveSelected = ::removeSelectedBooks,
+                            onShowBookInfo = { bookInfoDialogFor = it },
+                            onEditBook = { bookEditDialogFor = it },
+                            onCreateShelf = { showCreateShelfDialog = true },
+                            onRenameShelf = { shelfToRename = it },
+                            onDeleteShelf = { shelfToDelete = it },
+                            onTagSelectedBooks = { showTagSelectionDialog = true },
+                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
                         )
 
                         DesktopTab.SHELVES -> ShelvesScreen(
                             shelves = state.shelves,
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
-                            selectedBookIds = state.selectedBookIds
+                            selectedBookIds = state.selectedBookIds,
+                            onShowBookInfo = { bookInfoDialogFor = it },
+                            onEditBook = { bookEditDialogFor = it },
+                            onCreateShelf = { showCreateShelfDialog = true },
+                            onRenameShelf = { shelfToRename = it },
+                            onDeleteShelf = { shelfToDelete = it }
                         )
 
                         DesktopTab.READER -> {
@@ -411,7 +579,316 @@ private fun EpistemeDesktopApp() {
                 }
             }
         }
+
+        if (showCreateShelfDialog) {
+            TextInputDialog(
+                title = "Create shelf",
+                label = "Shelf name",
+                initialValue = "",
+                confirmLabel = "Create",
+                onDismiss = { showCreateShelfDialog = false },
+                onConfirm = { name ->
+                    createShelf(name)
+                    showCreateShelfDialog = false
+                }
+            )
+        }
+
+        shelfToRename?.let { shelf ->
+            TextInputDialog(
+                title = "Rename shelf",
+                label = "Shelf name",
+                initialValue = shelf.name,
+                confirmLabel = "Rename",
+                onDismiss = { shelfToRename = null },
+                onConfirm = { name ->
+                    renameShelf(shelf, name)
+                    shelfToRename = null
+                }
+            )
+        }
+
+        shelfToDelete?.let { shelf ->
+            ConfirmDialog(
+                title = "Delete shelf",
+                body = "Delete \"${shelf.name}\"? Books stay in your library.",
+                confirmLabel = "Delete",
+                onDismiss = { shelfToDelete = null },
+                onConfirm = {
+                    deleteShelf(shelf)
+                    shelfToDelete = null
+                }
+            )
+        }
+
+        if (showAddToShelfDialog) {
+            AddToShelfDialog(
+                shelves = state.shelves.filter { it.type == ShelfType.MANUAL && it.id != "unshelved" },
+                onDismiss = { showAddToShelfDialog = false },
+                onCreateShelf = {
+                    showAddToShelfDialog = false
+                    showCreateShelfDialog = true
+                },
+                onShelfSelected = { shelf ->
+                    addSelectedBooksToShelf(shelf.id)
+                    showAddToShelfDialog = false
+                }
+            )
+        }
+
+        if (showTagSelectionDialog) {
+            TextInputDialog(
+                title = "Tag selected books",
+                label = "Tag name",
+                initialValue = state.allTags.firstOrNull()?.name.orEmpty(),
+                confirmLabel = "Apply",
+                onDismiss = { showTagSelectionDialog = false },
+                onConfirm = { name ->
+                    tagSelectedBooks(name)
+                    showTagSelectionDialog = false
+                }
+            )
+        }
+
+        bookInfoDialogFor?.let { book ->
+            BookInfoDialog(
+                book = book,
+                onDismiss = { bookInfoDialogFor = null },
+                onEdit = {
+                    bookEditDialogFor = book
+                    bookInfoDialogFor = null
+                }
+            )
+        }
+
+        bookEditDialogFor?.let { book ->
+            BookEditDialog(
+                book = book,
+                knownTags = state.allTags,
+                onDismiss = { bookEditDialogFor = null },
+                onSave = { updated ->
+                    updateBookMetadata(updated)
+                    bookEditDialogFor = null
+                }
+            )
+        }
     }
+}
+
+@Composable
+private fun TextInputDialog(
+    title: String,
+    label: String,
+    initialValue: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var value by remember(initialValue) { mutableStateOf(initialValue) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                label = { Text(label) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ConfirmDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun AddToShelfDialog(
+    shelves: List<Shelf>,
+    onDismiss: () -> Unit,
+    onCreateShelf: () -> Unit,
+    onShelfSelected: (Shelf) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add to shelf") },
+        text = {
+            if (shelves.isEmpty()) {
+                Text("Create a shelf first, then add selected books to it.")
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(shelves, key = { it.id }) { shelf ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(shelf.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${shelf.bookCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCreateShelf) {
+                Text("New shelf")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun BookInfoDialog(
+    book: BookItem,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(book.cardTitleForMessage()) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoRow("File", book.displayName)
+                InfoRow("Type", book.type.name)
+                InfoRow("Author", book.author.orEmpty().ifBlank { "Unknown" })
+                InfoRow("Path", book.path.orEmpty().ifBlank { "Not available" })
+                InfoRow("Size", book.fileSize.toReadableSize())
+                InfoRow("Progress", "${(book.progressPercentage ?: 0f).toInt()}%")
+                if (!book.seriesName.isNullOrBlank()) {
+                    InfoRow("Series", listOfNotNull(book.seriesName, book.seriesIndex?.toString()).joinToString(" #"))
+                }
+                if (book.tags.isNotEmpty()) {
+                    InfoRow("Tags", book.tags.joinToString { it.name })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onEdit) {
+                Text("Edit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun BookEditDialog(
+    book: BookItem,
+    knownTags: List<Tag>,
+    onDismiss: () -> Unit,
+    onSave: (BookItem) -> Unit
+) {
+    var title by remember(book.id) { mutableStateOf(book.title.orEmpty()) }
+    var author by remember(book.id) { mutableStateOf(book.author.orEmpty()) }
+    var seriesName by remember(book.id) { mutableStateOf(book.seriesName.orEmpty()) }
+    var seriesIndex by remember(book.id) { mutableStateOf(book.seriesIndex?.toString().orEmpty()) }
+    var tagText by remember(book.id) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit book") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = author, onValueChange = { author = it }, label = { Text("Author") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = seriesName, onValueChange = { seriesName = it }, label = { Text("Series") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = seriesIndex, onValueChange = { seriesIndex = it }, label = { Text("Series index") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = tagText, onValueChange = { tagText = it }, label = { Text("Tags, comma separated") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (knownTags.isNotEmpty()) {
+                    Text("Existing: ${knownTags.joinToString { it.name }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val parsedTags = tagText.split(',')
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinctBy { it.lowercase() }
+                        .map { name ->
+                            knownTags.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                                ?: Tag(
+                                    id = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "tag_${System.currentTimeMillis()}" },
+                                    name = name,
+                                    color = 0xFF64B5F6.toInt()
+                                )
+                        }
+                    onSave(
+                        book.copy(
+                            title = title.trim().ifBlank { null },
+                            author = author.trim().ifBlank { null },
+                            seriesName = seriesName.trim().ifBlank { null },
+                            seriesIndex = seriesIndex.toDoubleOrNull(),
+                            tags = parsedTags
+                        )
+                    )
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
@@ -421,7 +898,11 @@ private fun HomeScreen(
     onRead: (BookItem) -> Unit,
     onSelect: (String) -> Unit,
     onClearSelection: () -> Unit,
-    onRemoveSelected: () -> Unit
+    onRemoveSelected: () -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onTagSelectedBooks: () -> Unit,
+    onAddSelectedBooksToShelf: () -> Unit
 ) {
     SharedHomeScreen(
         state = state,
@@ -429,7 +910,11 @@ private fun HomeScreen(
         onOpenBook = onRead,
         onToggleSelection = onSelect,
         onClearSelection = onClearSelection,
-        onRemoveSelected = onRemoveSelected
+        onRemoveSelected = onRemoveSelected,
+        onShowBookInfo = onShowBookInfo,
+        onEditBook = onEditBook,
+        onTagSelectedBooks = onTagSelectedBooks,
+        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf
     )
 }
 
@@ -443,7 +928,14 @@ private fun LibraryScreen(
     onRead: (BookItem) -> Unit,
     onSelect: (String) -> Unit,
     onClearSelection: () -> Unit,
-    onRemoveSelected: () -> Unit
+    onRemoveSelected: () -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onCreateShelf: () -> Unit,
+    onRenameShelf: (Shelf) -> Unit,
+    onDeleteShelf: (Shelf) -> Unit,
+    onTagSelectedBooks: () -> Unit,
+    onAddSelectedBooksToShelf: () -> Unit
 ) {
     SharedLibraryScreen(
         state = state,
@@ -454,7 +946,14 @@ private fun LibraryScreen(
         onOpenBook = onRead,
         onToggleSelection = onSelect,
         onClearSelection = onClearSelection,
-        onRemoveSelected = onRemoveSelected
+        onRemoveSelected = onRemoveSelected,
+        onShowBookInfo = onShowBookInfo,
+        onEditBook = onEditBook,
+        onCreateShelf = onCreateShelf,
+        onRenameShelf = onRenameShelf,
+        onDeleteShelf = onDeleteShelf,
+        onTagSelectedBooks = onTagSelectedBooks,
+        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf
     )
 }
 
@@ -463,13 +962,23 @@ private fun ShelvesScreen(
     shelves: List<Shelf>,
     selectedBookIds: Set<String>,
     onRead: (BookItem) -> Unit,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onCreateShelf: () -> Unit,
+    onRenameShelf: (Shelf) -> Unit,
+    onDeleteShelf: (Shelf) -> Unit
 ) {
     SharedShelvesScreen(
         shelves = shelves,
         selectedBookIds = selectedBookIds,
         onOpenBook = onRead,
-        onToggleSelection = onSelect
+        onToggleSelection = onSelect,
+        onShowBookInfo = onShowBookInfo,
+        onEditBook = onEditBook,
+        onCreateShelf = onCreateShelf,
+        onRenameShelf = onRenameShelf,
+        onDeleteShelf = onDeleteShelf
     )
 }
 
@@ -1367,17 +1876,32 @@ private fun choosePdfFile(): File? {
     return File(directory, file)
 }
 
-private fun SharedReaderScreenState.removeSelectedBooks(): SharedReaderScreenState {
-    if (selectedBookIds.isEmpty()) return this
-    return copy(
-        rawLibraryBooks = rawLibraryBooks.filterNot { it.id in selectedBookIds },
-        selectedBookIds = emptySet(),
-        bannerMessage = BannerMessage("Removed selected books from the desktop library.")
-    )
-}
-
 private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean = false): SharedReaderScreenState {
     return reduce(AppAction.BannerShown(BannerMessage(message, isError = isError)))
+}
+
+private fun List<BookItem>.collectTags(): List<Tag> {
+    return flatMap { it.tags }.distinctBy { it.id }.sortedBy { it.name.lowercase() }
+}
+
+private fun BookItem.cardTitleForMessage(): String {
+    return title?.takeIf { it.isNotBlank() } ?: displayName
+}
+
+private fun Long.toReadableSize(): String {
+    if (this <= 0L) return "Unknown"
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var value = this.toDouble()
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return if (unitIndex == 0) {
+        "${this} ${units[unitIndex]}"
+    } else {
+        "${String.format("%.1f", value)} ${units[unitIndex]}"
+    }
 }
 
 private fun File.toImportedBookFile(): ImportedBookFile {
