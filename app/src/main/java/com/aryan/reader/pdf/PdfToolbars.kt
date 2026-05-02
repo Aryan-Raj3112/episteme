@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.BuildConfig
@@ -41,6 +42,7 @@ import com.aryan.reader.R
 import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
+import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.epubreader.SystemUiMode
 import kotlin.collections.isNotEmpty
 
@@ -561,7 +563,7 @@ fun PdfBottomBar(
                     }
                 }
 
-                if (BuildConfig.FLAVOR != "oss" && !hiddenTools.contains(PdfReaderTool.AI_FEATURES.name)) {
+                if (areReaderAiFeaturesEnabled(LocalContext.current) && !hiddenTools.contains(PdfReaderTool.AI_FEATURES.name)) {
                     TooltipIconButton(
                         text = stringResource(R.string.tooltip_ai),
                         description = stringResource(R.string.tooltip_ai_desc),

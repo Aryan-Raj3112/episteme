@@ -198,6 +198,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
+import com.aryan.reader.AiFeature
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
@@ -219,6 +220,8 @@ import com.aryan.reader.epubreader.TtsOverlayControls
 import com.aryan.reader.epubreader.loadTapToNavigateSetting
 import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
+import com.aryan.reader.areReaderAiFeaturesEnabled
+import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -2057,11 +2060,11 @@ fun PdfViewerScreen(
     val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser) {
         { text: String ->
             executeWithOcrCheck {
-                val effectiveUseOnline = !isOss && useOnlineDictionary
+                val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
                 if (effectiveUseOnline) {
                     val wordCount = com.aryan.reader.countWords(text)
-                    if (wordCount > 1 && !isProUser) {
+                    if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
                         showDictionaryUpsellDialog = true
                     } else {
                         selectedTextForAi = text
@@ -2224,6 +2227,27 @@ fun PdfViewerScreen(
                 val base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
                 pageBitmap.recycle()
                 pageBitmap = null
+
+                @Suppress("KotlinConstantConditions")
+                if (BuildConfig.FLAVOR == "oss") {
+                    val fullText = StringBuilder()
+                    callByokGeminiInlineAi(
+                        context = context,
+                        feature = AiFeature.SUMMARIZE,
+                        mimeType = "image/jpeg",
+                        base64Data = base64Image,
+                        systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
+                        temperature = 0.2,
+                        maxTokens = 8192,
+                        onUpdate = {
+                            fullText.append(it)
+                            onUpdate(SummarizationResult(summary = fullText.toString()))
+                        },
+                        onError = { onUpdate(SummarizationResult(error = it)) }
+                    )
+                    onFinish()
+                    return@withContext
+                }
 
                 val url = URL(summarizationUrl)
                 connection = url.openConnection() as HttpURLConnection
@@ -5780,7 +5804,7 @@ fun PdfViewerScreen(
                         isSummarizationLoading = isSummarizationLoading,
                         onClearSummary = { summarizationResult = null },
                         onGenerateSummary = { force ->
-                            if (!isProUser && uiState.credits <= 0) {
+                            if (BuildConfig.FLAVOR != "oss" && !isProUser && uiState.credits <= 0) {
                                 showInsufficientCreditsDialog = true
                                 showAiHubSheet = false
                             } else {

@@ -312,6 +312,12 @@ fun HomeScreen(
                                 navController.navigate(AppDestinations.FONTS_SCREEN_ROUTE)
                             }
                         },
+                        onAiSettingsClick = {
+                            scope.launch {
+                                drawerState.close()
+                                navController.navigate(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                            }
+                        },
                         navController = navController,
                         onFolderSyncToggle = viewModel::setFolderSyncEnabled
                     )
@@ -349,7 +355,10 @@ fun HomeScreen(
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
                                 onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
                                 onLanguageClick = { showLanguageDialog = true },
-                                onExportLogsClick = { viewModel.exportLogsToFile(context) }
+                                onExportLogsClick = { viewModel.exportLogsToFile(context) },
+                                onToggleHideReaderAi = {
+                                    saveHideReaderAiFeatures(context, !loadHideReaderAiFeatures(context))
+                                }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -1004,10 +1013,13 @@ fun DefaultTopAppBar(
     onTestPanelDetectionClick: () -> Unit,
     onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
-    onExportLogsClick: () -> Unit
+    onExportLogsClick: () -> Unit,
+    onToggleHideReaderAi: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var hideReaderAiFeatures by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
 
     CustomTopAppBar(title = { }, navigationIcon = {
         IconButton(onClick = onDrawerClick) {
@@ -1094,6 +1106,20 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 })
 
+                DropdownMenuItem(
+                    text = { Text(if (hideReaderAiFeatures) "Show AI in reader" else "Hide AI in reader") },
+                    onClick = {
+                        onToggleHideReaderAi()
+                        hideReaderAiFeatures = !hideReaderAiFeatures
+                        showOptionsMenu = false
+                    },
+                    trailingIcon = {
+                        if (hideReaderAiFeatures) {
+                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                        }
+                    }
+                )
+
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_book_cache)) }, onClick = {
                     onClearCache()
@@ -1149,6 +1175,7 @@ private fun AppDrawerContent(
     onUpgradeClick: () -> Unit,
     onSyncUpsellClick: () -> Unit,
     onFontsClick: () -> Unit,
+    onAiSettingsClick: () -> Unit,
     navController: NavHostController,
     onFolderSyncToggle: (Boolean) -> Unit
 ) {
@@ -1318,6 +1345,16 @@ private fun AppDrawerContent(
                 onClick = onFontsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
+
+            if (isOss && !BuildConfig.IS_OFFLINE) {
+                NavigationDrawerItem(
+                    icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
+                    label = { Text("AI keys and models") },
+                    selected = false,
+                    onClick = onAiSettingsClick,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
 
             NavigationDrawerItem(
                 icon = { Icon(painterResource(id = R.drawable.feedback), contentDescription = null) },

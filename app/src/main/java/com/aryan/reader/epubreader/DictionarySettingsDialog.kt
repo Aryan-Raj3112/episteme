@@ -41,8 +41,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.graphics.drawable.toBitmap
-import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
+import com.aryan.reader.areReaderAiFeaturesEnabled
 
 @Suppress("KotlinConstantConditions")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,7 +92,7 @@ fun DictionarySettingsDialog(
                 )
 
                 // ── Dictionary ──
-                if (BuildConfig.FLAVOR != "oss") {
+                if (areReaderAiFeaturesEnabled(context)) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,

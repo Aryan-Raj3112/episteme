@@ -158,6 +158,7 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.countWords
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
@@ -337,7 +338,7 @@ private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 
 private fun loadUseOnlineDict(context: Context): Boolean {
-    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss") return false
+    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
 }
@@ -744,12 +745,11 @@ fun EpubReaderHost(
     var showSummarizationUpsellDialog by remember { mutableStateOf(false) }
 
     @Suppress("KotlinConstantConditions") val onDictionaryLookup = { word: String ->
-        val isOss = BuildConfig.FLAVOR == "oss"
-        val effectiveUseOnline = !isOss && useOnlineDictionary
+        val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
         if (effectiveUseOnline) {
             val wordCount = countWords(word)
-            if (wordCount > 1 && !isProUser) {
+            if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
                 showDictionaryUpsellDialog = true
             } else {
                 selectedTextForAi = word
@@ -2619,7 +2619,7 @@ fun EpubReaderHost(
         }
 
         val handleGenerateSummary: (Boolean) -> Unit = { force ->
-            if (!isProUser && credits <= 0) {
+            if (BuildConfig.FLAVOR != "oss" && !isProUser && credits <= 0) {
                 showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {
@@ -2676,6 +2676,7 @@ fun EpubReaderHost(
                                     val finalSummaryBuilder = StringBuilder()
                                     summarizeBookContent(
                                         content = text,
+                                        context = context,
                                         authToken = token,
                                         onUsageReceived = { cost, freeRemaining ->
                                             currentCost = cost
@@ -2738,7 +2739,7 @@ fun EpubReaderHost(
         }
 
         val handleGenerateRecap: () -> Unit = {
-            if (credits <= 0) {
+            if (BuildConfig.FLAVOR != "oss" && credits <= 0) {
                 showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {
@@ -3516,6 +3517,7 @@ fun EpubReaderHost(
 
                                                     summarizeBookContent(
                                                         content = content,
+                                                        context = context,
                                                         authToken = token,
                                                         onUsageReceived = { cost: Double?, freeRemaining: Int? ->
                                                             currentCost = cost

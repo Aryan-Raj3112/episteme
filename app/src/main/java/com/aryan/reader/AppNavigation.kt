@@ -58,6 +58,7 @@ object AppDestinations {
     const val PRO_SCREEN_ROUTE = "pro_screen"
     const val FEEDBACK_SCREEN_ROUTE = "feedback_screen_route"
     const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
+    const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
 }
 
 private fun NavHostController.navigateSingleTopTo(route: String) {
@@ -299,6 +300,12 @@ fun AppNavigation(
         composable(route = AppDestinations.FONTS_SCREEN_ROUTE) {
             FontsScreen(
                 viewModel = viewModel,
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(route = AppDestinations.AI_SETTINGS_SCREEN_ROUTE) {
+            AiSettingsScreen(
                 onBackClick = { navController.popBackStack() }
             )
         }

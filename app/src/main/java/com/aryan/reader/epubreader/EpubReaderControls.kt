@@ -115,6 +115,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -130,6 +131,7 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
+import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.loadNativeVoice
 import com.aryan.reader.paginatedreader.BookPaginator
@@ -572,10 +574,7 @@ fun EpubReaderBottomBar(
                 }
 
                 if (!hiddenTools.contains(ReaderTool.AI_FEATURES.name)) {
-                    @Suppress(
-                        "KotlinConstantConditions",
-                        "SimplifyBooleanWithConstants"
-                    ) if (BuildConfig.FLAVOR != "oss") {
+                    if (areReaderAiFeaturesEnabled(LocalContext.current)) {
                         TooltipIconButton(
                             text = stringResource(R.string.tooltip_ai),
                             description = stringResource(R.string.tooltip_ai_desc),

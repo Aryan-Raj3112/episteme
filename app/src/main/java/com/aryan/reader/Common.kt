@@ -6,6 +6,9 @@ package com.aryan.reader
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -77,6 +80,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.RichTooltip
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -185,7 +189,12 @@ import timber.log.Timber
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.KeyStore
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -199,6 +208,199 @@ const val recapEndpoint = "/recap"
 const val recapUrl = aiServerBasePath + recapEndpoint
 
 const val PREF_NATIVE_TTS_VOICE = "native_tts_voice_name"
+private const val AI_PREFS_NAME = "ai_byok_prefs"
+private const val PREF_AI_HIDE_READER_FEATURES = "hide_reader_ai_features"
+private const val PREF_AI_GEMINI_KEY = "gemini_key"
+private const val PREF_AI_GROQ_KEY = "groq_key"
+private const val PREF_AI_USE_ONE_MODEL = "use_one_model"
+private const val PREF_AI_MODEL_ALL = "model_all"
+private const val PREF_AI_MODEL_DEFINE = "model_define"
+private const val PREF_AI_MODEL_SUMMARIZE = "model_summarize"
+private const val PREF_AI_MODEL_RECAP = "model_recap"
+private const val AI_KEYSTORE_ALIAS = "reader_ai_byok_key_v1"
+private const val ENCRYPTION_PREFIX = "v1:"
+
+enum class AiFeature { DEFINE, SUMMARIZE, RECAP }
+
+data class AiModelOption(
+    val provider: String,
+    val name: String,
+    val label: String = "${provider.replaceFirstChar { it.titlecase(Locale.ROOT) }} - $name"
+) {
+    val id: String = "$provider:$name"
+}
+
+data class AiByokSettings(
+    val geminiKey: String = "",
+    val groqKey: String = "",
+    val useOneModel: Boolean = true,
+    val modelForAll: String = "gemini:gemini-flash-lite-latest",
+    val defineModel: String = "groq:qwen/qwen3-32b",
+    val summarizeModel: String = "gemini:gemini-flash-lite-latest",
+    val recapModel: String = "gemini:gemini-flash-lite-latest"
+)
+
+val aiByokModelOptions = listOf(
+    AiModelOption("groq", "qwen/qwen3-32b"),
+    AiModelOption("groq", "llama-3.3-70b-versatile"),
+    AiModelOption("groq", "llama-3.1-8b-instant"),
+    AiModelOption("gemini", "gemma-4-26b-a4b-it"),
+    AiModelOption("gemini", "gemma-4-31b-it"),
+    AiModelOption("gemini", "gemini-flash-lite-latest"),
+    AiModelOption("gemini", "gemini-2.5-flash-lite"),
+    AiModelOption("gemini", "gemini-3.1-flash-lite-preview")
+)
+
+private fun Context.aiPrefs() = getSharedPreferences(AI_PREFS_NAME, Context.MODE_PRIVATE)
+
+private fun getAiSecretKey(): SecretKey {
+    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (keyStore.getKey(AI_KEYSTORE_ALIAS, null) as? SecretKey)?.let { return it }
+
+    val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    val keySpec = KeyGenParameterSpec.Builder(
+        AI_KEYSTORE_ALIAS,
+        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+    )
+        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+        .setRandomizedEncryptionRequired(true)
+        .build()
+    keyGenerator.init(keySpec)
+    return keyGenerator.generateKey()
+}
+
+private fun encryptAiSecret(value: String): String {
+    if (value.isBlank()) return ""
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, getAiSecretKey())
+    val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+    val combined = cipher.iv + encrypted
+    return ENCRYPTION_PREFIX + Base64.encodeToString(combined, Base64.NO_WRAP)
+}
+
+private fun decryptAiSecret(value: String?): String {
+    if (value.isNullOrBlank()) return ""
+    if (!value.startsWith(ENCRYPTION_PREFIX)) return value
+    return try {
+        val combined = Base64.decode(value.removePrefix(ENCRYPTION_PREFIX), Base64.NO_WRAP)
+        val iv = combined.copyOfRange(0, 12)
+        val encrypted = combined.copyOfRange(12, combined.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, getAiSecretKey(), GCMParameterSpec(128, iv))
+        String(cipher.doFinal(encrypted), Charsets.UTF_8)
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to decrypt AI key")
+        ""
+    }
+}
+
+private fun maskedAiSecret(value: String): String {
+    val trimmed = value.trim()
+    return when {
+        trimmed.isBlank() -> ""
+        trimmed.length <= 6 -> "***"
+        else -> "${trimmed.take(3)}...${trimmed.takeLast(3)}"
+    }
+}
+
+fun loadAiByokSettings(context: Context): AiByokSettings {
+    val prefs = context.aiPrefs()
+    val settings = AiByokSettings(
+        geminiKey = decryptAiSecret(prefs.getString(PREF_AI_GEMINI_KEY, "")),
+        groqKey = decryptAiSecret(prefs.getString(PREF_AI_GROQ_KEY, "")),
+        useOneModel = prefs.getBoolean(PREF_AI_USE_ONE_MODEL, true),
+        modelForAll = prefs.getString(PREF_AI_MODEL_ALL, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest",
+        defineModel = prefs.getString(PREF_AI_MODEL_DEFINE, "groq:qwen/qwen3-32b") ?: "groq:qwen/qwen3-32b",
+        summarizeModel = prefs.getString(PREF_AI_MODEL_SUMMARIZE, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest",
+        recapModel = prefs.getString(PREF_AI_MODEL_RECAP, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest"
+    )
+    val geminiStored = prefs.getString(PREF_AI_GEMINI_KEY, "").orEmpty()
+    val groqStored = prefs.getString(PREF_AI_GROQ_KEY, "").orEmpty()
+    if ((geminiStored.isNotBlank() && !geminiStored.startsWith(ENCRYPTION_PREFIX)) ||
+        (groqStored.isNotBlank() && !groqStored.startsWith(ENCRYPTION_PREFIX))
+    ) {
+        saveAiByokSettings(context, settings)
+    }
+    return settings
+}
+
+fun saveAiByokSettings(context: Context, settings: AiByokSettings) {
+    context.aiPrefs().edit {
+        putString(PREF_AI_GEMINI_KEY, encryptAiSecret(settings.geminiKey.trim()))
+        putString(PREF_AI_GROQ_KEY, encryptAiSecret(settings.groqKey.trim()))
+        putBoolean(PREF_AI_USE_ONE_MODEL, settings.useOneModel)
+        putString(PREF_AI_MODEL_ALL, settings.modelForAll)
+        putString(PREF_AI_MODEL_DEFINE, settings.defineModel)
+        putString(PREF_AI_MODEL_SUMMARIZE, settings.summarizeModel)
+        putString(PREF_AI_MODEL_RECAP, settings.recapModel)
+    }
+}
+
+fun saveAiByokKey(context: Context, provider: String, key: String) {
+    val current = loadAiByokSettings(context)
+    val updated = when (provider) {
+        "gemini" -> current.copy(geminiKey = key)
+        "groq" -> current.copy(groqKey = key)
+        else -> current
+    }
+    saveAiByokSettings(context, updated)
+}
+
+fun deleteAiByokKey(context: Context, provider: String) {
+    saveAiByokKey(context, provider, "")
+}
+
+fun maskedAiByokKey(context: Context, provider: String): String {
+    val settings = loadAiByokSettings(context)
+    return maskedAiSecret(
+        when (provider) {
+            "gemini" -> settings.geminiKey
+            "groq" -> settings.groqKey
+            else -> ""
+        }
+    )
+}
+
+fun loadHideReaderAiFeatures(context: Context): Boolean {
+    return context.aiPrefs().getBoolean(PREF_AI_HIDE_READER_FEATURES, false)
+}
+
+fun saveHideReaderAiFeatures(context: Context, hidden: Boolean) {
+    context.aiPrefs().edit { putBoolean(PREF_AI_HIDE_READER_FEATURES, hidden) }
+}
+
+fun hasAiByokKey(context: Context): Boolean {
+    val settings = loadAiByokSettings(context)
+    return settings.geminiKey.isNotBlank() || settings.groqKey.isNotBlank()
+}
+
+@Suppress("KotlinConstantConditions")
+fun areReaderAiFeaturesEnabled(context: Context): Boolean {
+    if (loadHideReaderAiFeatures(context)) return false
+    if (BuildConfig.FLAVOR != "oss") return true
+    return !BuildConfig.IS_OFFLINE && hasAiByokKey(context)
+}
+
+private fun AiByokSettings.modelIdFor(feature: AiFeature): String {
+    return if (useOneModel) modelForAll else when (feature) {
+        AiFeature.DEFINE -> defineModel
+        AiFeature.SUMMARIZE -> summarizeModel
+        AiFeature.RECAP -> recapModel
+    }
+}
+
+fun aiModelById(id: String): AiModelOption {
+    return aiByokModelOptions.firstOrNull { it.id == id } ?: aiByokModelOptions.first { it.id == "gemini:gemini-flash-lite-latest" }
+}
+
+private fun AiByokSettings.apiKeyFor(provider: String): String {
+    return when (provider) {
+        "gemini" -> geminiKey
+        "groq" -> groqKey
+        else -> ""
+    }.trim()
+}
 
 data class SearchResult(
     val locationInSource: Int,
@@ -853,6 +1055,28 @@ suspend fun fetchAiDefinition(
     }
     Timber.d("Fetching AI definition for: '$text'")
 
+    @Suppress("KotlinConstantConditions")
+    if (BuildConfig.FLAVOR == "oss") {
+        if (BuildConfig.IS_OFFLINE) {
+            onError(context.getString(R.string.error_network_check_connection))
+            onFinish()
+            return
+        }
+        val systemInstruction = "You are an AI-powered dictionary. Your goal is to provide a concise and easy-to-understand definition for the given word, phrase or paragraphs. Keep the explanation brief. Respond only with the definition text, without any preamble. Do not send your thoughts, only the final definition you arrived on. no emoji."
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.DEFINE,
+            systemInstruction = systemInstruction,
+            userPrompt = "Define: \"$text\"",
+            temperature = 0.1,
+            maxTokens = 256,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
     withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
         try {
@@ -923,6 +1147,322 @@ suspend fun fetchAiDefinition(
 
 fun countWords(text: String): Int {
     return text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
+}
+
+private suspend fun streamGeminiAiResponse(
+    connection: HttpURLConnection,
+    onUpdate: (String) -> Unit,
+    onError: (String) -> Unit
+): Boolean {
+    var hasReceivedData = false
+    connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+        var buffer = ""
+        var line: String?
+        while (reader.readLine().also { line = it } != null) {
+            buffer += line
+            while (true) {
+                val start = buffer.indexOf('{')
+                if (start == -1) {
+                    buffer = ""
+                    break
+                }
+                var braceCount = 0
+                var end = -1
+                charLoop@ for (i in start until buffer.length) {
+                    when (buffer[i]) {
+                        '{' -> braceCount++
+                        '}' -> {
+                            braceCount--
+                            if (braceCount == 0) {
+                                end = i
+                                break@charLoop
+                            }
+                        }
+                    }
+                }
+                if (end == -1) break
+                val jsonString = buffer.substring(start, end + 1)
+                buffer = buffer.substring(end + 1)
+                try {
+                    val jsonResponse = JSONObject(jsonString)
+                    jsonResponse.optJSONArray("candidates")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("content")
+                        ?.optJSONArray("parts")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let {
+                            onUpdate(it)
+                            hasReceivedData = true
+                        }
+                    if (jsonResponse.optJSONArray("candidates")?.optJSONObject(0)?.optString("finishReason") == "SAFETY") {
+                        onError("Blocked for safety reasons.")
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "Could not parse Gemini BYOK stream object")
+                }
+            }
+        }
+    }
+    return hasReceivedData
+}
+
+private suspend fun streamGroqAiResponse(
+    connection: HttpURLConnection,
+    onUpdate: (String) -> Unit,
+    onError: (String) -> Unit
+): Boolean {
+    var hasReceivedData = false
+    var inThink = false
+    var thinkBuffer = ""
+
+    fun cleanChunk(text: String): String {
+        thinkBuffer += text
+        val out = StringBuilder()
+        while (true) {
+            if (inThink) {
+                val end = thinkBuffer.indexOf("</think>")
+                if (end == -1) {
+                    if (thinkBuffer.length > 7) thinkBuffer = thinkBuffer.takeLast(7)
+                    break
+                }
+                inThink = false
+                thinkBuffer = thinkBuffer.substring(end + 8)
+            } else {
+                val start = thinkBuffer.indexOf("<think>")
+                if (start == -1) {
+                    if (thinkBuffer.length > 6) {
+                        out.append(thinkBuffer.dropLast(6))
+                        thinkBuffer = thinkBuffer.takeLast(6)
+                    }
+                    break
+                }
+                out.append(thinkBuffer.substring(0, start))
+                inThink = true
+                thinkBuffer = thinkBuffer.substring(start + 7)
+            }
+        }
+        return out.toString()
+    }
+
+    connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+        var line: String?
+        while (reader.readLine().also { line = it } != null) {
+            val trimmed = line!!.trim()
+            if (!trimmed.startsWith("data: ")) continue
+            val data = trimmed.removePrefix("data: ").trim()
+            if (data == "[DONE]") continue
+            try {
+                val chunk = JSONObject(data)
+                    .optJSONArray("choices")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("delta")
+                    ?.optString("content")
+                    .orEmpty()
+                val cleaned = cleanChunk(chunk)
+                if (cleaned.isNotEmpty()) {
+                    onUpdate(cleaned)
+                    hasReceivedData = true
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Could not parse Groq BYOK stream line")
+            }
+        }
+    }
+    if (!inThink && thinkBuffer.isNotBlank()) {
+        onUpdate(thinkBuffer)
+        hasReceivedData = true
+    }
+    return hasReceivedData
+}
+
+private fun buildGroqPayload(
+    model: String,
+    systemInstruction: String,
+    userPrompt: String,
+    temperature: Double,
+    maxTokens: Int
+): JSONObject {
+    return JSONObject().apply {
+        put("model", model)
+        put("messages", JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "system")
+                put("content", systemInstruction)
+            })
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", userPrompt)
+            })
+        })
+        put("temperature", temperature)
+        put("top_p", 0.95)
+        put("max_tokens", maxTokens)
+        put("stream", true)
+        if (model.contains("qwen")) put("reasoning_effort", "none")
+    }
+}
+
+suspend fun callByokTextAi(
+    context: Context,
+    feature: AiFeature,
+    systemInstruction: String,
+    userPrompt: String,
+    temperature: Double,
+    maxTokens: Int,
+    onUpdate: (String) -> Unit,
+    onError: (String) -> Unit
+): Boolean = withContext(Dispatchers.IO) {
+    val settings = loadAiByokSettings(context)
+    val model = aiModelById(settings.modelIdFor(feature))
+    val apiKey = settings.apiKeyFor(model.provider)
+    if (apiKey.isBlank()) {
+        onError("Add a ${model.provider.replaceFirstChar { it.titlecase(Locale.ROOT) }} API key in AI key and model settings.")
+        return@withContext false
+    }
+
+    var connection: HttpURLConnection? = null
+    try {
+        val url = if (model.provider == "groq") {
+            URL("https://api.groq.com/openai/v1/chat/completions")
+        } else {
+            URL("https://generativelanguage.googleapis.com/v1beta/models/${model.name}:streamGenerateContent?key=$apiKey")
+        }
+        connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+        connection.setRequestProperty("Accept", "application/json")
+        if (model.provider == "groq") {
+            connection.setRequestProperty("Authorization", "Bearer $apiKey")
+        }
+        connection.connectTimeout = 15000
+        connection.readTimeout = 120000
+        connection.doOutput = true
+        connection.doInput = true
+
+        val payload = if (model.provider == "groq") {
+            buildGroqPayload(model.name, systemInstruction, userPrompt, temperature, maxTokens)
+        } else {
+            JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().apply {
+                    put("parts", JSONArray().put(JSONObject().apply { put("text", userPrompt) }))
+                }))
+                put("systemInstruction", JSONObject().apply {
+                    put("parts", JSONArray().put(JSONObject().apply { put("text", systemInstruction) }))
+                })
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", temperature)
+                    put("topP", 0.95)
+                    put("topK", 40)
+                    put("maxOutputTokens", maxTokens)
+                    put("response_mime_type", "text/plain")
+                    if (feature == AiFeature.DEFINE && model.name.startsWith("gemini")) {
+                        put("thinkingConfig", JSONObject().apply {
+                            put("thinkingBudget", 0)
+                        })
+                    }
+                })
+            }
+        }
+        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
+        val responseCode = connection.responseCode
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            val hasData = if (model.provider == "groq") {
+                streamGroqAiResponse(connection, onUpdate, onError)
+            } else {
+                streamGeminiAiResponse(connection, onUpdate, onError)
+            }
+            if (!hasData) onError("The AI provider returned an empty response.")
+            hasData
+        } else {
+            val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
+            onError("AI provider error: $responseCode. ${errorBody.orEmpty().take(300)}")
+            false
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "BYOK AI request failed")
+        onError(context.getString(R.string.error_network_check_connection))
+        false
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+suspend fun callByokGeminiInlineAi(
+    context: Context,
+    feature: AiFeature,
+    mimeType: String,
+    base64Data: String,
+    systemInstruction: String,
+    temperature: Double,
+    maxTokens: Int,
+    onUpdate: (String) -> Unit,
+    onError: (String) -> Unit
+): Boolean = withContext(Dispatchers.IO) {
+    val settings = loadAiByokSettings(context)
+    val model = aiModelById(settings.modelIdFor(feature))
+    if (model.provider != "gemini") {
+        onError("This summary needs a Gemini model because the selected Groq models do not support PDF/image input.")
+        return@withContext false
+    }
+    val apiKey = settings.geminiKey.trim()
+    if (apiKey.isBlank()) {
+        onError("Add a Gemini API key in AI key and model settings.")
+        return@withContext false
+    }
+
+    var connection: HttpURLConnection? = null
+    try {
+        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/${model.name}:streamGenerateContent?key=$apiKey")
+        connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.connectTimeout = 15000
+        connection.readTimeout = 180000
+        connection.doOutput = true
+        connection.doInput = true
+
+        val payload = JSONObject().apply {
+            put("contents", JSONArray().put(JSONObject().apply {
+                put("parts", JSONArray().put(JSONObject().apply {
+                    put("inlineData", JSONObject().apply {
+                        put("mime_type", mimeType)
+                        put("data", base64Data)
+                    })
+                }))
+            }))
+            put("systemInstruction", JSONObject().apply {
+                put("parts", JSONArray().put(JSONObject().apply { put("text", systemInstruction) }))
+            })
+            put("generationConfig", JSONObject().apply {
+                put("temperature", temperature)
+                put("topP", 0.95)
+                put("topK", 40)
+                put("maxOutputTokens", maxTokens)
+                put("response_mime_type", "text/plain")
+            })
+        }
+        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val responseCode = connection.responseCode
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            val hasData = streamGeminiAiResponse(connection, onUpdate, onError)
+            if (!hasData) onError("The AI provider returned an empty response.")
+            hasData
+        } else {
+            val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
+            onError("AI provider error: $responseCode. ${errorBody.orEmpty().take(300)}")
+            false
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "BYOK inline AI request failed")
+        onError(context.getString(R.string.error_network_check_connection))
+        false
+    } finally {
+        connection?.disconnect()
+    }
 }
 
 object MarkdownParser {
@@ -1003,6 +1543,41 @@ suspend fun fetchRecap(
 ) {
     if (pastSummaries.isEmpty() && currentText.isBlank()) {
         onError(context.getString(R.string.error_not_enough_context))
+        onFinish()
+        return
+    }
+
+    @Suppress("KotlinConstantConditions")
+    if (BuildConfig.FLAVOR == "oss") {
+        if (BuildConfig.IS_OFFLINE) {
+            onError(context.getString(R.string.error_network_recap))
+            onFinish()
+            return
+        }
+        val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple diffrent short stories that came before then summurize them too, its a recap of the whole book upto this point."
+        val promptContext = buildString {
+            append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
+            if (pastSummaries.isEmpty()) {
+                append("(None - User is in the first chapter)\n")
+            } else {
+                pastSummaries.forEachIndexed { index, summary ->
+                    append("Chapter ${index + 1}: $summary\n\n")
+                }
+            }
+            append("\n--- CURRENT SESSION (Text read in current chapter) ---\n")
+            append(currentText)
+            append("\n\nBased strictly on the above, provide a recap of the content read so far.")
+        }
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.RECAP,
+            systemInstruction = systemInstruction,
+            userPrompt = promptContext,
+            temperature = 0.3,
+            maxTokens = 4096,
+            onUpdate = onUpdate,
+            onError = onError
+        )
         onFinish()
         return
     }
@@ -2811,7 +3386,8 @@ fun AiResultContentView(
                 modifier = Modifier.weight(1f).padding(end = 8.dp)
             )
 
-            if (result != null && (!result.summary.isNullOrBlank() || isLoading)) {
+            val showUsageBadge = result?.isCacheHit == true || (BuildConfig.FLAVOR != "oss" && (result?.cost != null || isLoading))
+            if (result != null && showUsageBadge && (!result.summary.isNullOrBlank() || isLoading)) {
                 Surface(
                     color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
                         0xFF4CAF50

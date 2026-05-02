@@ -32,11 +32,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.aryan.reader.AiDefinitionPopup
+import com.aryan.reader.AiFeature
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.AiHubBottomSheet
+import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
+import com.aryan.reader.callByokTextAi
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.fetchRecap
 import com.aryan.reader.paginatedreader.IPaginator
@@ -55,6 +58,7 @@ import java.net.URL
  */
 suspend fun summarizeBookContent(
     content: String,
+    context: Context,
     authToken: String?,
     onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit = { _, _ -> },
     onUpdate: (String) -> Unit,
@@ -67,6 +71,27 @@ suspend fun summarizeBookContent(
         return
     }
     Timber.d("Starting summarization for content of length: ${content.length}")
+
+    @Suppress("KotlinConstantConditions")
+    if (BuildConfig.FLAVOR == "oss") {
+        if (BuildConfig.IS_OFFLINE) {
+            onError("AI features are unavailable in the offline OSS build.")
+            onFinish()
+            return
+        }
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.SUMMARIZE,
+            systemInstruction = "You are an expert in analyzing written content. Provide a concise, easy-to-read summary of the provided chapter. Identify the main ideas, plot points, and themes. Do not add a preamble like 'Here is the summary:'",
+            userPrompt = content,
+            temperature = 0.2,
+            maxTokens = 8192,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
 
     withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
@@ -196,6 +221,7 @@ suspend fun executeRecapLogic(
 
                 summarizeBookContent(
                     content = textToSummarize,
+                    context = context,
                     authToken = authToken,
                     onUsageReceived = { cost, _ ->
                         Timber.i("[AI-Billing] Background past chapter summary cost: $cost credits")
