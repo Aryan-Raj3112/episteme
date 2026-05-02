@@ -39,6 +39,7 @@ import androidx.media3.session.SessionToken
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
+import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -72,7 +73,7 @@ fun loadTtsMode(context: Context): TtsPlaybackManager.TtsMode {
     val savedModeName = prefs.getString("tts_mode", TtsPlaybackManager.TtsMode.BASE.name)
         ?: TtsPlaybackManager.TtsMode.BASE.name
 
-    val isCloudAllowed = BuildConfig.TTS_WORKER_URL.isNotBlank()
+    val isCloudAllowed = BuildConfig.TTS_WORKER_URL.isNotBlank() || isByokCloudTtsAvailable(context)
 
     return if (isCloudAllowed) {
         try {

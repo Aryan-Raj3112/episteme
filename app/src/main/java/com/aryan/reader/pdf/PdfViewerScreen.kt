@@ -222,6 +222,7 @@ import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
+import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -421,7 +422,7 @@ fun PdfViewerScreen(
     var currentTtsMode by remember {
         mutableStateOf(
             com.aryan.reader.tts.loadTtsMode(context).let {
-                if (BuildConfig.FLAVOR == "oss") TtsPlaybackManager.TtsMode.BASE else it
+                if (BuildConfig.FLAVOR == "oss" && !isByokCloudTtsAvailable(context)) TtsPlaybackManager.TtsMode.BASE else it
             }
         )
     }
@@ -2425,7 +2426,7 @@ fun PdfViewerScreen(
     }
 
     fun startTts(pageToReadOverride: Int? = null, startCharIndex: Int? = null) {
-        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
             showInsufficientCreditsDialog = true
             return
         }

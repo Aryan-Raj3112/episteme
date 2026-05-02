@@ -26,7 +26,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -85,19 +84,6 @@ fun AiSettingsScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Keys are encrypted with Android Keystore and stored in private app storage. After saving, the full key is never shown here again.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(14.dp)
-                )
-            }
-
             Text("Saved keys", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             SavedKeyRow("Gemini", maskedAiByokKey(context, "gemini"), onDelete = { providerToDelete = "gemini" })
             SavedKeyRow("Groq", maskedAiByokKey(context, "groq"), onDelete = { providerToDelete = "groq" })
@@ -200,6 +186,14 @@ fun AiSettingsScreen(
                     onSelected = { updateModels(settings.copy(recapModel = it)) }
                 )
             }
+
+            ModelSelector(
+                title = "Cloud TTS",
+                description = "Uses the saved Gemini key. Only $GEMINI_CLOUD_TTS_MODEL is supported for now.",
+                selectedId = settings.ttsModel,
+                options = listOf(AiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
+                onSelected = { updateModels(settings.copy(ttsModel = it)) }
+            )
         }
     }
 
@@ -250,7 +244,7 @@ private fun SavedKeyRow(
     ListItem(
         headlineContent = { Text(label) },
         supportingContent = {
-            Text(if (maskedKey.isBlank()) "No key saved" else maskedKey)
+            Text(maskedKey.ifBlank { "No key saved" })
         },
         trailingContent = {
             IconButton(onClick = onDelete, enabled = maskedKey.isNotBlank()) {
@@ -266,10 +260,11 @@ private fun ModelSelector(
     title: String,
     description: String,
     selectedId: String,
+    options: List<AiModelOption> = aiByokModelOptions,
     onSelected: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selected = aiModelById(selectedId)
+    val selected = options.firstOrNull { it.id == selectedId }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -280,7 +275,7 @@ private fun ModelSelector(
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedTextField(
-                value = selected.label,
+                value = selected?.label ?: "No model selected",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Model") },
@@ -291,14 +286,24 @@ private fun ModelSelector(
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {
-                aiByokModelOptions.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text("No model selected") },
+                    onClick = {
+                        onSelected("")
+                        expanded = false
+                    },
+                    trailingIcon = if (selectedId.isBlank()) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null
+                )
+                options.forEach { option ->
                     DropdownMenuItem(
                         text = { Text(option.label) },
                         onClick = {
                             onSelected(option.id)
                             expanded = false
                         },
-                        trailingIcon = if (option.id == selected.id) {
+                        trailingIcon = if (option.id == selected?.id) {
                             { Icon(Icons.Default.Check, contentDescription = null) }
                         } else null
                     )

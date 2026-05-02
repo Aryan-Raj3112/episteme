@@ -217,10 +217,22 @@ private const val PREF_AI_MODEL_ALL = "model_all"
 private const val PREF_AI_MODEL_DEFINE = "model_define"
 private const val PREF_AI_MODEL_SUMMARIZE = "model_summarize"
 private const val PREF_AI_MODEL_RECAP = "model_recap"
+private const val PREF_AI_TTS_MODEL = "tts_model"
+private const val PREF_AI_MODEL_EMPTY_MIGRATION_DONE = "model_empty_migration_done"
 private const val AI_KEYSTORE_ALIAS = "reader_ai_byok_key_v1"
 private const val ENCRYPTION_PREFIX = "v1:"
+const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
+const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
 
 enum class AiFeature { DEFINE, SUMMARIZE, RECAP }
+
+private fun AiFeature.displayName(): String {
+    return when (this) {
+        AiFeature.DEFINE -> "Smart dictionary"
+        AiFeature.SUMMARIZE -> "Summaries"
+        AiFeature.RECAP -> "Recaps"
+    }
+}
 
 data class AiModelOption(
     val provider: String,
@@ -234,10 +246,11 @@ data class AiByokSettings(
     val geminiKey: String = "",
     val groqKey: String = "",
     val useOneModel: Boolean = true,
-    val modelForAll: String = "gemini:gemini-flash-lite-latest",
-    val defineModel: String = "groq:qwen/qwen3-32b",
-    val summarizeModel: String = "gemini:gemini-flash-lite-latest",
-    val recapModel: String = "gemini:gemini-flash-lite-latest"
+    val modelForAll: String = "",
+    val defineModel: String = "",
+    val summarizeModel: String = "",
+    val recapModel: String = "",
+    val ttsModel: String = ""
 )
 
 val aiByokModelOptions = listOf(
@@ -306,14 +319,24 @@ private fun maskedAiSecret(value: String): String {
 
 fun loadAiByokSettings(context: Context): AiByokSettings {
     val prefs = context.aiPrefs()
+    if (!prefs.getBoolean(PREF_AI_MODEL_EMPTY_MIGRATION_DONE, false)) {
+        prefs.edit {
+            if (prefs.getString(PREF_AI_MODEL_ALL, "") == "gemini:gemini-flash-lite-latest") putString(PREF_AI_MODEL_ALL, "")
+            if (prefs.getString(PREF_AI_MODEL_DEFINE, "") == "groq:qwen/qwen3-32b") putString(PREF_AI_MODEL_DEFINE, "")
+            if (prefs.getString(PREF_AI_MODEL_SUMMARIZE, "") == "gemini:gemini-flash-lite-latest") putString(PREF_AI_MODEL_SUMMARIZE, "")
+            if (prefs.getString(PREF_AI_MODEL_RECAP, "") == "gemini:gemini-flash-lite-latest") putString(PREF_AI_MODEL_RECAP, "")
+            putBoolean(PREF_AI_MODEL_EMPTY_MIGRATION_DONE, true)
+        }
+    }
     val settings = AiByokSettings(
         geminiKey = decryptAiSecret(prefs.getString(PREF_AI_GEMINI_KEY, "")),
         groqKey = decryptAiSecret(prefs.getString(PREF_AI_GROQ_KEY, "")),
         useOneModel = prefs.getBoolean(PREF_AI_USE_ONE_MODEL, true),
-        modelForAll = prefs.getString(PREF_AI_MODEL_ALL, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest",
-        defineModel = prefs.getString(PREF_AI_MODEL_DEFINE, "groq:qwen/qwen3-32b") ?: "groq:qwen/qwen3-32b",
-        summarizeModel = prefs.getString(PREF_AI_MODEL_SUMMARIZE, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest",
-        recapModel = prefs.getString(PREF_AI_MODEL_RECAP, "gemini:gemini-flash-lite-latest") ?: "gemini:gemini-flash-lite-latest"
+        modelForAll = prefs.getString(PREF_AI_MODEL_ALL, "") ?: "",
+        defineModel = prefs.getString(PREF_AI_MODEL_DEFINE, "") ?: "",
+        summarizeModel = prefs.getString(PREF_AI_MODEL_SUMMARIZE, "") ?: "",
+        recapModel = prefs.getString(PREF_AI_MODEL_RECAP, "") ?: "",
+        ttsModel = prefs.getString(PREF_AI_TTS_MODEL, "") ?: ""
     )
     val geminiStored = prefs.getString(PREF_AI_GEMINI_KEY, "").orEmpty()
     val groqStored = prefs.getString(PREF_AI_GROQ_KEY, "").orEmpty()
@@ -334,6 +357,7 @@ fun saveAiByokSettings(context: Context, settings: AiByokSettings) {
         putString(PREF_AI_MODEL_DEFINE, settings.defineModel)
         putString(PREF_AI_MODEL_SUMMARIZE, settings.summarizeModel)
         putString(PREF_AI_MODEL_RECAP, settings.recapModel)
+        putString(PREF_AI_TTS_MODEL, settings.ttsModel)
     }
 }
 
@@ -382,6 +406,15 @@ fun areReaderAiFeaturesEnabled(context: Context): Boolean {
     return !BuildConfig.IS_OFFLINE && hasAiByokKey(context)
 }
 
+@Suppress("KotlinConstantConditions")
+fun isByokCloudTtsAvailable(context: Context): Boolean {
+    val settings = loadAiByokSettings(context)
+    return BuildConfig.FLAVOR == "oss" &&
+            !BuildConfig.IS_OFFLINE &&
+            settings.geminiKey.isNotBlank() &&
+            settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
+}
+
 private fun AiByokSettings.modelIdFor(feature: AiFeature): String {
     return if (useOneModel) modelForAll else when (feature) {
         AiFeature.DEFINE -> defineModel
@@ -390,8 +423,8 @@ private fun AiByokSettings.modelIdFor(feature: AiFeature): String {
     }
 }
 
-fun aiModelById(id: String): AiModelOption {
-    return aiByokModelOptions.firstOrNull { it.id == id } ?: aiByokModelOptions.first { it.id == "gemini:gemini-flash-lite-latest" }
+fun aiModelById(id: String): AiModelOption? {
+    return aiByokModelOptions.firstOrNull { it.id == id }
 }
 
 private fun AiByokSettings.apiKeyFor(provider: String): String {
@@ -1316,6 +1349,10 @@ suspend fun callByokTextAi(
 ): Boolean = withContext(Dispatchers.IO) {
     val settings = loadAiByokSettings(context)
     val model = aiModelById(settings.modelIdFor(feature))
+    if (model == null) {
+        onError("Choose a model for ${feature.displayName()} in AI key and model settings.")
+        return@withContext false
+    }
     val apiKey = settings.apiKeyFor(model.provider)
     if (apiKey.isBlank()) {
         onError("Add a ${model.provider.replaceFirstChar { it.titlecase(Locale.ROOT) }} API key in AI key and model settings.")
@@ -1403,6 +1440,10 @@ suspend fun callByokGeminiInlineAi(
 ): Boolean = withContext(Dispatchers.IO) {
     val settings = loadAiByokSettings(context)
     val model = aiModelById(settings.modelIdFor(feature))
+    if (model == null) {
+        onError("Choose a model for ${feature.displayName()} in AI key and model settings.")
+        return@withContext false
+    }
     if (model.provider != "gemini") {
         onError("This summary needs a Gemini model because the selected Groq models do not support PDF/image input.")
         return@withContext false
@@ -1667,10 +1708,12 @@ fun TtsSettingsSheet(
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val isOss = BuildConfig.FLAVOR == "oss"
-    var selectedTabIndex by remember(currentMode) { mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD && !isOss) 0 else 1) }
-
     val context = LocalContext.current
+    val isOss = BuildConfig.FLAVOR == "oss"
+    val isOssCloudAvailable = isByokCloudTtsAvailable(context)
+    var selectedTabIndex by remember(currentMode, isOssCloudAvailable) {
+        mutableIntStateOf(if (currentMode == TtsPlaybackManager.TtsMode.CLOUD && (!isOss || isOssCloudAvailable)) 0 else 1)
+    }
     val scope = rememberCoroutineScope()
     val samplePlayer = remember(context, scope) {
         SpeakerSamplePlayer(context, scope, getAuthToken = getAuthToken)
@@ -1697,7 +1740,7 @@ fun TtsSettingsSheet(
                 }
             }
 
-            if (isOss) {
+            if (isOss && !isOssCloudAvailable) {
                 Spacer(Modifier.height(16.dp))
                 DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE)
             } else {

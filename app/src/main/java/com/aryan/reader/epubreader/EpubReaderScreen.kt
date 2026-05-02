@@ -19,7 +19,7 @@
  */
 // EpubReaderScreen.kt
 @file:OptIn(ExperimentalSerializationApi::class) @file:Suppress("VariableNeverRead",
-    "UnusedVariable", "Unused", "SimplifyBooleanWithConstants"
+    "UnusedVariable", "Unused", "SimplifyBooleanWithConstants", "KotlinConstantConditions"
 )
 
 package com.aryan.reader.epubreader
@@ -160,6 +160,7 @@ import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.countWords
+import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.fetchAiDefinition
@@ -583,7 +584,7 @@ fun EpubReaderHost(
     var currentTtsMode by remember {
         mutableStateOf(
             loadTtsMode(context).let {
-                if (BuildConfig.FLAVOR == "oss") TtsPlaybackManager.TtsMode.BASE else it
+                if (BuildConfig.FLAVOR == "oss" && !isByokCloudTtsAvailable(context)) TtsPlaybackManager.TtsMode.BASE else it
             }
         )
     }
@@ -1401,7 +1402,7 @@ fun EpubReaderHost(
     }
 
     fun startTts() {
-        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -1460,7 +1461,7 @@ fun EpubReaderHost(
     )
 
     fun startTtsFromSelectionPaginated(baseCfi: String, startOffset: Int) {
-        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -3451,7 +3452,7 @@ fun EpubReaderHost(
 
                                                     if (ttsChunks.isNotEmpty()) {
                                                         logTtsChapterDiag("Vertical TTS extraction produced ${ttsChunks.size} chunks for chapter $targetChapterIndex")
-                                                        if (currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+                                                        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
                                                             showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
                                                             return@launch

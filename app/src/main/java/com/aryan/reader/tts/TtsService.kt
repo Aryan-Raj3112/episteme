@@ -30,6 +30,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
+import com.aryan.reader.isByokCloudTtsAvailable
+import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -279,7 +282,12 @@ class TtsService : MediaSessionService() {
             data class Error(val message: String) : GeminiWsEvent()
         }
 
-        suspend fun ensureConnected(serverUrl: String, speaker: String, authToken: String?) = connectionMutex.withLock {
+        suspend fun ensureConnected(
+            serverUrl: String,
+            speaker: String,
+            authToken: String?,
+            directGeminiApiKey: String? = null
+        ) = connectionMutex.withLock {
             if (webSocket != null) {
                 if (connectedSpeaker == speaker) {
                     val isSetup = try { setupDeferred.await() } catch(_: Exception) { false }
@@ -290,11 +298,15 @@ class TtsService : MediaSessionService() {
                 webSocket = null
             }
 
-            val sanitizedUrl = serverUrl.removeSuffix("/")
-            val wsUrlStr = sanitizedUrl.replace("https://", "wss://").replace("http://", "ws://")
-            val url = "$wsUrlStr/live?speaker=$speaker&token=${authToken ?: ""}"
+            val url = if (!directGeminiApiKey.isNullOrBlank()) {
+                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$directGeminiApiKey"
+            } else {
+                val sanitizedUrl = serverUrl.removeSuffix("/")
+                val wsUrlStr = sanitizedUrl.replace("https://", "wss://").replace("http://", "ws://")
+                "$wsUrlStr/live?speaker=$speaker&token=${authToken ?: ""}"
+            }
 
-            Timber.tag("TTS_CLOUD_DIAG").d("Connecting to WS: $url")
+            Timber.tag("TTS_CLOUD_DIAG").d("Connecting to WS: ${if (!directGeminiApiKey.isNullOrBlank()) "Gemini BYOK" else url}")
             val request = Request.Builder().url(url).build()
             val connectedDeferred = CompletableDeferred<Boolean>()
 
@@ -316,7 +328,7 @@ class TtsService : MediaSessionService() {
 
                     val setupMsg = JSONObject().apply {
                         put("setup", JSONObject().apply {
-                            put("model", "models/gemini-3.1-flash-live-preview")
+                            put("model", "models/$GEMINI_CLOUD_TTS_MODEL")
                             put("systemInstruction", JSONObject().apply {
                                 put("parts", org.json.JSONArray().apply {
                                     put(JSONObject().apply {
@@ -552,8 +564,17 @@ class TtsService : MediaSessionService() {
                         TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null)
                     } else {
                         try {
-                            liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken)
-                            liveClient.generateChunk(text, cachedFile)
+                            val directGeminiApiKey = if (isByokCloudTtsAvailable(this@TtsService)) {
+                                loadAiByokSettings(this@TtsService).geminiKey
+                            } else {
+                                null
+                            }
+                            if (directGeminiApiKey.isNullOrBlank() && googleCloudWorkerTtsUrl.isBlank()) {
+                                TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = "Cloud TTS is not configured.")
+                            } else {
+                                liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken, directGeminiApiKey)
+                                liveClient.generateChunk(text, cachedFile)
+                            }
                         } catch (e: Exception) {
                             Timber.tag("TTS_CLOUD_DIAG").e(e, "Cloud TTS generation failed")
                             TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = e.message ?: "Failed to connect to TTS service")
