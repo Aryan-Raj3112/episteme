@@ -25,6 +25,7 @@ package com.aryan.reader
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.view.WindowManager
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -160,6 +161,7 @@ fun HomeScreen(
     val customTabUriHandler = remember { CustomTabUriHandler(context) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
     var showAppThemePanel by remember { mutableStateOf(false) }
+    val activity = context as? Activity
 
     CompositionLocalProvider(LocalUriHandler provides customTabUriHandler) {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -228,6 +230,21 @@ fun HomeScreen(
             uiState.errorMessage?.let { message ->
                 snackbarHostState.showSnackbar(message)
                 viewModel.errorMessageShown()
+            }
+        }
+
+        LaunchedEffect(uiState.screenProtectEnabled) {
+            activity?.window?.let { window ->
+                if (uiState.screenProtectEnabled) {
+                    window.setFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE,
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                }
             }
         }
 
@@ -341,7 +358,10 @@ fun HomeScreen(
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
                                 onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
                                 onLanguageClick = { showLanguageDialog = true },
-                                onExportLogsClick = { viewModel.exportLogsToFile(context) }
+                                onExportLogsClick = { viewModel.exportLogsToFile(context) },
+                                onScreenProtectToggled = {
+                                    viewModel.screenProtectToggle()
+                                }
                             )
                         } else {
                             ContextualTopAppBar(
@@ -996,7 +1016,8 @@ fun DefaultTopAppBar(
     onTestPanelDetectionClick: () -> Unit,
     onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
-    onExportLogsClick: () -> Unit
+    onExportLogsClick: () -> Unit,
+    onScreenProtectToggled: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -1062,6 +1083,15 @@ fun DefaultTopAppBar(
                 }, trailingIcon = {
                     if (uiState.isTabsEnabled) {
                         Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                    }
+                })
+
+                DropdownMenuItem(text = { Text("Protect Screen Capture") }, onClick = {
+                    showOptionsMenu = false
+                    onScreenProtectToggled()
+                }, trailingIcon = {
+                    if (uiState.screenProtectEnabled) {
+                        Icon(Icons.Default.Check, contentDescription = "Enabled")
                     }
                 })
 

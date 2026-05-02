@@ -345,6 +345,7 @@ data class ReaderScreenState(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val allTags: List<TagEntity> = emptyList(),
     val showTagSelectionDialogFor: Set<String> = emptySet(),
+    val screenProtectEnabled : Boolean = false
 )
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -2313,6 +2314,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun screenProtectToggle(){
+        _internalState.update {
+            it.copy(screenProtectEnabled = !it.screenProtectEnabled) }
+        prefs.edit { putBoolean(PROTECT_SCREEN_CAPTURE, !(prefs.getBoolean(PROTECT_SCREEN_CAPTURE, false))) }
+    }
+
     fun updateLibraryFilters(filters: LibraryFilters) {
         _internalState.update { it.copy(libraryFilters = filters) }
 
@@ -2789,6 +2796,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         prefs.edit { putString(KEY_SYNCED_FOLDERS_JSON, jsonArray.toString()) }
     }
+
 
     fun addSyncedFolder(folderUri: Uri) {
         val currentFolders = _internalState.value.syncedFolders
@@ -5949,6 +5957,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_SEED_COLOR = "app_seed_color"
         private const val KEY_APP_TEXT_DIM_FACTOR = "app_text_dim_factor"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
+        private const val PROTECT_SCREEN_CAPTURE = "protect_screen_capture"`
 
         val SUPPORTED_MIME_TYPES = arrayOf(
             "application/pdf", "application/epub+zip", "application/x-mobipocket-ebook",
