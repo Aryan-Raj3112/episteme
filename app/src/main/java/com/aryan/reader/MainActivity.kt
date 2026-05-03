@@ -45,7 +45,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.util.UnstableApi
 
+@UnstableApi
 class MainActivity : AppCompatActivity() {
 
     private val viewModel: MainViewModel by viewModels()
@@ -91,12 +93,14 @@ class MainActivity : AppCompatActivity() {
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
 
+            val textDimFactor = if (darkTheme) uiState.appTextDimFactorDark else uiState.appTextDimFactorLight
+
             AppTheme(
                 darkTheme = darkTheme,
                 dynamicColor = uiState.appSeedColor == null,
                 seedColor = uiState.appSeedColor,
                 contrastLevel = uiState.appContrastOption.value,
-                textDimFactor = uiState.appTextDimFactor
+                textDimFactor = textDimFactor
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

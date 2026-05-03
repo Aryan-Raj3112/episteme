@@ -121,6 +121,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.ExperimentalSerializationApi
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -145,6 +146,7 @@ private data class CachedSpeechBubble(
     val maskBitmap: Bitmap?
 )
 
+@kotlin.OptIn(ExperimentalSerializationApi::class)
 @UnstableApi
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext: Context = application.applicationContext
@@ -544,7 +546,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             appContrastOption = try {
                 AppContrastOption.valueOf(prefs.getString(KEY_APP_CONTRAST_OPTION, AppContrastOption.STANDARD.name) ?: AppContrastOption.STANDARD.name)
             } catch (_: Exception) { AppContrastOption.STANDARD },
-            appTextDimFactor = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f),
+            appTextDimFactorLight = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR_LIGHT, prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f)),
+            appTextDimFactorDark = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR_DARK, prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f)),
             appSeedColor = if (prefs.contains(KEY_APP_SEED_COLOR)) androidx.compose.ui.graphics.Color(prefs.getInt(KEY_APP_SEED_COLOR, 0)) else null,
             customAppThemes = loadCustomAppThemes(prefs)
         )
@@ -1054,7 +1057,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.d("ViewModel instance created.")
         WorkManager.getInstance(application).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
 
-        // --- ADD THIS BLOCK ---
         val locatorConverter = LocatorConverter(
             bookCacheDao,
             ProtoBuf { serializersModule = semanticBlockModule },
@@ -5242,9 +5244,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.edit { putString(KEY_APP_CONTRAST_OPTION, option.name) }
     }
 
-    fun setAppTextDimFactor(factor: Float) {
-        _internalState.update { it.copy(appTextDimFactor = factor) }
-        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR, factor) }
+    fun setAppTextDimFactorLight(factor: Float) {
+        _internalState.update { it.copy(appTextDimFactorLight = factor) }
+        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_LIGHT, factor) }
+    }
+
+    fun setAppTextDimFactorDark(factor: Float) {
+        _internalState.update { it.copy(appTextDimFactorDark = factor) }
+        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_DARK, factor) }
     }
 
     fun setAppSeedColor(color: androidx.compose.ui.graphics.Color?) {
@@ -5489,6 +5496,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_CONTRAST_OPTION = "app_contrast_option"
         private const val KEY_APP_SEED_COLOR = "app_seed_color"
         private const val KEY_APP_TEXT_DIM_FACTOR = "app_text_dim_factor"
+        private const val KEY_APP_TEXT_DIM_FACTOR_LIGHT = "app_text_dim_factor_light"
+        private const val KEY_APP_TEXT_DIM_FACTOR_DARK = "app_text_dim_factor_dark"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
 
         val SUPPORTED_MIME_TYPES = arrayOf(

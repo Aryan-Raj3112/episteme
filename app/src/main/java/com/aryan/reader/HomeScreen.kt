@@ -545,7 +545,8 @@ fun HomeScreen(
                             uiState = uiState,
                             onThemeModeChanged = viewModel::setAppThemeMode,
                             onContrastOptionChanged = viewModel::setAppContrastOption,
-                            onTextDimFactorChanged = viewModel::setAppTextDimFactor,
+                            onTextDimFactorLightChanged = viewModel::setAppTextDimFactorLight,
+                            onTextDimFactorDarkChanged = viewModel::setAppTextDimFactorDark,
                             onSeedColorChanged = viewModel::setAppSeedColor,
                             onCustomThemeAdded = viewModel::addCustomAppTheme,
                             onCustomThemeDeleted = viewModel::deleteCustomAppTheme,
@@ -1737,7 +1738,8 @@ fun AppThemeBottomSheet(
     uiState: ReaderScreenState,
     onThemeModeChanged: (AppThemeMode) -> Unit,
     onContrastOptionChanged: (AppContrastOption) -> Unit,
-    onTextDimFactorChanged: (Float) -> Unit,
+    onTextDimFactorLightChanged: (Float) -> Unit,
+    onTextDimFactorDarkChanged: (Float) -> Unit,
     onSeedColorChanged: (Color?) -> Unit,
     onCustomThemeAdded: (CustomAppTheme) -> Unit,
     onCustomThemeDeleted: (String) -> Unit,
@@ -1801,24 +1803,68 @@ fun AppThemeBottomSheet(
 
             Spacer(Modifier.height(24.dp))
 
-            Text(stringResource(R.string.app_theme_text_brightness), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                androidx.compose.material3.Slider(
-                    value = uiState.appTextDimFactor,
-                    onValueChange = onTextDimFactorChanged,
-                    valueRange = 0.3f..1.0f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                )
-                Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
+            if (uiState.appThemeMode == AppThemeMode.SYSTEM) {
+                Text("${stringResource(R.string.app_theme_text_brightness)} (Light)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    androidx.compose.material3.Slider(
+                        value = uiState.appTextDimFactorLight,
+                        onValueChange = onTextDimFactorLightChanged,
+                        valueRange = 0.3f..1.0f,
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
+                    )
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Text("${stringResource(R.string.app_theme_text_brightness)} (Dark)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    androidx.compose.material3.Slider(
+                        value = uiState.appTextDimFactorDark,
+                        onValueChange = onTextDimFactorDarkChanged,
+                        valueRange = 0.3f..1.0f,
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
+                    )
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
+                }
+            } else {
+                Text(stringResource(R.string.app_theme_text_brightness), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    androidx.compose.material3.Slider(
+                        value = if (uiState.appThemeMode == AppThemeMode.DARK) uiState.appTextDimFactorDark else uiState.appTextDimFactorLight,
+                        onValueChange = if (uiState.appThemeMode == AppThemeMode.DARK) onTextDimFactorDarkChanged else onTextDimFactorLightChanged,
+                        valueRange = 0.3f..1.0f,
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
+                    )
+                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
+                }
             }
 
             Spacer(Modifier.height(24.dp))
