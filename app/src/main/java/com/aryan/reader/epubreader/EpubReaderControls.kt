@@ -1595,22 +1595,26 @@ fun CustomizeToolsSheet(
             val toItem = flatItems[toIndex]
             if (toItem.type == FlatItemType.MORE_HEADER || toItem.type == FlatItemType.MORE_TOOL) return@DragDropState
 
-            val targetSection = toItem.section ?: return@DragDropState
-
             val newList = flatItems.toMutableList()
-            val movedItem = newList.removeAt(fromIndex).copy(section = targetSection)
+            val movedItem = newList.removeAt(fromIndex)
 
-            var insertIndex = toIndex
-            if (fromIndex < toIndex) {
-                insertIndex -= 1
-            }
-
-            if (toItem.type == FlatItemType.SECTION_HEADER) {
-                insertIndex = if (fromIndex > toIndex) toIndex + 1 else toIndex
-            }
+            val newToIndex = newList.indexOfFirst { it.id == toKey }
+            val insertIndex = if (fromIndex < toIndex) newToIndex + 1 else newToIndex
 
             newList.add(insertIndex, movedItem)
-            flatItems = sanitizePlaceholders(newList).toMutableList()
+
+            var actualSection = movedItem.section
+            for (i in insertIndex downTo 0) {
+                val item = newList[i]
+                if (item.type == FlatItemType.SECTION_HEADER) {
+                    actualSection = item.section
+                    break
+                }
+            }
+
+            newList[insertIndex] = movedItem.copy(section = actualSection)
+
+            flatItems = newList
         }
     }
 
@@ -1657,7 +1661,7 @@ fun CustomizeToolsSheet(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .animateItem()
+                                .then(if (isDragged) Modifier else Modifier.animateItem())
                                 .zIndex(zIndex)
                                 .graphicsLayer {
                                     this.translationY = translationY
@@ -1696,6 +1700,7 @@ fun CustomizeToolsSheet(
                                         onDrag = { dragDropState.onDrag(it) },
                                         onDragEnd = {
                                             dragDropState.onDragEnd()
+                                            flatItems = sanitizePlaceholders(flatItems).toMutableList()
                                             commitDragDrop()
                                         }
                                     )

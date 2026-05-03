@@ -221,21 +221,25 @@ fun PdfCustomizeToolsSheet(
             val toItem = flatItems[toIndex]
             if (toItem.type == PdfFlatItemType.MORE_HEADER || toItem.type == PdfFlatItemType.MORE_TOOL) return@PdfDragDropState
 
-            val targetSection = toItem.section ?: return@PdfDragDropState
-
             val newList = flatItems.toMutableList()
-            val movedItem = newList.removeAt(fromIndex).copy(section = targetSection)
+            val movedItem = newList.removeAt(fromIndex)
 
-            var insertIndex = toIndex
-            if (fromIndex < toIndex) insertIndex -= 1
-            if (toItem.type == PdfFlatItemType.SECTION_HEADER) {
-                insertIndex = if (fromIndex > toIndex) toIndex + 1 else toIndex
-            }
+            val newToIndex = newList.indexOfFirst { it.id == toKey }
+            val insertIndex = if (fromIndex < toIndex) newToIndex + 1 else newToIndex
 
             newList.add(insertIndex, movedItem)
 
-            // Note the explicitly added .toList() to fix the MutableList mismatch error
-            flatItems = sanitizePdfPlaceholders(newList).toList()
+            var actualSection = movedItem.section
+            for (i in insertIndex downTo 0) {
+                val item = newList[i]
+                if (item.type == PdfFlatItemType.SECTION_HEADER) {
+                    actualSection = item.section
+                    break
+                }
+            }
+
+            newList[insertIndex] = movedItem.copy(section = actualSection)
+            flatItems = newList
         }
     }
 
@@ -281,7 +285,7 @@ fun PdfCustomizeToolsSheet(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .animateItem()
+                                .then(if (isDragged) Modifier else Modifier.animateItem())
                                 .zIndex(zIndex)
                                 .graphicsLayer {
                                     this.translationY = translationY
@@ -320,6 +324,7 @@ fun PdfCustomizeToolsSheet(
                                         onDrag = { dragDropState.onDrag(it) },
                                         onDragEnd = {
                                             dragDropState.onDragEnd()
+                                            flatItems = sanitizePdfPlaceholders(flatItems).toList()
                                             commitDragDrop()
                                         }
                                     )
