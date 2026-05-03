@@ -575,7 +575,7 @@
         });
     }
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -592,7 +592,9 @@
                   ", ImageSize: " +
                   imageSize +
                   ", HorizontalMargin: " +
-                  horizontalMargin
+                  horizontalMargin +
+                  ", VerticalMargin: " +
+                  verticalMargin
           );
 
         var dynamicStyleId = "dynamicReaderStyles";
@@ -609,12 +611,14 @@
         var newGap = parseFloat(paragraphGap);
         var newImageSize = parseFloat(imageSize);
         var newHorizontalMargin = parseFloat(horizontalMargin);
+        var newVerticalMargin = parseFloat(verticalMargin);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
         if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
         if (isNaN(newImageSize) || newImageSize < 0.5 || newImageSize > 2.0) newImageSize = 1.0;
         if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
+        if (isNaN(newVerticalMargin) || newVerticalMargin < 0.0 || newVerticalMargin > 3.0) newVerticalMargin = 1.0;
 
         rememberReaderImageAnchors();
 
@@ -669,11 +673,14 @@
         }
 
         var horizontalPaddingPx = Math.max(0, 16 * newHorizontalMargin);
+        var verticalPaddingPx = Math.max(0, 16 * newVerticalMargin);
         var horizontalMarginCss = `
             body {
                 box-sizing: border-box !important;
                 padding-left: ${horizontalPaddingPx}px !important;
                 padding-right: ${horizontalPaddingPx}px !important;
+                padding-top: ${verticalPaddingPx}px !important;
+                padding-bottom: ${verticalPaddingPx}px !important;
             }
         `;
 

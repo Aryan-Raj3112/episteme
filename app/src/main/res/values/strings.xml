@@ -808,7 +808,8 @@
     <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
     <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>
     <string name="visual_options_progress_bar">Progress Bar</string>
-    <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator at the bottom of the screen.</string>
+    <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator on the reading screen.</string>
+    <string name="visual_options_progress_bar_position">Position</string>
     <!-- "Seamless Chapter Transition" is a reading feature name. -->
     <string name="visual_options_seamless_chapter">Seamless Chapter Transition</string>
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
@@ -871,6 +872,7 @@
     <string name="label_paragraph_gap">Paragraph Gap</string>
     <string name="label_image_size">Image Size</string>
     <string name="label_horizontal_margin">Horizontal Margin</string>
+    <string name="label_vertical_margin">Vertical Margin</string>
     <string name="label_none">None</string>
     <!-- Short label for the "Original" font option in the reader settings. "Orig" is an abbreviation. -->
     <string name="label_original">Orig</string>

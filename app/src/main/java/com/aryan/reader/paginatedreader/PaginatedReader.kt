@@ -734,6 +734,7 @@ fun PaginatedReaderScreen(
     paragraphGapMultiplier: Float,
     imageSizeMultiplier: Float,
     horizontalMarginMultiplier: Float,
+    verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
     textAlign: ReaderTextAlign,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -792,6 +793,7 @@ fun PaginatedReaderScreen(
         var debouncedParagraphGapMult by remember { mutableFloatStateOf(paragraphGapMultiplier) }
         var debouncedImageSizeMult by remember { mutableFloatStateOf(imageSizeMultiplier) }
         var debouncedHorizontalMarginMult by remember { mutableFloatStateOf(horizontalMarginMultiplier) }
+        var debouncedVerticalMarginMult by remember { mutableFloatStateOf(verticalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
 
@@ -862,12 +864,13 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, fontFamily, textAlign) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, textAlign) {
             if (fontSizeMultiplier != debouncedFontSizeMult ||
                 lineHeightMultiplier != debouncedLineHeightMult ||
                 paragraphGapMultiplier != debouncedParagraphGapMult ||
                 imageSizeMultiplier != debouncedImageSizeMult ||
                 horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
+                verticalMarginMultiplier != debouncedVerticalMarginMult ||
                 fontFamily != debouncedFontFamily ||
                 textAlign != debouncedTextAlign
             ) {
@@ -888,6 +891,7 @@ fun PaginatedReaderScreen(
                 debouncedParagraphGapMult = paragraphGapMultiplier
                 debouncedImageSizeMult = imageSizeMultiplier
                 debouncedHorizontalMarginMult = horizontalMarginMultiplier
+                debouncedVerticalMarginMult = verticalMarginMultiplier
                 debouncedFontFamily = fontFamily
                 debouncedTextAlign = textAlign
                 Timber.d("Debounce complete. Applying new format settings.")
@@ -903,8 +907,28 @@ fun PaginatedReaderScreen(
         }
 
         val density = LocalDensity.current
-        val horizontalPadding = 16.dp * debouncedHorizontalMarginMult
-        val verticalPadding = 16.dp
+        val requestedHorizontalPadding = 16.dp * debouncedHorizontalMarginMult
+        val requestedVerticalPadding = 16.dp * debouncedVerticalMarginMult
+        val effectiveReaderPadding =
+            remember(this.constraints, density, requestedHorizontalPadding, requestedVerticalPadding) {
+                val requestedHorizontalPaddingPx = with(density) { requestedHorizontalPadding.roundToPx() }
+                val requestedVerticalPaddingPx = with(density) { requestedVerticalPadding.roundToPx() }
+                val minReadableWidthPx = with(density) { 96.dp.roundToPx() }
+                    .coerceAtMost(this.constraints.maxWidth)
+                val minReadableHeightPx = with(density) { 160.dp.roundToPx() }
+                    .coerceAtMost(this.constraints.maxHeight)
+                val horizontalPaddingPx = requestedHorizontalPaddingPx.coerceAtMost(
+                    ((this.constraints.maxWidth - minReadableWidthPx) / 2).coerceAtLeast(0)
+                )
+                val verticalPaddingPx = requestedVerticalPaddingPx.coerceAtMost(
+                    ((this.constraints.maxHeight - minReadableHeightPx) / 2).coerceAtLeast(0)
+                )
+                with(density) {
+                    horizontalPaddingPx.toDp() to verticalPaddingPx.toDp()
+                }
+            }
+        val horizontalPadding = effectiveReaderPadding.first
+        val verticalPadding = effectiveReaderPadding.second
 
         val textConstraints =
             remember(this.constraints, density, horizontalPadding, verticalPadding) {
@@ -912,9 +936,9 @@ fun PaginatedReaderScreen(
                 val verticalPaddingPx = with(density) { verticalPadding.roundToPx() }
                 val finalConstraints = this.constraints.copy(
                     minWidth = 0,
-                    maxWidth = this.constraints.maxWidth - (2 * horizontalPaddingPx),
+                    maxWidth = (this.constraints.maxWidth - (2 * horizontalPaddingPx)).coerceAtLeast(1),
                     minHeight = 0,
-                    maxHeight = this.constraints.maxHeight - (2 * verticalPaddingPx)
+                    maxHeight = (this.constraints.maxHeight - (2 * verticalPaddingPx)).coerceAtLeast(1)
                 )
                 finalConstraints
             }
@@ -1002,7 +1026,8 @@ fun PaginatedReaderScreen(
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = debouncedParagraphGapMult,
-                imageSizeMultiplier = debouncedImageSizeMult
+                imageSizeMultiplier = debouncedImageSizeMult,
+                verticalMarginMultiplier = debouncedVerticalMarginMult
             )
         }
 

@@ -120,6 +120,7 @@ private const val TAP_TO_NAVIGATE_ENABLED_KEY = "tap_to_navigate_enabled"
 private const val VOLUME_SCROLL_ENABLED_KEY = "volume_scroll_enabled"
 private const val SYSTEM_UI_MODE_KEY = "reader_system_ui_mode"
 private const val PAGE_INFO_MODE_KEY = "reader_page_info_mode"
+private const val PAGE_INFO_POSITION_KEY = "reader_page_info_position"
 private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
@@ -127,6 +128,7 @@ const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
 const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
 const val DEFAULT_IMAGE_SIZE_VAL = 1.0f
 const val DEFAULT_HORIZONTAL_MARGIN_VAL = 1.0f
+const val DEFAULT_VERTICAL_MARGIN_VAL = 1.0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
 private const val TTS_PITCH_KEY = "tts_pitch"
 
@@ -177,12 +179,18 @@ enum class PageInfoMode(val id: Int, val title: String) {
     HIDDEN(2, "Always Hide")
 }
 
+enum class PageInfoPosition(val id: Int, val title: String) {
+    BOTTOM(0, "Bottom"),
+    TOP(1, "Top")
+}
+
 data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
     val paragraphGap: Float,
     val imageSize: Float,
     val horizontalMargin: Float,
+    val verticalMargin: Float,
     val font: ReaderFont,
     val customPath: String?,
     val textAlign: ReaderTextAlign
@@ -194,9 +202,11 @@ private const val LOCAL_LINE_HEIGHT_PREFIX = "local_line_height_"
 private const val LOCAL_PARAGRAPH_GAP_PREFIX = "local_paragraph_gap_"
 private const val LOCAL_IMAGE_SIZE_PREFIX = "local_image_size_"
 private const val LOCAL_HORIZONTAL_MARGIN_PREFIX = "local_horizontal_margin_"
+private const val LOCAL_VERTICAL_MARGIN_PREFIX = "local_vertical_margin_"
 private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
 private const val HORIZONTAL_MARGIN_KEY = "reader_horizontal_margin"
+private const val VERTICAL_MARGIN_KEY = "reader_vertical_margin"
 
 fun loadFormatIsLocal(context: Context, bookId: String): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -216,6 +226,7 @@ fun saveLocalReaderSettings(
     paragraphGap: Float,
     imageSize: Float,
     horizontalMargin: Float,
+    verticalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -227,6 +238,7 @@ fun saveLocalReaderSettings(
         putFloat(LOCAL_PARAGRAPH_GAP_PREFIX + bookId, paragraphGap)
         putFloat(LOCAL_IMAGE_SIZE_PREFIX + bookId, imageSize)
         putFloat(LOCAL_HORIZONTAL_MARGIN_PREFIX + bookId, horizontalMargin)
+        putFloat(LOCAL_VERTICAL_MARGIN_PREFIX + bookId, verticalMargin)
         if (customFontPath != null) {
             putString(LOCAL_FONT_FAMILY_PREFIX + bookId, "custom|$customFontPath")
         } else {
@@ -258,6 +270,17 @@ fun loadPageInfoMode(context: Context): PageInfoMode {
     return PageInfoMode.entries.find { it.id == id } ?: PageInfoMode.DEFAULT
 }
 
+fun savePageInfoPosition(context: Context, position: PageInfoPosition) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putInt(PAGE_INFO_POSITION_KEY, position.id) }
+}
+
+fun loadPageInfoPosition(context: Context): PageInfoPosition {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val id = prefs.getInt(PAGE_INFO_POSITION_KEY, PageInfoPosition.BOTTOM.id)
+    return PageInfoPosition.entries.find { it.id == id } ?: PageInfoPosition.BOTTOM
+}
+
 fun savePullToTurn(context: Context, enabled: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putBoolean(PULL_TO_TURN_ENABLED_KEY, enabled) }
@@ -286,6 +309,11 @@ fun loadHorizontalMargin(context: Context): Float {
         return prefs.getFloat(HORIZONTAL_MARGIN_KEY, DEFAULT_HORIZONTAL_MARGIN_VAL)
     }
     return if (loadRemoveEdgePadding(context)) 0f else DEFAULT_HORIZONTAL_MARGIN_VAL
+}
+
+fun loadVerticalMargin(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(VERTICAL_MARGIN_KEY, DEFAULT_VERTICAL_MARGIN_VAL)
 }
 
 fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): FormatSettings {
@@ -321,6 +349,12 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         loadHorizontalMargin(context)
     }
 
+    val verticalMargin = if (isLocal && prefs.contains(LOCAL_VERTICAL_MARGIN_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_VERTICAL_MARGIN_PREFIX + bookId, DEFAULT_VERTICAL_MARGIN_VAL)
+    } else {
+        loadVerticalMargin(context)
+    }
+
     val savedFontVal = if (isLocal && prefs.contains(LOCAL_FONT_FAMILY_PREFIX + bookId)) {
         prefs.getString(LOCAL_FONT_FAMILY_PREFIX + bookId, ReaderFont.ORIGINAL.id) ?: ReaderFont.ORIGINAL.id
     } else {
@@ -346,6 +380,7 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         paragraphGap = paragraphGap,
         imageSize = imageSize,
         horizontalMargin = horizontalMargin,
+        verticalMargin = verticalMargin,
         font = font,
         customPath = customPath,
         textAlign = textAlign
@@ -390,6 +425,7 @@ fun saveReaderSettings(
     paragraphGap: Float,
     imageSize: Float,
     horizontalMargin: Float,
+    verticalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
     textAlign: ReaderTextAlign
@@ -401,6 +437,7 @@ fun saveReaderSettings(
         putFloat(PARAGRAPH_GAP_KEY, paragraphGap)
         putFloat(IMAGE_SIZE_KEY, imageSize)
         putFloat(HORIZONTAL_MARGIN_KEY, horizontalMargin)
+        putFloat(VERTICAL_MARGIN_KEY, verticalMargin)
         if (customFontPath != null) {
             putString(FONT_FAMILY_KEY, "custom|$customFontPath")
         } else {
@@ -454,6 +491,8 @@ fun ReaderTextFormatPanel(
     onImageSizeChange: (Float) -> Unit,
     currentHorizontalMargin: Float,
     onHorizontalMarginChange: (Float) -> Unit,
+    currentVerticalMargin: Float,
+    onVerticalMarginChange: (Float) -> Unit,
     currentFont: ReaderFont,
     currentCustomFontName: String?,
     onFontOptionClick: () -> Unit,
@@ -699,6 +738,20 @@ fun ReaderTextFormatPanel(
                             }
                         }
                     )
+
+                    FormatSlider(
+                        label = stringResource(R.string.label_vertical_margin),
+                        value = currentVerticalMargin,
+                        onValueChange = onVerticalMarginChange,
+                        valueRange = 0.0f..3.0f,
+                        formatValue = {
+                            when {
+                                it <= 0.01f -> noneLabel
+                                it in 0.99f..1.01f -> originalLabel
+                                else -> "%.1fx".format(it)
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -830,6 +883,8 @@ fun VisualOptionsSheet(
     onSystemUiModeChange: (SystemUiMode) -> Unit,
     pageInfoMode: PageInfoMode,
     onPageInfoModeChange: (PageInfoMode) -> Unit,
+    pageInfoPosition: PageInfoPosition,
+    onPageInfoPositionChange: (PageInfoPosition) -> Unit,
     pullToTurnEnabled: Boolean,
     onPullToTurnChange: (Boolean) -> Unit,
     pullToTurnMultiplier: Float,
@@ -881,6 +936,16 @@ fun VisualOptionsSheet(
                 options = PageInfoMode.entries,
                 selectedOption = pageInfoMode,
                 onOptionSelected = onPageInfoModeChange,
+                getLabel = { it.title }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(stringResource(R.string.visual_options_progress_bar_position), style = MaterialTheme.typography.titleSmall)
+            Spacer(modifier = Modifier.height(8.dp))
+            OptionSegmentedControl(
+                options = PageInfoPosition.entries,
+                selectedOption = pageInfoPosition,
+                onOptionSelected = onPageInfoPositionChange,
                 getLabel = { it.title }
             )
 

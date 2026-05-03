@@ -120,7 +120,8 @@ class BookPaginator(
     private val mathMLRenderer: MathMLRenderer,
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
-    private val imageSizeMultiplier: Float
+    private val imageSizeMultiplier: Float,
+    private val verticalMarginMultiplier: Float
 ) : IPaginator {
     override var totalPageCount by mutableIntStateOf(0)
         private set
@@ -285,6 +286,7 @@ class BookPaginator(
             append("-ta:$userTextAlign")
             append("-pg:$paragraphGapMultiplier")
             append("-img:$imageSizeMultiplier")
+            append("-vm:$verticalMarginMultiplier")
         }
         val hash = configString.hashCode()
         return hash

@@ -634,6 +634,7 @@ fun EpubReaderHost(
 
     var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
     var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
+    var pageInfoPosition by remember { mutableStateOf(loadPageInfoPosition(context)) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
@@ -889,12 +890,6 @@ fun EpubReaderHost(
     val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val roundedCornerBottomPadding = rememberBottomRoundedCornerPadding(view)
     val pageInfoCornerBottomPadding = roundedCornerBottomPadding.coerceAtMost(8.dp)
-    val pageInfoSafeBottomPadding = if (bottomPadding > 0.dp) {
-        bottomPadding
-    } else {
-        pageInfoCornerBottomPadding
-    }
-    val pageInfoReservedHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
 
     var bookmarks by remember(epubBook.title) {
         mutableStateOf(
@@ -1071,6 +1066,7 @@ fun EpubReaderHost(
     var currentParagraphGap by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.paragraphGap) }
     var currentImageSize by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.imageSize) }
     var currentHorizontalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.horizontalMargin) }
+    var currentVerticalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.verticalMargin) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
     var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
@@ -1086,14 +1082,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
             )
         }
     }
@@ -2057,11 +2053,7 @@ fun EpubReaderHost(
         }
     }
 
-    val pageInfoBottomPadding by animateDpAsState(
-        targetValue = if (showBars && pageInfoMode == PageInfoMode.SYNC) 45.dp else 0.dp,
-        label = "PageInfoBottomPadding"
-    )
-    val pageInfoVerticalPadding = pageInfoSafeBottomPadding + pageInfoBottomPadding
+    val pageInfoBarHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
 
     val isPageInfoVisible = when (pageInfoMode) {
         PageInfoMode.DEFAULT -> !showBars
@@ -2949,13 +2941,15 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
-                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoReservedHeight else 0.dp
+                        val pageInfoReserve = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoBarHeight else 0.dp
+                        val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
+                        val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
+                                .padding(top = contentTopPadding)
                                 .padding(bottom = contentBottomPadding)
-                                .padding(top = 16.dp)
                                 .testTag("ReaderContainer")
                         ) {
                             if (chapters.isEmpty()) {
@@ -3362,6 +3356,7 @@ fun EpubReaderHost(
                                             currentParagraphGap = currentParagraphGap,
                                             currentImageSize = currentImageSize,
                                             currentHorizontalMargin = currentHorizontalMargin,
+                                            currentVerticalMargin = currentVerticalMargin,
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
                                             currentTextAlign = currentTextAlign,
@@ -3850,11 +3845,14 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
-                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoReservedHeight else 0.dp
+                        val pageInfoReserve = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoBarHeight else 0.dp
+                        val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
+                        val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 
                         BoxWithConstraints(
                             modifier = Modifier
                                 .fillMaxSize()
+                                .padding(top = contentTopPadding)
                                 .padding(bottom = contentBottomPadding)
                                 .testTag("ReaderContainer")
                         ) {
@@ -3870,6 +3868,7 @@ fun EpubReaderHost(
                                 paragraphGapMultiplier = currentParagraphGap,
                                 imageSizeMultiplier = currentImageSize,
                                 horizontalMarginMultiplier = currentHorizontalMargin,
+                                verticalMarginMultiplier = currentVerticalMargin,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
                                 activeHighlightPalette = currentHighlightPalette,
@@ -4165,17 +4164,18 @@ fun EpubReaderHost(
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
-                    visible = renderMode == RenderMode.VERTICAL_SCROLL && isPageInfoVisible,
+                    visible = currentRenderMode == RenderMode.VERTICAL_SCROLL && isPageInfoVisible,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier.align(
+                        if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter
+                    )
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(pageInfoReservedHeight + pageInfoBottomPadding)
+                            .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
-                            .padding(bottom = pageInfoVerticalPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -4211,17 +4211,18 @@ fun EpubReaderHost(
 
                 // Page Info Bar (Paginated)
                 AnimatedVisibility(
-                    visible = renderMode == RenderMode.PAGINATED && paginator != null && isPageInfoVisible && paginatedPagerState.pageCount > 0,
+                    visible = currentRenderMode == RenderMode.PAGINATED && paginator != null && isPageInfoVisible && paginatedPagerState.pageCount > 0,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier.align(
+                        if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter
+                    )
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(pageInfoReservedHeight + pageInfoBottomPadding)
+                            .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
-                            .padding(bottom = pageInfoVerticalPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -4912,6 +4913,8 @@ fun EpubReaderHost(
                     onImageSizeChange = { currentImageSize = it },
                     currentHorizontalMargin = currentHorizontalMargin,
                     onHorizontalMarginChange = { currentHorizontalMargin = it },
+                    currentVerticalMargin = currentVerticalMargin,
+                    onVerticalMarginChange = { currentVerticalMargin = it },
                     currentFont = currentFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
                         customFonts.find { it.path == currentCustomFontPath }?.displayName ?: "Custom Font"
@@ -4930,6 +4933,7 @@ fun EpubReaderHost(
                         currentParagraphGap = DEFAULT_PARAGRAPH_GAP_VAL
                         currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
+                        currentVerticalMargin = DEFAULT_VERTICAL_MARGIN_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT
@@ -5284,6 +5288,11 @@ fun EpubReaderHost(
                 onPageInfoModeChange = {
                     pageInfoMode = it
                     savePageInfoMode(context, it)
+                },
+                pageInfoPosition = pageInfoPosition,
+                onPageInfoPositionChange = {
+                    pageInfoPosition = it
+                    savePageInfoPosition(context, it)
                 },
                 pullToTurnEnabled = pullToTurnEnabled,
                 onPullToTurnChange = {
