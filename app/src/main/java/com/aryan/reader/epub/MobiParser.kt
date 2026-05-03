@@ -109,10 +109,20 @@ class MobiParser(private val context: Context) {
     private external fun parseMobiFile(filePath: String): ParsedMobiData?
 
     companion object {
-        init {
+        private val nativeLoadError: Throwable? = try {
             System.loadLibrary("mobi")
             System.loadLibrary("native-lib")
+            null
+        } catch (t: Throwable) {
+            Timber.e(t, "MOBI native parser is unavailable on this device.")
+            t
         }
+
+        val isNativeParserAvailable: Boolean
+            get() = nativeLoadError == null
+
+        fun nativeParserUnavailableMessage(): String =
+            nativeLoadError?.message ?: "MOBI native parser is unavailable on this device."
     }
 
     suspend fun createMobiBook(
@@ -122,6 +132,11 @@ class MobiParser(private val context: Context) {
         parseContent: Boolean = true,
         extractionDirOverride: File? = null
     ): EpubBook? = withContext(Dispatchers.IO) {
+        if (!isNativeParserAvailable) {
+            Timber.e("Skipping MOBI parsing: ${nativeParserUnavailableMessage()}")
+            return@withContext null
+        }
+
         val tempFile = File.createTempFile("temp_mobi_", ".mobi", context.cacheDir)
         try {
             tempFile.outputStream().use { output ->

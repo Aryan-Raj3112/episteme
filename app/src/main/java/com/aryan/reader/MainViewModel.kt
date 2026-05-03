@@ -1339,7 +1339,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     inputStream = inputStream,
                     bookId = bookId,
                     originalBookNameHint = displayName
-                ) ?: throw Exception("MobiParser returned null. The file might be DRM-protected or invalid.")
+                ) ?: throw Exception(
+                    if (MobiParser.isNativeParserAvailable) {
+                        "MobiParser returned null. The file might be DRM-protected or invalid."
+                    } else {
+                        MobiParser.nativeParserUnavailableMessage()
+                    }
+                )
 
                 FileType.FB2 -> fb2Parser.createFb2Book(
                     inputStream = inputStream,
@@ -4267,7 +4273,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 } else {
                     throw Exception(
-                        "MobiParser returned null. The file might be DRM-protected or invalid."
+                        if (MobiParser.isNativeParserAvailable) {
+                            "MobiParser returned null. The file might be DRM-protected or invalid."
+                        } else {
+                            MobiParser.nativeParserUnavailableMessage()
+                        }
                     )
                 }
             } catch (e: Exception) {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -471,6 +472,43 @@ private fun computeImageRenderSizeDp(
     )
     if (widthPx <= 0f || heightPx <= 0f) return null
     return with(density) { widthPx.toDp() to heightPx.toDp() }
+}
+
+private fun tableCellImageModifier(
+    block: ImageBlock,
+    density: Density,
+    imageSizeMultiplier: Float
+): Modifier {
+    val baseModifier = if (block.style.width.isSpecified && block.style.width > 0.dp) {
+        Modifier.width(block.style.width * imageSizeMultiplier)
+    } else {
+        Modifier.fillMaxWidth(imageSizeMultiplier.coerceIn(0f, 1f))
+    }
+
+    val intrinsicWidth = block.intrinsicWidth
+    val intrinsicHeight = block.intrinsicHeight
+    val sizedModifier = if (
+        intrinsicWidth != null &&
+        intrinsicHeight != null &&
+        intrinsicWidth > 0f &&
+        intrinsicHeight > 0f
+    ) {
+        baseModifier.aspectRatio(intrinsicWidth / intrinsicHeight)
+    } else {
+        baseModifier.height(
+            if (block.expectedHeight > 0) {
+                with(density) { (block.expectedHeight * imageSizeMultiplier).toDp() }
+            } else {
+                250.dp
+            }
+        )
+    }
+
+    return if (block.style.maxWidth.isSpecified && block.style.maxWidth > 0.dp) {
+        sizedModifier.widthIn(max = block.style.maxWidth * imageSizeMultiplier)
+    } else {
+        sizedModifier
+    }
 }
 
 @Composable
@@ -3395,40 +3433,23 @@ internal fun PaginatedReaderContent(
                                                                                         }
 
                                                                                         is ImageBlock -> {
-                                                                                            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                                                                                                val scaledSize = computeImageRenderSizeDp(
+                                                                                            AsyncImage(
+                                                                                                model = Builder(
+                                                                                                    LocalContext.current
+                                                                                                ).data(
+                                                                                                    File(
+                                                                                                        blockInCell.path
+                                                                                                    )
+                                                                                                )
+                                                                                                    .build(),
+                                                                                                contentDescription = blockInCell.altText,
+                                                                                                contentScale = ContentScale.Fit,
+                                                                                                modifier = tableCellImageModifier(
                                                                                                     block = blockInCell,
                                                                                                     density = density,
-                                                                                                    maxWidthDp = maxWidth,
                                                                                                     imageSizeMultiplier = imageSizeMultiplier
                                                                                                 )
-                                                                                                val imageModifier = Modifier.then(
-                                                                                                    if (scaledSize != null) {
-                                                                                                        Modifier.width(scaledSize.first).height(scaledSize.second)
-                                                                                                    } else {
-                                                                                                        Modifier.fillMaxWidth().then(
-                                                                                                            if (blockInCell.expectedHeight > 0) {
-                                                                                                                Modifier.height(with(density) { (blockInCell.expectedHeight * imageSizeMultiplier).toDp() })
-                                                                                                            } else {
-                                                                                                                Modifier.height(250.dp)
-                                                                                                            }
-                                                                                                        )
-                                                                                                    }
-                                                                                                )
-                                                                                                AsyncImage(
-                                                                                                    model = Builder(
-                                                                                                        LocalContext.current
-                                                                                                    ).data(
-                                                                                                        File(
-                                                                                                            blockInCell.path
-                                                                                                        )
-                                                                                                    )
-                                                                                                        .build(),
-                                                                                                    contentDescription = blockInCell.altText,
-                                                                                                    contentScale = ContentScale.Fit,
-                                                                                                    modifier = imageModifier
-                                                                                                )
-                                                                                            }
+                                                                                            )
                                                                                         }
 
                                                                                         is TextContentBlock -> {
@@ -4285,37 +4306,20 @@ private fun RenderFlexChildBlock(
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     } else if (blockInCell is ImageBlock) {
-                                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                                            val scaledSize = computeImageRenderSizeDp(
+                                        AsyncImage(
+                                            model = Builder(LocalContext.current).data(
+                                                File(
+                                                    blockInCell.path
+                                                )
+                                            ).build(),
+                                            contentDescription = blockInCell.altText,
+                                            contentScale = ContentScale.Fit,
+                                            modifier = tableCellImageModifier(
                                                 block = blockInCell,
                                                 density = density,
-                                                maxWidthDp = maxWidth,
                                                 imageSizeMultiplier = imageSizeMultiplier
                                             )
-                                            val imageModifier = Modifier.then(
-                                                if (scaledSize != null) {
-                                                    Modifier.width(scaledSize.first).height(scaledSize.second)
-                                                } else {
-                                                    Modifier.fillMaxWidth().then(
-                                                        if (blockInCell.expectedHeight > 0) {
-                                                            Modifier.height(with(density) { (blockInCell.expectedHeight * imageSizeMultiplier).toDp() })
-                                                        } else {
-                                                            Modifier.height(250.dp)
-                                                        }
-                                                    )
-                                                }
-                                            )
-                                            AsyncImage(
-                                                model = Builder(LocalContext.current).data(
-                                                    File(
-                                                        blockInCell.path
-                                                    )
-                                                ).build(),
-                                                contentDescription = blockInCell.altText,
-                                                contentScale = ContentScale.Fit,
-                                                modifier = imageModifier
-                                            )
-                                        }
+                                        )
                                     }
                                 }
                             }
