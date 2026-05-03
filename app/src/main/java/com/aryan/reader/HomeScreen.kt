@@ -158,10 +158,11 @@ fun HomeScreen(
     viewModel: MainViewModel, windowSizeClass: WindowSizeClass, navController: NavHostController
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
     val customTabUriHandler = remember { CustomTabUriHandler(context) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
     var showAppThemePanel by remember { mutableStateOf(false) }
-    val activity = context as? Activity
+    
 
     CompositionLocalProvider(LocalUriHandler provides customTabUriHandler) {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
