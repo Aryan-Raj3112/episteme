@@ -35,6 +35,8 @@ import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.view.RoundedCorner
+import android.view.View
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -134,6 +136,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -224,6 +227,42 @@ private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
 
 private const val TAG_LINK_NAV = "LINK_NAV"
+
+private fun View.bottomRoundedCornerRadiusPx(): Int {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
+
+    val insets = rootWindowInsets ?: return 0
+    return max(
+        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0,
+        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius ?: 0
+    )
+}
+
+@Composable
+private fun rememberBottomRoundedCornerPadding(view: View): Dp {
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    var radiusPx by remember(view) { mutableIntStateOf(view.bottomRoundedCornerRadiusPx()) }
+
+    DisposableEffect(
+        view,
+        configuration.orientation,
+        configuration.screenWidthDp,
+        configuration.screenHeightDp
+    ) {
+        val listener = View.OnLayoutChangeListener { updatedView, _, _, _, _, _, _, _, _ ->
+            radiusPx = updatedView.bottomRoundedCornerRadiusPx()
+        }
+        view.addOnLayoutChangeListener(listener)
+        radiusPx = view.bottomRoundedCornerRadiusPx()
+
+        onDispose {
+            view.removeOnLayoutChangeListener(listener)
+        }
+    }
+
+    return with(density) { radiusPx.toDp() }
+}
 
 private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -816,6 +855,14 @@ fun EpubReaderHost(
     var lastKnownLocator by remember(initialLocator) { mutableStateOf(initialLocator) }
 
     val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val roundedCornerBottomPadding = rememberBottomRoundedCornerPadding(view)
+    val pageInfoCornerBottomPadding = roundedCornerBottomPadding.coerceAtMost(8.dp)
+    val pageInfoSafeBottomPadding = if (bottomPadding > 0.dp) {
+        bottomPadding
+    } else {
+        pageInfoCornerBottomPadding
+    }
+    val pageInfoReservedHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
 
     var bookmarks by remember(epubBook.title) {
         mutableStateOf(
@@ -1982,6 +2029,7 @@ fun EpubReaderHost(
         targetValue = if (showBars && pageInfoMode == PageInfoMode.SYNC) 45.dp else 0.dp,
         label = "PageInfoBottomPadding"
     )
+    val pageInfoVerticalPadding = pageInfoSafeBottomPadding + pageInfoBottomPadding
 
     val isPageInfoVisible = when (pageInfoMode) {
         PageInfoMode.DEFAULT -> !showBars
@@ -2869,7 +2917,7 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
-                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) PAGE_INFO_BAR_HEIGHT else 0.dp
+                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoReservedHeight else 0.dp
 
                         Box(
                             modifier = Modifier
@@ -3770,7 +3818,7 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
-                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) PAGE_INFO_BAR_HEIGHT else 0.dp
+                        val contentBottomPadding = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoReservedHeight else 0.dp
 
                         BoxWithConstraints(
                             modifier = Modifier
@@ -4093,9 +4141,9 @@ fun EpubReaderHost(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(PAGE_INFO_BAR_HEIGHT)
+                            .height(pageInfoReservedHeight + pageInfoBottomPadding)
                             .background(infoBarBgColor)
-                            .padding(bottom = bottomPadding + pageInfoBottomPadding)
+                            .padding(bottom = pageInfoVerticalPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -4139,9 +4187,9 @@ fun EpubReaderHost(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(PAGE_INFO_BAR_HEIGHT)
+                            .height(pageInfoReservedHeight + pageInfoBottomPadding)
                             .background(infoBarBgColor)
-                            .padding(bottom = bottomPadding + pageInfoBottomPadding)
+                            .padding(bottom = pageInfoVerticalPadding)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
