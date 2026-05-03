@@ -480,6 +480,14 @@ private fun computeImageRenderSizeDp(
     return with(density) { widthPx.toDp() to heightPx.toDp() }
 }
 
+private fun imageBlockContentAlignment(style: BlockStyle): Alignment {
+    return when {
+        style.float == "right" || style.horizontalAlign == "right" || style.horizontalAlign == "end" -> Alignment.CenterEnd
+        style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
+        else -> Alignment.Center
+    }
+}
+
 private fun tableCellImageModifier(
     block: ImageBlock,
     density: Density,
@@ -3237,7 +3245,10 @@ internal fun PaginatedReaderContent(
                                                                         )
                                                                     }).crossfade(true).build()
 
-                                                            BoxWithConstraints(modifier = paddingModifier) {
+                                                            BoxWithConstraints(
+                                                                modifier = paddingModifier,
+                                                                contentAlignment = imageBlockContentAlignment(style)
+                                                            ) {
                                                                 val scaledSize = computeImageRenderSizeDp(
                                                                     block = block,
                                                                     density = density,
@@ -4194,7 +4205,7 @@ private fun RenderFlexChildBlock(
                 ColorFilter.colorMatrix(ColorMatrix(matrix))
             } else null
 
-            BoxWithConstraints {
+            BoxWithConstraints(contentAlignment = imageBlockContentAlignment(style)) {
                 val scaledSize = computeImageRenderSizeDp(
                     block = childBlock,
                     density = density,

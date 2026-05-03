@@ -517,6 +517,64 @@
         }
     }, true);
 
+    function getReaderImageElements() {
+        return Array.prototype.slice.call(document.querySelectorAll("img, svg, video, canvas, image"));
+    }
+
+    function rememberReaderImageAnchors() {
+        getReaderImageElements().forEach(function (image) {
+            if (image.getAttribute("data-reader-image-anchor")) return;
+
+            var parent = image.parentElement || document.body;
+            var imageRect = image.getBoundingClientRect();
+            var parentRect = parent.getBoundingClientRect();
+            var parentWidth = parentRect.width || document.documentElement.clientWidth || window.innerWidth || 0;
+
+            if (!parentWidth || imageRect.width <= 0) {
+                image.setAttribute("data-reader-image-anchor", "center");
+                return;
+            }
+
+            var imageCenter = imageRect.left + imageRect.width / 2;
+            var parentCenter = parentRect.left + parentWidth / 2;
+            var tolerance = Math.max(4, parentWidth * 0.08);
+            var anchor = "center";
+
+            if (Math.abs(imageCenter - parentCenter) <= tolerance || imageRect.width >= parentWidth - 2) {
+                anchor = "center";
+            } else if (imageCenter > parentCenter) {
+                anchor = "right";
+            } else {
+                anchor = "left";
+            }
+
+            image.setAttribute("data-reader-image-anchor", anchor);
+        });
+    }
+
+    function applyReaderImageAnchors() {
+        getReaderImageElements().forEach(function (image) {
+            var anchor = image.getAttribute("data-reader-image-anchor") || "center";
+
+            image.style.setProperty("display", "block", "important");
+            image.style.setProperty("height", "auto", "important");
+            image.style.setProperty("object-fit", "contain", "important");
+
+            if (anchor === "right") {
+                image.style.setProperty("float", "none", "important");
+                image.style.setProperty("margin-left", "auto", "important");
+                image.style.setProperty("margin-right", "0", "important");
+            } else if (anchor === "left") {
+                image.style.setProperty("margin-left", "0", "important");
+                image.style.setProperty("margin-right", "auto", "important");
+            } else {
+                image.style.setProperty("float", "none", "important");
+                image.style.setProperty("margin-left", "auto", "important");
+                image.style.setProperty("margin-right", "auto", "important");
+            }
+        });
+    }
+
     window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
@@ -557,6 +615,8 @@
         if (isNaN(newGap) || newGap < 0.0 || newGap > 3.0) newGap = 1.0;
         if (isNaN(newImageSize) || newImageSize < 0.5 || newImageSize > 2.0) newImageSize = 1.0;
         if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
+
+        rememberReaderImageAnchors();
 
         var fontCss = "";
         if (fontFamily && fontFamily !== "Original" && fontFamily !== "") {
@@ -629,10 +689,22 @@
                 width: min(100%, calc(100% * var(--reader-image-size))) !important;
                 max-width: 100% !important;
                 height: auto !important;
+                display: block !important;
+                float: none !important;
+                margin-left: auto !important;
+                margin-right: auto !important;
+                object-fit: contain !important;
+            }
+            body p:has(> img:only-child),
+            body div:has(> img:only-child),
+            body figure {
+                text-align: center !important;
             }
         `;
 
         dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, imageCss, horizontalMarginCss].join("\n");
+        applyReaderImageAnchors();
+        setTimeout(applyReaderImageAnchors, 80);
 
         setTimeout(
             function () {
@@ -2170,6 +2242,7 @@
             if (window.checkImagesForDiagnosis) {
                 setTimeout(window.checkImagesForDiagnosis, 100);
             }
+            setTimeout(applyReaderImageAnchors, 80);
         },
     };
 
