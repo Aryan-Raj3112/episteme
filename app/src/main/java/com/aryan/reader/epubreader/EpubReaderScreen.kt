@@ -1227,6 +1227,7 @@ fun EpubReaderHost(
         } else activeTheme.textColor
     }
     val activeTextureId = activeTheme.textureId
+    val activeTextureAlpha = activeTheme.textureAlpha
 
     val infoBarBgColor = remember(effectiveBg, isDarkTheme) {
         val overlayAlpha = if (isDarkTheme) 0.08f else 0.06f
@@ -3361,6 +3362,7 @@ fun EpubReaderHost(
                                             customFontPath = currentCustomFontPath,
                                             currentTextAlign = currentTextAlign,
                                             activeTextureId = activeTextureId,
+                                            activeTextureAlpha = activeTextureAlpha,
                                             onHighlightClicked = {
                                                 lastHighlightClickTime = System.currentTimeMillis()
                                                 showBars = false
@@ -3880,6 +3882,7 @@ fun EpubReaderHost(
                                     offset = ttsState.startOffsetInSource
                                 ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
                                 activeTextureId = activeTextureId,
+                                activeTextureAlpha = activeTextureAlpha,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
                                 modifier = Modifier.alpha(if (isPagerInitialized) 1f else 0f),
                                 onPaginatorReady = { newPaginator ->

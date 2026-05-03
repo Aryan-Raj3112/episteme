@@ -189,7 +189,7 @@
         window.VIEWPORT_PADDING_BOTTOM = bottom || 0;
     };
 
-    window.applyReaderTheme = function (isDark, bgHex, textHex, textureBase64) {
+    window.applyReaderTheme = function (isDark, bgHex, textHex, textureBase64, textureAlpha) {
         var styleId = "readerThemeStyle";
         var themeStyleElement = document.getElementById(styleId);
 
@@ -207,8 +207,14 @@
         var effectiveBg = bgHex || (isDark ? '#121212' : '#FFFFFF');
         var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
 
+        var effectiveTextureAlpha = Math.max(0, Math.min(1, textureAlpha == null ? 0.55 : textureAlpha));
+        var bgMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(effectiveBg);
+        var bgRgb = bgMatch
+            ? `${parseInt(bgMatch[1], 16)}, ${parseInt(bgMatch[2], 16)}, ${parseInt(bgMatch[3], 16)}`
+            : (isDark ? '18, 18, 18' : '255, 255, 255');
+
         var textureCss = textureBase64
-            ? `background-image: url('${textureBase64}'); background-repeat: repeat; background-blend-mode: multiply;`
+            ? `background-image: linear-gradient(rgba(${bgRgb},${1 - effectiveTextureAlpha}), rgba(${bgRgb},${1 - effectiveTextureAlpha})), url('${textureBase64}'); background-repeat: repeat, repeat; background-blend-mode: normal, multiply;`
             : 'background-image: none;';
 
         var css = `

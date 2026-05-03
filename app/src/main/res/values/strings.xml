@@ -573,10 +573,14 @@
     <!-- Common.kt: ReaderThemePanel & ThemeBuilderView -->
     <string name="reading_themes">Reading Themes</string>
     <string name="theme_presets">Presets</string>
+    <string name="theme_textured_presets">Textured Presets</string>
     <string name="theme_my_themes">My Themes</string>
+    <string name="theme_my_textured_themes">My Textured Themes</string>
     <!-- "+" is a literal plus icon reference in the description. -->
     <string name="theme_no_custom">No custom themes yet. Tap \'+\' to create one.</string>
+    <string name="theme_no_textured_custom">No custom textured themes yet.</string>
     <string name="theme_new">New Theme</string>
+    <string name="theme_new_textured">New Textured Theme</string>
     <string name="theme_edit">Edit Theme</string>
     <string name="theme_name">Theme Name</string>
     <!-- Short motivational quote used as preview text in the theme builder. -->
@@ -587,6 +591,10 @@
     <string name="theme_low_contrast_warning">⚠️ Low contrast! This might cause eye strain.</string>
     <string name="theme_page_color">Page Color</string>
     <string name="theme_text_color">Text Color</string>
+    <string name="theme_texture">Texture</string>
+    <string name="theme_texture_none">None</string>
+    <string name="theme_texture_upload">Upload</string>
+    <string name="theme_texture_transparency">Texture Transparency</string>
     <string name="theme_color_live_preview">Live Preview</string>
     <!-- Short phrase shown in the live color preview area of the theme builder. -->
     <string name="theme_color_preview_text">Reading is dreaming.</string>

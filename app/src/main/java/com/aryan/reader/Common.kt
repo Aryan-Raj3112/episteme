@@ -4,11 +4,15 @@
 package com.aryan.reader
 
 import android.content.Context
-import android.speech.tts.TextToSpeech
-import android.speech.tts.Voice
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -38,8 +42,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +81,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.RichTooltip
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -121,6 +124,7 @@ import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -130,7 +134,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -186,6 +189,7 @@ import org.commonmark.parser.Parser
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -1182,7 +1186,7 @@ fun countWords(text: String): Int {
     return text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
 }
 
-private suspend fun streamGeminiAiResponse(
+private fun streamGeminiAiResponse(
     connection: HttpURLConnection,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit
@@ -1241,7 +1245,7 @@ private suspend fun streamGeminiAiResponse(
     return hasReceivedData
 }
 
-private suspend fun streamGroqAiResponse(
+private fun streamGroqAiResponse(
     connection: HttpURLConnection,
     onUpdate: (String) -> Unit,
     onError: (String) -> Unit
@@ -1595,7 +1599,7 @@ suspend fun fetchRecap(
             onFinish()
             return
         }
-        val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple diffrent short stories that came before then summurize them too, its a recap of the whole book upto this point."
+        val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple different short stories that came before then summarize them too, its a recap of the whole book up to this point."
         val promptContext = buildString {
             append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
             if (pastSummaries.isEmpty()) {
@@ -2425,11 +2429,117 @@ fun ColorComparePill(
     }
 }
 
-enum class ReaderTexture(val id: String, val resId: Int, val displayName: String) {
-    PAPER("paper", R.drawable.texture_paper, "Paper"),
-    CANVAS("canvas", R.drawable.texture_canvas, "Canvas"),
-    EINK("eink", R.drawable.texture_eink, "E-Ink"),
-    SLATE("slate", R.drawable.texture_slate, "Slate")
+enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String? = null, val resId: Int? = null) {
+    NATURAL_WHITE("asset:ep_naturalwhite.webp", "Natural White", "textures/ep_naturalwhite.webp"),
+    NATURAL_BLACK("asset:ep_naturalblack.webp", "Natural Black", "textures/ep_naturalblack.webp"),
+    LIGHT_VENEER("asset:light-veneer.webp", "Light Veneer", "textures/light-veneer.webp"),
+    RETINA_WOOD("asset:retina_wood.webp", "Retina Wood", "textures/retina_wood.webp"),
+    GREY_WASH("asset:grey_wash_wall.webp", "Grey Wash", "textures/grey_wash_wall.webp"),
+    CLASSY_FABRIC("asset:classy_fabric.webp", "Classy Fabric", "textures/classy_fabric.webp"),
+    RETRO_INTRO("asset:retro_intro.webp", "Retro Intro", "textures/retro_intro.webp"),
+    PAPER("paper", "Paper", resId = R.drawable.texture_paper),
+    CANVAS("canvas", "Canvas", resId = R.drawable.texture_canvas),
+    EINK("eink", "E-Ink", resId = R.drawable.texture_eink),
+    SLATE("slate", "Slate", resId = R.drawable.texture_slate)
+}
+
+private const val TEXTURE_FILE_PREFIX = "file:"
+private const val READER_TEXTURE_DIR = "reader_textures"
+
+fun readerTextureDisplayName(textureId: String?): String {
+    if (textureId == null) return "None"
+    return ReaderTexture.entries.find { it.id == textureId }?.displayName
+        ?: File(textureId.removePrefix(TEXTURE_FILE_PREFIX)).nameWithoutExtension.ifBlank { "Custom Image" }
+}
+
+fun importReaderTexture(context: Context, uri: Uri): String? {
+    return try {
+        val extension = context.contentResolver.getType(uri)
+            ?.substringAfterLast('/')
+            ?.lowercase(Locale.ROOT)
+            ?.let {
+                when (it) {
+                    "jpeg", "jpg" -> "jpg"
+                    "png", "webp", "gif", "bmp" -> it
+                    else -> null
+                }
+            } ?: uri.lastPathSegment
+            ?.substringAfterLast('.', "")
+            ?.lowercase(Locale.ROOT)
+            ?.takeIf { it in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp") }
+            ?: "img"
+        val dir = File(context.filesDir, READER_TEXTURE_DIR).apply { mkdirs() }
+        val output = File(dir, "texture_${System.currentTimeMillis()}.$extension")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            output.outputStream().use { out -> input.copyTo(out) }
+        } ?: return null
+        TEXTURE_FILE_PREFIX + output.absolutePath
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to import reader texture")
+        null
+    }
+}
+
+fun loadReaderTextureBitmap(context: Context, textureId: String?): ImageBitmap? {
+    if (textureId == null) return null
+    return try {
+        val bitmap = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
+            BitmapFactory.decodeFile(textureId.removePrefix(TEXTURE_FILE_PREFIX))
+        } else {
+            val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
+            when {
+                texture.assetPath != null -> context.assets.open(texture.assetPath).use(BitmapFactory::decodeStream)
+                texture.resId != null -> BitmapFactory.decodeResource(context.resources, texture.resId)
+                else -> null
+            }
+        }
+        bitmap?.asImageBitmap()
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to load reader texture bitmap: $textureId")
+        null
+    }
+}
+
+fun getReaderTextureDataUri(context: Context, textureId: String?): String? {
+    if (textureId == null) return null
+    return try {
+        var mimeType = "image/png"
+        val bytes = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
+            val file = File(textureId.removePrefix(TEXTURE_FILE_PREFIX))
+            mimeType = imageMimeTypeForExtension(file.extension)
+            file.readBytes()
+        } else {
+            val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
+            when {
+                texture.assetPath != null -> {
+                    mimeType = imageMimeTypeForExtension(texture.assetPath.substringAfterLast('.', "png"))
+                    context.assets.open(texture.assetPath).use { it.readBytes() }
+                }
+                texture.resId != null -> {
+                    val bitmap = BitmapFactory.decodeResource(context.resources, texture.resId)
+                    ByteArrayOutputStream().use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                        out.toByteArray()
+                    }
+                }
+                else -> null
+            }
+        } ?: return null
+        "data:$mimeType;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to encode reader texture: $textureId")
+        null
+    }
+}
+
+private fun imageMimeTypeForExtension(extension: String): String {
+    return when (extension.lowercase(Locale.ROOT)) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        else -> "image/png"
+    }
 }
 
 data class ReaderTheme(
@@ -2439,6 +2549,7 @@ data class ReaderTheme(
     val textColor: Color,
     val isDark: Boolean,
     val textureId: String? = null,
+    val textureAlpha: Float = if (textureId == null) 0f else 0.55f,
     val isCustom: Boolean = false
 )
 
@@ -2448,7 +2559,13 @@ val BuiltInThemes = listOf(
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
     ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
     ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
+    ReaderTheme("natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
+    ReaderTheme("natural_black_texture", "Natural Black", Color(0xFF111111), Color(0xFFE7E1D8), true, textureId = ReaderTexture.NATURAL_BLACK.id),
+    ReaderTheme("veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
+    ReaderTheme("grey_wash_texture", "Grey Wash", Color(0xFFE5E2DA), Color(0xFF202124), false, textureId = ReaderTexture.GREY_WASH.id),
+    ReaderTheme("fabric_texture", "Fabric", Color(0xFF262626), Color(0xFFE8E2D8), true, textureId = ReaderTexture.CLASSY_FABRIC.id),
+    ReaderTheme("retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
 )
 
 fun saveReaderThemeId(context: Context, themeId: String) {
@@ -2484,6 +2601,7 @@ fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {
             put("textColor", theme.textColor.toArgb())
             put("isDark", theme.isDark)
             theme.textureId?.let { put("textureId", it) }
+            put("textureAlpha", theme.textureAlpha)
         }
         jsonArray.put(obj)
     }
@@ -2506,6 +2624,7 @@ fun loadCustomThemes(context: Context): List<ReaderTheme> {
                     textColor = Color(obj.getInt("textColor")),
                     isDark = obj.getBoolean("isDark"),
                     textureId = if (obj.has("textureId")) obj.getString("textureId") else null,
+                    textureAlpha = obj.optDouble("textureAlpha", if (obj.has("textureId")) 0.55 else 0.0).toFloat().coerceIn(0f, 1f),
                     isCustom = true
                 )
             )
@@ -2539,6 +2658,11 @@ fun ReaderThemePanel(
     if (!isVisible) return
     var showBuilder by remember { mutableStateOf(false) }
     var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
+    var builderDefaultTextureId by remember { mutableStateOf<String?>(null) }
+    val plainBuiltInThemes = builtInThemes.filter { it.textureId == null }
+    val texturedBuiltInThemes = builtInThemes.filter { it.textureId != null }
+    val plainCustomThemes = customThemes.filter { it.textureId == null }
+    val texturedCustomThemes = customThemes.filter { it.textureId != null }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -2552,6 +2676,7 @@ fun ReaderThemePanel(
             if (isBuilding) {
                 ThemeBuilderView(
                     initialTheme = editingTheme,
+                    defaultTextureId = builderDefaultTextureId,
                     onSave = { newTheme ->
                         val updatedList = if (editingTheme != null) {
                             customThemes.map { if (it.id == newTheme.id) newTheme else it }
@@ -2562,10 +2687,12 @@ fun ReaderThemePanel(
                         onThemeSelected(newTheme.id)
                         showBuilder = false
                         editingTheme = null
+                        builderDefaultTextureId = null
                     },
                     onCancel = {
                         showBuilder = false
                         editingTheme = null
+                        builderDefaultTextureId = null
                     }
                 )
             } else {
@@ -2575,6 +2702,7 @@ fun ReaderThemePanel(
                         .fillMaxHeight(0.65f)
                         .padding(16.dp)
                         .padding(bottom = 16.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
                     Text(stringResource(R.string.reading_themes),
                         style = MaterialTheme.typography.titleLarge,
@@ -2592,7 +2720,7 @@ fun ReaderThemePanel(
                                 Text(stringResource(R.string.theme_preserve_image_colors), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                                 Text(stringResource(R.string.theme_preserve_image_colors_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
-                            androidx.compose.material3.Switch(
+                            Switch(
                                 checked = excludeImages,
                                 onCheckedChange = onExcludeImagesChange
                             )
@@ -2601,7 +2729,14 @@ fun ReaderThemePanel(
 
                     Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
-                    ThemeGrid(themes = builtInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
+                    ThemeGrid(themes = plainBuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
+
+                    if (texturedBuiltInThemes.isNotEmpty()) {
+                        Spacer(Modifier.height(24.dp))
+                        Text(stringResource(R.string.theme_textured_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(8.dp))
+                        ThemeGrid(themes = texturedBuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
+                    }
 
                     Spacer(Modifier.height(24.dp))
                     Row(
@@ -2610,17 +2745,59 @@ fun ReaderThemePanel(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        IconButton(onClick = { editingTheme = null; showBuilder = true }, modifier = Modifier.size(24.dp)) {
+                        IconButton(
+                            onClick = {
+                                editingTheme = null
+                                builderDefaultTextureId = null
+                                showBuilder = true
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
                             Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new), tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
 
-                    if (customThemes.isEmpty()) {
+                    if (plainCustomThemes.isEmpty()) {
                         Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         ThemeGrid(
-                            themes = customThemes,
+                            themes = plainCustomThemes,
+                            currentThemeId = currentThemeId,
+                            onThemeSelected = onThemeSelected,
+                            onEdit = { editingTheme = it; showBuilder = true },
+                            onDelete = { themeToDelete ->
+                                val updated = customThemes.filter { it.id != themeToDelete.id }
+                                onCustomThemesUpdated(updated)
+                                if (currentThemeId == themeToDelete.id) onThemeSelected("system")
+                            }
+                        )
+                    }
+
+                    Spacer(Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(stringResource(R.string.theme_my_textured_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        IconButton(
+                            onClick = {
+                                editingTheme = null
+                                builderDefaultTextureId = ReaderTexture.NATURAL_WHITE.id
+                                showBuilder = true
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new_textured), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (texturedCustomThemes.isEmpty()) {
+                        Text(stringResource(R.string.theme_no_textured_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        ThemeGrid(
+                            themes = texturedCustomThemes,
                             currentThemeId = currentThemeId,
                             onThemeSelected = onThemeSelected,
                             onEdit = { editingTheme = it; showBuilder = true },
@@ -2645,50 +2822,84 @@ fun ThemeGrid(
     onEdit: ((ReaderTheme) -> Unit)? = null,
     onDelete: ((ReaderTheme) -> Unit)? = null
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 80.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        items(themes.size) { index ->
-            val theme = themes[index]
-            val isSelected = currentThemeId == theme.id
-            val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
-            val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
-            val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        themes.chunked(3).forEach { rowThemes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .background(bgColor, CircleShape)
-                        .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
-                        .clickable { onThemeSelected(theme.id) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                rowThemes.forEach { theme ->
+                    ThemeGridItem(
+                        theme = theme,
+                        currentThemeId = currentThemeId,
+                        context = context,
+                        onThemeSelected = onThemeSelected,
+                        onEdit = onEdit,
+                        onDelete = onDelete,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                repeat(3 - rowThemes.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
 
-                if (theme.isCustom && onEdit != null && onDelete != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
-                        }
+@Composable
+private fun ThemeGridItem(
+    theme: ReaderTheme,
+    currentThemeId: String,
+    context: Context,
+    onThemeSelected: (String) -> Unit,
+    onEdit: ((ReaderTheme) -> Unit)?,
+    onDelete: ((ReaderTheme) -> Unit)?,
+    modifier: Modifier = Modifier
+) {
+    val isSelected = currentThemeId == theme.id
+    val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
+    val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val textureBitmap = remember(theme.textureId) { loadReaderTextureBitmap(context, theme.textureId) }
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .background(bgColor, CircleShape)
+                .then(textureBitmap?.let { bitmap ->
+                    Modifier.drawBehind {
+                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = theme.textureAlpha.coerceIn(0f, 1f))
                     }
+                } ?: Modifier)
+                .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
+                .clickable { onThemeSelected(theme.id) },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+        if (theme.isCustom && onEdit != null && onDelete != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -2698,13 +2909,19 @@ fun ThemeGrid(
 @Composable
 fun ThemeBuilderView(
     initialTheme: ReaderTheme?,
+    defaultTextureId: String? = null,
     onSave: (ReaderTheme) -> Unit,
     onCancel: () -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf(initialTheme?.name ?: "Custom Theme") }
     var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
     var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
-    var textureId by remember { mutableStateOf(initialTheme?.textureId) }
+    var textureId by remember { mutableStateOf(initialTheme?.textureId ?: defaultTextureId) }
+    var textureAlpha by remember { mutableFloatStateOf(initialTheme?.textureAlpha ?: 0.55f) }
+    val texturePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { importReaderTexture(context, it) }?.let { textureId = it }
+    }
 
     var editingColorType by remember { mutableStateOf<String?>(null) }
 
@@ -2742,13 +2959,11 @@ fun ThemeBuilderView(
                 color = bgColor,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
-                val context = LocalContext.current
+                val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
                 Box(modifier = Modifier.fillMaxSize().run {
-                    val texRes = ReaderTexture.entries.find { it.id == textureId }?.resId
-                    if (texRes != null) {
-                        val bmp = ImageBitmap.imageResource(context.resources, texRes)
+                    if (textureBitmap != null) {
                         this.drawBehind {
-                            drawRect(ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.5f)
+                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = textureAlpha.coerceIn(0f, 1f))
                         }
                     } else this
                 }) {
@@ -2795,6 +3010,17 @@ fun ThemeBuilderView(
                 )
             }
             Spacer(Modifier.height(16.dp))
+
+            TexturePickerSection(
+                selectedTextureId = textureId,
+                selectedTextureAlpha = textureAlpha,
+                onTextureSelected = { textureId = it },
+                onTextureAlphaChange = { textureAlpha = it },
+                onImportTexture = {
+                    texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
+                }
+            )
+            Spacer(Modifier.height(16.dp))
         }
 
         // Action Buttons at the bottom for better visibility
@@ -2808,7 +3034,7 @@ fun ThemeBuilderView(
             }
             Spacer(Modifier.width(8.dp))
             Button(onClick = {
-                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, isCustom = true))
+                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, textureAlpha = if (textureId == null) 0f else textureAlpha, isCustom = true))
             }) {
                 Text(stringResource(R.string.action_save), color = MaterialTheme.colorScheme.onPrimary)
             }
@@ -2827,6 +3053,112 @@ fun ThemeBuilderView(
                 if (type == "bg") bgColor = newColor else txtColor = newColor
             }
         )
+    }
+}
+
+@Composable
+private fun TexturePickerSection(
+    selectedTextureId: String?,
+    selectedTextureAlpha: Float,
+    onTextureSelected: (String?) -> Unit,
+    onTextureAlphaChange: (Float) -> Unit,
+    onImportTexture: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.theme_texture), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            TextureChoice(
+                label = stringResource(R.string.theme_texture_none),
+                textureId = null,
+                selectedTextureId = selectedTextureId,
+                onTextureSelected = onTextureSelected,
+                modifier = Modifier.weight(1f)
+            )
+            TextureChoice(
+                label = stringResource(R.string.theme_texture_upload),
+                textureId = selectedTextureId?.takeIf { it.startsWith(TEXTURE_FILE_PREFIX) },
+                selectedTextureId = selectedTextureId,
+                onTextureSelected = { onImportTexture() },
+                isUpload = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        ReaderTexture.entries.filter { it.assetPath != null }.chunked(2).forEach { rowTextures ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                rowTextures.forEach { texture ->
+                    TextureChoice(
+                        label = texture.displayName,
+                        textureId = texture.id,
+                        selectedTextureId = selectedTextureId,
+                        onTextureSelected = onTextureSelected,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (rowTextures.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        AnimatedVisibility(visible = selectedTextureId != null) {
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(stringResource(R.string.theme_texture_transparency), style = MaterialTheme.typography.labelMedium)
+                    Text("${((1f - selectedTextureAlpha) * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                Slider(
+                    value = 1f - selectedTextureAlpha,
+                    onValueChange = { onTextureAlphaChange((1f - it).coerceIn(0f, 1f)) },
+                    valueRange = 0f..1f
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureChoice(
+    label: String,
+    textureId: String?,
+    selectedTextureId: String?,
+    onTextureSelected: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+    isUpload: Boolean = false,
+) {
+    val context = LocalContext.current
+    val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
+    val selected = if (isUpload) selectedTextureId?.startsWith(TEXTURE_FILE_PREFIX) == true else selectedTextureId == textureId
+    Surface(
+        onClick = { onTextureSelected(textureId) },
+        modifier = modifier.height(52.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (selected) 0.95f else 0.45f),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(textureBitmap?.let { bitmap ->
+                    Modifier.drawBehind {
+                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.6f)
+                    }
+                } ?: Modifier)
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (isUpload && selectedTextureId?.startsWith(TEXTURE_FILE_PREFIX) == true) {
+                    readerTextureDisplayName(selectedTextureId)
+                } else label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -3442,7 +3774,9 @@ fun AiResultContentView(
                             stringResource(R.string.ai_cache_hit_free)
                         } else if (result.cost != null) {
                             if (result.cost == 0.0 && result.freeRemaining != null) {
-                                stringResource(R.string.ai_generated_free_remaining, result.freeRemaining ?: 0)
+                                stringResource(R.string.ai_generated_free_remaining,
+                                    result.freeRemaining
+                                )
                             } else {
                                 stringResource(R.string.ai_generated_cost, result.cost.toString())
                             }

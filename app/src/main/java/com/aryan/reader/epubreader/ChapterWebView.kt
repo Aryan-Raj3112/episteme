@@ -26,10 +26,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
-import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -83,13 +81,12 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
 import com.aryan.reader.R
-import com.aryan.reader.ReaderTexture
+import com.aryan.reader.getReaderTextureDataUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.BufferedReader
-import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 
 private const val TAG_LINK_NAV = "LINK_NAV"
@@ -387,7 +384,8 @@ fun ChapterWebView(
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
     onInternalLinkClick: (String) -> Unit,
-    activeTextureId: String? = null
+    activeTextureId: String? = null,
+    activeTextureAlpha: Float = 0.55f
 ) {
     Timber.d(
         "RenderChapterViaWebView for '$chapterTitle', Key: $key, isDarkTheme: $isDarkTheme, initialScrollTarget: $initialScrollTarget"
@@ -407,17 +405,8 @@ fun ChapterWebView(
 
     val textureBase64 by remember(activeTextureId) {
         mutableStateOf(
-            activeTextureId?.let { id ->
-                ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
-                    val bmp = BitmapFactory.decodeResource(context.resources, resId)
-                    val out = ByteArrayOutputStream()
-                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
-                    "data:image/png;base64," + Base64.encodeToString(
-                        out.toByteArray(),
-                        Base64.NO_WRAP
-                    )
-                }
-            })
+            getReaderTextureDataUri(context, activeTextureId)
+        )
     }
 
     val currentOnSnippetForBookmarkReady by rememberUpdatedState(onSnippetForBookmarkReady)
@@ -477,10 +466,10 @@ fun ChapterWebView(
 
     Box(modifier = modifier.fillMaxSize()) {
 
-        LaunchedEffect(isDarkTheme, effectiveBg, effectiveText, textureBase64) {
+        LaunchedEffect(isDarkTheme, effectiveBg, effectiveText, textureBase64, activeTextureAlpha) {
             val bgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
             val textHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
-            localWebViewRef?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"});", null)
+            localWebViewRef?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"}, ${activeTextureAlpha.coerceIn(0f, 1f)});", null)
         }
 
         key(
@@ -739,7 +728,7 @@ fun ChapterWebView(
                             val bgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
                             val textHex =
                                 String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
-                            view?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"});",
+                            view?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"}, ${activeTextureAlpha.coerceIn(0f, 1f)});",
                                 null)
 
                             val fragmentsJson = org.json.JSONArray(tocFragments).toString()

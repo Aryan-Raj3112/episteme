@@ -148,7 +148,7 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.R
-import com.aryan.reader.ReaderTexture
+import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epubreader.HighlightColor
@@ -755,7 +755,8 @@ fun PaginatedReaderScreen(
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
-    activeTextureId: String? = null
+    activeTextureId: String? = null,
+    activeTextureAlpha: Float = 0.55f
 ) {
     LaunchedEffect(userHighlights) {
         Timber.d("PaginatedReaderScreen: Received ${userHighlights.size} highlights.")
@@ -766,11 +767,7 @@ fun PaginatedReaderScreen(
 
     val context = LocalContext.current
     val textureBitmap = remember(activeTextureId) {
-        activeTextureId?.let { id ->
-            ReaderTexture.entries.find { it.id == id }?.resId?.let { resId ->
-                ImageBitmap.imageResource(context.resources, resId)
-            }
-        }
+        loadReaderTextureBitmap(context, activeTextureId)
     }
 
     val textureModifier = if (textureBitmap != null) {
@@ -778,7 +775,7 @@ fun PaginatedReaderScreen(
             val brush = ShaderBrush(
                 ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)
             )
-            drawRect(brush = brush, blendMode = BlendMode.Multiply, alpha = 0.6f)
+            drawRect(brush = brush, blendMode = BlendMode.Multiply, alpha = activeTextureAlpha.coerceIn(0f, 1f))
         }
     } else Modifier
 
