@@ -39,6 +39,8 @@ private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 private const val PDF_THEME_KEY = "pdf_reader_theme"
 private const val PDF_KEEP_SCREEN_ON_KEY = "pdf_keep_screen_on_enabled"
 private const val PDF_HIDDEN_TOOLS_KEY = "pdf_hidden_tools"
+private const val PDF_TOOL_ORDER_KEY = "pdf_tool_order"
+private const val PDF_BOTTOM_TOOLS_KEY = "pdf_bottom_tools"
 private const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 
@@ -87,6 +89,32 @@ internal fun loadPdfHiddenTools(context: Context): Set<String> {
 internal fun savePdfHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putStringSet(PDF_HIDDEN_TOOLS_KEY, hiddenTools) }
+}
+
+internal fun loadPdfToolOrder(context: Context): List<PdfReaderTool> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val savedTools = prefs.getString(PDF_TOOL_ORDER_KEY, null)
+        ?.split(',')
+        ?.filter { it.isNotBlank() }
+        ?.mapNotNull { name -> PdfReaderTool.entries.firstOrNull { it.name == name } }
+        .orEmpty()
+    return (savedTools + PdfReaderTool.entries.filterNot { it in savedTools }).distinct()
+}
+
+internal fun savePdfToolOrder(context: Context, toolOrder: List<PdfReaderTool>) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_TOOL_ORDER_KEY, toolOrder.joinToString(",") { it.name }) }
+}
+
+internal fun loadPdfBottomTools(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val defaultBottomTools = PdfReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+    return prefs.getStringSet(PDF_BOTTOM_TOOLS_KEY, defaultBottomTools) ?: defaultBottomTools
+}
+
+internal fun savePdfBottomTools(context: Context, bottomTools: Set<String>) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(PDF_BOTTOM_TOOLS_KEY, bottomTools) }
 }
 
 internal fun loadCustomHighlightColors(context: Context): Map<PdfHighlightColor, Color> {

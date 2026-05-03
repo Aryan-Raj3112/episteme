@@ -222,6 +222,8 @@ private const val AUTO_SCROLL_LOCAL_MAX_PREFIX = "auto_scroll_local_max_"
 private const val MUSICIAN_MODE_KEY = "musician_mode_enabled"
 private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
 private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
+private const val TOOL_ORDER_KEY = "reader_tool_order"
+private const val BOTTOM_TOOLS_KEY = "reader_bottom_tools"
 private const val TTS_LOCATE_REASON_INITIAL_RESTORE = "initial_restore"
 private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
@@ -272,6 +274,34 @@ private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
 private fun loadHiddenTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
+}
+
+private fun saveToolOrder(context: Context, toolOrder: List<ReaderTool>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(TOOL_ORDER_KEY, toolOrder.joinToString(",") { it.name }) }
+}
+
+private fun loadToolOrder(context: Context): List<ReaderTool> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    val savedTools = prefs.getString(TOOL_ORDER_KEY, null)
+        ?.split(',')
+        ?.filter { it.isNotBlank() }
+        ?.mapNotNull { name -> ReaderTool.entries.firstOrNull { it.name == name } }
+        .orEmpty()
+    return (savedTools + ReaderTool.entries.filterNot { it in savedTools }).distinct()
+}
+
+private fun saveBottomTools(context: Context, bottomTools: Set<String>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(BOTTOM_TOOLS_KEY, bottomTools) }
+}
+
+private fun loadBottomTools(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getStringSet(
+        BOTTOM_TOOLS_KEY,
+        ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+    ) ?: ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
 }
 
 private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
@@ -779,6 +809,8 @@ fun EpubReaderHost(
     }
 
     var hiddenTools by remember { mutableStateOf(loadHiddenTools(context)) }
+    var toolOrder by remember { mutableStateOf(loadToolOrder(context)) }
+    var bottomTools by remember { mutableStateOf(loadBottomTools(context)) }
     var showCustomizeToolsSheet by remember { mutableStateOf(false) }
 
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
@@ -4481,6 +4513,8 @@ fun EpubReaderHost(
                     volumeScrollEnabled = volumeScrollEnabled,
                     isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
                     hiddenTools = hiddenTools,
+                    toolOrder = toolOrder,
+                    bottomTools = bottomTools,
                     onCustomizeTools = { showCustomizeToolsSheet = true },
                     onNavigateBack = { triggerSaveAndExit() },
                     isKeepScreenOn = isKeepScreenOn,
@@ -4561,6 +4595,71 @@ fun EpubReaderHost(
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
                     onOpenVisualOptions = { showVisualOptionsSheet = true },
+                    onOpenAiHub = { showAiHubSheet = true },
+                    onOpenSlider = {
+                        when (currentRenderMode) {
+                            RenderMode.VERTICAL_SCROLL -> {
+                                sliderStartPage = currentPageInChapter
+                                sliderCurrentPage = currentPageInChapter.toFloat()
+                                isPageSliderVisible = true
+                                showBars = false
+                                scope.launch {
+                                    webViewRefForTts?.let { webView ->
+                                        startPageThumbnail = captureWebViewVisibleArea(webView)
+                                    }
+                                }
+                            }
+                            RenderMode.PAGINATED -> {
+                                if (paginatedPagerState.pageCount > 0) {
+                                    sliderStartPage = paginatedPagerState.currentPage + 1
+                                    sliderCurrentPage = (paginatedPagerState.currentPage + 1).toFloat()
+                                    isPageSliderVisible = true
+                                    showBars = false
+                                    startPageThumbnail = null
+                                } else {
+                                    bannerMessage = BannerMessage("Book is not paginated yet.")
+                                }
+                            }
+                        }
+                    },
+                    onOpenDrawer = {
+                        scope.launch { drawerState.open() }
+                    },
+                    onToggleFormat = {
+                        showFormatAdjustmentBars = !showFormatAdjustmentBars
+                        if (showFormatAdjustmentBars) {
+                            searchState.showSearchResultsPanel = false
+                            isPageSliderVisible = false
+                        }
+                    },
+                    onToggleSearch = {
+                        searchState.isSearchActive = true
+                        searchState.showSearchResultsPanel = true
+                        showBars = true
+                        showFormatAdjustmentBars = false
+                    },
+                    onToggleTts = {
+                        if (isTtsSessionActive) {
+                            Timber.d("TTS button clicked: Stopping TTS")
+                            userStoppedTts = true
+                            ttsController.stop()
+                        } else {
+                            when {
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) == PackageManager.PERMISSION_GRANTED -> {
+                                    startTts()
+                                }
+                                activity?.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) == true -> {
+                                    showPermissionRationaleDialog = true
+                                }
+                                else -> {
+                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            }
+                        }
+                    },
                     onToggleReflow = if (onToggleReflow != null) {
                         {
                             val activeChapter = if (currentRenderMode == RenderMode.PAGINATED) {
@@ -4726,8 +4825,12 @@ fun EpubReaderHost(
                     ttsState = ttsState,
                     isProUser = isProUser,
                     hiddenTools = hiddenTools,
+                    toolOrder = toolOrder,
+                    bottomTools = bottomTools,
                     currentTtsMode = currentTtsMode,
                     onOpenAiHub = { showAiHubSheet = true },
+                    onOpenDictionarySettings = { showDictionarySettingsSheet = true },
+                    onOpenThemeSettings = { showThemePanel = true },
                     onOpenSlider = {
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
@@ -5124,9 +5227,19 @@ fun EpubReaderHost(
         if (showCustomizeToolsSheet) {
             CustomizeToolsSheet(
                 hiddenTools = hiddenTools,
+                toolOrder = toolOrder,
+                bottomTools = bottomTools,
                 onUpdate = { newHiddenSet ->
                     hiddenTools = newHiddenSet
                     saveHiddenTools(context, newHiddenSet)
+                },
+                onOrderUpdate = { newOrder ->
+                    toolOrder = newOrder
+                    saveToolOrder(context, newOrder)
+                },
+                onPlacementUpdate = { newBottomTools ->
+                    bottomTools = newBottomTools
+                    saveBottomTools(context, newBottomTools)
                 },
                 onDismiss = { showCustomizeToolsSheet = false }
             )
