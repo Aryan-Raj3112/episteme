@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @Composable
@@ -68,6 +69,9 @@ fun MagnifierComposable(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val magnifierWidthPx = size.width
             val magnifierHeightPx = size.height
+            if (magnifierWidthPx <= 0f || magnifierHeightPx <= 0f || zoomFactor <= 0f) {
+                return@Canvas
+            }
 
             Timber.d("Magnifier: START. scale=$currentScale, centerOnBitmap=$magnifierCenterOnBitmap")
 
@@ -109,8 +113,10 @@ fun MagnifierComposable(
                 val srcTop = (centerInTileBitmap.y - sourceRectHeight / 2f)
                 Timber.d("Magnifier: Calculated source top-left=($srcLeft, $srcTop)")
 
-                val clampedSrcLeft = srcLeft.coerceIn(0f, bitmapToUse.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
-                val clampedSrcTop = srcTop.coerceIn(0f, bitmapToUse.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
+                val maxSrcLeft = max(0f, bitmapToUse.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
+                val maxSrcTop = max(0f, bitmapToUse.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
+                val clampedSrcLeft = srcLeft.coerceIn(0f, maxSrcLeft)
+                val clampedSrcTop = srcTop.coerceIn(0f, maxSrcTop)
                 Timber.d("Magnifier: Clamped source top-left=($clampedSrcLeft, $clampedSrcTop)")
 
                 val finalSrcLeftInt = clampedSrcLeft.roundToInt()
@@ -174,8 +180,10 @@ fun MagnifierComposable(
                 val srcTop = (magnifierCenterOnBitmap.y - sourceRectHeight / 2f)
                 Timber.d("Magnifier: Calculated source top-left=($srcLeft, $srcTop)")
 
-                val clampedSrcLeft = srcLeft.coerceIn(0f, sourceBitmap.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
-                val clampedSrcTop = srcTop.coerceIn(0f, sourceBitmap.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
+                val maxSrcLeft = max(0f, sourceBitmap.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
+                val maxSrcTop = max(0f, sourceBitmap.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
+                val clampedSrcLeft = srcLeft.coerceIn(0f, maxSrcLeft)
+                val clampedSrcTop = srcTop.coerceIn(0f, maxSrcTop)
                 Timber.d("Magnifier: Clamped source top-left=($clampedSrcLeft, $clampedSrcTop)")
 
                 val finalSrcLeftInt = clampedSrcLeft.roundToInt()

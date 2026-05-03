@@ -1958,11 +1958,11 @@ private fun FolderSyncScreen(
         }
     }
 
-    if (editingFolder != null) {
+    editingFolder?.let { folder ->
         EditFolderFiltersDialog(
-            folder = editingFolder!!,
+            folder = folder,
             onConfirm = { newFilters ->
-                onEditFolderFiltersClick(editingFolder!!, newFilters)
+                onEditFolderFiltersClick(folder, newFilters)
                 editingFolder = null
             },
             onDismiss = { editingFolder = null }

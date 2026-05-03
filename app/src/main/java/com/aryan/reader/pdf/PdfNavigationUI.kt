@@ -84,7 +84,9 @@ fun VerticalScrollbar(
 
             if (viewportRatio >= 1f) return@derivedStateOf null
 
-            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(80f, viewportHeight / 2)
+            val maxThumbHeight = viewportHeight / 2f
+            val minThumbHeight = minOf(80f, maxThumbHeight)
+            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(minThumbHeight, maxThumbHeight)
 
             val firstItemIndex = listState.firstVisibleItemIndex
             val firstItemOffset = listState.firstVisibleItemScrollOffset

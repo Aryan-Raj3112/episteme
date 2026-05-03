@@ -179,7 +179,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _prefsUpdateFlow = MutableStateFlow(0L)
     private val prefsListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val feedbackRepository = FeedbackRepository(appContext)
-    private val libraryStateProjector = LibraryStateProjector(AndroidFolderPathResolver(appContext))
+    private val libraryStateProjector = LibraryStateProjector(AndroidFolderPathResolver())
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
     private val epubRecoveryMutex = Mutex()

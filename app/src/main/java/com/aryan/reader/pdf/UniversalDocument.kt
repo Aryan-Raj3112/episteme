@@ -28,6 +28,7 @@ import me.zhanghai.android.libarchive.ArchiveException
 import okhttp3.Request
 import timber.log.Timber
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipFile
 import androidx.core.graphics.createBitmap
 
@@ -95,17 +96,36 @@ object DocumentFactory {
 
 // ================= PDF IMPLEMENTATION =================
 
+private inline fun closePdfiumResource(tag: String, closeBlock: () -> Unit) {
+    try {
+        closeBlock()
+    } catch (e: IllegalStateException) {
+        if (e.message == "Already closed") {
+            Timber.tag(tag).d(e, "Ignoring duplicate Pdfium close")
+        } else {
+            throw e
+        }
+    }
+}
+
 class PdfDocumentWrapper(val pdfDocument: PdfDocumentKt) : ReaderDocument {
+    private val isClosed = AtomicBoolean(false)
+
     override suspend fun getPageCount() = pdfDocument.getPageCount()
     override suspend fun openPage(pageIndex: Int): ReaderPage? {
         val page = pdfDocument.openPage(pageIndex) ?: return null
         return PdfPageWrapper(page)
     }
     override suspend fun getTableOfContents() = pdfDocument.getFixedTableOfContents()
-    override fun close() { pdfDocument.close() }
+    override fun close() {
+        if (!isClosed.compareAndSet(false, true)) return
+        closePdfiumResource("PdfDocumentWrapper") { pdfDocument.close() }
+    }
 }
 
 class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
+    private val isClosed = AtomicBoolean(false)
+
     override suspend fun getPageWidthPoint() = pdfPage.getPageWidthPoint()
     override suspend fun getPageHeightPoint() = pdfPage.getPageHeightPoint()
     override suspend fun getPageRotation() = pdfPage.getPageRotation()
@@ -159,10 +179,15 @@ class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
         return 0L
     }
 
-    override fun close() { pdfPage.close() }
+    override fun close() {
+        if (!isClosed.compareAndSet(false, true)) return
+        closePdfiumResource("PdfPageWrapper") { pdfPage.close() }
+    }
 }
 
 class PdfTextPageWrapper(private val textPage: PdfTextPageKt) : ReaderTextPage {
+    private val isClosed = AtomicBoolean(false)
+
     override suspend fun textPageCountChars() = textPage.textPageCountChars()
     override suspend fun textPageGetText(startIndex: Int, count: Int) = textPage.textPageGetText(startIndex, count)
     override suspend fun textPageGetRectsForRanges(ranges: IntArray) = textPage.textPageGetRectsForRanges(ranges)?.map { ReaderTextRect(it.rect) }
@@ -174,14 +199,22 @@ class PdfTextPageWrapper(private val textPage: PdfTextPageKt) : ReaderTextPage {
     override suspend fun loadWebLink(): ReaderWebLinks? {
         val links = textPage.loadWebLink() ?: return null
         return object : ReaderWebLinks {
+            private val isClosed = AtomicBoolean(false)
+
             override suspend fun countWebLinks() = links.countWebLinks()
             override suspend fun getURL(linkIndex: Int, maxLength: Int) = links.getURL(linkIndex, maxLength)
             override suspend fun countRects(linkIndex: Int) = links.countRects(linkIndex)
             override suspend fun getRect(linkIndex: Int, rectIndex: Int) = links.getRect(linkIndex, rectIndex)
-            override fun close() { links.close() }
+            override fun close() {
+                if (!isClosed.compareAndSet(false, true)) return
+                closePdfiumResource("PdfWebLinksWrapper") { links.close() }
+            }
         }
     }
-    override fun close() { textPage.close() }
+    override fun close() {
+        if (!isClosed.compareAndSet(false, true)) return
+        closePdfiumResource("PdfTextPageWrapper") { textPage.close() }
+    }
 }
 
 // ================= CBZ, CBR, CB7 IMPLEMENTATION =================
