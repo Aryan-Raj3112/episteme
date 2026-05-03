@@ -642,5 +642,4 @@
     <string name="pen_playground">Kalem Test Alanı</string>
     <string name="msg_indexing_pages_progress">Sayfalar dizinleniyor…%%%1$d bitti. Arama sonuçları otomatik olarak güncellenecek.</string>
     <string name="content_desc_show_dock">Araç Çubuğunu Göster</string>
-    <string name="protect_screencapture">Ekran Görüntüsü Koruması</string>
 </resources>

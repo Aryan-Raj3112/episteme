@@ -14,5 +14,4 @@
     <string name="active_tabs">Pestañas Activas</string>
     <string name="close_all_tabs">Cerrar todas las pastañas</string>
     <string name="dialog_close_all_tabs">¿Quieres cerrar todas las pastañas?</string>
-    <string name="protect_screencapture">Proteger captura de pantalla</string>
 </resources>

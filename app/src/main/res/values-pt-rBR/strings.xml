@@ -27,5 +27,4 @@
     <string name="pin_unpin">Fixar/Desfixar</string>
     <string name="internal_storage">Armazenamento Interno</string>
     <string name="clear_cloud_data_desc">Tem certeza de que deseja excluir permanentemente todos os seus dados de livro da nuvem? Isso também irá limpar sua biblioteca local para evitar a reinscrição. Esta ação não pode ser desfeita.</string>
-    <string name="protect_screencapture">Proteger captura de tela</string>
 </resources>
