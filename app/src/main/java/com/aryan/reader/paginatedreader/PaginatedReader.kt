@@ -252,6 +252,12 @@ private fun headerFontScale(level: Int): Float = when (level) {
     else -> 1.0f
 }
 
+private const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
+
+private fun paginationLineHeightMultiplierForWebViewSetting(multiplier: Float): Float {
+    return if (abs(multiplier - 1.0f) < 0.001f) WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER else multiplier
+}
+
 private fun createHeaderTextStyle(
     baseStyle: TextStyle,
     level: Int,
@@ -819,7 +825,7 @@ fun PaginatedReaderScreen(
             debouncedFontFamily
         ) {
             val adjustedFontSize = baseTextStyle.fontSize * debouncedFontSizeMult
-            val adjustedLineHeight = adjustedFontSize * debouncedLineHeightMult
+            val adjustedLineHeight = adjustedFontSize * paginationLineHeightMultiplierForWebViewSetting(debouncedLineHeightMult)
 
             baseTextStyle.copy(
                 color = effectiveText,
