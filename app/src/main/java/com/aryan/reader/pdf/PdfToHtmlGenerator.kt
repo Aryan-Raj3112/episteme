@@ -34,7 +34,9 @@ object PdfToHtmlGenerator {
         }
 
         try {
-            val doc = pdfiumCore.newDocument(pfd)
+            val doc = PdfiumEngineProvider.withPdfium {
+                pdfiumCore.newDocument(pfd)
+            }
             val totalPages = doc.getPageCount()
             Timber.tag(TAG).d("Document loaded. Total pages: $totalPages")
 
@@ -56,7 +58,9 @@ object PdfToHtmlGenerator {
                 writer.write(buildGlobalHtmlFooter())
             }
 
-            doc.close()
+            PdfiumEngineProvider.withPdfium {
+                doc.close()
+            }
             pfd.close()
             Timber.tag(TAG).d("generateHtmlFile SUCCESS | ${System.currentTimeMillis() - t0}ms")
             return@withContext true

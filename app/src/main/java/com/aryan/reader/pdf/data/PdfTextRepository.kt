@@ -34,6 +34,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.flatMap
 import com.aryan.reader.SearchResult
+import com.aryan.reader.pdf.PdfiumEngineProvider
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -171,13 +172,15 @@ class PdfTextRepository(context: Context) {
             var ocrUsed = false
 
             try {
-                document.openPage(pageIndex)?.use { page ->
-                    page.openTextPage().use { textPage ->
-                        val count = textPage.textPageCountChars()
-                        if (count > 0) {
-                            val nativeText = textPage.textPageGetText(0, count)
-                            if (!nativeText.isNullOrBlank()) {
-                                text = nativeText
+                PdfiumEngineProvider.withPdfium {
+                    document.openPage(pageIndex)?.use { page ->
+                        page.openTextPage().use { textPage ->
+                            val count = textPage.textPageCountChars()
+                            if (count > 0) {
+                                val nativeText = textPage.textPageGetText(0, count)
+                                if (!nativeText.isNullOrBlank()) {
+                                    text = nativeText
+                                }
                             }
                         }
                     }
@@ -187,26 +190,35 @@ class PdfTextRepository(context: Context) {
             }
 
             if (text.isBlank()) {
+                var bitmap: android.graphics.Bitmap? = null
                 try {
-                    document.openPage(pageIndex)?.use { page ->
-                        val targetWidth = 1080
-                        val ptrWidth = page.getPageWidthPoint()
-                        val ptrHeight = page.getPageHeightPoint()
+                    PdfiumEngineProvider.withPdfium {
+                        document.openPage(pageIndex)?.use { page ->
+                            val targetWidth = 1080
+                            val ptrWidth = page.getPageWidthPoint()
+                            val ptrHeight = page.getPageHeightPoint()
 
-                        if (ptrWidth > 0 && ptrHeight > 0) {
-                            val aspectRatio = ptrWidth.toFloat() / ptrHeight.toFloat()
-                            val targetHeight = (targetWidth / aspectRatio).toInt().coerceAtLeast(1)
+                            if (ptrWidth > 0 && ptrHeight > 0) {
+                                val aspectRatio = ptrWidth.toFloat() / ptrHeight.toFloat()
+                                val targetHeight = (targetWidth / aspectRatio).toInt().coerceAtLeast(1)
 
-                            val bitmap = createBitmap(targetWidth, targetHeight)
-                            page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, false)
-
-                            val visionText = OcrHelper.extractTextFromBitmap(bitmap, onOcrModelDownloading)
+                                bitmap = createBitmap(targetWidth, targetHeight)
+                                page.renderPageBitmap(bitmap!!, 0, 0, targetWidth, targetHeight, false)
+                            }
+                        }
+                    }
+                    bitmap?.let {
+                        try {
+                            val visionText = OcrHelper.extractTextFromBitmap(it, onOcrModelDownloading)
                             text = visionText?.text ?: ""
-                            bitmap.recycle()
                             ocrUsed = true
+                        } finally {
+                            it.recycle()
+                            bitmap = null
                         }
                     }
                 } catch (e: Exception) {
+                    bitmap?.recycle()
                     Timber.tag(TAG).e(e, "OCR failed for page $pageIndex")
                 }
             }
@@ -270,11 +282,13 @@ class PdfTextRepository(context: Context) {
     suspend fun hasNativeText(document: PdfDocumentKt, pageIndex: Int): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                document.openPage(pageIndex)?.use { page ->
-                    page.openTextPage().use { textPage ->
-                        textPage.textPageCountChars() > 0
-                    }
-                } ?: false
+                PdfiumEngineProvider.withPdfium {
+                    document.openPage(pageIndex)?.use { page ->
+                        page.openTextPage().use { textPage ->
+                            textPage.textPageCountChars() > 0
+                        }
+                    } ?: false
+                }
             } catch (_: Exception) {
                 false
             }

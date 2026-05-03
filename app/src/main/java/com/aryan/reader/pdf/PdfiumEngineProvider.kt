@@ -1,69 +1,120 @@
 package com.aryan.reader.pdf
 
 import com.aryan.reader.shared.pdf.PdfiumBridge
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal object PdfiumEngineProvider {
+    private val pdfiumMutex = Mutex()
+
     val bridge: PdfiumBridge
         get() = AndroidPdfiumBridge
 
     val lock: Any = this
+
+    suspend fun <T> withPdfium(block: suspend () -> T): T =
+        pdfiumMutex.withLock { block() }
+
+    fun <T> withPdfiumBlocking(block: () -> T): T =
+        runBlocking {
+            pdfiumMutex.withLock { block() }
+        }
 }
 
 private object AndroidPdfiumBridge : PdfiumBridge {
     override fun getFontSize(textPagePtr: Long, index: Int): Double =
-        NativePdfiumBridge.getFontSize(textPagePtr, index)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getFontSize(textPagePtr, index)
+        }
 
     override fun getFontWeight(textPagePtr: Long, index: Int): Int =
-        NativePdfiumBridge.getFontWeight(textPagePtr, index)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getFontWeight(textPagePtr, index)
+        }
 
     override fun getPageFontSizes(textPagePtr: Long, count: Int): FloatArray? =
-        NativePdfiumBridge.getPageFontSizes(textPagePtr, count)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageFontSizes(textPagePtr, count)
+        }
 
     override fun getPageFontWeights(textPagePtr: Long, count: Int): IntArray? =
-        NativePdfiumBridge.getPageFontWeights(textPagePtr, count)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageFontWeights(textPagePtr, count)
+        }
 
     override fun getPageFontFlags(textPagePtr: Long, count: Int): IntArray? =
-        NativePdfiumBridge.getPageFontFlags(textPagePtr, count)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageFontFlags(textPagePtr, count)
+        }
 
     override fun getPageCharBoxes(textPagePtr: Long, count: Int): FloatArray? =
-        NativePdfiumBridge.getPageCharBoxes(textPagePtr, count)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageCharBoxes(textPagePtr, count)
+        }
 
     override fun getAnnotCount(pagePtr: Long): Int =
-        NativePdfiumBridge.getAnnotCount(pagePtr)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotCount(pagePtr)
+        }
 
     override fun getAnnotSubtype(pagePtr: Long, index: Int): Int =
-        NativePdfiumBridge.getAnnotSubtype(pagePtr, index)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotSubtype(pagePtr, index)
+        }
 
     override fun getAnnotRect(pagePtr: Long, index: Int): FloatArray? =
-        NativePdfiumBridge.getAnnotRect(pagePtr, index)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotRect(pagePtr, index)
+        }
 
     override fun getAnnotString(pagePtr: Long, index: Int, key: String): String? =
-        NativePdfiumBridge.getAnnotString(pagePtr, index, key)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotString(pagePtr, index, key)
+        }
 
     override fun getPageObjectCount(pagePtr: Long): Int =
-        NativePdfiumBridge.getPageObjectCount(pagePtr)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageObjectCount(pagePtr)
+        }
 
     override fun getPageObjectType(pagePtr: Long, index: Int): Int =
-        NativePdfiumBridge.getPageObjectType(pagePtr, index)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageObjectType(pagePtr, index)
+        }
 
     override fun getPageObjectBoundingBox(pagePtr: Long, index: Int, outRect: FloatArray): Boolean =
-        NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, index, outRect)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, index, outRect)
+        }
 
     override fun extractImagePixels(pagePtr: Long, index: Int, dimens: IntArray): IntArray? =
-        NativePdfiumBridge.extractImagePixels(pagePtr, index, dimens)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.extractImagePixels(pagePtr, index, dimens)
+        }
 
     override fun performClick(pagePtr: Long, x: Double, y: Double): Boolean =
-        NativePdfiumBridge.performClick(pagePtr, x, y)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.performClick(pagePtr, x, y)
+        }
 
     override fun getLinkInfoAtPoint(docPtr: Long, pagePtr: Long, x: Double, y: Double): String? =
-        NativePdfiumBridge.getLinkInfoAtPoint(docPtr, pagePtr, x, y)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getLinkInfoAtPoint(docPtr, pagePtr, x, y)
+        }
 
     override fun getAnnotSubtypeAtPoint(pagePtr: Long, x: Double, y: Double): Int =
-        NativePdfiumBridge.getAnnotSubtypeAtPoint(pagePtr, x, y)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotSubtypeAtPoint(pagePtr, x, y)
+        }
 
     override fun getAnnotRectAtPoint(pagePtr: Long, x: Double, y: Double): FloatArray? =
-        NativePdfiumBridge.getAnnotRectAtPoint(pagePtr, x, y)
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.getAnnotRectAtPoint(pagePtr, x, y)
+        }
 
     override fun checkActionSupport(): Boolean =
-        NativePdfiumBridge.checkActionSupport()
+        PdfiumEngineProvider.withPdfiumBlocking {
+            NativePdfiumBridge.checkActionSupport()
+        }
 }

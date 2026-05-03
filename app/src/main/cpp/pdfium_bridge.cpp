@@ -52,7 +52,7 @@ static FPDFLink_GetDest_t get_dest_func = nullptr;
 static FPDFAction_GetDest_t get_action_dest_func = nullptr;
 static FPDFDest_GetDestPageIndex_t get_dest_page_index_func = nullptr;
 static FPDFAction_GetFilePath_t get_file_path_func = nullptr;
-static std::mutex g_pdfium_mutex;
+static std::recursive_mutex g_pdfium_mutex;
 static FPDFLink_GetAnnot_t get_link_annot_func = nullptr;
 static FPDFLink_GetAction_t get_link_action_func = nullptr;
 static FPDFAction_GetType_t get_action_type_func = nullptr;
@@ -169,20 +169,23 @@ static bool init_pdfium() {
 
 extern "C" JNIEXPORT jdouble JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getFontSize(JNIEnv *env, jclass clazz, jlong textPagePtr, jint index) {
-    if (!init_pdfium() || !get_font_size_func) return 0.0;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_font_size_func || textPagePtr == 0 || index < 0) return 0.0;
     return get_font_size_func(reinterpret_cast<void*>(textPagePtr), index);
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getFontWeight(JNIEnv *env, jclass clazz, jlong textPagePtr, jint index) {
-    if (!init_pdfium() || !get_font_weight_func) return 0;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_font_weight_func || textPagePtr == 0 || index < 0) return 0;
     return get_font_weight_func(reinterpret_cast<void*>(textPagePtr), index);
 }
 
 // Bulk extraction for blazing fast formatting processing
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontSizes(JNIEnv *env, jclass clazz, jlong textPagePtr, jint count) {
-    if (!init_pdfium() || !get_font_size_func || count <= 0) return nullptr;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_font_size_func || textPagePtr == 0 || count <= 0) return nullptr;
 
     jfloatArray result = env->NewFloatArray(count);
     jfloat *fill = new jfloat[count];
@@ -196,7 +199,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontSizes(JNIEnv *env, jclas
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontWeights(JNIEnv *env, jclass clazz, jlong textPagePtr, jint count) {
-    if (!init_pdfium() || !get_font_weight_func || count <= 0) return nullptr;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_font_weight_func || textPagePtr == 0 || count <= 0) return nullptr;
 
     jintArray result = env->NewIntArray(count);
     jint *fill = new jint[count];
@@ -210,7 +214,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontWeights(JNIEnv *env, jcl
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontFlags(JNIEnv *env, jclass clazz, jlong textPagePtr, jint count) {
-    if (!init_pdfium() || !get_font_info_func || count <= 0) return nullptr;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_font_info_func || textPagePtr == 0 || count <= 0) return nullptr;
 
     jintArray result = env->NewIntArray(count);
     jint *fill = new jint[count];
@@ -226,7 +231,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageFontFlags(JNIEnv *env, jclas
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageCharBoxes(JNIEnv *env, jclass clazz, jlong textPagePtr, jint count) {
-    if (!init_pdfium() || !get_char_box_func || count <= 0) return nullptr;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_char_box_func || textPagePtr == 0 || count <= 0) return nullptr;
 
     const int stride = 4;
     jfloatArray result = env->NewFloatArray(count * stride);
@@ -247,7 +253,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageCharBoxes(JNIEnv *env, jclas
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jstring key) {
-    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_func || !get_annot_string_func || pagePtr == 0) return nullptr;
 
     void* page = reinterpret_cast<void*>(pagePtr);
@@ -294,24 +300,23 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass 
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectCount(JNIEnv *env, jclass clazz, jlong pagePtr) {
-    if (!init_pdfium() || !count_objects_func) return 0;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !count_objects_func || pagePtr == 0) return 0;
     return count_objects_func(reinterpret_cast<void*>(pagePtr));
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectType(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
-    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_type_func || pagePtr == 0 || index < 0) return 0;
-    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
-    if (index >= object_count) return 0;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_object_func || !get_object_type_func || pagePtr == 0 || index < 0) return 0;
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     return obj ? get_object_type_func(obj) : 0;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectBoundingBox(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jfloatArray outRect) {
-    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_bounds_func || pagePtr == 0 || index < 0 || outRect == nullptr) return JNI_FALSE;
-    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
-    if (index >= object_count) return JNI_FALSE;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_object_func || !get_object_bounds_func || pagePtr == 0 || index < 0 || outRect == nullptr) return JNI_FALSE;
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     if (!obj) return JNI_FALSE;
 
@@ -326,9 +331,13 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageObjectBoundingBox(JNIEnv *en
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jintArray dimens) {
-    if (!init_pdfium() || !count_objects_func || !get_object_func || !get_object_type_func || !get_image_bitmap_func || !bitmap_get_buffer_func || pagePtr == 0 || index < 0 || dimens == nullptr) return nullptr;
-    const int object_count = count_objects_func(reinterpret_cast<void*>(pagePtr));
-    if (index >= object_count) return nullptr;
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+    if (!init_pdfium() || !get_object_func || !get_object_type_func || !get_image_bitmap_func ||
+        !bitmap_get_width_func || !bitmap_get_height_func || !bitmap_get_stride_func ||
+        !bitmap_get_buffer_func || !bitmap_destroy_func ||
+        pagePtr == 0 || index < 0 || dimens == nullptr) {
+        return nullptr;
+    }
 
     void* obj = get_object_func(reinterpret_cast<void*>(pagePtr), index);
     if (!obj || get_object_type_func(obj) != 3) return nullptr; // 3 = FPDF_PAGEOBJ_IMAGE
@@ -379,6 +388,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jcl
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_checkActionSupport(JNIEnv *env, jclass clazz) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     init_pdfium();
     // Return true if we have ANY way to handle actions
     return (do_annot_action_func || get_link_action_func) ? JNI_TRUE : JNI_FALSE;
@@ -386,6 +396,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_checkActionSupport(JNIEnv *env, jcl
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return -1;
 
     void* page = reinterpret_cast<void*>(pagePtr);
@@ -412,6 +423,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env,
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRectAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_count_func || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
 
     void* page = reinterpret_cast<void*>(pagePtr);
@@ -432,13 +444,14 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRectAtPoint(JNIEnv *env, jc
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotCount(JNIEnv *env, jclass clazz, jlong pagePtr) {
-    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return 0;
     return get_annot_count_func(reinterpret_cast<void*>(pagePtr));
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtype(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_func || !get_annot_subtype_func || pagePtr == 0) return 0;
     void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
     return annot ? get_annot_subtype_func(annot) : 0;
@@ -446,6 +459,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtype(JNIEnv *env, jclass
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
     void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
     if (!annot) return nullptr;
@@ -460,7 +474,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass cl
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
-    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || pagePtr == 0) return JNI_FALSE;
 
     void* page = reinterpret_cast<void*>(pagePtr);
@@ -527,7 +541,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass cl
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getLinkInfoAtPoint(JNIEnv *env, jclass clazz, jlong docPtr, jlong pagePtr, jdouble x, jdouble y) {
-    std::lock_guard<std::mutex> lock(g_pdfium_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium()) {
         LOGE("PdfLinkDiagnostic: init_pdfium failed.");
         return nullptr;

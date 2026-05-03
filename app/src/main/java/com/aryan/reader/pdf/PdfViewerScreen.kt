@@ -2826,7 +2826,11 @@ fun PdfViewerScreen(
                 }
 
                 pdfDocument = doc
-                documentMetadataTitle = (doc as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
+                documentMetadataTitle = (doc as? PdfDocumentWrapper)?.let { wrapper ->
+                    PdfiumEngineProvider.withPdfium {
+                        wrapper.pdfDocument.getDocumentMeta().title?.takeIf { it.isNotBlank() }
+                    }
+                }
                 pfdState = currentPfdOpened
                 val pagesCount = doc.getPageCount()
 
@@ -3076,8 +3080,11 @@ fun PdfViewerScreen(
                 )
 
                 bgPfd = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
-                if (bgPfd != null) {
-                    bgDoc = pdfiumCore.newDocument(bgPfd, documentPassword)
+                val openedBgPfd = bgPfd
+                if (openedBgPfd != null) {
+                    bgDoc = PdfiumEngineProvider.withPdfium {
+                        pdfiumCore.newDocument(openedBgPfd, documentPassword)
+                    }
 
                     val pagesToIndex = (0 until totalPages).filter { !existingPages.contains(it) }
                     val totalToDo = pagesToIndex.size
@@ -3108,7 +3115,9 @@ fun PdfViewerScreen(
                 Timber.e(e, "Indexer: Fatal error")
             } finally {
                 try {
-                    bgDoc?.close()
+                    PdfiumEngineProvider.withPdfium {
+                        bgDoc?.close()
+                    }
                     bgPfd?.close()
                 } catch (e: Exception) {
                     Timber.e(e, "Indexer: Cleanup failed")
