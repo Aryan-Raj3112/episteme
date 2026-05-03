@@ -18,7 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -450,6 +450,89 @@ fun ReflowProgressOverlay(
 }
 
 @Composable
+fun PdfJumpHistoryBar(
+    modifier: Modifier = Modifier,
+    showStandardBars: Boolean,
+    searchStateActive: Boolean,
+    backPage: Int?,
+    forwardPage: Int?,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onClear: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = showStandardBars && !searchStateActive && (backPage != null || forwardPage != null),
+        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        modifier = modifier
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 3.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(
+                    onClick = onBack,
+                    enabled = backPage != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.content_desc_jump_back),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = backPage?.let { stringResource(R.string.pdf_page_short, it + 1) } ?: "",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                TextButton(
+                    onClick = onClear,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.action_clear),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.action_clear), maxLines = 1)
+                }
+
+                TextButton(
+                    onClick = onForward,
+                    enabled = forwardPage != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = forwardPage?.let { stringResource(R.string.pdf_page_short, it + 1) } ?: "",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = stringResource(R.string.content_desc_jump_forward),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun PdfBottomBar(
     modifier: Modifier = Modifier,
     showStandardBars: Boolean,
@@ -463,8 +546,6 @@ fun PdfBottomBar(
     isEditMode: Boolean,
     isTtsSessionActive: Boolean,
     ttsErrorMessage: String?,
-    jumpBackPage: Int?,
-    onJumpBack: () -> Unit,
     onShowSlider: () -> Unit,
     onShowToc: () -> Unit,
     onSearchClick: () -> Unit,
@@ -492,33 +573,6 @@ fun PdfBottomBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                if (jumpBackPage != null) {
-                    TooltipIconButton(
-                        text = stringResource(R.string.action_jump_back_to_page, jumpBackPage + 1),
-                        description = stringResource(R.string.desc_return_to_previous_page),
-                        onClick = onJumpBack
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Undo,
-                                contentDescription = stringResource(R.string.content_desc_jump_back),
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "${jumpBackPage + 1}",
-                                fontSize = 10.sp,
-                                lineHeight = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-
                 if (!hiddenTools.contains(PdfReaderTool.SLIDER.name)) {
                     TooltipIconButton(
                         text = stringResource(R.string.tooltip_slider),

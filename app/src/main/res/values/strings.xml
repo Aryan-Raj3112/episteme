@@ -1214,6 +1214,7 @@
     <string name="msg_downloading_bubble_zoom_model_progress">Downloading Bubble Zoom model… %1$d%%</string>
     <string name="content_desc_exit_slider_navigation">Exit slider navigation</string>
     <string name="content_desc_jump_back">Jump Back</string>
+    <string name="content_desc_jump_forward">Jump Forward</string>
     <string name="content_desc_scroll_to_reading_page">Scroll to reading page</string>
     <string name="content_desc_annotated_page">Annotated Page</string>
     <string name="content_desc_close_image">Close Image</string>

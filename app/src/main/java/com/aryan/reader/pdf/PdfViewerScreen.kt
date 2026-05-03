@@ -92,7 +92,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
@@ -995,13 +994,80 @@ fun PdfViewerScreen(
     }
 
     val jumpHistory = remember { mutableStateListOf<Int>() }
-    var showJumpPill by remember { mutableStateOf(false) }
+    var jumpHistoryCursor by remember { mutableIntStateOf(-1) }
 
-    LaunchedEffect(showJumpPill, jumpHistory.size) {
-        if (showJumpPill && jumpHistory.isNotEmpty()) {
-            delay(4000)
-            showJumpPill = false
+    fun pruneJumpHistoryForDocument() {
+        if (totalPages <= 0) {
+            jumpHistory.clear()
+            jumpHistoryCursor = -1
+            return
         }
+
+        var index = jumpHistory.lastIndex
+        while (index >= 0) {
+            if (jumpHistory[index] !in 0 until totalPages) {
+                jumpHistory.removeAt(index)
+                if (jumpHistoryCursor >= index) jumpHistoryCursor--
+            }
+            index--
+        }
+        jumpHistoryCursor = jumpHistoryCursor.coerceIn(-1, jumpHistory.lastIndex)
+    }
+
+    fun recordJumpHistory(currentPageIndex: Int, targetPageIndex: Int) {
+        if (totalPages <= 0 || currentPageIndex !in 0 until totalPages || targetPageIndex !in 0 until totalPages || currentPageIndex == targetPageIndex) {
+            return
+        }
+
+        pruneJumpHistoryForDocument()
+        while (jumpHistory.lastIndex > jumpHistoryCursor) {
+            jumpHistory.removeAt(jumpHistory.lastIndex)
+        }
+
+        if (jumpHistoryCursor > 0 && jumpHistory.getOrNull(jumpHistoryCursor - 1) == currentPageIndex) {
+            jumpHistory[jumpHistoryCursor] = targetPageIndex
+            return
+        }
+
+        if (jumpHistoryCursor == -1 || jumpHistory.getOrNull(jumpHistoryCursor) != currentPageIndex) {
+            jumpHistory.add(currentPageIndex)
+            jumpHistoryCursor = jumpHistory.lastIndex
+        }
+
+        if (jumpHistory.lastOrNull() != targetPageIndex) {
+            jumpHistory.add(targetPageIndex)
+            jumpHistoryCursor = jumpHistory.lastIndex
+        }
+
+        while (jumpHistory.size > 21) {
+            jumpHistory.removeAt(0)
+            jumpHistoryCursor--
+        }
+        jumpHistoryCursor = jumpHistoryCursor.coerceIn(0, jumpHistory.lastIndex)
+    }
+
+    fun clearJumpHistory() {
+        jumpHistory.clear()
+        jumpHistoryCursor = -1
+    }
+
+    fun navigateToJumpHistoryPage(targetPageIndex: Int) {
+        if (targetPageIndex !in 0 until totalPages) {
+            pruneJumpHistoryForDocument()
+            return
+        }
+
+        coroutineScope.launch {
+            if (displayMode == DisplayMode.PAGINATION) {
+                pagerState.animateScrollToPage(targetPageIndex)
+            } else {
+                verticalReaderState.scrollToPage(targetPageIndex)
+            }
+        }
+    }
+
+    LaunchedEffect(totalPages) {
+        pruneJumpHistoryForDocument()
     }
 
     LaunchedEffect(currentPage, isDocumentReady, totalPages, initialScrollDone) {
@@ -2138,9 +2204,7 @@ fun PdfViewerScreen(
                     val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
                     if (current != targetPage) {
-                        if (jumpHistory.size > 20) jumpHistory.removeAt(0)
-                        jumpHistory.add(current)
-                        showJumpPill = true
+                        recordJumpHistory(current, targetPage)
                     }
 
                     if (displayMode == DisplayMode.PAGINATION) {
@@ -3188,9 +3252,7 @@ fun PdfViewerScreen(
                 val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
                 if (current != targetPage) {
-                    if (jumpHistory.size > 20) jumpHistory.removeAt(0)
-                    jumpHistory.add(current)
-                    showJumpPill = true
+                    recordJumpHistory(current, targetPage)
                 }
 
                 if (displayMode == DisplayMode.PAGINATION) {
@@ -3228,9 +3290,7 @@ fun PdfViewerScreen(
             val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
             if (current != targetPage) {
-                if (jumpHistory.size > 20) jumpHistory.removeAt(0)
-                jumpHistory.add(current)
-                showJumpPill = true
+                recordJumpHistory(current, targetPage)
             }
 
             if (displayMode == DisplayMode.PAGINATION) {
@@ -3319,9 +3379,7 @@ fun PdfViewerScreen(
                             val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
 
                             if (current != targetPage) {
-                                if (jumpHistory.size > 20) jumpHistory.removeAt(0)
-                                jumpHistory.add(current)
-                                showJumpPill = true
+                                recordJumpHistory(current, targetPage)
                             }
 
                             if (displayMode == DisplayMode.PAGINATION) {
@@ -4574,11 +4632,7 @@ fun PdfViewerScreen(
                                                     val targetPage = newValue.roundToInt()
 
                                                     if (targetPage != sliderStartPage) {
-                                                        if (jumpHistory.lastOrNull() != sliderStartPage) {
-                                                            if (jumpHistory.size > 20) jumpHistory.removeAt(0)
-                                                            jumpHistory.add(sliderStartPage)
-                                                        }
-                                                        showJumpPill = true
+                                                        recordJumpHistory(sliderStartPage, targetPage)
                                                     }
                                                     if (displayMode == DisplayMode.PAGINATION) {
                                                         pagerState.scrollToPage(
@@ -5074,55 +5128,32 @@ fun PdfViewerScreen(
                     )
                 }
 
-                val effectiveNavBarForPill = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
+                val jumpBackPage = jumpHistory.getOrNull(jumpHistoryCursor - 1)
+                val jumpForwardPage = jumpHistory.getOrNull(jumpHistoryCursor + 1)
+                val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
 
-                val isBottomBarVisibleForPill = showStandardBars && !searchState.isSearchActive
-                val targetPillBottomPadding = if (isBottomBarVisibleForPill) 56.dp + 16.dp + effectiveNavBarForPill else 16.dp + effectiveNavBarForPill
-
-                val pillBottomPadding by animateDpAsState(
-                    targetValue = targetPillBottomPadding,
-                    label = "PillBottomPadding"
-                )
-
-                AnimatedVisibility(
-                    visible = showJumpPill && jumpHistory.isNotEmpty(),
-                    enter = fadeIn() + slideInVertically { it },
-                    exit = fadeOut() + slideOutVertically { it },
+                PdfJumpHistoryBar(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(bottom = pillBottomPadding)
-                        .padding(start = 16.dp)
-                ) {
-                    val lastPage = jumpHistory.lastOrNull() ?: 0
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        shadowElevation = 6.dp,
-                        onClick = {
-                            val target = jumpHistory.removeLastOrNull()
-                            if (target != null) {
-                                showJumpPill = false
-                                coroutineScope.launch {
-                                    if (displayMode == DisplayMode.PAGINATION) {
-                                        pagerState.animateScrollToPage(target)
-                                    } else {
-                                        verticalReaderState.scrollToPage(target)
-                                    }
-                                }
-                            }
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 56.dp + effectiveNavBarForJumpBar),
+                    showStandardBars = showStandardBars,
+                    searchStateActive = searchState.isSearchActive,
+                    backPage = jumpBackPage,
+                    forwardPage = jumpForwardPage,
+                    onBack = {
+                        jumpBackPage?.let { target ->
+                            jumpHistoryCursor = (jumpHistoryCursor - 1).coerceAtLeast(0)
+                            navigateToJumpHistoryPage(target)
                         }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = stringResource(R.string.content_desc_jump_back), modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.pdf_back_to_page_short, lastPage + 1), style = MaterialTheme.typography.labelLarge)
+                    },
+                    onForward = {
+                        jumpForwardPage?.let { target ->
+                            jumpHistoryCursor = (jumpHistoryCursor + 1).coerceAtMost(jumpHistory.lastIndex)
+                            navigateToJumpHistoryPage(target)
                         }
-                    }
-                }
+                    },
+                    onClear = { clearJumpHistory() }
+                )
 
                 // Bottom Bar
                 PdfBottomBar(
@@ -5138,20 +5169,6 @@ fun PdfViewerScreen(
                     isEditMode = isEditMode,
                     isTtsSessionActive = isTtsSessionActive,
                     ttsErrorMessage = ttsState.errorMessage,
-                    jumpBackPage = jumpHistory.lastOrNull(),
-                    onJumpBack = {
-                        val target = jumpHistory.removeLastOrNull()
-                        if (target != null) {
-                            showJumpPill = false
-                            coroutineScope.launch {
-                                if (displayMode == DisplayMode.PAGINATION) {
-                                    pagerState.animateScrollToPage(target)
-                                } else {
-                                    verticalReaderState.scrollToPage(target)
-                                }
-                            }
-                        }
-                    },
                     onShowSlider = {
                         val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
                         sliderStartPage = currentPageForSlider
