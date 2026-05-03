@@ -642,4 +642,5 @@
     <string name="label_font_color">Couleur de la police</string>
     <string name="label_highlight_color">Surlignage</string>
     <string name="msg_page_unavailable">Page indisponible</string>
+    <string name="protect_screencapture">Protéger la capture d’écran</string>
 </resources>

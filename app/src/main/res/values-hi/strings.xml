@@ -1,3 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="protect_screencapture">स्क्रीन कैप्चर को सुरक्षित करें</string>
 </resources>

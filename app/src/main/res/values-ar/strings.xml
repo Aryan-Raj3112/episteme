@@ -642,4 +642,5 @@
     <string name="label_highlight_color">مُظلِل</string>
     <string name="msg_page_unavailable">الصفحة غير متوفرة</string>
     <string name="sign_in_to_purchase_credits">يرجى تسجيل الدخول إلى حساب Google الخاص بك لشراء رصيد.</string>
+    <string name="protect_screencapture">حماية لقطة الشاشة</string>
 </resources>

@@ -70,4 +70,5 @@
     <string name="options_recent_limit">Giới hạn Tài liệu gần đây</string>
     <string name="options_no_limit">Không giới hạn</string>
     <string name="options_files_limit">%1$d tài liệu</string>
+    <string name="protect_screencapture">Bảo vệ chụp ảnh màn hình</string>
 </resources>

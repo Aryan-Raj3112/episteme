@@ -1086,12 +1086,12 @@ fun DefaultTopAppBar(
                     }
                 })
 
-                DropdownMenuItem(text = { Text("Protect Screen Capture") }, onClick = {
+                DropdownMenuItem(text = { Text(stringResource(R.string.protect_screencapture)) }, onClick = {
                     showOptionsMenu = false
                     onScreenProtectToggled()
                 }, trailingIcon = {
                     if (uiState.screenProtectEnabled) {
-                        Icon(Icons.Default.Check, contentDescription = "Enabled")
+                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
                     }
                 })
 

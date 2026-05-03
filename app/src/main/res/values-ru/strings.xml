@@ -642,4 +642,5 @@
     <string name="label_highlight_color">Цвет выделения</string>
     <string name="msg_page_unavailable">Страница недоступна</string>
     <string name="msg_search_pages_count">%1$d+ Страниц</string>
+    <string name="protect_screencapture">Защита от снимков экрана</string>
 </resources>
