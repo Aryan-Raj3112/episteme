@@ -26,6 +26,7 @@ import android.graphics.Canvas
 import android.os.Build
 import android.webkit.WebView
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -39,12 +40,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -65,6 +67,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -112,12 +115,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -129,6 +129,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.core.graphics.createBitmap
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
@@ -167,6 +168,85 @@ enum class ReaderTool(val title: String, val category: String) {
     VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
     TTS_SETTINGS("TTS Voice Settings", "Overflow Menu")
+}
+
+enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
+
+data class FlatToolItem(
+    val id: String,
+    val type: FlatItemType,
+    val tool: ReaderTool? = null,
+    val section: ToolbarSection? = null,
+    val title: String? = null
+)
+
+fun sanitizePlaceholders(list: List<FlatToolItem>): List<FlatToolItem> {
+    val result = mutableListOf<FlatToolItem>()
+    val sectionMap = mutableMapOf<ToolbarSection, MutableList<FlatToolItem>>()
+    ToolbarSection.entries.forEach { sectionMap[it] = mutableListOf() }
+
+    list.forEach { item ->
+        if (item.type == FlatItemType.TOOL) {
+            item.section?.let { sectionMap[it]?.add(item) }
+        }
+    }
+
+    ToolbarSection.entries.forEach { section ->
+        result.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
+
+        val tools = sectionMap[section] ?: emptyList()
+        if (tools.isEmpty()) {
+            result.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
+        } else {
+            result.addAll(tools)
+        }
+    }
+
+    // Maintain More menu items
+    list.filter { it.type == FlatItemType.MORE_HEADER || it.type == FlatItemType.MORE_TOOL }.forEach {
+        result.add(it)
+    }
+
+    return result
+}
+
+class DragDropState(
+    val lazyListState: LazyListState,
+    val onMove: (String, String) -> Unit
+) {
+    var draggedItemId by mutableStateOf<String?>(null)
+    var dragOffset by mutableStateOf(Offset.Zero)
+
+    fun onDragStart(id: String) {
+        draggedItemId = id
+        dragOffset = Offset.Zero
+    }
+
+    fun onDrag(delta: Offset) {
+        val draggedId = draggedItemId ?: return
+        dragOffset += delta
+
+        val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
+        val currentItem = visibleItems.find { it.key == draggedId } ?: return
+
+        val startY = currentItem.offset + dragOffset.y
+        val center = startY + currentItem.size / 2f
+
+        val targetItem = visibleItems.find {
+            it.key != draggedId && center >= it.offset && center <= (it.offset + it.size)
+        }
+
+        if (targetItem != null) {
+            onMove(draggedId, targetItem.key.toString())
+            // Adjust visual offset to prevent snapping when items swap in the layout
+            dragOffset = dragOffset.copy(y = dragOffset.y - (targetItem.offset - currentItem.offset))
+        }
+    }
+
+    fun onDragEnd() {
+        draggedItemId = null
+        dragOffset = Offset.Zero
+    }
 }
 
 private val epubToolbarTools = setOf(
@@ -1439,44 +1519,99 @@ fun CustomizeToolsSheet(
     onPlacementUpdate: (Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val toolbarTools = toolOrder.filter { it in epubToolbarTools }
-    val sectionBounds = remember { mutableMapOf<ToolbarSection, Rect>() }
-    val rowBounds = remember { mutableMapOf<ReaderTool, Rect>() }
-    var draggedTool by remember { mutableStateOf<ReaderTool?>(null) }
-    var dragPosition by remember { mutableStateOf(Offset.Zero) }
+    var localHiddenTools by remember { mutableStateOf(hiddenTools) }
 
-    fun sectionFor(tool: ReaderTool): ToolbarSection = when {
-        hiddenTools.contains(tool.name) -> ToolbarSection.HIDDEN
-        bottomTools.contains(tool.name) -> ToolbarSection.BOTTOM
-        else -> ToolbarSection.TOP
+    var flatItems by remember {
+        mutableStateOf(
+            run {
+                val toolbarTools = toolOrder.filter { it in epubToolbarTools }
+                val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+                val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+                val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
+                val moreTools = toolOrder.filter { it !in epubToolbarTools }
+
+                val list = mutableListOf<FlatToolItem>()
+
+                ToolbarSection.entries.forEach { section ->
+                    val tools = when(section) {
+                        ToolbarSection.TOP -> topTools
+                        ToolbarSection.BOTTOM -> bottomToolsList
+                        ToolbarSection.HIDDEN -> hiddenToolsList
+                    }
+                    list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
+                    if (tools.isEmpty()) {
+                        list.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
+                    } else {
+                        tools.forEach { tool ->
+                            list.add(FlatToolItem("tool_${tool.name}", FlatItemType.TOOL, tool = tool, section = section))
+                        }
+                    }
+                }
+
+                list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, title = "More menu"))
+                moreTools.forEach { tool ->
+                    list.add(FlatToolItem("more_${tool.name}", FlatItemType.MORE_TOOL, tool = tool))
+                }
+                list
+            }
+        )
     }
 
-    fun toolsIn(section: ToolbarSection): List<ReaderTool> =
-        toolbarTools.filter { sectionFor(it) == section }
+    val commitDragDrop = {
+        val newHidden = localHiddenTools.filter { toolName ->
+            toolOrder.find { it.name == toolName } !in epubToolbarTools
+        }.toMutableSet()
 
-    fun applyDrop(tool: ReaderTool, targetSection: ToolbarSection, position: Offset) {
-        val newHiddenTools = when (targetSection) {
-            ToolbarSection.HIDDEN -> hiddenTools + tool.name
-            else -> hiddenTools - tool.name
+        val newBottom = mutableSetOf<String>()
+        val newOrder = mutableListOf<ReaderTool>()
+
+        flatItems.forEach { item ->
+            if (item.type == FlatItemType.TOOL && item.tool != null) {
+                newOrder.add(item.tool)
+                if (item.section == ToolbarSection.HIDDEN) newHidden.add(item.tool.name)
+                if (item.section == ToolbarSection.BOTTOM) newBottom.add(item.tool.name)
+            }
         }
-        val newBottomTools = when (targetSection) {
-            ToolbarSection.BOTTOM -> bottomTools + tool.name
-            else -> bottomTools - tool.name
+
+        val moreTools = flatItems.filter { it.type == FlatItemType.MORE_TOOL }.mapNotNull { it.tool }
+        newOrder.addAll(moreTools)
+
+        localHiddenTools = newHidden
+        onUpdate(newHidden)
+        onPlacementUpdate(newBottom)
+        onOrderUpdate(newOrder)
+    }
+
+    val lazyListState = rememberLazyListState()
+    val dragDropState = remember {
+        DragDropState(lazyListState) { fromKey, toKey ->
+            val fromIndex = flatItems.indexOfFirst { it.id == fromKey }
+            val toIndex = flatItems.indexOfFirst { it.id == toKey }
+            if (fromIndex == -1 || toIndex == -1 || fromIndex == toIndex) return@DragDropState
+
+            val fromItem = flatItems[fromIndex]
+            if (fromItem.type != FlatItemType.TOOL) return@DragDropState
+
+            val toItem = flatItems[toIndex]
+            if (toItem.type == FlatItemType.MORE_HEADER || toItem.type == FlatItemType.MORE_TOOL) return@DragDropState
+
+            val targetSection = toItem.section ?: return@DragDropState
+
+            val newList = flatItems.toMutableList()
+            val movedItem = newList.removeAt(fromIndex).copy(section = targetSection)
+
+            var insertIndex = toIndex
+            if (fromIndex < toIndex) {
+                insertIndex -= 1
+            }
+
+            if (toItem.type == FlatItemType.SECTION_HEADER) {
+                insertIndex = if (fromIndex > toIndex) toIndex + 1 else toIndex
+            }
+
+            newList.add(insertIndex, movedItem)
+            flatItems = sanitizePlaceholders(newList).toMutableList()
         }
-        val targetTools = toolsIn(targetSection).filterNot { it == tool }
-        val insertIndex = targetTools.indexOfFirst { target ->
-            position.y < (rowBounds[target]?.center?.y ?: Float.MAX_VALUE)
-        }.let { if (it == -1) targetTools.size else it }
-        val newToolbarOrder = toolbarTools.toMutableList().also { it.remove(tool) }
-        val anchorTool = targetTools.getOrNull(insertIndex)
-        val globalIndex = anchorTool?.let { newToolbarOrder.indexOf(it) } ?: run {
-            val lastInSection = targetTools.lastOrNull()
-            if (lastInSection != null) newToolbarOrder.indexOf(lastInSection) + 1 else newToolbarOrder.size
-        }
-        newToolbarOrder.add(globalIndex.coerceIn(0, newToolbarOrder.size), tool)
-        onUpdate(newHiddenTools)
-        onPlacementUpdate(newBottomTools)
-        onOrderUpdate(newToolbarOrder + toolOrder.filter { it !in epubToolbarTools })
     }
 
     Dialog(
@@ -1489,9 +1624,9 @@ fun CustomizeToolsSheet(
                 .windowInsetsPadding(WindowInsets.navigationBars),
             color = MaterialTheme.colorScheme.surface
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -1507,99 +1642,89 @@ fun CustomizeToolsSheet(
                 }
 
                 LazyColumn(
+                    state = lazyListState,
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    ToolbarSection.entries.forEach { section ->
-                        item(section.title) {
-                            ToolbarDropSection(
-                                title = section.title,
-                                tools = toolsIn(section),
-                                draggedTool = draggedTool,
-                                onSectionBounds = { sectionBounds[section] = it },
-                                onToolBounds = { tool, bounds -> rowBounds[tool] = bounds },
-                                onDragStart = { tool, start ->
-                                    draggedTool = tool
-                                    dragPosition = start
-                                },
-                                onDrag = { dragPosition += it },
-                                onDragEnd = { tool ->
-                                    val targetSection = sectionBounds.entries.firstOrNull { (_, bounds) ->
-                                        bounds.contains(dragPosition)
-                                    }?.key ?: sectionFor(tool)
-                                    applyDrop(tool, targetSection, dragPosition)
-                                    draggedTool = null
-                                }
-                            )
-                        }
-                    }
-                    item("more") {
-                        Text(
-                            text = "More menu",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
-                        )
-                        toolOrder.filter { it !in epubToolbarTools }.forEach { tool ->
-                            MoreToolVisibilityRow(
-                                title = tool.title,
-                                visible = !hiddenTools.contains(tool.name),
-                                onToggle = {
-                                    if (hiddenTools.contains(tool.name)) onUpdate(hiddenTools - tool.name)
-                                    else onUpdate(hiddenTools + tool.name)
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+                    items(flatItems, key = { it.id }) { item ->
+                        val isDragged = item.id == dragDropState.draggedItemId
 
-@Composable
-private fun ToolbarDropSection(
-    title: String,
-    tools: List<ReaderTool>,
-    draggedTool: ReaderTool?,
-    onSectionBounds: (Rect) -> Unit,
-    onToolBounds: (ReaderTool, Rect) -> Unit,
-    onDragStart: (ReaderTool, Offset) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: (ReaderTool) -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .onGloballyPositioned { onSectionBounds(it.boundsInWindow()) },
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(8.dp))
-            if (tools.isEmpty()) {
-                Text(
-                    text = "Drop tools here",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
-            } else {
-                tools.forEach { tool ->
-                    ToolbarDragRow(
-                        tool = tool,
-                        isDragging = draggedTool == tool,
-                        onBounds = { onToolBounds(tool, it) },
-                        onDragStart = { onDragStart(tool, it) },
-                        onDrag = onDrag,
-                        onDragEnd = { onDragEnd(tool) }
-                    )
+                        val zIndex = if (isDragged) 1f else 0f
+                        val elevation = if (isDragged) 8.dp else 0.dp
+                        val scale = if (isDragged) 1.03f else 1f
+                        val translationY = if (isDragged) dragDropState.dragOffset.y else 0f
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItem()
+                                .zIndex(zIndex)
+                                .graphicsLayer {
+                                    this.translationY = translationY
+                                    this.scaleX = scale
+                                    this.scaleY = scale
+                                    this.shadowElevation = elevation.toPx()
+                                }
+                        ) {
+                            when (item.type) {
+                                FlatItemType.SECTION_HEADER -> {
+                                    Text(
+                                        text = item.title ?: "",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp, start = 4.dp)
+                                    )
+                                }
+                                FlatItemType.EMPTY_PLACEHOLDER -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(64.dp)
+                                            .padding(vertical = 4.dp)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("Drop tools here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                FlatItemType.TOOL -> {
+                                    ToolbarDragRow(
+                                        tool = item.tool!!,
+                                        isDragging = isDragged,
+                                        onDragStart = { dragDropState.onDragStart(item.id) },
+                                        onDrag = { dragDropState.onDrag(it) },
+                                        onDragEnd = {
+                                            dragDropState.onDragEnd()
+                                            commitDragDrop()
+                                        }
+                                    )
+                                }
+                                FlatItemType.MORE_HEADER -> {
+                                    Text(
+                                        text = item.title ?: "More menu",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp, start = 4.dp)
+                                    )
+                                }
+                                FlatItemType.MORE_TOOL -> {
+                                    MoreToolVisibilityRow(
+                                        title = item.tool!!.title,
+                                        visible = !localHiddenTools.contains(item.tool.name),
+                                        onToggle = {
+                                            localHiddenTools = if (localHiddenTools.contains(item.tool.name)) {
+                                                localHiddenTools - item.tool.name
+                                            } else {
+                                                localHiddenTools + item.tool.name
+                                            }
+                                            onUpdate(localHiddenTools)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1610,47 +1735,49 @@ private fun ToolbarDropSection(
 private fun ToolbarDragRow(
     tool: ReaderTool,
     isDragging: Boolean,
-    onBounds: (Rect) -> Unit,
-    onDragStart: (Offset) -> Unit,
+    onDragStart: () -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit
 ) {
-    var bounds by remember { mutableStateOf<Rect?>(null) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .onGloballyPositioned {
-                bounds = it.boundsInWindow()
-                onBounds(it.boundsInWindow())
-            }
-            .pointerInput(tool) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart(bounds?.center ?: Offset.Zero) },
-                    onDragEnd = onDragEnd,
-                    onDragCancel = onDragEnd,
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        onDrag(dragAmount)
-                    }
-                )
-            },
+            .padding(vertical = 4.dp),
         shape = RoundedCornerShape(12.dp),
-        color = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+        color = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), // Less padding on right for the handle
             verticalAlignment = Alignment.CenterVertically
         ) {
             ToolPreviewIcon(tool)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(16.dp))
             Text(
                 text = tool.title,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
-            Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            // The Handle with gesture detector specifically attached to it
+            Icon(
+                Icons.Default.Menu,
+                contentDescription = "Drag to reorder",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(48.dp) // Large touch target
+                    .padding(12.dp) // Visual size of 24dp
+                    .pointerInput(tool) {
+                        detectDragGestures(
+                            onDragStart = { onDragStart() },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                onDrag(dragAmount)
+                            },
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragEnd
+                        )
+                    }
+            )
         }
     }
 }
@@ -1681,7 +1808,7 @@ private fun MoreToolVisibilityRow(
     }
 }
 
-private enum class ToolbarSection(val title: String) {
+enum class ToolbarSection(val title: String) {
     TOP("Top Bar"),
     BOTTOM("Bottom Bar"),
     HIDDEN("Hidden Tools")
@@ -1757,7 +1884,7 @@ fun TtsOverlayControls(
     modifier: Modifier = Modifier,
     credits: Int
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
     var pitch by remember { mutableFloatStateOf(loadTtsPitch(context)) }
     var isDraggingRate by remember { mutableStateOf(false) }
