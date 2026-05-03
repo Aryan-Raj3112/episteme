@@ -43,13 +43,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.pdf.PdfViewerScreen
+import kotlinx.coroutines.delay
 
 object AppDestinations {
     const val MAIN_ROUTE = "main"
@@ -61,22 +64,64 @@ object AppDestinations {
     const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
 }
 
-private fun NavHostController.navigateSingleTopTo(route: String) {
-    navigate(route) {
-        launchSingleTop = true
-        popUpTo(graph.startDestinationId) {
-            saveState = false
-        }
+private fun NavHostController.isReadyForBackStackChange(): Boolean {
+    return currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
+}
+
+private suspend fun NavHostController.awaitReadyForBackStackChange() {
+    while (!isReadyForBackStackChange()) {
+        delay(32)
     }
 }
 
-private fun NavHostController.returnToMain() {
-    if (!popBackStack(AppDestinations.MAIN_ROUTE, inclusive = false)) {
-        navigate(AppDestinations.MAIN_ROUTE) {
+private fun NavHostController.navigateSingleTopTo(route: String) {
+    if (!isReadyForBackStackChange()) {
+        Timber.d("Skipping navigation to $route because the current entry is not resumed yet.")
+        return
+    }
+
+    try {
+        navigate(route) {
             launchSingleTop = true
             popUpTo(graph.startDestinationId) {
                 saveState = false
             }
+        }
+    } catch (e: IllegalStateException) {
+        Timber.w(e, "Navigation to $route ignored because the back stack is mid-transition.")
+    }
+}
+
+private fun NavHostController.navigateToMain() {
+    navigateSingleTopTo(AppDestinations.MAIN_ROUTE)
+}
+
+private fun NavHostController.navigateIfReady(route: String) {
+    if (currentDestination?.route == route) return
+    navigateSingleTopTo(route)
+}
+
+private fun NavHostController.popBackStackIfReady(): Boolean {
+    if (!isReadyForBackStackChange()) {
+        Timber.d("Skipping popBackStack because the current entry is not resumed yet.")
+        return false
+    }
+
+    return try {
+        popBackStack()
+    } catch (e: IllegalStateException) {
+        Timber.w(e, "popBackStack ignored because the back stack is mid-transition.")
+        false
+    }
+}
+
+private suspend fun NavHostController.syncRouteTo(route: String) {
+    awaitReadyForBackStackChange()
+    if (currentDestination?.route != route) {
+        if (route == AppDestinations.MAIN_ROUTE) {
+            navigateToMain()
+        } else {
+            navigateSingleTopTo(route)
         }
     }
 }
@@ -91,34 +136,31 @@ fun AppNavigation(
 ) {
     Timber.d("AppNavigation composable invoked.")
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStackEntry?.destination?.route
 
-    LaunchedEffect(uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
+    LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
-            try {
-                when (uiState.selectedFileType) {
-                    FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
-                        if (uiState.selectedPdfUri != null) {
-                            if (navController.currentDestination?.route != AppDestinations.PDF_VIEWER_ROUTE) {
-                                navController.navigateSingleTopTo(AppDestinations.PDF_VIEWER_ROUTE)
-                            }
-                        }
-                    }
-                    FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
-                        if (uiState.selectedEpubBook != null) {
-                            if (navController.currentDestination?.route != AppDestinations.EPUB_READER_ROUTE) {
-                                navController.navigateSingleTopTo(AppDestinations.EPUB_READER_ROUTE)
-                            }
-                        }
-                    }
-                    null -> {
-                        val currentRoute = navController.currentBackStackEntry?.destination?.route
-                        if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
-                            navController.returnToMain()
+            when (uiState.selectedFileType) {
+                FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7 -> {
+                    if (uiState.selectedPdfUri != null) {
+                        if (currentRoute != AppDestinations.PDF_VIEWER_ROUTE) {
+                            navController.syncRouteTo(AppDestinations.PDF_VIEWER_ROUTE)
                         }
                     }
                 }
-            } catch (e: IllegalStateException) {
-                Timber.w(e, "Navigation transition already in progress, ignoring.")
+                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
+                    if (uiState.selectedEpubBook != null) {
+                        if (currentRoute != AppDestinations.EPUB_READER_ROUTE) {
+                            navController.syncRouteTo(AppDestinations.EPUB_READER_ROUTE)
+                        }
+                    }
+                }
+                null -> {
+                    if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
+                        navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
+                    }
+                }
             }
         }
     }
@@ -164,7 +206,7 @@ fun AppNavigation(
                             }
                         },
                         onNavigateToPro = {
-                            navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
                         },
                         viewModel = viewModel
                     )
@@ -237,7 +279,7 @@ fun AppNavigation(
                                 }
                             },
                             onNavigateToPro = {
-                                navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
                             },
                             onRenderModeChange = viewModel::setRenderMode,
                             customFonts = customFonts,
@@ -287,7 +329,7 @@ fun AppNavigation(
         composable(route = AppDestinations.PRO_SCREEN_ROUTE) {
             ProScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
@@ -300,13 +342,13 @@ fun AppNavigation(
         composable(route = AppDestinations.FONTS_SCREEN_ROUTE) {
             FontsScreen(
                 viewModel = viewModel,
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStackIfReady() }
             )
         }
 
         composable(route = AppDestinations.AI_SETTINGS_SCREEN_ROUTE) {
             AiSettingsScreen(
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStackIfReady() }
             )
         }
     }

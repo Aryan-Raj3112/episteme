@@ -191,7 +191,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
 
     //noinspection GradleDependency (Updating these might cause the custom toolbox in pagination to break)
-    implementation("androidx.navigation:navigation-compose:2.9.2")
+    implementation("androidx.navigation:navigation-compose:2.9.6")
     //noinspection GradleDependency
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
     //noinspection GradleDependency
