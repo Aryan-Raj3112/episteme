@@ -417,22 +417,14 @@ class FolderSyncWorker(
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {
-        val lowerName = name.lowercase()
-        return when {
-            mimeType == "application/pdf" || lowerName.endsWith(".pdf") -> FileType.PDF
-            mimeType == "application/epub+zip" || lowerName.endsWith(".epub") -> FileType.EPUB
-            mimeType == "application/vnd.oasis.opendocument.text" || lowerName.endsWith(".odt") -> FileType.ODT
-            mimeType == "application/x-vnd.oasis.opendocument.text-flat-xml" || lowerName.endsWith(".fodt") -> FileType.FODT
-            mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || lowerName.endsWith(".docx") -> FileType.DOCX
-            lowerName.endsWith(".mobi") || lowerName.endsWith(".azw3") || lowerName.endsWith(".prc") -> FileType.MOBI
-            lowerName.endsWith(".fb2") || lowerName.endsWith(".fb2.zip") -> FileType.FB2
-            lowerName.endsWith(".cbz") -> FileType.CBZ
-            lowerName.endsWith(".cbr") -> FileType.CBR
-            lowerName.endsWith(".cb7") -> FileType.CB7
-            lowerName.endsWith(".md") || lowerName.endsWith(".markdown") -> FileType.MD
-            lowerName.endsWith(".txt") -> FileType.TXT
-            mimeType == "text/html" || lowerName.endsWith(".html") || lowerName.endsWith(".xhtml") || lowerName.endsWith(".htm") -> FileType.HTML
-            else -> null
+        return when (mimeType) {
+            "application/pdf" -> FileType.PDF
+            "application/epub+zip" -> FileType.EPUB
+            "application/vnd.oasis.opendocument.text" -> FileType.ODT
+            "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
+            "text/html", "application/xhtml+xml" -> FileType.HTML
+            else -> resolveFileTypeFromName(name)
         }
     }
 

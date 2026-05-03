@@ -38,6 +38,8 @@ data class OpdsAcquisition(
         get() = when {
             mimeType.contains("epub") -> "EPUB"
             mimeType.contains("pdf") -> "PDF"
+            mimeType.contains("markdown") || mimeType.contains("text/x-markdown") -> "MD"
+            mimeType.contains("html") || mimeType.contains("xhtml") -> "HTML"
             mimeType.contains("mobi") || mimeType.contains("x-mobipocket-ebook") -> "MOBI"
             mimeType.contains("fictionbook") || mimeType.contains("fb2") -> "FB2"
             mimeType.contains("cbz") || mimeType.contains("comicbook") -> "CBZ"
@@ -52,6 +54,7 @@ data class OpdsAcquisition(
             "PDF" -> 4
             "MOBI" -> 3
             "FB2" -> 2
+            "MD", "HTML" -> 2
             "CBZ" -> 1
             "TXT" -> 0
             else -> -1

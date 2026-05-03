@@ -4153,87 +4153,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "text/x-c", "text/x-c++", "text/x-csharp", "text/x-ruby", "text/x-go", "text/x-log" -> FileType.HTML
 
             "text/plain" -> {
-                if (fileName?.endsWith(".md", ignoreCase = true) == true || fileName?.endsWith(".markdown", ignoreCase = true) == true) {
-                    FileType.MD
-                } else if (fileName?.let {
-                        it.endsWith(".csv", ignoreCase = true) || it.endsWith(".tsv", ignoreCase = true) ||
-                                it.endsWith(".json", ignoreCase = true) || it.endsWith(".xml", ignoreCase = true) ||
-                                it.endsWith(".log", ignoreCase = true) || it.endsWith(".java", ignoreCase = true) ||
-                                it.endsWith(".kt", ignoreCase = true) || it.endsWith(".py", ignoreCase = true) ||
-                                it.endsWith(".js", ignoreCase = true) || it.endsWith(".cpp", ignoreCase = true) ||
-                                it.endsWith(".c", ignoreCase = true) || it.endsWith(".cs", ignoreCase = true) ||
-                                it.endsWith(".rb", ignoreCase = true) || it.endsWith(".go", ignoreCase = true)
-                    } == true) {
-                    FileType.HTML
-                } else {
-                    FileType.TXT
-                }
+                resolveFileTypeFromName(fileName) ?: FileType.TXT
             }
 
             else -> {
-                when {
-                    fileName?.endsWith(".cbz", ignoreCase = true) == true -> FileType.CBZ
-                    fileName?.endsWith(".cbr", ignoreCase = true) == true -> FileType.CBR
-                    fileName?.endsWith(".cb7", ignoreCase = true) == true -> FileType.CB7
-                    fileName?.endsWith(".pdf", ignoreCase = true) == true -> FileType.PDF
-                    fileName?.endsWith(".epub", ignoreCase = true) == true -> FileType.EPUB
-                    fileName?.endsWith(
-                        ".mobi",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".azw3",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".prc",
-                        ignoreCase = true
-                    ) == true -> FileType.MOBI
-
-                    fileName?.endsWith(
-                        ".md",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".markdown",
-                        ignoreCase = true
-                    ) == true -> FileType.MD
-
-                    fileName?.endsWith(".txt", ignoreCase = true) == true -> FileType.TXT
-                    fileName?.endsWith(
-                        ".fb2",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".fb2.zip",
-                        ignoreCase = true
-                    ) == true -> FileType.FB2
-                    fileName?.endsWith(
-                        ".html",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".xhtml",
-                        ignoreCase = true
-                    ) == true || fileName?.endsWith(
-                        ".htm",
-                        ignoreCase = true
-                    ) == true -> FileType.HTML
-                    fileName?.endsWith(".docx", ignoreCase = true) == true -> FileType.DOCX
-                    fileName?.endsWith(".odt", ignoreCase = true) == true -> FileType.ODT
-                    fileName?.endsWith(".fodt", ignoreCase = true) == true -> FileType.FODT
-                    fileName?.endsWith(".csv", ignoreCase = true) == true ||
-                    fileName?.endsWith(".tsv", ignoreCase = true) == true ||
-                    fileName?.endsWith(".json", ignoreCase = true) == true ||
-                    fileName?.endsWith(".xml", ignoreCase = true) == true ||
-                    fileName?.endsWith(".log", ignoreCase = true) == true ||
-                    fileName?.endsWith(".java", ignoreCase = true) == true ||
-                    fileName?.endsWith(".kt", ignoreCase = true) == true ||
-                    fileName?.endsWith(".py", ignoreCase = true) == true ||
-                    fileName?.endsWith(".js", ignoreCase = true) == true ||
-                    fileName?.endsWith(".cpp", ignoreCase = true) == true ||
-                    fileName?.endsWith(".c", ignoreCase = true) == true ||
-                    fileName?.endsWith(".cs", ignoreCase = true) == true ||
-                    fileName?.endsWith(".rb", ignoreCase = true) == true ||
-                    fileName?.endsWith(".go", ignoreCase = true) == true -> FileType.HTML
-
-                    else -> null
-                }
+                resolveFileTypeFromName(fileName)
             }
         }
     }

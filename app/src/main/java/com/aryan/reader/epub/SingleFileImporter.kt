@@ -35,6 +35,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.safety.Safelist
 import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
 import java.io.File
@@ -52,6 +54,15 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
     }
 
+    private val htmlSafelist = Safelist.relaxed()
+        .addTags("article", "aside", "details", "div", "figcaption", "figure", "footer", "header", "main", "section", "summary")
+        .addAttributes(":all", "class", "dir", "id", "lang", "title")
+        .addAttributes("a", "name", "target")
+        .addProtocols("a", "href", "http", "https", "mailto", "tel", "#")
+        .addProtocols("img", "src", "http", "https", "data", "file", "content")
+
+    private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
+
     suspend fun importSingleFile(
         inputStream: InputStream,
         type: FileType,
@@ -61,8 +72,9 @@ class SingleFileImporter(private val context: Context) {
     ): EpubBook {
 
         val lowerHint = originalBookNameHint.lowercase()
-        val isCsv = lowerHint.endsWith(".csv") || lowerHint.endsWith(".tsv")
-        val isCodeOrData = listOf(".json", ".xml", ".log", ".java", ".kt", ".py", ".js", ".cpp", ".c", ".cs", ".rb", ".go").any { lowerHint.endsWith(it) }
+        val isCsv = lowerHint.endsWith(".csv") || lowerHint.endsWith(".tsv") ||
+            lowerHint.endsWith(".csv.txt") || lowerHint.endsWith(".tsv.txt")
+        val isCodeOrData = com.aryan.reader.isCodeOrDataFileName(originalBookNameHint)
 
         if (type == FileType.HTML && (isCsv || isCodeOrData)) {
             return parseDynamicContentToHtml(inputStream, originalBookNameHint, bookId, parseContent, isCsv)
@@ -99,7 +111,7 @@ class SingleFileImporter(private val context: Context) {
                     writer.write("</head>\n<body>\n<pre><code>\n")
                 }
 
-                val delimiter = if (originalBookNameHint.lowercase().endsWith(".tsv")) '\t' else ','
+                val delimiter = if (originalBookNameHint.lowercase().let { it.endsWith(".tsv") || it.endsWith(".tsv.txt") }) '\t' else ','
 
                 inputStream.bufferedReader().use { reader ->
                     var line = reader.readLine()
@@ -245,7 +257,7 @@ class SingleFileImporter(private val context: Context) {
                 val chapterTitle = "Page $pageNum"
 
                 val document = parser.parse(rawText)
-                val htmlBody = renderer.render(document)
+                val htmlBody = sanitizeHtmlFragment(renderer.render(document))
 
                 val fileName = "page_$pageNum.html"
                 val file = File(extractionDir, fileName)
@@ -507,6 +519,7 @@ class SingleFileImporter(private val context: Context) {
         val chapters = mutableListOf<EpubChapter>()
 
         inputStream.bufferedReader().use { reader ->
+            var inScript = false
             var inStyle = false
             var inBody = false
             var pageNum = 1
@@ -515,6 +528,19 @@ class SingleFileImporter(private val context: Context) {
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 val trimmed = line!!.trim()
+
+                if (inScript) {
+                    if (trimmed.contains("</script", ignoreCase = true)) {
+                        inScript = false
+                    }
+                    continue
+                }
+                if (trimmed.startsWith("<script", ignoreCase = true)) {
+                    if (!trimmed.contains("</script", ignoreCase = true)) {
+                        inScript = true
+                    }
+                    continue
+                }
 
                 if (!inBody) {
                     if (trimmed.startsWith("<title", ignoreCase = true)) {
@@ -630,6 +656,10 @@ class SingleFileImporter(private val context: Context) {
         }
 
         return@withContext book
+    }
+
+    private fun sanitizeHtmlFragment(html: String): String {
+        return Jsoup.clean(html, "", htmlSafelist, htmlOutputSettings)
     }
 
     private suspend fun parseDocx(
@@ -754,8 +784,9 @@ class SingleFileImporter(private val context: Context) {
         val chapterTitle = if (pageNum > 1 || bodyContent.contains("<page-break")) "Page $pageNum" else title
         val fileName = "page_$pageNum.html"
         val file = File(extractionDir, fileName)
+        val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent)
 
-        val fullHtml = "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<title>${title.replace("\"", "&quot;")}</title>\n<style>${cssStyle}</style>\n</head>\n<body>\n${bodyContent.trim()}\n</body>\n</html>"
+        val fullHtml = "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<title>${title.replace("\"", "&quot;")}</title>\n<style>${cssStyle}</style>\n</head>\n<body>\n${sanitizedBodyContent.trim()}\n</body>\n</html>"
 
         file.writeText(fullHtml)
 

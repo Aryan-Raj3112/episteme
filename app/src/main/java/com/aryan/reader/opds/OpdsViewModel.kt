@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aryan.reader.resolveFileExtensionSuffixFromName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Response
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
@@ -93,16 +95,7 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     val body = response.body ?: throw Exception("Empty body")
                     val contentLength = body.contentLength()
 
-                    val ext = when (acquisition.formatName) {
-                        "EPUB" -> ".epub"
-                        "PDF" -> ".pdf"
-                        "MOBI" -> ".mobi"
-                        "FB2" -> ".fb2"
-                        "CBZ" -> ".cbz"
-                        "CBR" -> ".cbr"
-                        "TXT" -> ".txt"
-                        else -> ".epub"
-                    }
+                    val ext = resolveOpdsDownloadExtension(acquisition, response)
 
                     val safeTitle = entry.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").take(50)
                     val tempFile = File(context.cacheDir, "opds_dl_${safeTitle}$ext")
@@ -146,6 +139,45 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 _downloadingState.update { it - entry.id }
             }
         }
+    }
+
+    private fun resolveOpdsDownloadExtension(acquisition: OpdsAcquisition, response: Response): String {
+        val candidates = listOfNotNull(
+            response.header("Content-Disposition")?.let(::extractContentDispositionFilename),
+            Uri.parse(acquisition.url).lastPathSegment
+        )
+
+        candidates.forEach { candidate ->
+            resolveFileExtensionSuffixFromName(Uri.decode(candidate))?.let { return it }
+        }
+
+        return when (acquisition.formatName) {
+            "EPUB" -> ".epub"
+            "PDF" -> ".pdf"
+            "MOBI" -> ".mobi"
+            "FB2" -> ".fb2"
+            "CBZ" -> ".cbz"
+            "CBR" -> ".cbr"
+            "MD" -> ".md"
+            "HTML" -> ".html"
+            "TXT" -> ".txt"
+            else -> ".epub"
+        }
+    }
+
+    private fun extractContentDispositionFilename(contentDisposition: String): String? {
+        val encodedFilename = Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE)
+            .find(contentDisposition)
+            ?.groupValues
+            ?.getOrNull(1)
+        if (!encodedFilename.isNullOrBlank()) return encodedFilename.trim('"')
+
+        return Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE)
+            .find(contentDisposition)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.trim('"')
     }
 
     init {
