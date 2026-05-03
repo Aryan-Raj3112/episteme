@@ -45,6 +45,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -126,6 +127,7 @@ private suspend fun NavHostController.syncRouteTo(route: String) {
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
@@ -157,7 +159,7 @@ fun AppNavigation(
                     }
                 }
                 null -> {
-                    if (currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE) {
+                    if (currentRoute == AppDestinations.PDF_VIEWER_ROUTE || currentRoute == AppDestinations.EPUB_READER_ROUTE) {
                         navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
                     }
                 }

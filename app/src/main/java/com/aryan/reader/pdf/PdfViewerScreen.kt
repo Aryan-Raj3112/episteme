@@ -5849,728 +5849,6 @@ fun PdfViewerScreen(
                     }
                 }
 
-                if (showAiHubSheet) {
-                    val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
-                        pagerState.currentPage
-                    } else {
-                        verticalReaderState.currentPage
-                    }
-                    val bookTitle = documentMetadataTitle ?: originalFileName
-
-                    AiHubBottomSheet(
-                        bookTitle = bookTitle,
-                        currentChapterIndex = currentPageForDisplay,
-                        chapterTitle = "Page ${currentPageForDisplay + 1}",
-                        summaryCacheManager = summaryCacheManager,
-                        summarizationResult = summarizationResult,
-                        isSummarizationLoading = isSummarizationLoading,
-                        onClearSummary = { summarizationResult = null },
-                        onGenerateSummary = { force ->
-                            if (BuildConfig.FLAVOR != "oss" && !isProUser && uiState.credits <= 0) {
-                                showInsufficientCreditsDialog = true
-                                showAiHubSheet = false
-                            } else {
-                                coroutineScope.launch {
-                                    isSummarizationLoading = true
-                                    summarizationResult = null
-
-                                    val cached = if (!force) summaryCacheManager.getSummary(bookTitle, currentPageForDisplay) else null
-                                    if (cached != null) {
-                                        summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
-                                        isSummarizationLoading = false
-                                        return@launch
-                                    }
-
-                                    val token = viewModel.getAuthToken()
-                                    summarizeCurrentPage(
-                                        authToken = token,
-                                        onUpdate = { result ->
-                                            if (result.error == "INSUFFICIENT_CREDITS") {
-                                                showInsufficientCreditsDialog = true
-                                                showAiHubSheet = false
-                                                isSummarizationLoading = false
-                                            } else {
-                                                summarizationResult = result
-                                            }
-                                        }, onFinish = {
-                                            isSummarizationLoading = false
-                                            val finalSummary = summarizationResult?.summary
-                                            if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
-                                                summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        },
-                        recapResult = null,
-                        isRecapLoading = false,
-                        onGenerateRecap = null,
-                        onDismiss = { showAiHubSheet = false },
-                        isMainTtsActive = isTtsSessionActive,
-                        getAuthToken = { viewModel.getAuthToken() },
-                        credits = uiState.credits,
-                        isProUser = isProUser
-                    )
-                }
-
-                if (showPermissionRationaleDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showPermissionRationaleDialog = false },
-                        title = { Text(stringResource(R.string.dialog_permission_required)) },
-                        text = {
-                            Text(
-                                stringResource(R.string.dialog_permission_notification_desc)
-                            )
-                        },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    showPermissionRationaleDialog = false
-                                    permissionLauncher.launch(
-                                        Manifest.permission.POST_NOTIFICATIONS
-                                    )
-                                }) { Text(stringResource(R.string.action_continue)) }
-                        },
-                        dismissButton = {
-                            TextButton(
-                                onClick = {
-                                    showPermissionRationaleDialog = false
-                                    startTts()
-                                }) { Text(stringResource(R.string.action_not_now)) }
-                        })
-                }
-                if (showSummarizationUpsellDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showSummarizationUpsellDialog = false },
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.summarize),
-                                contentDescription = null
-                            )
-                        },
-                        title = { Text(stringResource(R.string.dialog_unlock_page_summarization)) },
-                        text = {
-                            Text(
-                                stringResource(R.string.dialog_unlock_page_summarization_desc)
-                            )
-                        },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    showSummarizationUpsellDialog = false
-                                    onNavigateToPro()
-                                }) { Text(stringResource(R.string.action_learn_more)) }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showSummarizationUpsellDialog = false }) {
-                                Text(stringResource(R.string.action_not_now))
-                            }
-                        })
-                }
-
-                if (showInsufficientCreditsDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showInsufficientCreditsDialog = false },
-                        icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
-                        title = { Text(stringResource(R.string.dialog_out_of_credits_title)) },
-                        text = { Text(stringResource(R.string.dialog_out_of_credits_desc)) },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showInsufficientCreditsDialog = false
-                                onNavigateToPro()
-                            }) { Text(stringResource(R.string.action_get_pro_or_add_credits)) }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showInsufficientCreditsDialog = false }) {
-                                Text(stringResource(R.string.action_cancel))
-                            }
-                        }
-                    )
-                }
-
-                // --- PANEL POPUP ---
-                if (poppedUpPanelBitmap != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.85f))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                poppedUpPanelBitmap?.recycle()
-                                poppedUpPanelBitmap = null
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
-                            contentDescription = stringResource(R.string.content_desc_annotated_page),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Fit
-                        )
-
-                        IconButton(
-                            onClick = {
-                                poppedUpPanelBitmap?.recycle()
-                                poppedUpPanelBitmap = null
-                            },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(24.dp)
-                                .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.content_desc_close_image),
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-                // --- END PANEL POPUP ---
-
-                if (showPasswordDialog) {
-                    PasswordDialog(
-                        isError = isPasswordError,
-                        onDismiss = { onNavigateBack() },
-                        onConfirm = { password -> documentPassword = password })
-                }
-
-                if (showBubbleZoomDownloadDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showBubbleZoomDownloadDialog = false },
-                        icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                        title = { Text(stringResource(R.string.dialog_download_bubble_zoom_model)) },
-                        text = {
-                            Text(stringResource(R.string.dialog_download_bubble_zoom_model_desc))
-                        },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showBubbleZoomDownloadDialog = false
-                                viewModel.downloadSpeechBubbleModel(context)
-                            }) {
-                                Text(stringResource(R.string.action_download))
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showBubbleZoomDownloadDialog = false }) {
-                                Text(stringResource(R.string.action_cancel))
-                            }
-                        }
-                    )
-                }
-
-                if (showNewTabSheet) {
-                    ModalBottomSheet(
-                        onDismissRequest = { showNewTabSheet = false },
-                        sheetState = sheetState,
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ) {
-                        val pdfFiles = remember(uiState.rawLibraryFiles, openTabs) {
-                            val openIds = openTabs.map { it.bookId }
-                            uiState.rawLibraryFiles
-                                .filter { it.type == FileType.PDF && it.bookId !in openIds }
-                                .sortedByDescending { it.timestamp }
-                        }
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 16.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.title_add_pdf_to_tab),
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                            if (pdfFiles.isEmpty()) {
-                                Text(
-                                    stringResource(R.string.msg_no_other_pdfs_found),
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            } else {
-                                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                                    items(pdfFiles, key = { it.bookId }) { file ->
-                                        ListItem(
-                                            headlineContent = { Text(file.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                            supportingContent = { file.author?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                                            modifier = Modifier.clickable {
-                                                coroutineScope.launch {
-                                                    sheetState.hide()
-                                                    showNewTabSheet = false
-                                                    viewModel.switchTab(file.bookId)
-                                                }
-                                            }
-                                        )
-                                        HorizontalDivider()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (showPenPlayground) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .clickable { showPenPlayground = false },
-                        contentAlignment = Alignment.Center
-                    ) { PenPlayground(onClose = { showPenPlayground = false }) }
-                }
-
-                if (showAiDefinitionPopup) {
-                    AiDefinitionPopup(
-                        word = selectedTextForAi,
-                        result = aiDefinitionResult,
-                        isLoading = isAiDefinitionLoading,
-                        onDismiss = {
-                            showAiDefinitionPopup = false
-                            selectedTextForAi = null
-                            aiDefinitionResult = null
-                        },
-                        isMainTtsActive = isTtsSessionActive,
-                        onOpenExternalDictionary = {
-                            selectedTextForAi?.let { text ->
-                                if (!selectedDictPackage.isNullOrEmpty()) {
-                                    ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
-                                } else {
-                                    Toast.makeText(context, context.getString(R.string.toast_select_offline_dict_first), Toast.LENGTH_SHORT).show()
-                                    showDictionarySettingsSheet = true
-                                }
-                            }
-                        },
-                        getAuthToken = { viewModel.getAuthToken() }
-                    )
-                }
-                if (showDictionaryUpsellDialog) {
-                    AlertDialog(onDismissRequest = { showDictionaryUpsellDialog = false }, icon = {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ai),
-                            contentDescription = null
-                        )
-                    }, title = { Text(stringResource(R.string.ai_unlock_smart_dict)) }, text = {
-                        Text(
-                            stringResource(R.string.ai_unlock_smart_dict_desc)
-                        )
-                    }, confirmButton = {
-                        TextButton(
-                            onClick = {
-                                showDictionaryUpsellDialog = false
-                                onNavigateToPro()
-                            }) { Text(stringResource(R.string.action_learn_more)) }
-                    }, dismissButton = {
-                        TextButton(onClick = { showDictionaryUpsellDialog = false }) {
-                            Text(stringResource(R.string.action_not_now))
-                        }
-                    })
-                }
-
-                showReindexDialog?.let { newLanguage ->
-                    if (BuildConfig.IS_PRO) {
-                        AlertDialog(
-                            onDismissRequest = { showReindexDialog = null },
-                            icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                            title = { Text(stringResource(R.string.title_reindex_document)) },
-                            text = {
-                                Text(
-                                    stringResource(R.string.desc_reindex_document_warning)
-                                )
-                            },
-                            confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            ocrLanguage = newLanguage
-                                            saveOcrLanguage(context, newLanguage)
-                                            hasSelectedOcrLanguage = true
-
-                                            currentBookId?.let { id ->
-                                                isBackgroundIndexing = true
-                                                backgroundIndexingProgress = 0f
-                                                withContext(Dispatchers.IO) {
-                                                    pdfTextRepository.clearBookText(id)
-                                                    pdfTextRepository.setBookLanguage(id, newLanguage.name)
-                                                }
-                                                isBackgroundIndexing = false
-                                            }
-
-                                            pendingActionAfterOcrSelection?.invoke()
-                                            pendingActionAfterOcrSelection = null
-                                            showReindexDialog = null
-                                            showOcrLanguageDialog = false
-                                        }
-                                    }
-                                ) { Text(stringResource(R.string.action_reindex)) }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showReindexDialog = null }) {
-                                    Text(stringResource(R.string.action_cancel))
-                                }
-                            }
-                        )
-                    } else {
-                        showReindexDialog = null
-                    }
-                }
-
-                if (showOcrLanguageDialog && !isOss) {
-                    OcrLanguageSelectionDialog(
-                        currentLanguage = ocrLanguage,
-                        isFirstRun = !hasSelectedOcrLanguage,
-                        onDismiss = {
-                            showOcrLanguageDialog = false
-                            pendingActionAfterOcrSelection = null
-                        },
-                        onLanguageSelected = { selected ->
-                            coroutineScope.launch {
-                                val storedLangName = currentBookId?.let {
-                                    pdfTextRepository.getBookLanguage(it)
-                                }
-
-                                val hasIndexedPages = currentBookId?.let {
-                                    pdfTextRepository.getIndexedPages(it).isNotEmpty()
-                                } == true
-
-                                if (hasIndexedPages && storedLangName != null && storedLangName != selected.name) {
-                                    showReindexDialog = selected
-                                    showOcrLanguageDialog = false
-                                } else {
-                                    ocrLanguage = selected
-                                    saveOcrLanguage(context, selected)
-                                    hasSelectedOcrLanguage = true
-
-                                    currentBookId?.let {
-                                        pdfTextRepository.setBookLanguage(it, selected.name)
-                                    }
-
-                                    showOcrLanguageDialog = false
-                                    pendingActionAfterOcrSelection?.invoke()
-                                    pendingActionAfterOcrSelection = null
-                                }
-                            }
-                        })
-                }
-
-                if (showTtsSettingsSheet) {
-                    val bookTitle = documentMetadataTitle ?: originalFileName
-                    TtsSettingsSheet(
-                        isVisible = true,
-                        onDismiss = { showTtsSettingsSheet = false },
-                        currentMode = currentTtsMode,
-                        onModeChange = { newMode ->
-                            currentTtsMode = newMode
-                            saveTtsMode(context, newMode)
-                            ttsController.changeTtsMode(newMode.name)
-                        },
-                        currentSpeakerId = ttsState.speakerId,
-                        onSpeakerChange = { newSpeaker ->
-                            ttsController.changeSpeaker(newSpeaker)
-                        },
-                        isTtsActive = isTtsSessionActive,
-                        getAuthToken = { viewModel.getAuthToken() },
-                        bookTitle = bookTitle
-                    )
-                }
-
-                if (showDictionarySettingsSheet) {
-                    DictionarySettingsDialog(
-                        isVisible = true,
-                        onDismiss = { showDictionarySettingsSheet = false },
-                        isProUser = isProUser,
-                        useOnlineDictionary = useOnlineDictionary,
-                        onToggleOnlineDictionary = { newState ->
-                            useOnlineDictionary = newState
-                            saveUseOnlineDict(context, newState)
-                        },
-                        selectedDictionaryPackageName = selectedDictPackage,
-                        onSelectDictionaryPackage = { pkg ->
-                            selectedDictPackage = pkg
-                            saveExternalDictPackage(context, pkg)
-                        },
-                        selectedTranslatePackageName = selectedTranslatePackage,
-                        onSelectTranslatePackage = { pkg ->
-                            selectedTranslatePackage = pkg
-                            saveExternalTranslatePackage(context, pkg)
-                        },
-                        selectedSearchPackageName = selectedSearchPackage,
-                        onSelectSearchPackage = { pkg ->
-                            selectedSearchPackage = pkg
-                            saveExternalSearchPackage(context, pkg)
-                        }
-                    )
-                }
-
-                if (highlightToNoteId != null) {
-                    val targetHighlight = userHighlights.find { it.id == highlightToNoteId }
-                    if (targetHighlight != null) {
-                        val effectiveBg = if (activeTheme.backgroundColor == Color.Unspecified) MaterialTheme.colorScheme.surface else activeTheme.backgroundColor
-                        val effectiveText = if (activeTheme.textColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else activeTheme.textColor
-
-                        PdfAnnotationBottomSheet(
-                            highlight = targetHighlight,
-                            effectiveBg = effectiveBg,
-                            effectiveText = effectiveText,
-                            customHighlightColors = customHighlightColors,
-                            onPaletteClick = {
-                                highlightColorPickerInitialSlot = targetHighlight.color
-                                showHighlightColorPicker = true
-                            },
-                            onColorChange = { newColor ->
-                                onHighlightUpdate(
-                                    targetHighlight.id,
-                                    newColor
-                                )
-                            },
-                            onDismiss = { highlightToNoteId = null },
-                            onSave = { noteText ->
-                                val index =
-                                    userHighlights.indexOfFirst { it.id == targetHighlight.id }
-                                if (index != -1) {
-                                    userHighlights[index] =
-                                        targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
-                                }
-                                highlightToNoteId = null
-                            },
-                            onDelete = {
-                                onHighlightDelete(targetHighlight.id)
-                                highlightToNoteId = null
-                            },
-                            onCopy = {
-                                val clip = ClipData.newPlainText(
-                                    "Copied Text",
-                                    targetHighlight.text
-                                )
-                                clipboardManager.setText(
-                                    androidx.compose.ui.text.AnnotatedString(
-                                        targetHighlight.text
-                                    )
-                                )
-                                highlightToNoteId = null
-                            },
-                            onDictionary = {
-                                onDictionaryLookupStable(targetHighlight.text)
-                                highlightToNoteId = null
-                            },
-                            onTranslate = {
-                                onTranslateTextStable(targetHighlight.text)
-                                highlightToNoteId = null
-                            },
-                            onSearch = {
-                                onSearchTextStable(targetHighlight.text)
-                                highlightToNoteId = null
-                            }
-                        )
-                    } else {
-                        highlightToNoteId = null
-                    }
-                }
-
-                if (showHighlightColorPicker) {
-                    HighlightColorPickerDialog(
-                        initialColors = customHighlightColors,
-                        initialSelection = highlightColorPickerInitialSlot,
-                        onDismiss = { showHighlightColorPicker = false },
-                        onSave = { newColors ->
-                            customHighlightColors = newColors
-                            saveCustomHighlightColors(context, newColors)
-                            showHighlightColorPicker = false
-                        }
-                    )
-                }
-
-                if (showThemePanel) {
-                    ReaderThemePanel(
-                        isVisible = true,
-                        currentThemeId = currentThemeId,
-                        excludeImages = excludeImages,
-                        onExcludeImagesChange = {
-                            excludeImages = it
-                            com.aryan.reader.saveExcludeImages(context, it)
-                        },
-                        showExcludeImagesOption = true,
-                        builtInThemes = PdfBuiltInThemes,
-                        onThemeSelected = {
-                            currentThemeId = it
-                            savePdfThemeId(context, it)
-                            showThemePanel = false
-                        },
-                        onDismiss = { showThemePanel = false },
-                        customThemes = customThemes,
-                        onCustomThemesUpdated = {
-                            customThemes = it
-                            saveCustomThemes(context, it)
-                        }
-                    )
-                }
-
-                if (clickedLinkUrl != null) {
-                    val url = clickedLinkUrl!!
-                    AlertDialog(
-                        onDismissRequest = { clickedLinkUrl = null },
-                        title = { Text(stringResource(R.string.dialog_external_link_title)) },
-                        text = { Text(stringResource(R.string.desc_external_link_warning)) },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    try {
-                                        uriHandler.openUri(url)
-                                    } catch (e: Exception) {
-                                        Timber.e(e, "Failed to open URI")
-                                    }
-                                    clickedLinkUrl = null
-                                }) { Text(stringResource(R.string.action_visit)) }
-                        },
-                        dismissButton = {
-                            Row {
-                                TextButton(
-                                    onClick = {
-                                        clipboardManager.setText(AnnotatedString(url))
-                                        clickedLinkUrl = null
-                                    }) { Text(stringResource(R.string.action_copy)) }
-                                TextButton(onClick = { clickedLinkUrl = null }) {
-                                    Text(stringResource(R.string.action_cancel))
-                                }
-                            }
-                        })
-                }
-
-                if (showSaveDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showSaveDialog = false },
-                        title = { Text(stringResource(R.string.title_save_to_device)) },
-                        text = { Text(stringResource(R.string.desc_choose_format_save)) },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    showSaveDialog = false
-                                    pendingSaveMode = SaveMode.ANNOTATED
-                                    val suggestedName = getSuggestedFilename(
-                                        originalFileName, isAnnotated = true
-                                    )
-                                    saveLauncher.launch(suggestedName)
-                                }) { Text(stringResource(R.string.action_with_annotations)) }
-                        },
-                        dismissButton = {
-                            Row {
-                                TextButton(
-                                    onClick = {
-                                        showSaveDialog = false
-                                        pendingSaveMode = SaveMode.ORIGINAL
-                                        val suggestedName = getSuggestedFilename(
-                                            originalFileName, isAnnotated = false
-                                        )
-                                        saveLauncher.launch(suggestedName)
-                                    }) { Text(stringResource(R.string.action_original)) }
-
-                                Spacer(Modifier.width(8.dp))
-
-                                TextButton(
-                                    onClick = {
-                                        showSaveDialog = false
-                                        pendingSaveMode = null
-                                    }) { Text(stringResource(R.string.action_cancel)) }
-                            }
-                        })
-                }
-
-                if (showShareDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showShareDialog = false },
-                        title = { Text(stringResource(R.string.share_chooser_title)) },
-                        text = { Text(stringResource(R.string.desc_choose_format_share)) },
-                        confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    showShareDialog = false
-                                    isShareLoading = true
-                                    Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
-                                    val filename = getSuggestedFilename(
-                                        originalFileName, isAnnotated = true
-                                    )
-                                    coroutineScope.launch {
-                                        val currentRichTextLayouts = richTextController?.pageLayouts
-
-                                        viewModel.sharePdf(
-                                            activityContext = context,
-                                            sourceUri = effectivePdfUri,
-                                            annotations = allAnnotations,
-                                            richTextPageLayouts = currentRichTextLayouts,
-                                            textBoxes = textBoxes.toList(),
-                                            highlights = userHighlights.toList(),
-                                            includeAnnotations = true,
-                                            filename = filename,
-                                            bookId = currentBookId
-                                        )
-                                        isShareLoading = false
-                                    }
-                                }) { Text(stringResource(R.string.action_with_annotations)) }
-                        },
-                        dismissButton = {
-                            Row {
-                                TextButton(
-                                    onClick = {
-                                        showShareDialog = false
-                                        isShareLoading = true
-                                        val filename = getSuggestedFilename(
-                                            originalFileName, isAnnotated = false
-                                        )
-                                        coroutineScope.launch {
-                                            viewModel.sharePdf(
-                                                activityContext = context,
-                                                sourceUri = pdfUri,
-                                                annotations = allAnnotations,
-                                                includeAnnotations = false,
-                                                filename = filename
-                                            )
-                                            isShareLoading = false
-                                        }
-                                    }) { Text(stringResource(R.string.action_original)) }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = { showShareDialog = false }) {
-                                    Text(stringResource(R.string.action_cancel))
-                                }
-                            }
-                        })
-                }
-
-                if (isShareLoading) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .clickable(enabled = false) {}, contentAlignment = Alignment.Center
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 6.dp
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(32.dp), strokeWidth = 3.dp
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = stringResource(R.string.msg_preparing_pdf),
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                            }
-                        }
-                    }
-                }
-
                 val effectiveNavBarPaddingForOverlays = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
                 val autoScrollPadding by animateDpAsState(
                     targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
@@ -6721,28 +5999,751 @@ fun PdfViewerScreen(
                         }
                     )
                 }
-                if (showVisualOptionsSheet) {
-                    PdfVisualOptionsSheet(
-                        systemUiMode = systemUiMode,
-                        onSystemUiModeChange = { mode ->
-                            systemUiMode = mode
-                            savePdfSystemUiMode(context, mode)
-                        },
-                        onDismiss = { showVisualOptionsSheet = false }
-                    )
+            }
+        }
+    }
+
+    if (showAiHubSheet) {
+        val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
+            pagerState.currentPage
+        } else {
+            verticalReaderState.currentPage
+        }
+        val bookTitle = documentMetadataTitle ?: originalFileName
+
+        AiHubBottomSheet(
+            bookTitle = bookTitle,
+            currentChapterIndex = currentPageForDisplay,
+            chapterTitle = "Page ${currentPageForDisplay + 1}",
+            summaryCacheManager = summaryCacheManager,
+            summarizationResult = summarizationResult,
+            isSummarizationLoading = isSummarizationLoading,
+            onClearSummary = { summarizationResult = null },
+            onGenerateSummary = { force ->
+                if (BuildConfig.FLAVOR != "oss" && !isProUser && uiState.credits <= 0) {
+                    showInsufficientCreditsDialog = true
+                    showAiHubSheet = false
+                } else {
+                    coroutineScope.launch {
+                        isSummarizationLoading = true
+                        summarizationResult = null
+
+                        val cached = if (!force) summaryCacheManager.getSummary(bookTitle, currentPageForDisplay) else null
+                        if (cached != null) {
+                            summarizationResult = SummarizationResult(summary = cached, isCacheHit = true)
+                            isSummarizationLoading = false
+                            return@launch
+                        }
+
+                        val token = viewModel.getAuthToken()
+                        summarizeCurrentPage(
+                            authToken = token,
+                            onUpdate = { result ->
+                                if (result.error == "INSUFFICIENT_CREDITS") {
+                                    showInsufficientCreditsDialog = true
+                                    showAiHubSheet = false
+                                    isSummarizationLoading = false
+                                } else {
+                                    summarizationResult = result
+                                }
+                            }, onFinish = {
+                                isSummarizationLoading = false
+                                val finalSummary = summarizationResult?.summary
+                                if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
+                                    summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
+                                }
+                            }
+                        )
+                    }
                 }
-                if (showCustomizeToolsSheet) {
-                    PdfCustomizeToolsSheet(
-                        hiddenTools = hiddenTools,
-                        toolOrder = toolOrder,
-                        bottomTools = bottomTools,
-                        onUpdate = onUpdateHiddenTools,
-                        onOrderUpdate = onUpdateToolOrder,
-                        onPlacementUpdate = onUpdateBottomTools,
-                        onDismiss = { showCustomizeToolsSheet = false }
+            },
+            recapResult = null,
+            isRecapLoading = false,
+            onGenerateRecap = null,
+            onDismiss = { showAiHubSheet = false },
+            isMainTtsActive = isTtsSessionActive,
+            getAuthToken = { viewModel.getAuthToken() },
+            credits = uiState.credits,
+            isProUser = isProUser
+        )
+    }
+
+    if (showPermissionRationaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionRationaleDialog = false },
+            title = { Text(stringResource(R.string.dialog_permission_required)) },
+            text = {
+                Text(
+                    stringResource(R.string.dialog_permission_notification_desc)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPermissionRationaleDialog = false
+                        permissionLauncher.launch(
+                            Manifest.permission.POST_NOTIFICATIONS
+                        )
+                    }) { Text(stringResource(R.string.action_continue)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showPermissionRationaleDialog = false
+                        startTts()
+                    }) { Text(stringResource(R.string.action_not_now)) }
+            })
+    }
+    if (showSummarizationUpsellDialog) {
+        AlertDialog(
+            onDismissRequest = { showSummarizationUpsellDialog = false },
+            icon = {
+                Icon(
+                    painter = painterResource(id = R.drawable.summarize),
+                    contentDescription = null
+                )
+            },
+            title = { Text(stringResource(R.string.dialog_unlock_page_summarization)) },
+            text = {
+                Text(
+                    stringResource(R.string.dialog_unlock_page_summarization_desc)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSummarizationUpsellDialog = false
+                        onNavigateToPro()
+                    }) { Text(stringResource(R.string.action_learn_more)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSummarizationUpsellDialog = false }) {
+                    Text(stringResource(R.string.action_not_now))
+                }
+            })
+    }
+
+    if (showInsufficientCreditsDialog) {
+        AlertDialog(
+            onDismissRequest = { showInsufficientCreditsDialog = false },
+            icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
+            title = { Text(stringResource(R.string.dialog_out_of_credits_title)) },
+            text = { Text(stringResource(R.string.dialog_out_of_credits_desc)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showInsufficientCreditsDialog = false
+                    onNavigateToPro()
+                }) { Text(stringResource(R.string.action_get_pro_or_add_credits)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInsufficientCreditsDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    // --- PANEL POPUP ---
+    if (poppedUpPanelBitmap != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.85f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    poppedUpPanelBitmap?.recycle()
+                    poppedUpPanelBitmap = null
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
+                contentDescription = stringResource(R.string.content_desc_annotated_page),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentScale = ContentScale.Fit
+            )
+
+            IconButton(
+                onClick = {
+                    poppedUpPanelBitmap?.recycle()
+                    poppedUpPanelBitmap = null
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(24.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = stringResource(R.string.content_desc_close_image),
+                    tint = Color.White
+                )
+            }
+        }
+    }
+    // --- END PANEL POPUP ---
+
+    if (showPasswordDialog) {
+        PasswordDialog(
+            isError = isPasswordError,
+            onDismiss = { onNavigateBack() },
+            onConfirm = { password -> documentPassword = password })
+    }
+
+    if (showBubbleZoomDownloadDialog) {
+        AlertDialog(
+            onDismissRequest = { showBubbleZoomDownloadDialog = false },
+            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+            title = { Text(stringResource(R.string.dialog_download_bubble_zoom_model)) },
+            text = {
+                Text(stringResource(R.string.dialog_download_bubble_zoom_model_desc))
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBubbleZoomDownloadDialog = false
+                    viewModel.downloadSpeechBubbleModel(context)
+                }) {
+                    Text(stringResource(R.string.action_download))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBubbleZoomDownloadDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    if (showNewTabSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showNewTabSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            val pdfFiles = remember(uiState.rawLibraryFiles, openTabs) {
+                val openIds = openTabs.map { it.bookId }
+                uiState.rawLibraryFiles
+                    .filter { it.type == FileType.PDF && it.bookId !in openIds }
+                    .sortedByDescending { it.timestamp }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.title_add_pdf_to_tab),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(16.dp)
+                )
+                if (pdfFiles.isEmpty()) {
+                    Text(
+                        stringResource(R.string.msg_no_other_pdfs_found),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        items(pdfFiles, key = { it.bookId }) { file ->
+                            ListItem(
+                                headlineContent = { Text(file.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                supportingContent = { file.author?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                                modifier = Modifier.clickable {
+                                    coroutineScope.launch {
+                                        sheetState.hide()
+                                        showNewTabSheet = false
+                                        viewModel.switchTab(file.bookId)
+                                    }
+                                }
+                            )
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPenPlayground) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { showPenPlayground = false },
+            contentAlignment = Alignment.Center
+        ) { PenPlayground(onClose = { showPenPlayground = false }) }
+    }
+
+    if (showAiDefinitionPopup) {
+        AiDefinitionPopup(
+            word = selectedTextForAi,
+            result = aiDefinitionResult,
+            isLoading = isAiDefinitionLoading,
+            onDismiss = {
+                showAiDefinitionPopup = false
+                selectedTextForAi = null
+                aiDefinitionResult = null
+            },
+            isMainTtsActive = isTtsSessionActive,
+            onOpenExternalDictionary = {
+                selectedTextForAi?.let { text ->
+                    if (!selectedDictPackage.isNullOrEmpty()) {
+                        ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                    } else {
+                        Toast.makeText(context, context.getString(R.string.toast_select_offline_dict_first), Toast.LENGTH_SHORT).show()
+                        showDictionarySettingsSheet = true
+                    }
+                }
+            },
+            getAuthToken = { viewModel.getAuthToken() }
+        )
+    }
+    if (showDictionaryUpsellDialog) {
+        AlertDialog(onDismissRequest = { showDictionaryUpsellDialog = false }, icon = {
+            Icon(
+                painter = painterResource(id = R.drawable.ai),
+                contentDescription = null
+            )
+        }, title = { Text(stringResource(R.string.ai_unlock_smart_dict)) }, text = {
+            Text(
+                stringResource(R.string.ai_unlock_smart_dict_desc)
+            )
+        }, confirmButton = {
+            TextButton(
+                onClick = {
+                    showDictionaryUpsellDialog = false
+                    onNavigateToPro()
+                }) { Text(stringResource(R.string.action_learn_more)) }
+        }, dismissButton = {
+            TextButton(onClick = { showDictionaryUpsellDialog = false }) {
+                Text(stringResource(R.string.action_not_now))
+            }
+        })
+    }
+
+    showReindexDialog?.let { newLanguage ->
+        if (BuildConfig.IS_PRO) {
+            AlertDialog(
+                onDismissRequest = { showReindexDialog = null },
+                icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                title = { Text(stringResource(R.string.title_reindex_document)) },
+                text = {
+                    Text(
+                        stringResource(R.string.desc_reindex_document_warning)
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                ocrLanguage = newLanguage
+                                saveOcrLanguage(context, newLanguage)
+                                hasSelectedOcrLanguage = true
+
+                                currentBookId?.let { id ->
+                                    isBackgroundIndexing = true
+                                    backgroundIndexingProgress = 0f
+                                    withContext(Dispatchers.IO) {
+                                        pdfTextRepository.clearBookText(id)
+                                        pdfTextRepository.setBookLanguage(id, newLanguage.name)
+                                    }
+                                    isBackgroundIndexing = false
+                                }
+
+                                pendingActionAfterOcrSelection?.invoke()
+                                pendingActionAfterOcrSelection = null
+                                showReindexDialog = null
+                                showOcrLanguageDialog = false
+                            }
+                        }
+                    ) { Text(stringResource(R.string.action_reindex)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showReindexDialog = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            )
+        } else {
+            showReindexDialog = null
+        }
+    }
+
+    if (showOcrLanguageDialog && !isOss) {
+        OcrLanguageSelectionDialog(
+            currentLanguage = ocrLanguage,
+            isFirstRun = !hasSelectedOcrLanguage,
+            onDismiss = {
+                showOcrLanguageDialog = false
+                pendingActionAfterOcrSelection = null
+            },
+            onLanguageSelected = { selected ->
+                coroutineScope.launch {
+                    val storedLangName = currentBookId?.let {
+                        pdfTextRepository.getBookLanguage(it)
+                    }
+
+                    val hasIndexedPages = currentBookId?.let {
+                        pdfTextRepository.getIndexedPages(it).isNotEmpty()
+                    } == true
+
+                    if (hasIndexedPages && storedLangName != null && storedLangName != selected.name) {
+                        showReindexDialog = selected
+                        showOcrLanguageDialog = false
+                    } else {
+                        ocrLanguage = selected
+                        saveOcrLanguage(context, selected)
+                        hasSelectedOcrLanguage = true
+
+                        currentBookId?.let {
+                            pdfTextRepository.setBookLanguage(it, selected.name)
+                        }
+
+                        showOcrLanguageDialog = false
+                        pendingActionAfterOcrSelection?.invoke()
+                        pendingActionAfterOcrSelection = null
+                    }
+                }
+            })
+    }
+
+    if (showTtsSettingsSheet) {
+        val bookTitle = documentMetadataTitle ?: originalFileName
+        TtsSettingsSheet(
+            isVisible = true,
+            onDismiss = { showTtsSettingsSheet = false },
+            currentMode = currentTtsMode,
+            onModeChange = { newMode ->
+                currentTtsMode = newMode
+                saveTtsMode(context, newMode)
+                ttsController.changeTtsMode(newMode.name)
+            },
+            currentSpeakerId = ttsState.speakerId,
+            onSpeakerChange = { newSpeaker ->
+                ttsController.changeSpeaker(newSpeaker)
+            },
+            isTtsActive = isTtsSessionActive,
+            getAuthToken = { viewModel.getAuthToken() },
+            bookTitle = bookTitle
+        )
+    }
+
+    if (showDictionarySettingsSheet) {
+        DictionarySettingsDialog(
+            isVisible = true,
+            onDismiss = { showDictionarySettingsSheet = false },
+            isProUser = isProUser,
+            useOnlineDictionary = useOnlineDictionary,
+            onToggleOnlineDictionary = { newState ->
+                useOnlineDictionary = newState
+                saveUseOnlineDict(context, newState)
+            },
+            selectedDictionaryPackageName = selectedDictPackage,
+            onSelectDictionaryPackage = { pkg ->
+                selectedDictPackage = pkg
+                saveExternalDictPackage(context, pkg)
+            },
+            selectedTranslatePackageName = selectedTranslatePackage,
+            onSelectTranslatePackage = { pkg ->
+                selectedTranslatePackage = pkg
+                saveExternalTranslatePackage(context, pkg)
+            },
+            selectedSearchPackageName = selectedSearchPackage,
+            onSelectSearchPackage = { pkg ->
+                selectedSearchPackage = pkg
+                saveExternalSearchPackage(context, pkg)
+            }
+        )
+    }
+
+    if (highlightToNoteId != null) {
+        val targetHighlight = userHighlights.find { it.id == highlightToNoteId }
+        if (targetHighlight != null) {
+            val effectiveBg = if (activeTheme.backgroundColor == Color.Unspecified) MaterialTheme.colorScheme.surface else activeTheme.backgroundColor
+            val effectiveText = if (activeTheme.textColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else activeTheme.textColor
+
+            PdfAnnotationBottomSheet(
+                highlight = targetHighlight,
+                effectiveBg = effectiveBg,
+                effectiveText = effectiveText,
+                customHighlightColors = customHighlightColors,
+                onPaletteClick = {
+                    highlightColorPickerInitialSlot = targetHighlight.color
+                    showHighlightColorPicker = true
+                },
+                onColorChange = { newColor ->
+                    onHighlightUpdate(
+                        targetHighlight.id,
+                        newColor
+                    )
+                },
+                onDismiss = { highlightToNoteId = null },
+                onSave = { noteText ->
+                    val index =
+                        userHighlights.indexOfFirst { it.id == targetHighlight.id }
+                    if (index != -1) {
+                        userHighlights[index] =
+                            targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                    }
+                    highlightToNoteId = null
+                },
+                onDelete = {
+                    onHighlightDelete(targetHighlight.id)
+                    highlightToNoteId = null
+                },
+                onCopy = {
+                    val clip = ClipData.newPlainText(
+                        "Copied Text",
+                        targetHighlight.text
+                    )
+                    clipboardManager.setText(
+                        androidx.compose.ui.text.AnnotatedString(
+                            targetHighlight.text
+                        )
+                    )
+                    highlightToNoteId = null
+                },
+                onDictionary = {
+                    onDictionaryLookupStable(targetHighlight.text)
+                    highlightToNoteId = null
+                },
+                onTranslate = {
+                    onTranslateTextStable(targetHighlight.text)
+                    highlightToNoteId = null
+                },
+                onSearch = {
+                    onSearchTextStable(targetHighlight.text)
+                    highlightToNoteId = null
+                }
+            )
+        } else {
+            highlightToNoteId = null
+        }
+    }
+
+    if (showHighlightColorPicker) {
+        HighlightColorPickerDialog(
+            initialColors = customHighlightColors,
+            initialSelection = highlightColorPickerInitialSlot,
+            onDismiss = { showHighlightColorPicker = false },
+            onSave = { newColors ->
+                customHighlightColors = newColors
+                saveCustomHighlightColors(context, newColors)
+                showHighlightColorPicker = false
+            }
+        )
+    }
+
+    if (showThemePanel) {
+        ReaderThemePanel(
+            isVisible = true,
+            currentThemeId = currentThemeId,
+            excludeImages = excludeImages,
+            onExcludeImagesChange = {
+                excludeImages = it
+                com.aryan.reader.saveExcludeImages(context, it)
+            },
+            showExcludeImagesOption = true,
+            builtInThemes = PdfBuiltInThemes,
+            onThemeSelected = {
+                currentThemeId = it
+                savePdfThemeId(context, it)
+                showThemePanel = false
+            },
+            onDismiss = { showThemePanel = false },
+            customThemes = customThemes,
+            onCustomThemesUpdated = {
+                customThemes = it
+                saveCustomThemes(context, it)
+            }
+        )
+    }
+
+    if (clickedLinkUrl != null) {
+        val url = clickedLinkUrl!!
+        AlertDialog(
+            onDismissRequest = { clickedLinkUrl = null },
+            title = { Text(stringResource(R.string.dialog_external_link_title)) },
+            text = { Text(stringResource(R.string.desc_external_link_warning)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        try {
+                            uriHandler.openUri(url)
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to open URI")
+                        }
+                        clickedLinkUrl = null
+                    }) { Text(stringResource(R.string.action_visit)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(url))
+                            clickedLinkUrl = null
+                        }) { Text(stringResource(R.string.action_copy)) }
+                    TextButton(onClick = { clickedLinkUrl = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            })
+    }
+
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            title = { Text(stringResource(R.string.title_save_to_device)) },
+            text = { Text(stringResource(R.string.desc_choose_format_save)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSaveDialog = false
+                        pendingSaveMode = SaveMode.ANNOTATED
+                        val suggestedName = getSuggestedFilename(
+                            originalFileName, isAnnotated = true
+                        )
+                        saveLauncher.launch(suggestedName)
+                    }) { Text(stringResource(R.string.action_with_annotations)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            showSaveDialog = false
+                            pendingSaveMode = SaveMode.ORIGINAL
+                            val suggestedName = getSuggestedFilename(
+                                originalFileName, isAnnotated = false
+                            )
+                            saveLauncher.launch(suggestedName)
+                        }) { Text(stringResource(R.string.action_original)) }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    TextButton(
+                        onClick = {
+                            showSaveDialog = false
+                            pendingSaveMode = null
+                        }) { Text(stringResource(R.string.action_cancel)) }
+                }
+            })
+    }
+
+    if (showShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showShareDialog = false },
+            title = { Text(stringResource(R.string.share_chooser_title)) },
+            text = { Text(stringResource(R.string.desc_choose_format_share)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showShareDialog = false
+                        isShareLoading = true
+                        Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                        val filename = getSuggestedFilename(
+                            originalFileName, isAnnotated = true
+                        )
+                        coroutineScope.launch {
+                            val currentRichTextLayouts = richTextController?.pageLayouts
+
+                            viewModel.sharePdf(
+                                activityContext = context,
+                                sourceUri = effectivePdfUri,
+                                annotations = allAnnotations,
+                                richTextPageLayouts = currentRichTextLayouts,
+                                textBoxes = textBoxes.toList(),
+                                highlights = userHighlights.toList(),
+                                includeAnnotations = true,
+                                filename = filename,
+                                bookId = currentBookId
+                            )
+                            isShareLoading = false
+                        }
+                    }) { Text(stringResource(R.string.action_with_annotations)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            showShareDialog = false
+                            isShareLoading = true
+                            val filename = getSuggestedFilename(
+                                originalFileName, isAnnotated = false
+                            )
+                            coroutineScope.launch {
+                                viewModel.sharePdf(
+                                    activityContext = context,
+                                    sourceUri = pdfUri,
+                                    annotations = allAnnotations,
+                                    includeAnnotations = false,
+                                    filename = filename
+                                )
+                                isShareLoading = false
+                            }
+                        }) { Text(stringResource(R.string.action_original)) }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { showShareDialog = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            })
+    }
+
+    if (isShareLoading) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable(enabled = false) {}, contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp), strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(R.string.msg_preparing_pdf),
+                        style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
         }
+    }
+
+    if (showVisualOptionsSheet) {
+        PdfVisualOptionsSheet(
+            systemUiMode = systemUiMode,
+            onSystemUiModeChange = { mode ->
+                systemUiMode = mode
+                savePdfSystemUiMode(context, mode)
+            },
+            onDismiss = { showVisualOptionsSheet = false }
+        )
+    }
+    if (showCustomizeToolsSheet) {
+        PdfCustomizeToolsSheet(
+            hiddenTools = hiddenTools,
+            toolOrder = toolOrder,
+            bottomTools = bottomTools,
+            onUpdate = onUpdateHiddenTools,
+            onOrderUpdate = onUpdateToolOrder,
+            onPlacementUpdate = onUpdateBottomTools,
+            onDismiss = { showCustomizeToolsSheet = false }
+        )
     }
 }
