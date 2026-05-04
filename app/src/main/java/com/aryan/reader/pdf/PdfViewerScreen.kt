@@ -112,8 +112,6 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -200,7 +198,9 @@ import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiFeature
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.AiHubBottomSheet
+import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
@@ -476,7 +476,10 @@ fun PdfViewerScreen(
 
     val customFonts by viewModel.customFonts.collectAsState()
 
-    val snackbarHostState = remember { SnackbarHostState() }
+    var bannerMessage by remember { mutableStateOf<BannerMessage?>(null) }
+    fun showBanner(message: String, isError: Boolean = false) {
+        bannerMessage = BannerMessage(message, isError = isError)
+    }
     val onOcrStateChange: (Boolean) -> Unit = {}
 
     var showZoomIndicator by remember { mutableStateOf(false) }
@@ -519,9 +522,7 @@ fun PdfViewerScreen(
             )
         } catch (e: Exception) {
             Timber.tag("PdfPrint").e(e, "Failed to initialize print job")
-            coroutineScope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.error_open_print_settings))
-            }
+            showBanner(context.getString(R.string.error_open_print_settings), isError = true)
         }
     }
 
@@ -676,12 +677,6 @@ fun PdfViewerScreen(
     val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
     val navBarHeight = WindowInsets.systemBars.getBottom(density)
 
-    val effectiveNavBarForSnackbar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
-    val snackbarPadding by animateDpAsState(
-        targetValue = if (showStandardBars && !searchState.isSearchActive) 56.dp + effectiveNavBarForSnackbar else effectiveNavBarForSnackbar,
-        label = "SnackbarPadding"
-    )
-
     val targetVerticalHeaderHeight = remember(
         dockLocation,
         snapPreviewLocation,
@@ -754,6 +749,7 @@ fun PdfViewerScreen(
             }
         }
     }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(ocrLanguage) { OcrHelper.init(ocrLanguage) }
 
@@ -775,10 +771,20 @@ fun PdfViewerScreen(
                 showInsufficientCreditsDialog = true
                 ttsController.stop()
             } else {
-                coroutineScope.launch {
-                    snackbarHostState.showSnackbar(message)
-                }
+                showBanner(message, isError = true)
             }
+        }
+    }
+
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { showBanner(it, isError = true) }
+    }
+
+    LaunchedEffect(bannerMessage) {
+        val message = bannerMessage ?: return@LaunchedEffect
+        if (!message.isPersistent) {
+            delay(2500L)
+            bannerMessage = null
         }
     }
 
@@ -1244,8 +1250,6 @@ fun PdfViewerScreen(
     var ttsPageData by remember { mutableStateOf<TtsPageData?>(null) }
     var ttsDisplayPageIndex by remember { mutableStateOf<Int?>(null) }
     var ttsHighlightData by remember { mutableStateOf<TtsHighlightData?>(null) }
-
-    var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoadingDocument by remember { mutableStateOf(true) }
 
     var selectionClearTrigger by remember { mutableLongStateOf(0L) }
@@ -1525,7 +1529,7 @@ fun PdfViewerScreen(
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
                 onBookmarksChanged(result.bookmarksJson)
 
-                snackbarHostState.showSnackbar("Page added at ${targetIndex + 1}")
+                showBanner("Page added at ${targetIndex + 1}")
             }
         }
     }
@@ -1613,7 +1617,7 @@ fun PdfViewerScreen(
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
                 onBookmarksChanged(result.bookmarksJson)
 
-                snackbarHostState.showSnackbar("Page deleted")
+                showBanner("Page deleted")
 
                 val newMax = (virtualPages.size - 1).coerceAtLeast(0)
                 if (currentPage > newMax) {
@@ -1798,7 +1802,7 @@ fun PdfViewerScreen(
             }
 
             if (pageRemoved) {
-                snackbarHostState.showSnackbar("Extra page removed")
+                showBanner("Extra page removed")
             }
         }
     }
@@ -3478,12 +3482,6 @@ fun PdfViewerScreen(
         @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            snackbarHost = {
-                SnackbarHost(
-                    hostState = snackbarHostState,
-                    modifier = Modifier.padding(bottom = snackbarPadding)
-                )
-            }
         ) { _ ->
             BoxWithConstraints(
                 modifier = Modifier
@@ -4961,9 +4959,12 @@ fun PdfViewerScreen(
                                     }
                                     redoStack.clear()
 
-                                    snackbarHostState.showSnackbar(context.getString(R.string.msg_imported_svg_strokes))
+                                    showBanner(context.getString(R.string.msg_imported_svg_strokes))
                                 } else {
-                                    snackbarHostState.showSnackbar(context.getString(R.string.error_import_svg_failed))
+                                    showBanner(
+                                        context.getString(R.string.error_import_svg_failed),
+                                        isError = true
+                                    )
                                 }
                             }
                         }
@@ -5307,7 +5308,7 @@ fun PdfViewerScreen(
                     isHighlightingLoading = isHighlightingLoading,
                     isEditMode = isEditMode,
                     isTtsSessionActive = isTtsSessionActive,
-                    ttsErrorMessage = ttsState.errorMessage,
+                    ttsErrorMessage = null,
                     onShowThemePanel = showPdfThemePanel,
                     onToggleScrollLock = togglePdfScrollLock,
                     onShowDictionarySettings = showPdfDictionarySettings,
@@ -5321,7 +5322,10 @@ fun PdfViewerScreen(
                     isBubbleZoomModeActive = isBubbleZoomModeActive,
                     onToggleBubbleZoom = {
                         if (isOss) {
-                            coroutineScope.launch { snackbarHostState.showSnackbar("Bubble Zoom is only available in Playstore version of Episteme") }
+                            showBanner(
+                                "Bubble Zoom is only available in Playstore version of Episteme",
+                                isError = true
+                            )
                         } else if (!isBubbleZoomModeActive && !viewModel.isSpeechBubbleModelAvailable(context)) {
                             showBubbleZoomDownloadDialog = true
                         } else {
@@ -6054,6 +6058,8 @@ fun PdfViewerScreen(
                         }
                     )
                 }
+
+                CustomTopBanner(bannerMessage = bannerMessage)
             }
         }
     }
