@@ -1752,7 +1752,7 @@ private fun ToolbarDragRow(
         color = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), // Less padding on right for the handle
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ToolPreviewIcon(tool)
@@ -1763,14 +1763,14 @@ private fun ToolbarDragRow(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
-            // The Handle with gesture detector specifically attached to it
             Icon(
                 Icons.Default.Menu,
                 contentDescription = "Drag to reorder",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
-                    .size(48.dp) // Large touch target
-                    .padding(12.dp) // Visual size of 24dp
+                    .size(32.dp)
+                    .padding(6.dp)
+                    .clip(CircleShape)
                     .pointerInput(tool) {
                         detectDragGestures(
                             onDragStart = { onDragStart() },
@@ -1897,20 +1897,27 @@ fun TtsOverlayControls(
 
     val activeMode = try { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode) } catch(_: Exception) { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD }
     val progressPercent = ttsState.bookProgressPercent
-    val bookLabel = ttsState.bookTitle?.takeIf { it.isNotBlank() }
-    val chapterLabel = remember(ttsState.chapterIndex, ttsState.totalChapters, ttsState.chapterTitle) {
+    val cleanChapterTitle = remember(ttsState.chapterTitle) {
+        ttsState.chapterTitle
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString(" - ")
+            ?.takeIf { it.isNotBlank() }
+    }
+    val chapterLabel = remember(ttsState.chapterIndex, ttsState.totalChapters, cleanChapterTitle) {
         val chapterNumber = ttsState.chapterIndex?.plus(1)
         val totalChapters = ttsState.totalChapters
         when {
             chapterNumber != null && totalChapters != null -> buildString {
                 append("Chapter $chapterNumber of $totalChapters")
-                if (!ttsState.chapterTitle.isNullOrBlank()) append(": ${ttsState.chapterTitle}")
+                if (!cleanChapterTitle.isNullOrBlank()) append(": $cleanChapterTitle")
             }
             chapterNumber != null -> buildString {
                 append("Chapter $chapterNumber")
-                if (!ttsState.chapterTitle.isNullOrBlank()) append(": ${ttsState.chapterTitle}")
+                if (!cleanChapterTitle.isNullOrBlank()) append(": $cleanChapterTitle")
             }
-            !ttsState.chapterTitle.isNullOrBlank() -> ttsState.chapterTitle
+            !cleanChapterTitle.isNullOrBlank() -> cleanChapterTitle
             else -> null
         }
     }
@@ -2054,18 +2061,8 @@ fun TtsOverlayControls(
 
                     Spacer(Modifier.height(16.dp))
 
-                    if (bookLabel != null || chapterLabel != null || progressPercent != null || chunkLabel != null) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (bookLabel != null) {
-                                Text(
-                                    bookLabel,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
+                    if (chapterLabel != null || progressPercent != null || chunkLabel != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2073,11 +2070,11 @@ fun TtsOverlayControls(
                             ) {
                                 Text(
                                     chapterLabel ?: "Reading",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
                                 )
                                 Text(
                                     listOfNotNull(progressPercent?.let { "$it%" }, chunkLabel).joinToString(" - "),
@@ -2122,41 +2119,151 @@ fun TtsOverlayControls(
                         Spacer(Modifier.width(16.dp))
 
                         // Unified Sliders Block
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(stringResource(R.string.tts_speed_short, "%.1f".format(rate)), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
-                                Slider(
-                                    value = rate,
-                                    onValueChange = {
-                                        rate = it; if (!isDraggingRate && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                        isDraggingRate = true; ttsController.pause()
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        stringResource(R.string.tts_speed_short, "%.1f".format(rate)),
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_speed), modifier = Modifier.size(16.dp))
                                     }
-                                    },
-                                    onValueChangeFinished = { isDraggingRate = false; saveAndApply() },
-                                    valueRange = 0.5f..3.0f,
-                                    steps = 24,
-                                    modifier = Modifier.weight(1f).height(24.dp)
-                                )
-                                IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_speed), modifier = Modifier.size(16.dp))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { rate = ((rate * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                    Slider(
+                                        value = rate,
+                                        onValueChange = {
+                                            rate = it; if (!isDraggingRate && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                            isDraggingRate = true; ttsController.pause()
+                                        }
+                                        },
+                                        onValueChangeFinished = { isDraggingRate = false; saveAndApply() },
+                                        valueRange = 0.5f..3.0f,
+                                        modifier = Modifier.weight(1f).height(20.dp),
+                                        thumb = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                            )
+                                        },
+                                        track = { sliderState ->
+                                            val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                                            val fraction = if (range == 0f) 0f else {
+                                                ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(2.dp)
+                                                    .background(
+                                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+                                                        RoundedCornerShape(1.dp)
+                                                    ),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fraction)
+                                                        .height(2.dp)
+                                                        .background(
+                                                            MaterialTheme.colorScheme.primary,
+                                                            RoundedCornerShape(1.dp)
+                                                        )
+                                                )
+                                            }
+                                        }
+                                    )
+                                    IconButton(
+                                        onClick = { rate = ((rate * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(3.0f); saveAndApply() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(stringResource(R.string.tts_pitch_short, "%.1f".format(pitch)), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(62.dp))
-                                Slider(
-                                    value = pitch,
-                                    onValueChange = {
-                                        pitch = it; if (!isDraggingPitch && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                        isDraggingPitch = true; ttsController.pause()
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        stringResource(R.string.tts_pitch_short, "%.1f".format(pitch)),
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_pitch), modifier = Modifier.size(16.dp))
                                     }
-                                    },
-                                    onValueChangeFinished = { isDraggingPitch = false; saveAndApply() },
-                                    valueRange = 0.5f..2.0f,
-                                    steps = 14,
-                                    modifier = Modifier.weight(1f).height(24.dp)
-                                )
-                                IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_pitch), modifier = Modifier.size(16.dp))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { pitch = ((pitch * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                    Slider(
+                                        value = pitch,
+                                        onValueChange = {
+                                            pitch = it; if (!isDraggingPitch && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                            isDraggingPitch = true; ttsController.pause()
+                                        }
+                                        },
+                                        onValueChangeFinished = { isDraggingPitch = false; saveAndApply() },
+                                        valueRange = 0.5f..2.0f,
+                                        modifier = Modifier.weight(1f).height(20.dp),
+                                        thumb = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                            )
+                                        },
+                                        track = { sliderState ->
+                                            val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                                            val fraction = if (range == 0f) 0f else {
+                                                ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(2.dp)
+                                                    .background(
+                                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+                                                        RoundedCornerShape(1.dp)
+                                                    ),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fraction)
+                                                        .height(2.dp)
+                                                        .background(
+                                                            MaterialTheme.colorScheme.primary,
+                                                            RoundedCornerShape(1.dp)
+                                                        )
+                                                )
+                                            }
+                                        }
+                                    )
+                                    IconButton(
+                                        onClick = { pitch = ((pitch * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(2.0f); saveAndApply() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
                         }

@@ -76,6 +76,7 @@ import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.epub.SingleFileImporter
+import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.ml.ISpeechBubbleDetector
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.paginatedreader.Locator
@@ -1393,10 +1394,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (latestState.selectedBookId != bookId || latestState.selectedEpubUri != uri) {
                     return@withLock
                 }
-                if (latestState.selectedEpubBook?.extractionBasePath?.let { path ->
-                        path.isNotBlank() && File(path).exists()
-                    } == true
-                ) {
+                if (latestState.selectedEpubBook?.hasReadableExtractedContent() == true) {
                     return@withLock
                 }
 
@@ -3402,6 +3400,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
                 val allDbIds = recentFilesRepository.getAllFilesForSync().map { it.bookId }.toSet()
                 val validStreamHashes = allDbIds.map { it.hashCode().toString() }.toSet()
+                val validActiveBookCacheDirs = allDbIds.mapTo(mutableSetOf()) {
+                    ImportedFileCache.activeBookDirName(it)
+                }
                 ImportedFileCache.deleteStaleTemporaryBookDirs(appContext, TimeUnit.HOURS.toMillis(1))
 
                 cacheDir.listFiles()?.forEach { file ->
@@ -3412,10 +3413,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             if (deleted) Timber.d("Sweeper cleaned old temp file: $name")
                         }
                     } else if (ImportedFileCache.isActiveBookDir(name)) {
-                        val bookId = name.removePrefix("imported_file_")
-                        if (bookId !in allDbIds && file.lastModified() < oneHourAgo) {
+                        val legacyBookId = name.removePrefix("imported_file_")
+                        if (name !in validActiveBookCacheDirs && legacyBookId !in allDbIds && file.lastModified() < oneHourAgo) {
                             val deleted = file.deleteRecursively()
-                            if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache for: $bookId")
+                            if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache: $name")
                         }
                     } else if (name.startsWith("opds_stream_")) {
                         val bookIdHash = name.removePrefix("opds_stream_")

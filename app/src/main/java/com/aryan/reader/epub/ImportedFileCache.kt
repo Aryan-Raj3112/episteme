@@ -9,8 +9,12 @@ object ImportedFileCache {
     private const val TEMP_PREFIX = "imported_file_tmp_"
     private val invalidSegmentChars = Regex("[^A-Za-z0-9._-]+")
 
+    fun activeBookDirName(bookId: String): String {
+        return "$ACTIVE_PREFIX${bookMarker(bookId)}"
+    }
+
     fun activeBookDir(context: Context, bookId: String): File {
-        return File(context.cacheDir, "$ACTIVE_PREFIX$bookId")
+        return File(context.cacheDir, activeBookDirName(bookId))
     }
 
     fun prepareActiveBookDir(context: Context, bookId: String): File {
@@ -39,6 +43,7 @@ object ImportedFileCache {
 
     fun clearBookCache(context: Context, bookId: String) {
         activeBookDir(context, bookId).takeIf { it.exists() }?.deleteRecursively()
+        legacyActiveBookDir(context, bookId).takeIf { it.exists() }?.deleteRecursively()
         clearTemporaryBookDirs(context, bookId)
     }
 
@@ -67,6 +72,10 @@ object ImportedFileCache {
 
     fun isActiveBookDir(name: String): Boolean {
         return name.startsWith(ACTIVE_PREFIX) && !isTemporaryBookDir(name)
+    }
+
+    private fun legacyActiveBookDir(context: Context, bookId: String): File {
+        return File(context.cacheDir, "$ACTIVE_PREFIX$bookId")
     }
 
     private fun bookMarker(bookId: String): String {

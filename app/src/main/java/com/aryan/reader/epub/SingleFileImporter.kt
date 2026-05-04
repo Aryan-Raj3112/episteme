@@ -189,11 +189,7 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
-
-        val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
-            if (!exists()) mkdirs()
-        }
+        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
@@ -327,11 +323,7 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
-
-        val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
-            if (!exists()) mkdirs()
-        }
+        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
@@ -492,11 +484,7 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
-
-        val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
-            if (!exists()) mkdirs()
-        }
+        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
@@ -684,11 +672,7 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        File(context.cacheDir, "imported_file_$bookId").deleteRecursively()
-
-        val extractionDir = File(context.cacheDir, "imported_file_$bookId").apply {
-            if (!exists()) mkdirs()
-        }
+        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {

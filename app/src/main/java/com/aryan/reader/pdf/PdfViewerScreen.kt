@@ -1242,6 +1242,7 @@ fun PdfViewerScreen(
     var isHighlightingLoading by remember { mutableStateOf(false) }
 
     var ttsPageData by remember { mutableStateOf<TtsPageData?>(null) }
+    var ttsDisplayPageIndex by remember { mutableStateOf<Int?>(null) }
     var ttsHighlightData by remember { mutableStateOf<TtsHighlightData?>(null) }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -1265,6 +1266,26 @@ fun PdfViewerScreen(
                 }
             }
         }
+    }
+
+    fun displayPageToPdfPage(displayPageIndex: Int): Int? {
+        if (displayPageIndex !in 0 until totalDisplayPages) return null
+        if (virtualPages.isEmpty()) return displayPageIndex.takeIf { it in 0 until totalPages }
+
+        return when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
+            is VirtualPage.PdfPage -> virtualPage.pdfIndex.takeIf { it in 0 until totalPages }
+            is VirtualPage.BlankPage -> null
+            null -> null
+        }
+    }
+
+    fun pdfPageToDisplayPage(pdfPageIndex: Int): Int? {
+        if (pdfPageIndex !in 0 until totalPages) return null
+        if (virtualPages.isEmpty()) return pdfPageIndex.takeIf { it in 0 until totalDisplayPages }
+
+        return virtualPages.indexOfFirst {
+            it is VirtualPage.PdfPage && it.pdfIndex == pdfPageIndex
+        }.takeIf { it >= 0 }
     }
 
     LaunchedEffect(richTextController, toolSettings.textStyle) {
@@ -2513,7 +2534,13 @@ fun PdfViewerScreen(
         }
         coroutineScope.launch {
             val token = viewModel.getAuthToken()
-            val pageToRead = pageToReadOverride ?: currentPage
+            val requestedDisplayPage = pageToReadOverride ?: currentPage
+            val pageToRead = displayPageToPdfPage(requestedDisplayPage)
+            if (pageToRead == null) {
+                Timber.w("TTS: Ignoring blank or invalid display page $requestedDisplayPage.")
+                return@launch
+            }
+            val displayPageForTts = pdfPageToDisplayPage(pageToRead) ?: requestedDisplayPage
             var rawPageText: String? = null
             var tempPage: ReaderPage? = null
             var tempTextPage: ReaderTextPage? = null
@@ -2561,6 +2588,7 @@ fun PdfViewerScreen(
             if (rawPageText != null && rawPageText!!.isNotBlank()) {
                 val processedText = preprocessTextForTts(rawPageText!!)
                 ttsPageData = TtsPageData(pageToRead, processedText, ocrUsedForCurrentPageTts)
+                ttsDisplayPageIndex = displayPageForTts
 
                 val cleanStartIndex = if (startCharIndex != null && startCharIndex >= 0) {
                     processedText.indexMap.indexOfFirst { it >= startCharIndex }.coerceAtLeast(0)
@@ -2602,10 +2630,16 @@ fun PdfViewerScreen(
                 if (nextPage < totalPages) {
                     Timber.i("TTS found no text on page $pageToRead. Skipping to $nextPage.")
                     isAutoPagingForTts = true
+                    val nextDisplayPage = pdfPageToDisplayPage(nextPage)
                     if (displayMode == DisplayMode.PAGINATION) {
-                        coroutineScope.launch { pagerState.animateScrollToPage(nextPage) }
+                        nextDisplayPage?.let { coroutineScope.launch { pagerState.animateScrollToPage(it) } }
                     } else {
-                        startTts(pageToReadOverride = nextPage)
+                        if (nextDisplayPage != null) {
+                            startTts(pageToReadOverride = nextDisplayPage)
+                        } else {
+                            ttsController.stop()
+                            isAutoPagingForTts = false
+                        }
                     }
                 } else {
                     ttsController.stop()
@@ -2663,12 +2697,24 @@ fun PdfViewerScreen(
                     DisplayMode.PAGINATION -> {
                         Timber.d("TTS auto-paging to next page: ${nextPage + 1}")
                         isAutoPagingForTts = true
-                        coroutineScope.launch { pagerState.animateScrollToPage(nextPage) }
+                        val nextDisplayPage = pdfPageToDisplayPage(nextPage)
+                        if (nextDisplayPage != null) {
+                            coroutineScope.launch { pagerState.animateScrollToPage(nextDisplayPage) }
+                        } else {
+                            ttsController.stop()
+                            isAutoPagingForTts = false
+                        }
                     }
 
                     DisplayMode.VERTICAL_SCROLL -> {
                         Timber.d("TTS auto-starting on next page (no scroll): ${nextPage + 1}")
-                        startTts(pageToReadOverride = nextPage)
+                        val nextDisplayPage = pdfPageToDisplayPage(nextPage)
+                        if (nextDisplayPage != null) {
+                            startTts(pageToReadOverride = nextDisplayPage)
+                        } else {
+                            ttsController.stop()
+                            isAutoPagingForTts = false
+                        }
                     }
                 }
             } else {
@@ -3765,7 +3811,7 @@ fun PdfViewerScreen(
                                                         currentPageScale = newScale
                                                     }
                                                 },
-                                                ttsHighlightData = if (pagerState.currentPage == pageIndex) ttsHighlightData else null,
+                                                ttsHighlightData = if (ttsDisplayPageIndex == pageIndex) ttsHighlightData else null,
                                                 searchQuery = searchState.searchQuery,
                                                 searchHighlightMode = searchHighlightMode,
                                                 searchResultToHighlight = if (pagerState.currentPage == pageIndex) searchHighlightTarget else null,
@@ -4214,7 +4260,7 @@ fun PdfViewerScreen(
                                             onTranslateText = onTranslateTextStable,
                                             onSearchText = onSearchTextStable,
                                             ttsHighlightData = ttsHighlightData,
-                                            ttsReadingPage = ttsPageData?.pageIndex,
+                                            ttsReadingPage = ttsDisplayPageIndex,
                                             userHighlights = userHighlights,
                                             onHighlightAdd = onHighlightAdd,
                                             onHighlightUpdate = onHighlightUpdate,
@@ -5626,7 +5672,7 @@ fun PdfViewerScreen(
                     }
                 }
 
-                val ttsReadingPage = ttsPageData?.pageIndex
+                val ttsReadingPage = ttsDisplayPageIndex
 
                 val isTtsPageVisible by remember(
                     ttsReadingPage,
@@ -5890,7 +5936,7 @@ fun PdfViewerScreen(
                         isCollapsed = isTtsCollapsed,
                         onCollapseChange = { isTtsCollapsed = it },
                         onLocateCurrentChunk = {
-                            ttsPageData?.pageIndex?.let { targetPage ->
+                            ttsDisplayPageIndex?.let { targetPage ->
                                 coroutineScope.launch {
                                     if (displayMode == DisplayMode.PAGINATION) {
                                         pagerState.scrollToPage(targetPage)

@@ -166,6 +166,7 @@ import com.aryan.reader.countWords
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadReaderThemeId
@@ -487,8 +488,8 @@ fun EpubReaderScreen(
         }
     } else null
 
-    val hasValidExtractionBasePath = remember(epubBook.extractionBasePath) {
-        epubBook.extractionBasePath.isNotBlank() && File(epubBook.extractionBasePath).exists()
+    val hasValidExtractionBasePath = remember(epubBook.extractionBasePath, epubBook.chapters) {
+        epubBook.hasReadableExtractedContent()
     }
     var requestedContentRecovery by remember(epubBook.extractionBasePath, uiState.selectedBookId) {
         mutableStateOf(false)

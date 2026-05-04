@@ -1272,9 +1272,9 @@
     <string name="label_short">Short</string>
     <string name="label_long">Long</string>
     <!-- Compact TTS speed label. %1$s = formatted multiplier, e.g. 1.2. -->
-    <string name="tts_speed_short">Spd: %1$sx</string>
+    <string name="tts_speed_short">Speed: %1$sx</string>
     <!-- Compact TTS pitch label. %1$s = formatted multiplier, e.g. 1.0. -->
-    <string name="tts_pitch_short">Ptch: %1$sx</string>
+    <string name="tts_pitch_short">Pitch: %1$sx</string>
     <string name="content_desc_play_pause">Play/Pause</string>
     <string name="content_desc_reset_speed">Reset Speed</string>
     <string name="content_desc_reset_pitch">Reset Pitch</string>
