@@ -2526,7 +2526,11 @@ fun PdfViewerScreen(
         return false
     }
 
-    fun startTts(pageToReadOverride: Int? = null, startCharIndex: Int? = null) {
+    fun startTts(
+        pageToReadOverride: Int? = null,
+        startCharIndex: Int? = null,
+        continueSession: Boolean = false
+    ) {
         if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
             showInsufficientCreditsDialog = true
             return
@@ -2615,6 +2619,7 @@ fun PdfViewerScreen(
                     bookTitle = bookTitle,
                     chapterTitle = pageTitle,
                     coverImageUri = null,
+                    continueSession = continueSession,
                     ttsMode = currentTtsMode,
                     playbackSource = "READER",
                     authToken = token
@@ -2639,7 +2644,7 @@ fun PdfViewerScreen(
                         nextDisplayPage?.let { coroutineScope.launch { pagerState.animateScrollToPage(it) } }
                     } else {
                         if (nextDisplayPage != null) {
-                            startTts(pageToReadOverride = nextDisplayPage)
+                            startTts(pageToReadOverride = nextDisplayPage, continueSession = true)
                         } else {
                             ttsController.stop()
                             isAutoPagingForTts = false
@@ -2714,7 +2719,7 @@ fun PdfViewerScreen(
                         Timber.d("TTS auto-starting on next page (no scroll): ${nextPage + 1}")
                         val nextDisplayPage = pdfPageToDisplayPage(nextPage)
                         if (nextDisplayPage != null) {
-                            startTts(pageToReadOverride = nextDisplayPage)
+                            startTts(pageToReadOverride = nextDisplayPage, continueSession = true)
                         } else {
                             ttsController.stop()
                             isAutoPagingForTts = false
@@ -3052,7 +3057,7 @@ fun PdfViewerScreen(
     LaunchedEffect(currentPage) {
         if (previousPage != -1 && previousPage != currentPage) {
             if (isAutoPagingForTts) {
-                startTts()
+                startTts(continueSession = true)
             } else if (displayMode == DisplayMode.PAGINATION && (ttsState.isPlaying || ttsState.isLoading)) {
                 Timber.d("Page changed manually while TTS active, stopping.")
                 ttsController.stop()

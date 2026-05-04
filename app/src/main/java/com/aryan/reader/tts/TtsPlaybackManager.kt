@@ -479,6 +479,14 @@ class TtsPlaybackManager(
     }
 
     private fun markSessionFinishedNaturally(chunkIndex: Int) {
+        val currentState = _ttsState.value
+        if (currentState.isLoading && currentState.currentChunkIndex == -1) {
+            Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d(
+                "Ignoring stale streamed completion while a continuation session is loading."
+            )
+            return
+        }
+
         val safeChunkIndex = if (textChunks.isNotEmpty()) {
             chunkIndex.coerceIn(0, textChunks.lastIndex)
         } else {
@@ -595,7 +603,10 @@ class TtsPlaybackManager(
             }
             prefetchNextChunkAudio(startAtIndex)
         } else {
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Failed to load audio.")
+            _ttsState.value = _ttsState.value.copy(
+                isLoading = false,
+                errorMessage = ttsAudioData.error ?: "Failed to load audio."
+            )
         }
     }
 
