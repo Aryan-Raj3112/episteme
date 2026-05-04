@@ -73,6 +73,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -1356,6 +1357,16 @@ private fun AppDrawerContent(
                     label = { Text("AI keys and models") },
                     selected = false,
                     onClick = onAiSettingsClick,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+
+            if (isOss) {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
+                    label = { Text(stringResource(R.string.drawer_support_project)) },
+                    selected = false,
+                    onClick = { navController.navigate(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                 )
             }

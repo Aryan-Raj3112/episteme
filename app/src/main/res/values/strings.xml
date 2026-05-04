@@ -102,6 +102,7 @@
     <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="drawer_backup_desc">Upload books from your synced folders to Google Drive.</string>
     <string name="drawer_custom_fonts">Custom Fonts</string>
+    <string name="drawer_support_project">Support the Project</string>
     <string name="drawer_help_feedback">Help &amp; Feedback</string>
     <string name="drawer_sign_out">Sign Out</string>
 
@@ -316,6 +317,15 @@
     <string name="github_issues_desc">Report bugs, request features, and track development progress.</string>
     <string name="email_support">Email Support</string>
     <string name="email_support_desc">Contact us directly via email for any other inquiries.</string>
+
+    <!-- Support Project -->
+    <string name="support_project_title">Support the Project</string>
+    <string name="support_project_heading">Help keep Episteme moving</string>
+    <string name="support_project_desc">Your support helps me keep maintaining and Improving Episteme for everyone!!!</string>
+    <string name="support_github_sponsor">Sponsor on GitHub</string>
+    <string name="support_github_sponsor_desc">Support development directly through GitHub Sponsors. As a thank you, you get a README shoutout in the project repo.</string>
+    <string name="support_patreon">Join on Patreon</string>
+    <string name="support_patreon_desc">As a thank you for backing the app, Patreon supporters get extra content and benefits: sneak peeks at what I am working on, early screenshots and updates, votes that help shape how new features should look and work, and a README shoutout in the project repo.</string>
 
     <!-- Dialogs -->
     <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->

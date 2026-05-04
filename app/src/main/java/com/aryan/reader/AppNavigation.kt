@@ -52,6 +52,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
+import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
 import kotlinx.coroutines.delay
 
@@ -61,6 +62,7 @@ object AppDestinations {
     const val EPUB_READER_ROUTE = "epub_reader"
     const val PRO_SCREEN_ROUTE = "pro_screen"
     const val FEEDBACK_SCREEN_ROUTE = "feedback_screen_route"
+    const val SUPPORT_PROJECT_SCREEN_ROUTE = "support_project_screen_route"
     const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
     const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
 }
@@ -337,6 +339,12 @@ fun AppNavigation(
 
         composable(route = AppDestinations.FEEDBACK_SCREEN_ROUTE) {
             FeedbackScreen(
+                navController = navController
+            )
+        }
+
+        composable(route = AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) {
+            SupportProjectScreen(
                 navController = navController
             )
         }
