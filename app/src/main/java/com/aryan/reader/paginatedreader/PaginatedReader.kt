@@ -781,7 +781,7 @@ fun PaginatedReaderScreen(
 
     var isNavigatingByLink by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg).then(textureModifier)) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg)) {
         val textMeasurer = rememberTextMeasurer()
         val baseTextStyle = MaterialTheme.typography.bodyLarge
 
@@ -1242,7 +1242,8 @@ fun PaginatedReaderScreen(
             isDarkTheme = isDarkTheme,
             activeHighlightPalette = activeHighlightPalette,
             onUpdatePalette = onUpdatePalette,
-            effectiveText = effectiveText
+            effectiveText = effectiveText,
+            pageTextureModifier = textureModifier
         )
 
         androidx.compose.animation.AnimatedVisibility(
@@ -2063,7 +2064,8 @@ internal fun PaginatedReaderContent(
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
-    isDarkTheme: Boolean
+    isDarkTheme: Boolean,
+    pageTextureModifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -2358,7 +2360,7 @@ internal fun PaginatedReaderContent(
                             pendingCrossPageSelection = null
                         }
 
-                        Box(modifier = Modifier.fillMaxSize().then(pageModifier)) {
+                        Box(modifier = Modifier.fillMaxSize().background(effectiveBg).then(pageTextureModifier).then(pageModifier)) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                                     detectTapGestures(

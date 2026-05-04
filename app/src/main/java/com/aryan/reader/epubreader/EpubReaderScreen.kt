@@ -169,6 +169,7 @@ import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
+import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderThemeId
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.CfiUtils
@@ -186,6 +187,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
+import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -1207,6 +1209,7 @@ fun EpubReaderHost(
 
     var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+    var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         BuiltInThemes.find { it.id == currentThemeId }
@@ -1228,7 +1231,7 @@ fun EpubReaderHost(
         } else activeTheme.textColor
     }
     val activeTextureId = activeTheme.textureId
-    val activeTextureAlpha = activeTheme.textureAlpha
+    val activeTextureAlpha = 1f - globalTextureTransparency
 
     val infoBarBgColor = remember(effectiveBg, isDarkTheme) {
         val overlayAlpha = if (isDarkTheme) 0.08f else 0.06f
@@ -5341,6 +5344,11 @@ fun EpubReaderHost(
             ReaderThemePanel(
                 isVisible = true,
                 currentThemeId = currentThemeId,
+                globalTextureTransparency = globalTextureTransparency,
+                onGlobalTextureTransparencyChange = {
+                    globalTextureTransparency = it
+                    saveGlobalTextureTransparency(context, it)
+                },
                 onThemeSelected = {
                     currentThemeId = it
                     saveReaderThemeId(context, it)

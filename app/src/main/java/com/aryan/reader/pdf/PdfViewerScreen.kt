@@ -223,6 +223,7 @@ import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
+import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -236,6 +237,7 @@ import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
+import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -309,6 +311,7 @@ fun PdfViewerScreen(
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
+    var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
     val documentCache = remember { DocumentCache(3) }
     val summaryCacheManager = remember(context) { SummaryCacheManager(context) }
     val tabStateMap = remember { mutableStateMapOf<String, Int>() }
@@ -3802,6 +3805,7 @@ fun PdfViewerScreen(
                                                 virtualPage = virtualPage,
                                                 totalPages = totalDisplayPages,
                                                 activeTheme = activeTheme,
+                                                activeTextureAlpha = 1f - globalTextureTransparency,
                                                 excludeImages = excludeImages,
                                                 isScrollLocked = isScrollLocked,
                                                 customHighlightColors = customHighlightColors,
@@ -4240,6 +4244,7 @@ fun PdfViewerScreen(
                                             state = verticalReaderState,
                                             pdfDocument = docHolder,
                                             activeTheme = activeTheme,
+                                            activeTextureAlpha = 1f - globalTextureTransparency,
                                             excludeImages = excludeImages,
                                             isScrollLocked = isScrollLocked,
                                             customHighlightColors = customHighlightColors,
@@ -6617,6 +6622,11 @@ fun PdfViewerScreen(
             },
             showExcludeImagesOption = true,
             builtInThemes = PdfBuiltInThemes,
+            globalTextureTransparency = globalTextureTransparency,
+            onGlobalTextureTransparencyChange = {
+                globalTextureTransparency = it
+                saveGlobalTextureTransparency(context, it)
+            },
             onThemeSelected = {
                 currentThemeId = it
                 savePdfThemeId(context, it)

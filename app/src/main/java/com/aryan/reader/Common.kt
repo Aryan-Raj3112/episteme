@@ -26,6 +26,7 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -42,6 +43,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -2549,7 +2556,6 @@ data class ReaderTheme(
     val textColor: Color,
     val isDark: Boolean,
     val textureId: String? = null,
-    val textureAlpha: Float = if (textureId == null) 0f else 0.55f,
     val isCustom: Boolean = false
 )
 
@@ -2578,6 +2584,28 @@ fun loadReaderThemeId(context: Context): String {
     return prefs.getString(PREF_READER_THEME, "system") ?: "system"
 }
 
+const val PREF_GLOBAL_TEXTURE_TRANSPARENCY = "global_texture_transparency"
+
+fun saveGlobalTextureTransparency(context: Context, transparency: Float) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PREF_GLOBAL_TEXTURE_TRANSPARENCY, transparency) }
+}
+
+fun loadGlobalTextureTransparency(context: Context): Float {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getFloat(PREF_GLOBAL_TEXTURE_TRANSPARENCY, 0f)
+}
+
+fun getImportedTextures(context: Context): List<String> {
+    return try {
+        val dir = File(context.filesDir, READER_TEXTURE_DIR)
+        if (!dir.exists()) emptyList()
+        else dir.listFiles()?.map { TEXTURE_FILE_PREFIX + it.absolutePath } ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
 const val PREF_EXCLUDE_IMAGES = "exclude_images"
 
 fun saveExcludeImages(context: Context, excludeImages: Boolean) {
@@ -2601,7 +2629,6 @@ fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {
             put("textColor", theme.textColor.toArgb())
             put("isDark", theme.isDark)
             theme.textureId?.let { put("textureId", it) }
-            put("textureAlpha", theme.textureAlpha)
         }
         jsonArray.put(obj)
     }
@@ -2624,7 +2651,6 @@ fun loadCustomThemes(context: Context): List<ReaderTheme> {
                     textColor = Color(obj.getInt("textColor")),
                     isDark = obj.getBoolean("isDark"),
                     textureId = if (obj.has("textureId")) obj.getString("textureId") else null,
-                    textureAlpha = obj.optDouble("textureAlpha", if (obj.has("textureId")) 0.55 else 0.0).toFloat().coerceIn(0f, 1f),
                     isCustom = true
                 )
             )
@@ -2651,14 +2677,18 @@ fun ReaderThemePanel(
     showExcludeImagesOption: Boolean = false,
     customThemes: List<ReaderTheme>,
     builtInThemes: List<ReaderTheme> = BuiltInThemes,
+    globalTextureTransparency: Float,
+    onGlobalTextureTransparencyChange: (Float) -> Unit,
     onThemeSelected: (String) -> Unit,
     onCustomThemesUpdated: (List<ReaderTheme>) -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!isVisible) return
     var showBuilder by remember { mutableStateOf(false) }
+    var builderIsTextured by remember { mutableStateOf(false) }
     var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
-    var builderDefaultTextureId by remember { mutableStateOf<String?>(null) }
+    var selectedTabIndex by remember { mutableIntStateOf(if (builtInThemes.find { it.id == currentThemeId }?.textureId != null || customThemes.find { it.id == currentThemeId }?.textureId != null) 1 else 0) }
+
     val plainBuiltInThemes = builtInThemes.filter { it.textureId == null }
     val texturedBuiltInThemes = builtInThemes.filter { it.textureId != null }
     val plainCustomThemes = customThemes.filter { it.textureId == null }
@@ -2676,7 +2706,8 @@ fun ReaderThemePanel(
             if (isBuilding) {
                 ThemeBuilderView(
                     initialTheme = editingTheme,
-                    defaultTextureId = builderDefaultTextureId,
+                    isTexturedMode = builderIsTextured,
+                    globalTextureAlpha = 1f - globalTextureTransparency,
                     onSave = { newTheme ->
                         val updatedList = if (editingTheme != null) {
                             customThemes.map { if (it.id == newTheme.id) newTheme else it }
@@ -2687,161 +2718,120 @@ fun ReaderThemePanel(
                         onThemeSelected(newTheme.id)
                         showBuilder = false
                         editingTheme = null
-                        builderDefaultTextureId = null
                     },
                     onCancel = {
                         showBuilder = false
                         editingTheme = null
-                        builderDefaultTextureId = null
                     }
                 )
             } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.65f)
-                        .padding(16.dp)
-                        .padding(bottom = 16.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    Text(stringResource(R.string.reading_themes),
+                Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
+                    Text(
+                        text = stringResource(R.string.reading_themes),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
                     )
 
-                    if (showExcludeImagesOption) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.theme_preserve_image_colors), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                                Text(stringResource(R.string.theme_preserve_image_colors_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
+                        Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }) {
+                            Text("Solid Colors", modifier = Modifier.padding(12.dp))
+                        }
+                        Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }) {
+                            Text("Textured", modifier = Modifier.padding(12.dp))
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    if (selectedTabIndex == 1) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Texture Transparency", style = MaterialTheme.typography.labelMedium)
+                                Text("${(globalTextureTransparency * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
-                            Switch(
-                                checked = excludeImages,
-                                onCheckedChange = onExcludeImagesChange
+                            Slider(
+                                value = globalTextureTransparency,
+                                onValueChange = onGlobalTextureTransparencyChange,
+                                valueRange = 0f..1f
                             )
                         }
                     }
 
-                    Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    ThemeGrid(themes = plainBuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
+                    val activeListBuiltIn = if (selectedTabIndex == 0) plainBuiltInThemes else texturedBuiltInThemes
+                    val activeListCustom = if (selectedTabIndex == 0) plainCustomThemes else texturedCustomThemes
 
-                    if (texturedBuiltInThemes.isNotEmpty()) {
-                        Spacer(Modifier.height(24.dp))
-                        Text(stringResource(R.string.theme_textured_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.height(8.dp))
-                        ThemeGrid(themes = texturedBuiltInThemes, currentThemeId = currentThemeId, onThemeSelected = onThemeSelected)
-                    }
-
-                    Spacer(Modifier.height(24.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        IconButton(
-                            onClick = {
-                                editingTheme = null
-                                builderDefaultTextureId = null
-                                showBuilder = true
-                            },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new), tint = MaterialTheme.colorScheme.primary)
+                        if (showExcludeImagesOption) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(stringResource(R.string.theme_preserve_image_colors), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                        Text(stringResource(R.string.theme_preserve_image_colors_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    }
+                                    Switch(checked = excludeImages, onCheckedChange = onExcludeImagesChange)
+                                }
+                            }
+                        }
+
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        }
+
+                        items(activeListBuiltIn) { theme ->
+                            ThemeGridItem(
+                                theme = theme,
+                                currentThemeId = currentThemeId,
+                                context = LocalContext.current,
+                                globalTextureAlpha = 1f - globalTextureTransparency,
+                                onThemeSelected = onThemeSelected,
+                                onEdit = null,
+                                onDelete = null
+                            )
+                        }
+
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                IconButton(onClick = { editingTheme = null; builderIsTextured = selectedTabIndex == 1; showBuilder = true }) {
+                                    Icon(Icons.Default.Add, contentDescription = "New Theme", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+
+                        if (activeListCustom.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            items(activeListCustom) { theme ->
+                                ThemeGridItem(
+                                    theme = theme,
+                                    currentThemeId = currentThemeId,
+                                    context = LocalContext.current,
+                                    globalTextureAlpha = 1f - globalTextureTransparency,
+                                    onThemeSelected = onThemeSelected,
+                                    onEdit = { editingTheme = it; builderIsTextured = selectedTabIndex == 1; showBuilder = true },
+                                    onDelete = { themeToDelete ->
+                                        val updated = customThemes.filter { it.id != themeToDelete.id }
+                                        onCustomThemesUpdated(updated)
+                                        if (currentThemeId == themeToDelete.id) onThemeSelected("system")
+                                    }
+                                )
+                            }
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
-
-                    if (plainCustomThemes.isEmpty()) {
-                        Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        ThemeGrid(
-                            themes = plainCustomThemes,
-                            currentThemeId = currentThemeId,
-                            onThemeSelected = onThemeSelected,
-                            onEdit = { editingTheme = it; showBuilder = true },
-                            onDelete = { themeToDelete ->
-                                val updated = customThemes.filter { it.id != themeToDelete.id }
-                                onCustomThemesUpdated(updated)
-                                if (currentThemeId == themeToDelete.id) onThemeSelected("system")
-                            }
-                        )
-                    }
-
-                    Spacer(Modifier.height(24.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(stringResource(R.string.theme_my_textured_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        IconButton(
-                            onClick = {
-                                editingTheme = null
-                                builderDefaultTextureId = ReaderTexture.NATURAL_WHITE.id
-                                showBuilder = true
-                            },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new_textured), tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    if (texturedCustomThemes.isEmpty()) {
-                        Text(stringResource(R.string.theme_no_textured_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        ThemeGrid(
-                            themes = texturedCustomThemes,
-                            currentThemeId = currentThemeId,
-                            onThemeSelected = onThemeSelected,
-                            onEdit = { editingTheme = it; showBuilder = true },
-                            onDelete = { themeToDelete ->
-                                val updated = customThemes.filter { it.id != themeToDelete.id }
-                                onCustomThemesUpdated(updated)
-                                if (currentThemeId == themeToDelete.id) onThemeSelected("system")
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ThemeGrid(
-    themes: List<ReaderTheme>,
-    currentThemeId: String,
-    onThemeSelected: (String) -> Unit,
-    onEdit: ((ReaderTheme) -> Unit)? = null,
-    onDelete: ((ReaderTheme) -> Unit)? = null
-) {
-    val context = LocalContext.current
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        themes.chunked(3).forEach { rowThemes ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                rowThemes.forEach { theme ->
-                    ThemeGridItem(
-                        theme = theme,
-                        currentThemeId = currentThemeId,
-                        context = context,
-                        onThemeSelected = onThemeSelected,
-                        onEdit = onEdit,
-                        onDelete = onDelete,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                repeat(3 - rowThemes.size) {
-                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -2853,6 +2843,7 @@ private fun ThemeGridItem(
     theme: ReaderTheme,
     currentThemeId: String,
     context: Context,
+    globalTextureAlpha: Float,
     onThemeSelected: (String) -> Unit,
     onEdit: ((ReaderTheme) -> Unit)?,
     onDelete: ((ReaderTheme) -> Unit)?,
@@ -2864,17 +2855,14 @@ private fun ThemeGridItem(
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     val textureBitmap = remember(theme.textureId) { loadReaderTextureBitmap(context, theme.textureId) }
 
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
                 .size(56.dp)
                 .background(bgColor, CircleShape)
                 .then(textureBitmap?.let { bitmap ->
                     Modifier.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = theme.textureAlpha.coerceIn(0f, 1f))
+                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = globalTextureAlpha)
                     }
                 } ?: Modifier)
                 .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
@@ -2888,15 +2876,8 @@ private fun ThemeGridItem(
 
         if (theme.isCustom && onEdit != null && onDelete != null) {
             Spacer(modifier = Modifier.height(6.dp))
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
@@ -2909,31 +2890,31 @@ private fun ThemeGridItem(
 @Composable
 fun ThemeBuilderView(
     initialTheme: ReaderTheme?,
-    defaultTextureId: String? = null,
+    isTexturedMode: Boolean,
+    globalTextureAlpha: Float,
     onSave: (ReaderTheme) -> Unit,
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    var name by remember { mutableStateOf(initialTheme?.name ?: "Custom Theme") }
+    var name by remember { mutableStateOf(initialTheme?.name ?: if (isTexturedMode) "Custom Textured" else "Custom Solid") }
     var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
     var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
-    var textureId by remember { mutableStateOf(initialTheme?.textureId ?: defaultTextureId) }
-    var textureAlpha by remember { mutableFloatStateOf(initialTheme?.textureAlpha ?: 0.55f) }
-    val texturePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { importReaderTexture(context, it) }?.let { textureId = it }
-    }
-
     var editingColorType by remember { mutableStateOf<String?>(null) }
+
+    var importedTextures by remember { mutableStateOf(getImportedTextures(context)) }
+    var textureId by remember { mutableStateOf(initialTheme?.textureId ?: importedTextures.firstOrNull()) }
+
+    val texturePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { importReaderTexture(context, it) }?.let { newId ->
+            importedTextures = getImportedTextures(context)
+            textureId = newId
+        }
+    }
 
     val contrast = calculateContrastRatio(bgColor, txtColor)
     val isDark = bgColor.luminance() < 0.5f
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(0.85f)
-            .padding(16.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(16.dp)) {
         Text(
             text = stringResource(if (initialTheme == null) R.string.theme_new else R.string.theme_edit),
             fontWeight = FontWeight.Bold,
@@ -2961,69 +2942,43 @@ fun ThemeBuilderView(
             ) {
                 val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
                 Box(modifier = Modifier.fillMaxSize().run {
-                    if (textureBitmap != null) {
+                    if (isTexturedMode && textureBitmap != null) {
                         this.drawBehind {
-                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = textureAlpha.coerceIn(0f, 1f))
+                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = globalTextureAlpha)
                         }
                     } else this
                 }) {
                     Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                        Text(text = stringResource(R.string.theme_preview_quote),
-                            color = txtColor,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text(text = stringResource(R.string.theme_preview_quote), color = txtColor, style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
-                        Text(text = stringResource(R.string.theme_preview_author),
-                            color = txtColor,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.End
-                        )
+                        Text(text = stringResource(R.string.theme_preview_author), color = txtColor, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
                     }
                 }
             }
 
-            // Animated Contrast Warning
             AnimatedVisibility(visible = contrast < 4.5f) {
-                Text(stringResource(R.string.theme_low_contrast_warning),
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+                Text(stringResource(R.string.theme_low_contrast_warning), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 8.dp))
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Sleek Color Swatches
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ColorSwatchItem(
-                    label = stringResource(R.string.theme_page_color),
-                    color = bgColor,
-                    onClick = { editingColorType = "bg" },
-                    modifier = Modifier.weight(1f)
-                )
-                ColorSwatchItem(
-                    label = stringResource(R.string.theme_text_color),
-                    color = txtColor,
-                    onClick = { editingColorType = "text" },
-                    modifier = Modifier.weight(1f)
+                ColorSwatchItem(label = stringResource(R.string.theme_page_color), color = bgColor, onClick = { editingColorType = "bg" }, modifier = Modifier.weight(1f))
+                ColorSwatchItem(label = stringResource(R.string.theme_text_color), color = txtColor, onClick = { editingColorType = "text" }, modifier = Modifier.weight(1f))
+            }
+
+            if (isTexturedMode) {
+                Spacer(Modifier.height(24.dp))
+                CustomTexturePickerSection(
+                    importedTextures = importedTextures,
+                    selectedTextureId = textureId,
+                    onTextureSelected = { textureId = it },
+                    onImportTexture = { texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp")) }
                 )
             }
-            Spacer(Modifier.height(16.dp))
-
-            TexturePickerSection(
-                selectedTextureId = textureId,
-                selectedTextureAlpha = textureAlpha,
-                onTextureSelected = { textureId = it },
-                onTextureAlphaChange = { textureAlpha = it },
-                onImportTexture = {
-                    texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
-                }
-            )
             Spacer(Modifier.height(16.dp))
         }
 
-        // Action Buttons at the bottom for better visibility
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
             horizontalArrangement = Arrangement.End,
@@ -3034,7 +2989,7 @@ fun ThemeBuilderView(
             }
             Spacer(Modifier.width(8.dp))
             Button(onClick = {
-                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = textureId, textureAlpha = if (textureId == null) 0f else textureAlpha, isCustom = true))
+                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = if (isTexturedMode) textureId else null, isCustom = true))
             }) {
                 Text(stringResource(R.string.action_save), color = MaterialTheme.colorScheme.onPrimary)
             }
@@ -3049,10 +3004,59 @@ fun ThemeBuilderView(
             textColor = txtColor,
             editingColorType = type,
             onDismiss = { editingColorType = null },
-            onColorChanged = { newColor ->
-                if (type == "bg") bgColor = newColor else txtColor = newColor
-            }
+            onColorChanged = { newColor -> if (type == "bg") bgColor = newColor else txtColor = newColor }
         )
+    }
+}
+
+@Composable
+private fun CustomTexturePickerSection(
+    importedTextures: List<String>,
+    selectedTextureId: String?,
+    onTextureSelected: (String?) -> Unit,
+    onImportTexture: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Select Custom Texture", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            item {
+                Surface(
+                    onClick = onImportTexture,
+                    modifier = Modifier.size(72.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.Add, contentDescription = "Import", tint = MaterialTheme.colorScheme.primary)
+                        Text("Import", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            items(importedTextures) { tex ->
+                val isSelected = tex == selectedTextureId
+                val context = LocalContext.current
+                val bitmap = remember(tex) { loadReaderTextureBitmap(context, tex) }
+
+                Surface(
+                    onClick = { onTextureSelected(tex) },
+                    modifier = Modifier.size(72.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isSelected) 0.95f else 0.45f),
+                    border = BorderStroke(if (isSelected) 2.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().then(bitmap?.let {
+                            Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(it, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.6f) }
+                        } ?: Modifier),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
     }
 }
 

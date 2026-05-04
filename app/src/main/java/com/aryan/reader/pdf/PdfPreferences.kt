@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.ReaderTheme
+import com.aryan.reader.ReaderTexture
 import com.aryan.reader.epubreader.SystemUiMode
 
 internal const val VERTICAL_SCROLL_TAG = "PdfVerticalScroll"
@@ -78,7 +79,13 @@ val PdfBuiltInThemes = listOf(
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
     ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
     ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
+    ReaderTheme("pdf_natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
+    ReaderTheme("pdf_natural_black_texture", "Natural Black", Color(0xFF111111), Color(0xFFE7E1D8), true, textureId = ReaderTexture.NATURAL_BLACK.id),
+    ReaderTheme("pdf_veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
+    ReaderTheme("pdf_grey_wash_texture", "Grey Wash", Color(0xFFE5E2DA), Color(0xFF202124), false, textureId = ReaderTexture.GREY_WASH.id),
+    ReaderTheme("pdf_fabric_texture", "Fabric", Color(0xFF262626), Color(0xFFE8E2D8), true, textureId = ReaderTexture.CLASSY_FABRIC.id),
+    ReaderTheme("pdf_retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
 )
 
 internal fun loadPdfHiddenTools(context: Context): Set<String> {

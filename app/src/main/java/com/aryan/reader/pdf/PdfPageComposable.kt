@@ -69,9 +69,13 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -119,6 +123,7 @@ import androidx.core.graphics.scale
 import androidx.core.graphics.set
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
+import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
@@ -434,7 +439,9 @@ data class PageStaticData(
     val colorFilter: StableHolder<ColorFilter?>,
     val isDarkMode: Boolean,
     val excludeImages: Boolean,
-    val imageRects: StableHolder<List<android.graphics.Rect>>
+    val imageRects: StableHolder<List<android.graphics.Rect>>,
+    val textureBitmap: StableHolder<ImageBitmap?>,
+    val textureAlpha: Float
 )
 
 @Stable
@@ -505,6 +512,7 @@ internal fun PdfPageComposable(
     onTtsHighlightCenterCalculated: ((Float) -> Unit)? = null,
     onSearchHighlightCenterCalculated: ((Float) -> Unit)? = null,
     activeTheme: com.aryan.reader.ReaderTheme = com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
     onDoubleTap: ((Offset) -> Unit)? = null,
     isEditMode: Boolean = false,
@@ -560,7 +568,7 @@ internal fun PdfPageComposable(
     var isLoadingPage by remember { mutableStateOf(true) }
     var pageErrorMessage by remember { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
-    LocalContext.current
+    val context = LocalContext.current
     val viewConfiguration = LocalViewConfiguration.current
     val coroutineScope = rememberCoroutineScope()
     var isStylusEraserOverride by remember { mutableStateOf(false) }
@@ -699,6 +707,12 @@ internal fun PdfPageComposable(
         } else {
             activeTheme.backgroundColor
         }
+    }
+    val textureBitmap = remember(activeTheme.textureId) {
+        loadReaderTextureBitmap(context, activeTheme.textureId)
+    }
+    val effectiveTextureAlpha = remember(activeTheme.textureId, activeTextureAlpha) {
+        if (activeTheme.textureId == null) 0f else activeTextureAlpha.coerceIn(0f, 1f)
     }
 
     val centeringOffsetX by remember(canvasWidthPx.floatValue, actualBitmapWidthPx) {
@@ -3938,7 +3952,9 @@ internal fun PdfPageComposable(
                         stableColorFilter,
                         isDarkMode,
                         excludeImages,
-                        stableImageRects
+                        stableImageRects,
+                        textureBitmap,
+                        effectiveTextureAlpha
                     ) {
                         Timber.tag("PdfDrawPerf").v(
                             "STATIC DATA GENERATED: Scale=$effectiveScale, Tiles=${stableTiles.item.size}"
@@ -3956,7 +3972,9 @@ internal fun PdfPageComposable(
                             colorFilter = stableColorFilter,
                             isDarkMode = isDarkMode,
                             excludeImages = excludeImages,
-                            imageRects = stableImageRects
+                            imageRects = stableImageRects,
+                            textureBitmap = StableHolder(textureBitmap),
+                            textureAlpha = effectiveTextureAlpha
                         )
                     }
 
@@ -4320,7 +4338,9 @@ private fun PdfBitmapLayer(
     colorFilter: ColorFilter? = null,
     isDarkMode: Boolean = false,
     excludeImages: Boolean = false,
-    imageRects: List<android.graphics.Rect> = emptyList()
+    imageRects: List<android.graphics.Rect> = emptyList(),
+    textureBitmap: ImageBitmap? = null,
+    textureAlpha: Float = 0f
 ) {
     Canvas(modifier = Modifier.fillMaxSize().graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
@@ -4419,6 +4439,15 @@ private fun PdfBitmapLayer(
                                 }
                             }
                         }
+                    }
+
+                    if (textureBitmap != null && textureAlpha > 0f) {
+                        drawRect(
+                            brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
+                            size = Size(dstW.toFloat(), dstH.toFloat()),
+                            blendMode = BlendMode.Multiply,
+                            alpha = textureAlpha
+                        )
                     }
                 }
             }
@@ -4941,7 +4970,9 @@ private fun PdfPageStaticLayer(data: PageStaticData) {
         colorFilter = data.colorFilter.item,
         isDarkMode = data.isDarkMode,
         excludeImages = data.excludeImages,
-        imageRects = data.imageRects.item
+        imageRects = data.imageRects.item,
+        textureBitmap = data.textureBitmap.item,
+        textureAlpha = data.textureAlpha
     )
 }
 
