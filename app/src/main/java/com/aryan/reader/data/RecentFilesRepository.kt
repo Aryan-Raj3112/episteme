@@ -385,6 +385,10 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
     }
 
+    suspend fun hasFolderBooksWithoutCovers(): Boolean = withContext(Dispatchers.IO) {
+        return@withContext recentFileDao.countFolderBooksWithoutCovers() > 0
+    }
+
     suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
         recentFileDao.detachAllFolderBooks()
         Timber.d("Detached all folder books. They are now standard local files.")

@@ -145,9 +145,11 @@ class FolderSyncWorker(
 
             Timber.tag("FolderSync").d("Phase 1.5: Preloading annotation sidecars...")
             val preloadedSidecars = LocalSyncUtils.preloadAnnotationSidecars(appContext, documentTree).toMutableMap()
+            val existingFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+            val existingFolderBooksById = existingFolderBooks.associateBy { it.bookId }
 
             folderMetadataMap.forEach { (bookId, remoteMeta) ->
-                val existingItem = recentFilesRepository.getFileByBookId(bookId)
+                val existingItem = existingFolderBooksById[bookId]
 
                 if (existingItem != null) {
                     if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
@@ -175,7 +177,6 @@ class FolderSyncWorker(
 
             Timber.tag("FolderAnnotationSync").d("Phase 1.5: Checking annotation sidecars for existing local books...")
             val processedBookIds = mutableSetOf<String>()
-            val existingFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
 
             for (book in existingFolderBooks) {
                 processedBookIds.add(book.bookId)
@@ -207,7 +208,10 @@ class FolderSyncWorker(
                 val contentResolver = appContext.contentResolver
                 val foundBookIds = mutableSetOf<String>()
                 val newOrUpdatedItems = mutableListOf<RecentFileItem>()
-                val existingItemsMap = existingFolderBooks.associateBy { it.bookId }.toMutableMap()
+                val existingItemsMap = existingFolderBooksById.toMutableMap()
+                val existingItemsByUri = existingFolderBooks
+                    .mapNotNull { item -> item.uriString?.let { uri -> uri to item } }
+                    .toMap()
 
                 val rootDocId = DocumentsContract.getTreeDocumentId(folderUri)
                 val dirQueue = ArrayDeque<String>()
@@ -273,12 +277,11 @@ class FolderSyncWorker(
                                         }
 
                                         if (existingItem == null) {
-                                            val oldItem = existingItemsMap.values.find {
-                                                it.bookId != stableId && (
-                                                    it.uriString == docUri.toString() ||
-                                                        it.bookId.startsWith("local_${name}_")
-                                                    )
-                                            }
+                                            val docUriString = docUri.toString()
+                                            val oldItem = existingItemsByUri[docUriString]?.takeIf { it.bookId != stableId }
+                                                ?: existingItemsMap.values.find {
+                                                    it.bookId != stableId && it.bookId.startsWith("local_${name}_")
+                                                }
                                             if (oldItem != null) {
                                                 val oldId = oldItem.bookId
                                                 Timber.tag("FolderSync").i("Migrating book ID for $name from $oldId to $stableId")
@@ -398,7 +401,7 @@ class FolderSyncWorker(
                 }
             }
 
-            if (!isStopped) {
+            if (!isStopped && recentFilesRepository.hasFolderBooksWithoutCovers()) {
                 Timber.tag("FolderSync").i("Folder scan complete. Enqueuing metadata extraction.")
                 val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>().build()
                 WorkManager.getInstance(appContext).enqueueUniqueWork(
@@ -406,6 +409,8 @@ class FolderSyncWorker(
                     ExistingWorkPolicy.APPEND_OR_REPLACE,
                     metaRequest
                 )
+            } else if (!isStopped) {
+                Timber.tag("FolderSync").i("Folder scan complete. Metadata extraction skipped; no folder books need covers.")
             }
 
             return true

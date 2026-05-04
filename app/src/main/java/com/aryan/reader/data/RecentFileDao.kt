@@ -90,8 +90,33 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isRecent = 0, lastModifiedTimestamp = :timestamp WHERE bookId IN (:bookIds)")
     suspend fun markAsNotRecent(bookIds: List<String>, timestamp: Long)
 
-    @Query("SELECT * FROM recent_files WHERE sourceFolderUri IS NOT NULL AND coverImagePath IS NULL AND isDeleted = 0")
+    @Query("""
+        SELECT * FROM recent_files
+        WHERE sourceFolderUri IS NOT NULL
+        AND isDeleted = 0
+        AND (
+            fileSize <= 0
+            OR (
+                coverImagePath IS NULL
+                AND type IN ('PDF', 'EPUB', 'MOBI', 'ODT', 'FODT')
+            )
+        )
+    """)
     suspend fun getFolderBooksWithoutCovers(): List<RecentFileEntity>
+
+    @Query("""
+        SELECT COUNT(*) FROM recent_files
+        WHERE sourceFolderUri IS NOT NULL
+        AND isDeleted = 0
+        AND (
+            fileSize <= 0
+            OR (
+                coverImagePath IS NULL
+                AND type IN ('PDF', 'EPUB', 'MOBI', 'ODT', 'FODT')
+            )
+        )
+    """)
+    suspend fun countFolderBooksWithoutCovers(): Int
 
     @Query("UPDATE recent_files SET sourceFolderUri = NULL WHERE sourceFolderUri IS NOT NULL")
     suspend fun detachAllFolderBooks()

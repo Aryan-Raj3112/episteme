@@ -39,6 +39,7 @@ class LibraryStateProjector(
             .map { item ->
                 item.copy(tags = bookTagsMap[item.bookId] ?: emptyList())
             }
+        val allLibraryFilesById = allLibraryFiles.associateBy { it.bookId }
 
         val rawFilteredByQuery = filterBySearch(allLibraryFiles, internalState.searchQuery)
         val libraryFiltered = applyLibraryFilters(rawFilteredByQuery, internalState.libraryFilters)
@@ -48,9 +49,7 @@ class LibraryStateProjector(
             internalState.sortOrder
         ).take(if (internalState.recentFilesLimit > 0) internalState.recentFilesLimit else Int.MAX_VALUE)
 
-        val openTabsList = internalState.openTabIds.mapNotNull { tabId ->
-            allLibraryFiles.find { it.bookId == tabId }
-        }
+        val openTabsList = internalState.openTabIds.mapNotNull { tabId -> allLibraryFilesById[tabId] }
 
         val shelfProjection = buildShelves(
             allLibraryFiles = allLibraryFiles,
@@ -88,7 +87,7 @@ class LibraryStateProjector(
             isAddingBooksToShelf = internalState.isAddingBooksToShelf && viewingShelfId != null,
             contextualActionShelfIds = selectedShelfIds,
             contextualActionItems = internalState.contextualActionItems
-                .mapNotNull { ctx -> allLibraryFiles.find { it.bookId == ctx.bookId } }
+                .mapNotNull { ctx -> allLibraryFilesById[ctx.bookId] }
                 .toSet(),
             shelves = shelfProjection.shelves,
             openTabs = openTabsList,
@@ -108,6 +107,14 @@ class LibraryStateProjector(
         val allShelves = mutableListOf<Shelf>()
         val shelvedBookIds = mutableSetOf<String>()
         val baseFilesMap = allLibraryFiles.associateBy { it.bookId }
+        val shelfRefsByShelfId = shelfRefs.groupBy { it.shelfId }
+        val taggedBookIdsByTagId = mutableMapOf<String, MutableList<String>>()
+
+        allLibraryFiles.forEach { item ->
+            item.tags.forEach { tag ->
+                taggedBookIdsByTagId.getOrPut(tag.id) { mutableListOf() }.add(item.bookId)
+            }
+        }
 
         dbShelves.forEach { shelfEntity ->
             if (shelfEntity.isSmart && shelfEntity.smartRulesJson != null) {
@@ -118,8 +125,7 @@ class LibraryStateProjector(
                     shelvedBookIds.addAll(matchingBooks.map { it.bookId })
                 }
             } else {
-                val bookIdsInShelf = shelfRefs
-                    .filter { it.shelfId == shelfEntity.id }
+                val bookIdsInShelf = shelfRefsByShelfId[shelfEntity.id].orEmpty()
                     .sortedBy { it.addedAt }
                     .map { it.bookId }
                 val booksInShelf = bookIdsInShelf.mapNotNull { baseFilesMap[it] }
@@ -129,7 +135,7 @@ class LibraryStateProjector(
         }
 
         val tagShelves = dbTags.mapNotNull { tag ->
-            val taggedBooks = allLibraryFiles.filter { item -> item.tags.any { it.id == tag.id } }
+            val taggedBooks = taggedBookIdsByTagId[tag.id].orEmpty().mapNotNull { baseFilesMap[it] }
             if (taggedBooks.isEmpty()) {
                 null
             } else {
@@ -173,6 +179,10 @@ class LibraryStateProjector(
         sortOrder: SortOrder
     ): List<Shelf> {
         val folderNamesByUri = syncedFolders.associate { it.uriString to it.name }
+        val folderSegmentsByBookId = allLibraryFiles
+            .asSequence()
+            .filter { it.sourceFolderUri != null }
+            .associate { it.bookId to folderPathResolver.relativeFolderSegments(it) }
 
         return allLibraryFiles
             .filter { it.sourceFolderUri != null }
@@ -192,9 +202,7 @@ class LibraryStateProjector(
                     name = rootName,
                     type = ShelfType.FOLDER,
                     books = sortFiles(books, sortOrder),
-                    directBooks = mutableListOf<RecentFileItem>().also { direct ->
-                        direct.addAll(books.filter { folderPathResolver.relativeFolderSegments(it).isEmpty() })
-                    },
+                    directBooks = emptyList(),
                     childShelfIds = emptyList(),
                     depth = 0,
                     sortKey = "folder:${rootName.lowercase()}:"
@@ -203,7 +211,7 @@ class LibraryStateProjector(
                 val nestedShelves = linkedMapOf<String, FolderShelfAccumulator>()
                 books.forEach { book ->
                     rootAccumulator.books.add(book)
-                    val segments = folderPathResolver.relativeFolderSegments(book)
+                    val segments = folderSegmentsByBookId[book.bookId].orEmpty()
                     if (segments.isEmpty()) {
                         rootAccumulator.directBooks.add(book)
                     }

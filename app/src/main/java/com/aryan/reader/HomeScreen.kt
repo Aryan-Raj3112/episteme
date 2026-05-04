@@ -614,6 +614,9 @@ private fun RecentFilesContent(
     hasSyncedFolder: Boolean
 ) {
     val canRefresh = isSyncEnabled || hasSyncedFolder
+    val selectedItemUris = remember(selectedContextItems) {
+        selectedContextItems.mapNotNullTo(mutableSetOf()) { it.uriString }
+    }
 
     val content = @Composable {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -626,7 +629,7 @@ private fun RecentFilesContent(
                 isTabsEnabled = isTabsEnabled,
                 onTabCloseClick = onTabCloseClick,
                 onCloseAllTabsClick = onCloseAllTabsClick,
-                selectedItemUris = selectedContextItems.mapNotNull { it.uriString }.toSet(),
+                selectedItemUris = selectedItemUris,
                 pinnedHomeBookIds = pinnedHomeBookIds,
                 onItemClick = onItemClick,
                 onItemLongClick = onItemLongClick,

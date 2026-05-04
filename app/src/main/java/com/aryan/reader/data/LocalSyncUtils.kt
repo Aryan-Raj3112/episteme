@@ -216,15 +216,17 @@ object LocalSyncUtils {
         try {
             val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME)
             if (syncDir == null || !syncDir.isDirectory) return@withContext results
-            val bookIds = syncDir.listFiles()
-                .mapNotNull { extractAnnotationBookId(it.name) }
-                .toSet()
-
-            for (bookId in bookIds) {
-                val best = resolveAndCleanAnnotationConflicts(context, syncDir, bookId)
-                if (best != null) {
-                    results[bookId] = best
+            val groupedFiles = syncDir.listFiles()
+                .filter { file ->
+                    val name = file.name ?: ""
+                    extractAnnotationBookId(name) != null &&
+                        !name.contains(".syncthing.")
                 }
+                .groupBy { file -> extractAnnotationBookId(file.name).orEmpty() }
+
+            for ((bookId, files) in groupedFiles) {
+                val best = resolveAndCleanAnnotationConflicts(context, syncDir, bookId, files)
+                if (best != null) results[bookId] = best
             }
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Error preloading annotation sidecars")
@@ -253,12 +255,13 @@ object LocalSyncUtils {
     private fun resolveAndCleanAnnotationConflicts(
         context: Context,
         syncDir: DocumentFile,
-        bookId: String
+        bookId: String,
+        knownFiles: List<DocumentFile>? = null
     ): Pair<Long, String>? {
         val basePattern = ".${bookId}${ANNOTATION_SUFFIX}"
         val legacyPattern = "${bookId}${ANNOTATION_SUFFIX}"
 
-        val allFiles = syncDir.listFiles()
+        val allFiles = knownFiles ?: syncDir.listFiles().asList()
 
         val candidates = allFiles.filter { file ->
             val name = file.name ?: ""

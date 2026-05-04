@@ -583,6 +583,7 @@ fun LibraryScreenContent(
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
     var showSortMenu by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+    val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
 
     var textFieldValue by remember(isSearchActive) {
         mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
@@ -828,7 +829,7 @@ fun LibraryScreenContent(
                             items(recentFiles, key = { it.bookId }) { item ->
                                 LibraryListItem(
                                     item = item,
-                                    isSelected = selectedItems.any { it.bookId == item.bookId },
+                                    isSelected = item.bookId in selectedBookIds,
                                     isPinned = item.bookId in pinnedLibraryBookIds,
                                     onItemClick = { onItemClick(item) },
                                     onItemLongClick = { onItemLongClick(item) },
