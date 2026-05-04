@@ -1518,6 +1518,7 @@ fun EpubReaderHost(
                                 chapterTitle = chapterTitle,
                                 coverImageUri = coverUriString,
                                 chapterIndex = chapterIndex,
+                                totalChapters = chapters.size,
                                 ttsMode = currentTtsMode,
                                 playbackSource = "READER",
                                 authToken = token
@@ -1581,6 +1582,7 @@ fun EpubReaderHost(
                             chapterTitle = chapterTitle,
                             coverImageUri = coverUriString,
                             chapterIndex = chapterIndex,
+                            totalChapters = chapters.size,
                             ttsMode = currentTtsMode,
                             playbackSource = "READER",
                             authToken = token
@@ -3550,6 +3552,7 @@ fun EpubReaderHost(
                                                             chapterTitle = chapterTitle,
                                                             coverImageUri = coverUriString,
                                                             chapterIndex = targetChapterIndex,
+                                                            totalChapters = chapters.size,
                                                             ttsMode = currentTtsMode,
                                                             playbackSource = "READER",
                                                             authToken = token

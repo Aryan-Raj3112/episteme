@@ -328,6 +328,8 @@ private fun handleVerticalAutoAdvance(
                         chapterTitle = chapters.getOrNull(currentTtsChapterIndex)?.title,
                         coverImageUri = coverImagePath?.let { android.net.Uri.fromFile(File(it)).toString() },
                         chapterIndex = currentTtsChapterIndex,
+                        totalChapters = chapters.size,
+                        continueSession = true,
                         ttsMode = currentTtsMode,
                         playbackSource = "READER",
                         authToken = token
@@ -358,6 +360,8 @@ private fun handleVerticalAutoAdvance(
                     chapterTitle = chapters.getOrNull(nextIdx)?.title,
                     coverImageUri = coverImagePath?.let { Uri.fromFile(File(it)).toString() },
                     chapterIndex = nextIdx,
+                    totalChapters = chapters.size,
+                    continueSession = true,
                     ttsMode = currentTtsMode,
                     playbackSource = "READER",
                     authToken = token
@@ -433,6 +437,8 @@ private fun handlePaginatedAutoAdvance(
                         chapterTitle = chapterTitle,
                         coverImageUri = coverUriString,
                         chapterIndex = chapterToTry,
+                        totalChapters = chapters.size,
+                        continueSession = true,
                         ttsMode = ttsMode,
                         playbackSource = "READER",
                         authToken = token

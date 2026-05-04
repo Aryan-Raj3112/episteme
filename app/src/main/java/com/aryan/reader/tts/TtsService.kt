@@ -239,16 +239,31 @@ class TtsService : MediaSessionService() {
     private lateinit var cacheManager: TtsCacheManager
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val playerState = if (::player.isInitialized) {
+            "playbackState=${player.playbackState}, isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}, mediaItems=${player.mediaItemCount}, currentIndex=${player.currentMediaItemIndex}"
+        } else {
+            "player=uninitialized"
+        }
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "onUpdateNotification called. startInForegroundRequired=$startInForegroundRequired, hasPostNotifications=$hasNotificationPermission, $playerState"
+        )
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
 
             if (startInForegroundRequired) {
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Notification permission missing while foreground is required. Calling stopSelf().")
                 stopSelf()
+            } else {
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Notification permission missing. Skipping notification update.")
             }
 
             return
         }
 
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Delegating notification update to MediaSessionService.")
         super.onUpdateNotification(session, startInForegroundRequired)
     }
 
@@ -588,6 +603,11 @@ class TtsService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Timber.d("TtsService created.")
+        val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "TtsService onCreate. sdk=${Build.VERSION.SDK_INT}, hasPostNotifications=$hasNotificationPermission"
+        )
 
         cacheManager = TtsCacheManager(this)
 
@@ -643,6 +663,7 @@ class TtsService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory))
             .build()
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("ExoPlayer created for TTS service.")
 
         playbackManager = TtsPlaybackManager(
             player = player,
@@ -655,21 +676,30 @@ class TtsService : MediaSessionService() {
             .build()
 
         mediaSession?.let { playbackManager.setMediaSession(it) }
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("MediaSession created and attached to playback manager. sessionAvailable=${mediaSession != null}")
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "onTaskRemoved. playWhenReady=${if (::player.isInitialized) player.playWhenReady else null}, isPlaying=${if (::player.isInitialized) player.isPlaying else null}"
+        )
         if (!player.playWhenReady) {
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed while player is not playWhenReady. Calling stopSelf().")
             stopSelf()
         }
         Timber.d("onTaskRemoved called, stopping service.")
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "onGetSession. package=${controllerInfo.packageName}, sessionAvailable=${mediaSession != null}"
+        )
         return mediaSession
     }
 
     override fun onDestroy() {
         Timber.d("TtsService is being destroyed.")
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
         baseTtsSynthesizer.shutdown()
         playbackManager.release()
         mediaSession?.run {

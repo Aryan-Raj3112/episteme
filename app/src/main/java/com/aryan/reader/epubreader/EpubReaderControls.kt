@@ -1896,6 +1896,31 @@ fun TtsOverlayControls(
     var isDraggingPitch by remember { mutableStateOf(false) }
 
     val activeMode = try { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode) } catch(_: Exception) { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD }
+    val progressPercent = ttsState.bookProgressPercent
+    val bookLabel = ttsState.bookTitle?.takeIf { it.isNotBlank() }
+    val chapterLabel = remember(ttsState.chapterIndex, ttsState.totalChapters, ttsState.chapterTitle) {
+        val chapterNumber = ttsState.chapterIndex?.plus(1)
+        val totalChapters = ttsState.totalChapters
+        when {
+            chapterNumber != null && totalChapters != null -> buildString {
+                append("Chapter $chapterNumber of $totalChapters")
+                if (!ttsState.chapterTitle.isNullOrBlank()) append(": ${ttsState.chapterTitle}")
+            }
+            chapterNumber != null -> buildString {
+                append("Chapter $chapterNumber")
+                if (!ttsState.chapterTitle.isNullOrBlank()) append(": ${ttsState.chapterTitle}")
+            }
+            !ttsState.chapterTitle.isNullOrBlank() -> ttsState.chapterTitle
+            else -> null
+        }
+    }
+    val chunkLabel = remember(ttsState.currentChunkIndex, ttsState.totalChunks) {
+        if (ttsState.currentChunkIndex >= 0 && ttsState.totalChunks > 0) {
+            "Chunk ${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
+        } else {
+            null
+        }
+    }
 
     val saveAndApply = {
         saveTtsSpeechRate(context, rate)
@@ -2028,6 +2053,43 @@ fun TtsOverlayControls(
                     }
 
                     Spacer(Modifier.height(16.dp))
+
+                    if (bookLabel != null || chapterLabel != null || progressPercent != null || chunkLabel != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (bookLabel != null) {
+                                Text(
+                                    bookLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    chapterLabel ?: "Reading",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    listOfNotNull(progressPercent?.let { "$it%" }, chunkLabel).joinToString(" - "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                    }
 
                     // Middle Section: Controls
                     Row(
