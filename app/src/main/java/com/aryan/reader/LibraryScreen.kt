@@ -143,6 +143,8 @@ import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import timber.log.Timber
@@ -164,7 +166,7 @@ fun LibraryScreen(
 ) {
     val compStart = remember { System.currentTimeMillis() }
     LaunchedEffect(Unit) {
-        Timber.tag("AppPerfDebug").d("LibComp: LibraryScreen initial composition completed in ${System.currentTimeMillis() - compStart}ms")
+        ReaderPerfLog.d("LibraryScreen initial composition ${System.currentTimeMillis() - compStart}ms")
     }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -192,12 +194,6 @@ fun LibraryScreen(
     )
 
     val containsFolderItems = screenModel.containsFolderItemsInSelection
-
-    LaunchedEffect(uiState.libraryScreenStartPage) {
-        if (pagerState.currentPage != uiState.libraryScreenStartPage) {
-            pagerState.animateScrollToPage(uiState.libraryScreenStartPage)
-        }
-    }
 
     val scope = rememberCoroutineScope()
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -256,6 +252,8 @@ fun LibraryScreen(
 
     LaunchedEffect(pagerState) {
         androidx.compose.runtime.snapshotFlow { pagerState.settledPage }
+            .drop(1)
+            .distinctUntilChanged()
             .collect { page ->
                 viewModel.setLibraryScreenPage(page)
             }
@@ -720,7 +718,16 @@ fun LibraryScreenContent(
                             Tab(
                                 selected = pagerState.currentPage == index,
                                 onClick = {
-                                    scope.launch { pagerState.animateScrollToPage(index) }
+                                    ReaderPerfLog.d("LibraryPager click page=$index title=$title")
+                                    if (pagerState.currentPage != index) {
+                                        scope.launch {
+                                            val start = ReaderPerfLog.nowNanos()
+                                            pagerState.animateScrollToPage(index)
+                                            ReaderPerfLog.d(
+                                                "LibraryPager settled page=$index elapsed=${ReaderPerfLog.elapsedMs(start)}ms"
+                                            )
+                                        }
+                                    }
                                 },
                                 text = { Text(title) }
                             )
@@ -810,6 +817,7 @@ fun LibraryScreenContent(
                 state = pagerState,
                 snapPositionalThreshold = 0.25f
             ),
+            beyondViewportPageCount = 0,
             key = { it }
         ) { page ->
             when (page) {
@@ -1888,6 +1896,18 @@ private fun FolderSyncScreen(
     isLoading: Boolean
 ) {
     var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
+    val folderStatsByUri = remember(allRecentFiles) {
+        allRecentFiles
+            .asSequence()
+            .filter { it.sourceFolderUri != null }
+            .groupBy { it.sourceFolderUri!! }
+            .mapValues { (_, files) ->
+                FolderFileStats(
+                    totalBooks = files.size,
+                    countsByType = files.groupingBy { it.type }.eachCount()
+                )
+            }
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -1955,7 +1975,7 @@ private fun FolderSyncScreen(
                 items(syncedFolders, key = { it.uriString }) { folder ->
                     FolderCard(
                         folder = folder,
-                        allRecentFiles = allRecentFiles,
+                        stats = folderStatsByUri[folder.uriString] ?: FolderFileStats.Empty,
                         onRemoveClick = onRemoveFolderClick,
                         onEditFiltersClick = { editingFolder = folder }
                     )
@@ -1976,25 +1996,26 @@ private fun FolderSyncScreen(
     }
 }
 
+private data class FolderFileStats(
+    val totalBooks: Int,
+    val countsByType: Map<FileType, Int>
+) {
+    companion object {
+        val Empty = FolderFileStats(totalBooks = 0, countsByType = emptyMap())
+    }
+}
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun FolderCard(
     folder: SyncedFolder,
-    allRecentFiles: List<RecentFileItem>,
+    stats: FolderFileStats,
     onRemoveClick: (SyncedFolder) -> Unit,
     onEditFiltersClick: (SyncedFolder) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
     val lastScanText = if (folder.lastScanTime == 0L) stringResource(R.string.never) else dateFormat.format(Date(folder.lastScanTime))
-
-    val folderFiles = remember(allRecentFiles, folder.uriString) {
-        allRecentFiles.filter { it.sourceFolderUri == folder.uriString }
-    }
-    val totalBooks = folderFiles.size
-    val countsByType = remember(folderFiles) {
-        folderFiles.groupBy { it.type }.mapValues { it.value.size }
-    }
 
     androidx.compose.material3.ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -2070,18 +2091,18 @@ private fun FolderCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(text = totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
+                    Text(text = stats.totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
                 }
             }
 
-            if (countsByType.isNotEmpty()) {
+            if (stats.countsByType.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    countsByType.forEach { (type, count) ->
+                    stats.countsByType.forEach { (type, count) ->
                         AssistChip(
                             onClick = { },
                             label = { Text(stringResource(R.string.folder_filter_count, type.name, count)) }

@@ -50,7 +50,7 @@ data class Shelf(
     val sortKey: String = name.lowercase()
 ) {
     val bookCount: Int get() = books.size
-    val topBook: RecentFileItem? get() = books.maxByOrNull { it.timestamp }
+    val topBook: RecentFileItem? by lazy(LazyThreadSafetyMode.NONE) { books.maxByOrNull { it.timestamp } }
     val directBookCount: Int get() = directBooks.size
     val childShelfCount: Int get() = childShelfIds.size
 }

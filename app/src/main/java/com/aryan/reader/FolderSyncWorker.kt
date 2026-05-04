@@ -24,11 +24,11 @@ import android.content.Context
 import timber.log.Timber
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.ExistingWorkPolicy
-import androidx.work.WorkManager
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import kotlinx.coroutines.Dispatchers
@@ -53,11 +53,15 @@ class FolderSyncWorker(
         const val WORK_NAME = "FolderSyncWorker"
         const val WORK_NAME_ONETIME = "FolderSyncWorker_OneTime"
         const val KEY_METADATA_ONLY = "key_metadata_only"
+        const val KEY_TARGET_FOLDER_URI = "key_target_folder_uri"
+        private const val SCAN_DB_BATCH_SIZE = 600
         private val syncMutex = Mutex()
     }
 
     override suspend fun doWork(): Result {
+        val workerStart = ReaderPerfLog.nowNanos()
         val isMetadataOnly = inputData.getBoolean(KEY_METADATA_ONLY, false)
+        val targetFolderUri = inputData.getString(KEY_TARGET_FOLDER_URI)
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
 
         val jsonString = prefs.getString("synced_folders_list_json", null)
@@ -87,17 +91,31 @@ class FolderSyncWorker(
         }
 
         if (folders.isEmpty()) {
-            Timber.tag("FolderSync").w("Worker: No folders linked. Aborting.")
+            ReaderPerfLog.w("FolderSync worker aborted: no linked folders")
             return Result.success()
         }
 
-        Timber.tag("FolderSync").d("Worker: processing ${folders.size} folders.")
+        val foldersToProcess = if (targetFolderUri.isNullOrBlank()) {
+            folders
+        } else {
+            folders.filter { it.first == targetFolderUri }
+        }
+
+        if (foldersToProcess.isEmpty()) {
+            ReaderPerfLog.w("FolderSync worker aborted: target folder not linked target=$targetFolderUri")
+            return Result.success()
+        }
+
+        ReaderPerfLog.d(
+            "FolderSync worker start folders=${foldersToProcess.size}/${folders.size} " +
+                "target=${targetFolderUri ?: "ALL"} metadataOnly=$isMetadataOnly"
+        )
 
         return withContext(Dispatchers.IO) {
             syncMutex.withLock {
                 var allSuccess = true
 
-                for ((uriString, allowedTypes) in folders) {
+                for ((uriString, allowedTypes) in foldersToProcess) {
                     val success = performSyncForFolder(uriString, allowedTypes, isMetadataOnly)
                     if (!success) allSuccess = false
                 }
@@ -107,11 +125,20 @@ class FolderSyncWorker(
                         val array = org.json.JSONArray(jsonString)
                         val now = System.currentTimeMillis()
                         for (i in 0 until array.length()) {
-                            array.getJSONObject(i).put("lastScanTime", now)
+                            val obj = array.getJSONObject(i)
+                            if (targetFolderUri.isNullOrBlank() || obj.optString("uri") == targetFolderUri) {
+                                obj.put("lastScanTime", now)
+                            }
                         }
                         prefs.edit { putString("synced_folders_list_json", array.toString()) }
                     } catch (_: Exception) {}
                 }
+
+                val elapsed = ReaderPerfLog.elapsedMs(workerStart)
+                ReaderPerfLog.i(
+                    "FolderSync worker finished status=${if (allSuccess) "success" else "failure"} " +
+                        "folders=${foldersToProcess.size} elapsed=${elapsed}ms"
+                )
 
                 if (allSuccess) Result.success() else Result.failure()
             }
@@ -121,8 +148,24 @@ class FolderSyncWorker(
     private suspend fun performSyncForFolder(folderUriString: String, allowedFileTypes: Set<FileType>, metadataOnly: Boolean): Boolean {
         if (folderUriString.isBlank()) return true
         val folderUri = folderUriString.toUri()
+        val folderStart = ReaderPerfLog.nowNanos()
+        var dirsScanned = 0
+        var filesSeen = 0
+        var supportedBooksSeen = 0
+        var newBooks = 0
+        var updatedBooks = 0
+        var unchangedBooks = 0
+        var dbFlushes = 0
+        var scanDbFlushes = 0
+        var sidecarsImported = 0
+        var stoppedForUnlinkedFolder = false
 
         try {
+            if (!isFolderStillLinked(folderUriString)) {
+                ReaderPerfLog.w("FolderSync folder skipped: no longer linked folder=$folderUriString")
+                return true
+            }
+
             try {
                 appContext.contentResolver.takePersistableUriPermission(
                     folderUri,
@@ -137,16 +180,39 @@ class FolderSyncWorker(
                 return false
             }
 
-            Timber.tag("FolderSync").d("Phase 0: Migrating legacy root sidecars to subfolder...")
-            LocalSyncUtils.migrateLegacySidecarsToSubfolder(appContext, documentTree)
+            ReaderPerfLog.d("FolderSync phase legacy-sidecar-migration skipped")
 
-            Timber.tag("FolderSync").d("Phase 1: Importing JSON metadata from folder...")
-            val folderMetadataMap = LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
+            val folderMetadataMap = if (metadataOnly) {
+                ReaderPerfLog.measureSuspend(
+                    name = "FolderSync phase metadata-sidecars",
+                    minLogMs = 25L
+                ) {
+                    LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
+                }
+            } else {
+                ReaderPerfLog.d("FolderSync phase metadata-sidecars skipped during file scan")
+                mutableMapOf<String, FolderBookMetadata>()
+            }
 
-            Timber.tag("FolderSync").d("Phase 1.5: Preloading annotation sidecars...")
-            val preloadedSidecars = LocalSyncUtils.preloadAnnotationSidecars(appContext, documentTree).toMutableMap()
-            val existingFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
+            val preloadedSidecars = if (metadataOnly) {
+                ReaderPerfLog.measureSuspend(
+                    name = "FolderSync phase annotation-sidecars",
+                    minLogMs = 25L
+                ) {
+                    LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri).toMutableMap()
+                }
+            } else {
+                ReaderPerfLog.d("FolderSync phase annotation-sidecars skipped during file scan")
+                mutableMapOf<String, Pair<Long, String>>()
+            }
+            val existingFolderBooks = ReaderPerfLog.measureSuspend(
+                name = "FolderSync phase load-existing-db",
+                minLogMs = 25L
+            ) {
+                recentFilesRepository.getFilesBySourceFolder(folderUriString)
+            }
             val existingFolderBooksById = existingFolderBooks.associateBy { it.bookId }
+            val remoteMetadataUpdates = mutableListOf<RecentFileItem>()
 
             folderMetadataMap.forEach { (bookId, remoteMeta) ->
                 val existingItem = existingFolderBooksById[bookId]
@@ -168,37 +234,48 @@ class FolderSyncWorker(
                             isRecent = remoteMeta.isRecent || existingItem.isRecent,
                             timestamp = if (remoteMeta.isRecent) remoteMeta.lastModifiedTimestamp else existingItem.timestamp
                         )
-                        recentFilesRepository.addRecentFile(itemToUpdate)
+                        remoteMetadataUpdates.add(itemToUpdate)
                     } else {
                         Timber.tag("PdfPositionDebug").d("FolderSyncWorker: Local meta is newer/equal for $bookId. Ignoring remote. Local Page: ${existingItem.lastPage}")
                     }
                 }
             }
 
-            Timber.tag("FolderAnnotationSync").d("Phase 1.5: Checking annotation sidecars for existing local books...")
+            if (remoteMetadataUpdates.isNotEmpty()) {
+                recentFilesRepository.addRecentFiles(remoteMetadataUpdates)
+                dbFlushes++
+                ReaderPerfLog.d(
+                    "FolderSync applied remote metadata updates count=${remoteMetadataUpdates.size} folder=$folderUriString"
+                )
+            }
+
             val processedBookIds = mutableSetOf<String>()
 
-            for (book in existingFolderBooks) {
-                processedBookIds.add(book.bookId)
+            if (metadataOnly && preloadedSidecars.isNotEmpty()) {
+                Timber.tag("FolderAnnotationSync").d("Phase 1.5: Checking annotation sidecars for existing local books...")
+                for (book in existingFolderBooks) {
+                    processedBookIds.add(book.bookId)
 
-                val sidecarData = preloadedSidecars[book.bookId]
+                    val sidecarData = preloadedSidecars[book.bookId]
 
-                if (sidecarData != null) {
-                    val (remoteTs, jsonPayload) = sidecarData
+                    if (sidecarData != null) {
+                        val (remoteTs, jsonPayload) = sidecarData
 
-                    val localFiles = listOf(
-                        File(appContext.filesDir, "annotations/annotation_${book.bookId}.json"),
-                        File(appContext.filesDir, "pdf_rich_text/text_${book.bookId}.json"),
-                        File(appContext.filesDir, "page_layouts/layout_${book.bookId}.json"),
-                        File(appContext.filesDir, "pdf_text_boxes/boxes_${book.bookId}.json")
-                    )
-                    val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
+                        val localFiles = listOf(
+                            File(appContext.filesDir, "annotations/annotation_${book.bookId}.json"),
+                            File(appContext.filesDir, "pdf_rich_text/text_${book.bookId}.json"),
+                            File(appContext.filesDir, "page_layouts/layout_${book.bookId}.json"),
+                            File(appContext.filesDir, "pdf_text_boxes/boxes_${book.bookId}.json")
+                        )
+                        val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
 
-                    if (remoteTs > (localTs + 1000)) {
-                        Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
-                        recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
-                    } else {
-                        Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
+                        if (remoteTs > (localTs + 1000)) {
+                            Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
+                            recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
+                            sidecarsImported++
+                        } else {
+                            Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
+                        }
                     }
                 }
             }
@@ -212,6 +289,13 @@ class FolderSyncWorker(
                 val existingItemsByUri = existingFolderBooks
                     .mapNotNull { item -> item.uriString?.let { uri -> uri to item } }
                     .toMap()
+                val legacyItemsByName = existingFolderBooks
+                    .asSequence()
+                    .filter { it.bookId.startsWith("local_${it.displayName}_") }
+                    .groupBy { it.displayName }
+                    .mapValues { entry ->
+                        ArrayDeque<RecentFileItem>().apply { addAll(entry.value) }
+                    }
 
                 val rootDocId = DocumentsContract.getTreeDocumentId(folderUri)
                 val dirQueue = ArrayDeque<String>()
@@ -227,7 +311,13 @@ class FolderSyncWorker(
 
                 while (dirQueue.isNotEmpty()) {
                     if (isStopped) break
+                    if (!isFolderStillLinked(folderUriString)) {
+                        ReaderPerfLog.w("FolderSync folder abort: folder unlinked during scan folder=$folderUriString")
+                        stoppedForUnlinkedFolder = true
+                        break
+                    }
                     val currentDocId = dirQueue.removeFirst()
+                    dirsScanned++
                     val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
 
                     try {
@@ -238,10 +328,17 @@ class FolderSyncWorker(
                             val sizeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
                             val modCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
-                            while (cursor.moveToNext() && !isStopped) {
+                            while (cursor.moveToNext() && !isStopped && !stoppedForUnlinkedFolder) {
                                 val docId = cursor.getString(idCol)
                                 val name = cursor.getString(nameCol) ?: ""
                                 val mimeType = cursor.getString(mimeCol)
+                                filesSeen++
+
+                                if (filesSeen % 100 == 0 && !isFolderStillLinked(folderUriString)) {
+                                    ReaderPerfLog.w("FolderSync folder abort: folder unlinked after entries=$filesSeen folder=$folderUriString")
+                                    stoppedForUnlinkedFolder = true
+                                    break
+                                }
 
                                 if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                                     if (!name.startsWith(".") && name != "EpistemeSyncData") {
@@ -253,13 +350,15 @@ class FolderSyncWorker(
 
                                     val type = getFileType(name, mimeType)
                                     if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
+                                        supportedBooksSeen++
                                         val stableId = buildStableBookId(name, rootDocId, docId)
                                         foundBookIds.add(stableId)
 
                                         val docUri = DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
+                                        val docUriString = docUri.toString()
                                         var existingItem = existingItemsMap[stableId]
 
-                                        if (existingItem != null && existingItem.uriString != docUri.toString()) {
+                                        if (existingItem != null && existingItem.uriString != docUriString) {
                                             val collidedItem = existingItem
                                             val collidedStableId = computeStableIdForStoredItem(collidedItem, rootDocId)
                                             if (!collidedStableId.isNullOrBlank() && collidedStableId != stableId && collidedStableId != collidedItem.bookId) {
@@ -277,10 +376,9 @@ class FolderSyncWorker(
                                         }
 
                                         if (existingItem == null) {
-                                            val docUriString = docUri.toString()
                                             val oldItem = existingItemsByUri[docUriString]?.takeIf { it.bookId != stableId }
-                                                ?: existingItemsMap.values.find {
-                                                    it.bookId != stableId && it.bookId.startsWith("local_${name}_")
+                                                ?: legacyItemsByName[name]?.firstOrNull {
+                                                    it.bookId != stableId
                                                 }
                                             if (oldItem != null) {
                                                 val oldId = oldItem.bookId
@@ -294,6 +392,7 @@ class FolderSyncWorker(
                                                     preloadedSidecars = preloadedSidecars,
                                                     existingItemsMap = existingItemsMap
                                                 )
+                                                legacyItemsByName[name]?.remove(oldItem)
                                                 existingItem = existingItemsMap[stableId]
                                             }
                                         }
@@ -327,6 +426,7 @@ class FolderSyncWorker(
                                                 fileSize = size
                                             )
                                             newOrUpdatedItems.add(newItem)
+                                            newBooks++
                                         } else {
                                             var needsUpdate = false
                                             var updatedItem = existingItem
@@ -334,7 +434,11 @@ class FolderSyncWorker(
                                             if (existingItem.fileSize > 0L && size > 0L && existingItem.fileSize != size) {
                                                 Timber.tag("FolderSync").i("File size changed for $name (${existingItem.fileSize} -> $size).")
                                                 recentFilesRepository.clearLocalCachesForBook(stableId)
-                                                updatedItem = updatedItem.copy(fileSize = size, lastModifiedTimestamp = lastModified)
+                                                updatedItem = updatedItem.copy(
+                                                    fileSize = size,
+                                                    lastModifiedTimestamp = lastModified,
+                                                    folderTextMetadataParsed = false
+                                                )
                                                 needsUpdate = true
                                             }
 
@@ -350,11 +454,23 @@ class FolderSyncWorker(
 
                                             if (needsUpdate) {
                                                 newOrUpdatedItems.add(updatedItem)
+                                                updatedBooks++
+                                            } else {
+                                                unchangedBooks++
                                             }
                                         }
 
-                                        if (newOrUpdatedItems.size >= 50) {
+                                        val batchLimit = if (scanDbFlushes == 0) 40 else SCAN_DB_BATCH_SIZE
+                                        if (newOrUpdatedItems.size >= batchLimit) {
+                                            if (!isFolderStillLinked(folderUriString)) {
+                                                ReaderPerfLog.w("FolderSync batch dropped: folder unlinked pending=${newOrUpdatedItems.size} folder=$folderUriString")
+                                                newOrUpdatedItems.clear()
+                                                stoppedForUnlinkedFolder = true
+                                                break
+                                            }
                                             recentFilesRepository.addRecentFiles(newOrUpdatedItems)
+                                            dbFlushes++
+                                            scanDbFlushes++
                                             newOrUpdatedItems.clear()
                                         }
 
@@ -373,6 +489,7 @@ class FolderSyncWorker(
                                                 if (remoteTs > (localTs + 1000)) {
                                                     Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for new book $stableId. Importing.")
                                                     recentFilesRepository.importAnnotationBundle(stableId, jsonPayload)
+                                                    sidecarsImported++
                                                 }
                                             }
                                         }
@@ -383,16 +500,19 @@ class FolderSyncWorker(
                     } catch (e: Exception) {
                         Timber.tag("FolderSync").e(e, "Failed to query children for docId: $currentDocId")
                     }
+
+                    if (stoppedForUnlinkedFolder) break
                 }
 
-                if (newOrUpdatedItems.isNotEmpty()) {
+                if (!stoppedForUnlinkedFolder && newOrUpdatedItems.isNotEmpty()) {
                     recentFilesRepository.addRecentFiles(newOrUpdatedItems)
+                    dbFlushes++
+                    scanDbFlushes++
                     newOrUpdatedItems.clear()
                 }
 
-                if (!isStopped) {
-                    val dbFolderBooks = recentFilesRepository.getFilesBySourceFolder(folderUriString)
-                    val idsToRemove = dbFolderBooks.filter { !foundBookIds.contains(it.bookId) }.map { it.bookId }
+                if (!isStopped && !stoppedForUnlinkedFolder) {
+                    val idsToRemove = existingItemsMap.keys.filter { it !in foundBookIds }
 
                     if (idsToRemove.isNotEmpty()) {
                         Timber.tag("FolderSync").i("Cleaning up ${idsToRemove.size} missing folder books.")
@@ -401,16 +521,33 @@ class FolderSyncWorker(
                 }
             }
 
-            if (!isStopped && recentFilesRepository.hasFolderBooksWithoutCovers()) {
-                Timber.tag("FolderSync").i("Folder scan complete. Enqueuing metadata extraction.")
-                val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>().build()
-                WorkManager.getInstance(appContext).enqueueUniqueWork(
-                    MetadataExtractionWorker.WORK_NAME,
-                    ExistingWorkPolicy.APPEND_OR_REPLACE,
-                    metaRequest
-                )
-            } else if (!isStopped) {
-                Timber.tag("FolderSync").i("Folder scan complete. Metadata extraction skipped; no folder books need covers.")
+            val elapsed = ReaderPerfLog.elapsedMs(folderStart)
+            ReaderPerfLog.i(
+                "FolderSync folder finished metadataOnly=$metadataOnly elapsed=${elapsed}ms " +
+                    "dirs=$dirsScanned entries=$filesSeen supported=$supportedBooksSeen " +
+                    "new=$newBooks updated=$updatedBooks unchanged=$unchangedBooks " +
+                    "dbFlushes=$dbFlushes sidecarsImported=$sidecarsImported " +
+                    "unlinkedAbort=$stoppedForUnlinkedFolder folder=$folderUriString"
+            )
+
+            if (!isStopped && !stoppedForUnlinkedFolder && !metadataOnly) {
+                if (recentFilesRepository.hasFolderBooksNeedingTextMetadata(folderUriString)) {
+                    ReaderPerfLog.i("FolderSync enqueue text metadata extraction folder=$folderUriString")
+                    val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>()
+                        .setInputData(
+                            androidx.work.Data.Builder()
+                                .putString(MetadataExtractionWorker.KEY_SOURCE_FOLDER_URI, folderUriString)
+                                .build()
+                        )
+                        .build()
+                    WorkManager.getInstance(appContext).enqueueUniqueWork(
+                        MetadataExtractionWorker.WORK_NAME,
+                        ExistingWorkPolicy.REPLACE,
+                        metaRequest
+                    )
+                } else {
+                    ReaderPerfLog.d("FolderSync text metadata extraction skipped: no pending books folder=$folderUriString")
+                }
             }
 
             return true
@@ -419,6 +556,22 @@ class FolderSyncWorker(
             Timber.tag("FolderSync").e(e, "Error during folder sync worker execution.")
             return false
         }
+    }
+
+    private fun isFolderStillLinked(folderUriString: String): Boolean {
+        val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        val jsonString = prefs.getString("synced_folders_list_json", null)
+        if (jsonString != null) {
+            return try {
+                val array = org.json.JSONArray(jsonString)
+                (0 until array.length()).any { index ->
+                    array.getJSONObject(index).optString("uri") == folderUriString
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+        return prefs.getString("synced_folder_uri", null) == folderUriString
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {

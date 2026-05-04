@@ -54,7 +54,8 @@ data class RecentFileEntity(
     @ColumnInfo(name = "fileSize", defaultValue = "0") val fileSize: Long,
     @ColumnInfo(defaultValue = "NULL") val seriesName: String?,
     @ColumnInfo(defaultValue = "NULL") val seriesIndex: Double?,
-    @ColumnInfo(defaultValue = "NULL") val description: String?
+    @ColumnInfo(defaultValue = "NULL") val description: String?,
+    @ColumnInfo(defaultValue = "0") val folderTextMetadataParsed: Boolean
 )
 
 data class RecentFileSummary(

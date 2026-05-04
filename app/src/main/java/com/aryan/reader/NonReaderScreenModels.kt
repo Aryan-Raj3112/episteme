@@ -13,7 +13,7 @@ data class HomeScreenModel(
 )
 
 fun ReaderScreenState.toHomeScreenModel(): HomeScreenModel {
-    val homeRecentFiles = recentFiles.filter { it.isRecent }
+    val homeRecentFiles = recentFiles
     return HomeScreenModel(
         recentFiles = homeRecentFiles,
         openTabs = openTabs,

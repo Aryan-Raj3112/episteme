@@ -27,8 +27,35 @@ data class LibraryProjectionInput(
 class LibraryStateProjector(
     private val folderPathResolver: FolderPathResolver = EmptyFolderPathResolver
 ) {
+    private var cachedProjection: CachedProjection? = null
+
     fun project(input: LibraryProjectionInput): ReaderScreenState {
+        val start = ReaderPerfLog.nowNanos()
         val internalState = input.state
+        val cacheKey = ProjectionCacheKey(
+            recentFilesFromDb = input.recentFilesFromDb,
+            dbShelves = input.dbShelves,
+            shelfRefs = input.shelfRefs,
+            dbTags = input.dbTags,
+            tagRefs = input.tagRefs,
+            folderKeys = internalState.syncedFolders.map { SyncedFolderProjectionKey(it.uriString, it.name) },
+            sortOrder = internalState.sortOrder,
+            searchQuery = internalState.searchQuery,
+            libraryFilters = internalState.libraryFilters,
+            recentFilesLimit = internalState.recentFilesLimit
+        )
+
+        cachedProjection?.takeIf { it.key == cacheKey }?.let { cache ->
+            val result = buildStateFromCache(internalState, cache)
+            val elapsed = ReaderPerfLog.elapsedMs(start)
+            if (elapsed >= 8L) {
+                ReaderPerfLog.d(
+                    "LibraryProject cache-hit took ${elapsed}ms books=${cache.allLibraryFiles.size} shelves=${cache.shelfProjection.shelves.size}"
+                )
+            }
+            return result
+        }
+
         val tagsById = input.dbTags.associateBy { it.id }
         val bookTagsMap = input.tagRefs.groupBy { it.bookId }.mapValues { entry ->
             entry.value.mapNotNull { tagsById[it.tagId] }
@@ -43,13 +70,24 @@ class LibraryStateProjector(
 
         val rawFilteredByQuery = filterBySearch(allLibraryFiles, internalState.searchQuery)
         val libraryFiltered = applyLibraryFilters(rawFilteredByQuery, internalState.libraryFilters)
-        val sortedLibraryFiles = sortFiles(libraryFiltered, internalState.sortOrder)
-        val visibleRecentFiles = sortFiles(
-            allLibraryFiles.filter { it.isRecent },
-            internalState.sortOrder
-        ).take(if (internalState.recentFilesLimit > 0) internalState.recentFilesLimit else Int.MAX_VALUE)
-
-        val openTabsList = internalState.openTabIds.mapNotNull { tabId -> allLibraryFilesById[tabId] }
+        val sortedLibraryFiles = if (internalState.sortOrder == SortOrder.RECENT) {
+            libraryFiltered
+        } else {
+            sortFiles(libraryFiltered, internalState.sortOrder)
+        }
+        val recentLimit = if (internalState.recentFilesLimit > 0) internalState.recentFilesLimit else Int.MAX_VALUE
+        val visibleRecentFiles = if (internalState.sortOrder == SortOrder.RECENT) {
+            allLibraryFiles
+                .asSequence()
+                .filter { it.isRecent }
+                .take(recentLimit)
+                .toList()
+        } else {
+            sortFiles(
+                allLibraryFiles.filter { it.isRecent },
+                internalState.sortOrder
+            ).take(recentLimit)
+        }
 
         val shelfProjection = buildShelves(
             allLibraryFiles = allLibraryFiles,
@@ -60,39 +98,64 @@ class LibraryStateProjector(
             syncedFolders = internalState.syncedFolders
         )
 
-        val validShelfIds = shelfProjection.shelves.mapTo(mutableSetOf()) { it.id }
-        val viewingShelfId = internalState.viewingShelfId?.takeIf { it in validShelfIds }
-        val selectedShelfIds = internalState.contextualActionShelfIds.filterTo(mutableSetOf()) { it in validShelfIds }
+        val cache = CachedProjection(
+            key = cacheKey,
+            allLibraryFiles = allLibraryFiles,
+            allLibraryFilesById = allLibraryFilesById,
+            sortedLibraryFiles = sortedLibraryFiles,
+            visibleRecentFiles = visibleRecentFiles,
+            shelfProjection = shelfProjection,
+            validShelfIds = shelfProjection.shelves.mapTo(mutableSetOf()) { it.id },
+            dbTags = input.dbTags
+        )
+        cachedProjection = cache
 
+        val elapsed = ReaderPerfLog.elapsedMs(start)
+        if (elapsed >= 16L || allLibraryFiles.size >= 500) {
+            ReaderPerfLog.d(
+                "LibraryProject recompute took ${elapsed}ms books=${allLibraryFiles.size} " +
+                    "visible=${sortedLibraryFiles.size} shelves=${shelfProjection.shelves.size} " +
+                    "tags=${input.dbTags.size} shelfRefs=${input.shelfRefs.size} tagRefs=${input.tagRefs.size}"
+            )
+        }
+
+        return buildStateFromCache(internalState, cache)
+    }
+
+    private fun buildStateFromCache(
+        internalState: ReaderScreenState,
+        cache: CachedProjection
+    ): ReaderScreenState {
+        val viewingShelfId = internalState.viewingShelfId?.takeIf { it in cache.validShelfIds }
+        val selectedShelfIds = internalState.contextualActionShelfIds.filterTo(mutableSetOf()) { it in cache.validShelfIds }
         val booksAvailableForAdding = if (internalState.isAddingBooksToShelf && viewingShelfId != null) {
-            val currentShelfBookIds = shelfProjection.shelves
+            val currentShelfBookIds = cache.shelfProjection.shelves
                 .find { it.id == viewingShelfId }
                 ?.books
-                ?.map { it.bookId }
-                ?.toSet()
+                ?.mapTo(mutableSetOf()) { it.bookId }
                 ?: emptySet()
             when (internalState.addBooksSource) {
-                AddBooksSource.UNSHELVED -> shelfProjection.unshelvedBooks
-                AddBooksSource.ALL_BOOKS -> allLibraryFiles.filter { it.bookId !in currentShelfBookIds }
+                AddBooksSource.UNSHELVED -> cache.shelfProjection.unshelvedBooks
+                AddBooksSource.ALL_BOOKS -> cache.allLibraryFiles.filter { it.bookId !in currentShelfBookIds }
             }
         } else {
             emptyList()
         }
 
         return internalState.copy(
-            recentFiles = visibleRecentFiles,
-            allRecentFiles = sortedLibraryFiles,
-            rawLibraryFiles = allLibraryFiles,
+            recentFiles = cache.visibleRecentFiles,
+            allRecentFiles = cache.sortedLibraryFiles,
+            rawLibraryFiles = cache.allLibraryFiles,
             viewingShelfId = viewingShelfId,
             isAddingBooksToShelf = internalState.isAddingBooksToShelf && viewingShelfId != null,
             contextualActionShelfIds = selectedShelfIds,
             contextualActionItems = internalState.contextualActionItems
-                .mapNotNull { ctx -> allLibraryFilesById[ctx.bookId] }
+                .mapNotNull { ctx -> cache.allLibraryFilesById[ctx.bookId] }
                 .toSet(),
-            shelves = shelfProjection.shelves,
-            openTabs = openTabsList,
+            shelves = cache.shelfProjection.shelves,
+            openTabs = internalState.openTabIds.mapNotNull { tabId -> cache.allLibraryFilesById[tabId] },
             booksAvailableForAdding = booksAvailableForAdding,
-            allTags = input.dbTags
+            allTags = cache.dbTags
         )
     }
 
@@ -209,6 +272,7 @@ class LibraryStateProjector(
                 )
 
                 val nestedShelves = linkedMapOf<String, FolderShelfAccumulator>()
+                val nestedShelvesById = mutableMapOf<String, FolderShelfAccumulator>()
                 books.forEach { book ->
                     rootAccumulator.books.add(book)
                     val segments = folderSegmentsByBookId[book.bookId].orEmpty()
@@ -231,8 +295,9 @@ class LibraryStateProjector(
                             if (parentShelfId == rootShelfId) {
                                 rootAccumulator.childShelfIds.add(shelfId)
                             } else {
-                                nestedShelves.values.find { it.id == parentShelfId }?.childShelfIds?.add(shelfId)
+                                nestedShelvesById[parentShelfId]?.childShelfIds?.add(shelfId)
                             }
+                            nestedShelvesById[shelfId] = newShelf
                             newShelf
                         }
                         accumulator.books.add(book)
@@ -283,6 +348,35 @@ class LibraryStateProjector(
     private data class ShelfProjection(
         val shelves: List<Shelf>,
         val unshelvedBooks: List<RecentFileItem>
+    )
+
+    private data class ProjectionCacheKey(
+        val recentFilesFromDb: List<RecentFileItem>,
+        val dbShelves: List<ShelfEntity>,
+        val shelfRefs: List<BookShelfCrossRef>,
+        val dbTags: List<TagEntity>,
+        val tagRefs: List<BookTagCrossRef>,
+        val folderKeys: List<SyncedFolderProjectionKey>,
+        val sortOrder: SortOrder,
+        val searchQuery: String,
+        val libraryFilters: LibraryFilters,
+        val recentFilesLimit: Int
+    )
+
+    private data class SyncedFolderProjectionKey(
+        val uriString: String,
+        val name: String
+    )
+
+    private data class CachedProjection(
+        val key: ProjectionCacheKey,
+        val allLibraryFiles: List<RecentFileItem>,
+        val allLibraryFilesById: Map<String, RecentFileItem>,
+        val sortedLibraryFiles: List<RecentFileItem>,
+        val visibleRecentFiles: List<RecentFileItem>,
+        val shelfProjection: ShelfProjection,
+        val validShelfIds: Set<String>,
+        val dbTags: List<TagEntity>
     )
 }
 

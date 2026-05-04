@@ -162,7 +162,7 @@ fun HomeScreen(
 ) {
     val compStart = remember { System.currentTimeMillis() }
     LaunchedEffect(Unit) {
-        Timber.tag("AppPerfDebug").d("HomeComp: HomeScreen initial composition completed in ${System.currentTimeMillis() - compStart}ms")
+        ReaderPerfLog.d("HomeScreen initial composition ${System.currentTimeMillis() - compStart}ms")
     }
     val context = LocalContext.current
     val customTabUriHandler = remember { CustomTabUriHandler(context) }

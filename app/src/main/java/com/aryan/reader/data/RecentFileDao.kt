@@ -94,29 +94,55 @@ interface RecentFileDao {
         SELECT * FROM recent_files
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
-        AND (
-            fileSize <= 0
-            OR (
-                coverImagePath IS NULL
-                AND type IN ('PDF', 'EPUB', 'MOBI', 'ODT', 'FODT')
-            )
-        )
+        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
+        AND folderTextMetadataParsed = 0
     """)
-    suspend fun getFolderBooksWithoutCovers(): List<RecentFileEntity>
+    suspend fun getFolderBooksNeedingTextMetadata(): List<RecentFileEntity>
+
+    @Query("""
+        SELECT * FROM recent_files
+        WHERE sourceFolderUri = :sourceFolderUri
+        AND isDeleted = 0
+        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
+        AND folderTextMetadataParsed = 0
+    """)
+    suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String): List<RecentFileEntity>
 
     @Query("""
         SELECT COUNT(*) FROM recent_files
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
-        AND (
-            fileSize <= 0
-            OR (
-                coverImagePath IS NULL
-                AND type IN ('PDF', 'EPUB', 'MOBI', 'ODT', 'FODT')
-            )
-        )
+        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
+        AND folderTextMetadataParsed = 0
     """)
-    suspend fun countFolderBooksWithoutCovers(): Int
+    suspend fun countFolderBooksNeedingTextMetadata(): Int
+
+    @Query("""
+        SELECT COUNT(*) FROM recent_files
+        WHERE sourceFolderUri = :sourceFolderUri
+        AND isDeleted = 0
+        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
+        AND folderTextMetadataParsed = 0
+    """)
+    suspend fun countFolderBooksNeedingTextMetadata(sourceFolderUri: String): Int
+
+    @Query("""
+        UPDATE recent_files
+        SET
+            coverImagePath = COALESCE(:coverImagePath, coverImagePath),
+            title = COALESCE(:title, title),
+            author = COALESCE(:author, author),
+            fileSize = CASE WHEN :fileSize > 0 THEN :fileSize ELSE fileSize END,
+            folderTextMetadataParsed = 1
+        WHERE bookId = :bookId
+    """)
+    suspend fun updateExtractedMetadata(
+        bookId: String,
+        coverImagePath: String?,
+        title: String?,
+        author: String?,
+        fileSize: Long
+    )
 
     @Query("UPDATE recent_files SET sourceFolderUri = NULL WHERE sourceFolderUri IS NOT NULL")
     suspend fun detachAllFolderBooks()

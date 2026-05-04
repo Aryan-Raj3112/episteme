@@ -24,6 +24,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.core.net.toUri
+import com.aryan.reader.ReaderPerfLog
 import timber.log.Timber
 import com.aryan.reader.BookImporter
 import com.aryan.reader.paginatedreader.Locator
@@ -33,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import androidx.room.withTransaction
 import java.io.File
 import java.io.FileOutputStream
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -47,7 +49,8 @@ private const val COVER_CACHE_DIR = "cover_cache"
 
 class RecentFilesRepository(private val context: Context) {
 
-    private val recentFileDao = AppDatabase.getDatabase(context).recentFileDao()
+    private val database = AppDatabase.getDatabase(context)
+    private val recentFileDao = database.recentFileDao()
     private val coverCacheDir = File(context.filesDir, COVER_CACHE_DIR)
     private val bookImporter = BookImporter(context)
 
@@ -57,10 +60,10 @@ class RecentFilesRepository(private val context: Context) {
     private val pdfTextBoxRepository = PdfTextBoxRepository(context)
     private val pdfHighlightRepository = com.aryan.reader.pdf.data.PdfHighlightRepository(context)
 
-    val activeShelvesFlow = AppDatabase.getDatabase(context).shelfDao().getAllActiveShelves()
-    val shelfCrossRefsFlow = AppDatabase.getDatabase(context).shelfDao().getAllBookShelfCrossRefs()
-    val tagsFlow = AppDatabase.getDatabase(context).tagDao().getAllTags()
-    val tagCrossRefsFlow = AppDatabase.getDatabase(context).tagDao().getAllBookTagCrossRefs()
+    val activeShelvesFlow = database.shelfDao().getAllActiveShelves()
+    val shelfCrossRefsFlow = database.shelfDao().getAllBookShelfCrossRefs()
+    val tagsFlow = database.tagDao().getAllTags()
+    val tagCrossRefsFlow = database.tagDao().getAllBookTagCrossRefs()
 
     init {
         if (!coverCacheDir.exists()) {
@@ -184,7 +187,8 @@ class RecentFilesRepository(private val context: Context) {
                 fileSize = if (item.fileSize > 0) item.fileSize else existingItem.fileSize,
                 seriesName = item.seriesName ?: existingItem.seriesName,
                 seriesIndex = item.seriesIndex ?: existingItem.seriesIndex,
-                description = item.description ?: existingItem.description
+                description = item.description ?: existingItem.description,
+                folderTextMetadataParsed = item.folderTextMetadataParsed || existingItem.folderTextMetadataParsed
             )
         } else {
             item.toRecentFileEntity()
@@ -355,12 +359,25 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     suspend fun deleteFilesBySourceFolder(folderUriString: String) = withContext(Dispatchers.IO) {
-        val filesToRemove = getFilesBySourceFolder(folderUriString)
-        if (filesToRemove.isNotEmpty()) {
-            Timber.d("DeleteDebug: Cascading deletion for ${filesToRemove.size} files from folder.")
-            deleteFilePermanently(filesToRemove.map { it.bookId })
-        } else {
-            recentFileDao.deleteFilesBySourceFolder(folderUriString)
+        val start = ReaderPerfLog.nowNanos()
+        val filesToRemove = recentFileDao.getFilesBySourceFolder(folderUriString)
+        recentFileDao.deleteFilesBySourceFolder(folderUriString)
+        ReaderPerfLog.i(
+            "FolderRemove db delete books=${filesToRemove.size} elapsed=${ReaderPerfLog.elapsedMs(start)}ms folder=$folderUriString"
+        )
+
+        filesToRemove.forEach { item ->
+            item.coverImagePath?.let { deleteCachedCover(it) }
+            try {
+                pdfAnnotationRepository.getAnnotationFileForSync(item.bookId)?.delete()
+                pdfRichTextRepository.getFileForSync(item.bookId).delete()
+                pageLayoutRepository.getLayoutFile(item.bookId).delete()
+                pdfTextBoxRepository.getFileForSync(item.bookId).delete()
+                pdfHighlightRepository.getFileForSync(item.bookId).delete()
+                ImportedFileCache.clearBookCache(context, item.bookId)
+            } catch (e: Exception) {
+                Timber.e(e, "Error during local cleanup for detached folder book ${item.bookId}")
+            }
         }
     }
 
@@ -381,12 +398,40 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun getFolderBooksWithoutCovers(): List<RecentFileItem> = withContext(Dispatchers.IO) {
-        return@withContext recentFileDao.getFolderBooksWithoutCovers().map { it.toRecentFileItem() }
+    suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String? = null): List<RecentFileItem> = withContext(Dispatchers.IO) {
+        val entities = if (sourceFolderUri.isNullOrBlank()) {
+            recentFileDao.getFolderBooksNeedingTextMetadata()
+        } else {
+            recentFileDao.getFolderBooksNeedingTextMetadata(sourceFolderUri)
+        }
+        return@withContext entities.map { it.toRecentFileItem() }
     }
 
-    suspend fun hasFolderBooksWithoutCovers(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext recentFileDao.countFolderBooksWithoutCovers() > 0
+    suspend fun hasFolderBooksNeedingTextMetadata(sourceFolderUri: String? = null): Boolean = withContext(Dispatchers.IO) {
+        val count = if (sourceFolderUri.isNullOrBlank()) {
+            recentFileDao.countFolderBooksNeedingTextMetadata()
+        } else {
+            recentFileDao.countFolderBooksNeedingTextMetadata(sourceFolderUri)
+        }
+        return@withContext count > 0
+    }
+
+    suspend fun updateExtractedMetadata(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext
+        items.chunked(300).forEach { chunk ->
+            database.withTransaction {
+                chunk.forEach { item ->
+                    recentFileDao.updateExtractedMetadata(
+                        bookId = item.bookId,
+                        coverImagePath = item.coverImagePath,
+                        title = item.title,
+                        author = item.author,
+                        fileSize = item.fileSize
+                    )
+                }
+            }
+        }
+        Timber.tag(ReaderPerfLog.TAG).d("Metadata extraction batch updated ${items.size} rows.")
     }
 
     suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {

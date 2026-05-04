@@ -2353,7 +2353,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
 
-                scanSyncedFolder()
+                triggerFolderSyncWorker(
+                    metadataOnly = false,
+                    showFeedback = true,
+                    targetFolderUriString = newFolder.uriString
+                )
 
                 showBanner(appContext.getString(R.string.banner_folder_added, name))
 
@@ -2366,6 +2370,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeSyncedFolder(folder: SyncedFolder) {
         viewModelScope.launch {
+            val workManager = WorkManager.getInstance(appContext)
+            ReaderPerfLog.d("FolderRemove request folder=${folder.uriString}")
+            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
+            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+
             val currentFolders = _internalState.value.syncedFolders.toMutableList()
             currentFolders.removeAll { it.uriString == folder.uriString }
 
@@ -2373,9 +2382,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update { it.copy(syncedFolders = currentFolders) }
 
             val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
-            filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
-
             recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
+            filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
             try {
                 appContext.contentResolver.releasePersistableUriPermission(
                     folder.uriString.toUri(),
@@ -2386,7 +2394,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             if (currentFolders.isEmpty()) {
-                WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+                workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME)
             }
 
             showBanner(appContext.getString(R.string.banner_folder_removed))
@@ -2401,16 +2409,33 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         triggerFolderSyncWorker(metadataOnly = false, showFeedback = true)
     }
 
-    private fun triggerFolderSyncWorker(metadataOnly: Boolean, showFeedback: Boolean) {
+    private fun triggerFolderSyncWorker(
+        metadataOnly: Boolean,
+        showFeedback: Boolean,
+        targetFolderUriString: String? = null
+    ) {
         val folders = _internalState.value.syncedFolders
         if (folders.isEmpty()) return
 
-        Timber.tag("FolderSync")
-            .d("Requesting folder sync for ${folders.size} folders (metadataOnly=$metadataOnly, feedback=$showFeedback)")
+        val targetFolderName = targetFolderUriString
+            ?.let { target -> folders.firstOrNull { it.uriString == target }?.name ?: target }
+        ReaderPerfLog.d(
+            "FolderSync request folders=${folders.size} target=${targetFolderName ?: "ALL"} " +
+                "metadataOnly=$metadataOnly feedback=$showFeedback"
+        )
 
         val workManager = WorkManager.getInstance(appContext)
+        if (!metadataOnly) {
+            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+        }
         val data = androidx.work.Data.Builder()
-            .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, metadataOnly).build()
+            .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, metadataOnly)
+            .apply {
+                if (!targetFolderUriString.isNullOrBlank()) {
+                    putString(FolderSyncWorker.KEY_TARGET_FOLDER_URI, targetFolderUriString)
+                }
+            }
+            .build()
 
         val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
 
@@ -2489,7 +2514,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 withContext(Dispatchers.Main) {
-                    scanSyncedFolder()
+                    triggerFolderSyncWorker(
+                        metadataOnly = false,
+                        showFeedback = true,
+                        targetFolderUriString = folder.uriString
+                    )
                 }
             }
         }
@@ -2497,12 +2526,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun disconnectAllSyncedFolders() {
         viewModelScope.launch {
+            val workManager = WorkManager.getInstance(appContext)
+            ReaderPerfLog.d("FolderRemove disconnect all folders=${_internalState.value.syncedFolders.size}")
+            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
+            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+
             val folders = _internalState.value.syncedFolders
             folders.forEach { folder ->
                 val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
-                filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
-
                 recentFilesRepository.deleteFilesBySourceFolder(folder.uriString)
+                filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
                 try {
                     appContext.contentResolver.releasePersistableUriPermission(
                         folder.uriString.toUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -2516,8 +2550,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 remove(KEY_SYNCED_FOLDER_URI)
             }
             _internalState.update { it.copy(syncedFolders = emptyList()) }
-
-            WorkManager.getInstance(appContext).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
         }
     }
 
@@ -3808,7 +3840,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false, bundleResult: CalibreBundleResult? = null
     ) {
         val openBookStartTime = System.currentTimeMillis()
-        Timber.tag("AppPerfDebug").d("FileOpenProcess: openBook started for $bookId at $openBookStartTime")
+        ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
 
@@ -3876,12 +3908,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
 
-                    if (recentItem?.sourceFolderUri != null) {
-                        launch(Dispatchers.IO) {
-                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
-                        }
-                    }
-
                     Timber.tag("FileOpenPerf")
                         .d("[$bookId] Branch: PDF | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     _internalState.update {
@@ -3892,7 +3918,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             isLoading = false
                         )
                     }
-                    Timber.tag("AppPerfDebug").d("FileOpenReady: PDF/Archive state updated in ${System.currentTimeMillis() - openBookStartTime}ms")
+                    ReaderPerfLog.d("FileOpen ready bookId=$bookId type=$type elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     persistReaderSession(bookId, type)
                     addFileToRecent(
                         uri,
@@ -3914,11 +3940,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
-                    if (recentItem?.sourceFolderUri != null) {
-                        launch(Dispatchers.IO) {
-                            recentFilesRepository.syncLocalMetadataToFolder(bookId)
-                        }
-                    }
                     Timber.tag("FileOpenPerf")
                         .d("[$bookId] Branch: ${type.name} | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     val locator =
@@ -3941,7 +3962,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             initialHighlightsJson = recentItem?.highlightsJson,
                         )
                     }
-                    Timber.tag("AppPerfDebug").d("FileOpenReady: EPUB/Text state updated in ${System.currentTimeMillis() - openBookStartTime}ms")
+                    ReaderPerfLog.d("FileOpen ready bookId=$bookId type=$type elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
                     persistReaderSession(bookId, type)
 
                     if (!suppressNavigation) {
@@ -4410,7 +4431,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun onRecentFileClicked(item: RecentFileItem) {
-        Timber.tag("AppPerfDebug").d("FileOpenStart: User clicked book ${item.bookId} (${item.displayName})")
+        ReaderPerfLog.d("FileOpen click bookId=${item.bookId} name=${item.displayName}")
         val currentSelection = _internalState.value.contextualActionItems
         if (currentSelection.isNotEmpty()) {
             Timber.d("Toggling selection for: ${item.displayName}")
