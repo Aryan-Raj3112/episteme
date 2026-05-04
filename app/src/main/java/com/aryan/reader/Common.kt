@@ -2567,9 +2567,9 @@ val BuiltInThemes = listOf(
     ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
     ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
     ReaderTheme("natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
-    ReaderTheme("natural_black_texture", "Natural Black", Color(0xFF111111), Color(0xFFE7E1D8), true, textureId = ReaderTexture.NATURAL_BLACK.id),
+    ReaderTheme("retina_texture", "Retina", Color(0xFFF1E4CD), Color(0xFF2A2119), false, textureId = ReaderTexture.RETINA_WOOD.id),
     ReaderTheme("veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
-    ReaderTheme("grey_wash_texture", "Grey Wash", Color(0xFFE5E2DA), Color(0xFF202124), false, textureId = ReaderTexture.GREY_WASH.id),
+    ReaderTheme("grey_wash_texture", "Grey Wash", Color(0xFF202124), Color(0xFFFFFFFF), true, textureId = ReaderTexture.GREY_WASH.id),
     ReaderTheme("fabric_texture", "Fabric", Color(0xFF262626), Color(0xFFE8E2D8), true, textureId = ReaderTexture.CLASSY_FABRIC.id),
     ReaderTheme("retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
 )
@@ -2862,7 +2862,7 @@ private fun ThemeGridItem(
                 .background(bgColor, CircleShape)
                 .then(textureBitmap?.let { bitmap ->
                     Modifier.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = globalTextureAlpha)
+                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = globalTextureAlpha)
                     }
                 } ?: Modifier)
                 .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
@@ -2944,7 +2944,7 @@ fun ThemeBuilderView(
                 Box(modifier = Modifier.fillMaxSize().run {
                     if (isTexturedMode && textureBitmap != null) {
                         this.drawBehind {
-                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = globalTextureAlpha)
+                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = globalTextureAlpha)
                         }
                     } else this
                 }) {
@@ -3048,7 +3048,7 @@ private fun CustomTexturePickerSection(
                 ) {
                     Box(
                         modifier = Modifier.fillMaxSize().then(bitmap?.let {
-                            Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(it, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.6f) }
+                            Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(it, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = 0.6f) }
                         } ?: Modifier),
                         contentAlignment = Alignment.Center
                     ) {
@@ -3146,7 +3146,7 @@ private fun TextureChoice(
                 .fillMaxSize()
                 .then(textureBitmap?.let { bitmap ->
                     Modifier.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.Multiply, alpha = 0.6f)
+                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = 0.6f)
                     }
                 } ?: Modifier)
                 .padding(horizontal = 8.dp),

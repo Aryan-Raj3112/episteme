@@ -441,7 +441,8 @@ data class PageStaticData(
     val excludeImages: Boolean,
     val imageRects: StableHolder<List<android.graphics.Rect>>,
     val textureBitmap: StableHolder<ImageBitmap?>,
-    val textureAlpha: Float
+    val textureAlpha: Float,
+    val textureBlendMode: BlendMode
 )
 
 @Stable
@@ -713,6 +714,9 @@ internal fun PdfPageComposable(
     }
     val effectiveTextureAlpha = remember(activeTheme.textureId, activeTextureAlpha) {
         if (activeTheme.textureId == null) 0f else activeTextureAlpha.coerceIn(0f, 1f)
+    }
+    val textureBlendMode = remember(activeTheme.textureId, activeTheme.isDark, activeTheme.id) {
+        if (activeTheme.isDark || activeTheme.id == "reverse") BlendMode.Screen else BlendMode.Multiply
     }
 
     val centeringOffsetX by remember(canvasWidthPx.floatValue, actualBitmapWidthPx) {
@@ -3954,7 +3958,8 @@ internal fun PdfPageComposable(
                         excludeImages,
                         stableImageRects,
                         textureBitmap,
-                        effectiveTextureAlpha
+                        effectiveTextureAlpha,
+                        textureBlendMode
                     ) {
                         Timber.tag("PdfDrawPerf").v(
                             "STATIC DATA GENERATED: Scale=$effectiveScale, Tiles=${stableTiles.item.size}"
@@ -3974,7 +3979,8 @@ internal fun PdfPageComposable(
                             excludeImages = excludeImages,
                             imageRects = stableImageRects,
                             textureBitmap = StableHolder(textureBitmap),
-                            textureAlpha = effectiveTextureAlpha
+                            textureAlpha = effectiveTextureAlpha,
+                            textureBlendMode = textureBlendMode
                         )
                     }
 
@@ -4340,7 +4346,8 @@ private fun PdfBitmapLayer(
     excludeImages: Boolean = false,
     imageRects: List<android.graphics.Rect> = emptyList(),
     textureBitmap: ImageBitmap? = null,
-    textureAlpha: Float = 0f
+    textureAlpha: Float = 0f,
+    textureBlendMode: BlendMode = BlendMode.Multiply
 ) {
     Canvas(modifier = Modifier.fillMaxSize().graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
@@ -4445,7 +4452,7 @@ private fun PdfBitmapLayer(
                         drawRect(
                             brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
                             size = Size(dstW.toFloat(), dstH.toFloat()),
-                            blendMode = BlendMode.Multiply,
+                            blendMode = textureBlendMode,
                             alpha = textureAlpha
                         )
                     }
@@ -4972,7 +4979,8 @@ private fun PdfPageStaticLayer(data: PageStaticData) {
         excludeImages = data.excludeImages,
         imageRects = data.imageRects.item,
         textureBitmap = data.textureBitmap.item,
-        textureAlpha = data.textureAlpha
+        textureAlpha = data.textureAlpha,
+        textureBlendMode = data.textureBlendMode
     )
 }
 

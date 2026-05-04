@@ -214,7 +214,7 @@
             : (isDark ? '18, 18, 18' : '255, 255, 255');
 
         var textureCss = textureBase64
-            ? `background-image: linear-gradient(rgba(${bgRgb},${1 - effectiveTextureAlpha}), rgba(${bgRgb},${1 - effectiveTextureAlpha})), url('${textureBase64}'); background-repeat: repeat, repeat; background-blend-mode: normal, multiply;`
+            ? `background-image: linear-gradient(rgba(${bgRgb},${1 - effectiveTextureAlpha}), rgba(${bgRgb},${1 - effectiveTextureAlpha})), url('${textureBase64}'); background-repeat: repeat, repeat; background-blend-mode: normal, normal;`
             : 'background-image: none;';
 
         var css = `

@@ -775,7 +775,7 @@ fun PaginatedReaderScreen(
             val brush = ShaderBrush(
                 ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)
             )
-            drawRect(brush = brush, blendMode = BlendMode.Multiply, alpha = activeTextureAlpha.coerceIn(0f, 1f))
+            drawRect(brush = brush, blendMode = BlendMode.SrcOver, alpha = activeTextureAlpha.coerceIn(0f, 1f))
         }
     } else Modifier
 
@@ -1243,7 +1243,9 @@ fun PaginatedReaderScreen(
             activeHighlightPalette = activeHighlightPalette,
             onUpdatePalette = onUpdatePalette,
             effectiveText = effectiveText,
-            pageTextureModifier = textureModifier
+            pageTextureModifier = if (isPageTurnAnimationEnabled) Modifier else textureModifier,
+            pageTextureBitmap = textureBitmap,
+            pageTextureAlpha = activeTextureAlpha.coerceIn(0f, 1f)
         )
 
         androidx.compose.animation.AnimatedVisibility(
@@ -2065,7 +2067,9 @@ internal fun PaginatedReaderContent(
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
     isDarkTheme: Boolean,
-    pageTextureModifier: Modifier = Modifier
+    pageTextureModifier: Modifier = Modifier,
+    pageTextureBitmap: ImageBitmap? = null,
+    pageTextureAlpha: Float = 0f
 ) {
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -2206,7 +2210,9 @@ internal fun PaginatedReaderContent(
                                 pageIndex,
                                 effectiveBg,
                                 isDarkTheme,
-                                pageTurnTouchY
+                                pageTurnTouchY,
+                                pageTextureBitmap,
+                                pageTextureAlpha
                             )
                         } else Modifier
 
@@ -4384,7 +4390,9 @@ private fun Modifier.realisticBookPage(
     pageIndex: Int,
     paperColor: Color,
     isDarkTheme: Boolean,
-    touchY: Float?
+    touchY: Float?,
+    textureBitmap: ImageBitmap? = null,
+    textureAlpha: Float = 0f
 ): Modifier = composed {
 
     val frontPath = remember { Path() }
@@ -4412,9 +4420,19 @@ private fun Modifier.realisticBookPage(
         .drawWithContent {
             val drawStart = System.nanoTime()
             val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+            fun drawPaperBackground() {
+                drawRect(color = paperColor)
+                if (textureBitmap != null && textureAlpha > 0f) {
+                    drawRect(
+                        brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
+                        blendMode = BlendMode.SrcOver,
+                        alpha = textureAlpha
+                    )
+                }
+            }
 
             if (abs(pageOffset) < 0.001f) {
-                drawRect(color = paperColor)
+                drawPaperBackground()
                 drawContent()
             }
             else if (pageOffset < 0f && pageOffset > -1f) {
@@ -4475,7 +4493,7 @@ private fun Modifier.realisticBookPage(
                     frontPath.close()
 
                     clipPath(frontPath) {
-                        drawRect(color = paperColor)
+                        drawPaperBackground()
                         this@drawWithContent.drawContent()
                     }
 
@@ -4518,6 +4536,15 @@ private fun Modifier.realisticBookPage(
                     clipRect(0f, 0f, w, h) {
                         clipPath(frontPath) {
                             drawPath(reflectedScreenPath, color = paperColor)
+                            if (textureBitmap != null && textureAlpha > 0f) {
+                                clipPath(reflectedScreenPath) {
+                                    drawRect(
+                                        brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
+                                        blendMode = BlendMode.SrcOver,
+                                        alpha = textureAlpha
+                                    )
+                                }
+                            }
                             val flapTint = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
                             drawPath(reflectedScreenPath, color = flapTint)
 
@@ -4545,12 +4572,12 @@ private fun Modifier.realisticBookPage(
                     }
 
                 } else {
-                    drawRect(color = paperColor)
+                    drawPaperBackground()
                     drawContent()
                 }
             }
             else {
-                drawRect(color = paperColor)
+                drawPaperBackground()
                 drawContent()
             }
 

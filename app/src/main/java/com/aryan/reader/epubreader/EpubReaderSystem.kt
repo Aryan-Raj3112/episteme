@@ -20,6 +20,7 @@
 package com.aryan.reader.epubreader
 
 import timber.log.Timber
+import android.graphics.Color
 import android.view.KeyEvent
 import android.view.View
 import android.view.Window
@@ -51,14 +52,20 @@ fun EpubReaderSystemUiController(
             return@DisposableEffect onDispose {}
         }
         val insetsController = WindowCompat.getInsetsController(window, view)
+        val originalStatusBarColor = window.statusBarColor
+        val originalNavigationBarColor = window.navigationBarColor
         Timber.d("Applying immersive mode.")
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
         insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         onDispose {
             Timber.d("Restoring system UI.")
             WindowCompat.setDecorFitsSystemWindows(window, true)
+            window.statusBarColor = originalStatusBarColor
+            window.navigationBarColor = originalNavigationBarColor
             insetsController.show(WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.statusBars())
             insetsController.isAppearanceLightStatusBars = initialIsAppearanceLightStatusBars
             insetsController.systemBarsBehavior = initialSystemBarsBehavior

@@ -121,9 +121,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -171,6 +176,7 @@ import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderThemeId
+import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.CfiUtils
 import com.aryan.reader.paginatedreader.HeaderBlock
@@ -1232,6 +1238,18 @@ fun EpubReaderHost(
     }
     val activeTextureId = activeTheme.textureId
     val activeTextureAlpha = 1f - globalTextureTransparency
+    val activeTextureBitmap = remember(activeTextureId) {
+        loadReaderTextureBitmap(context, activeTextureId)
+    }
+    val activeTextureModifier = activeTextureBitmap?.let { bitmap ->
+        Modifier.drawBehind {
+            drawRect(
+                brush = ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)),
+                blendMode = BlendMode.SrcOver,
+                alpha = activeTextureAlpha.coerceIn(0f, 1f)
+            )
+        }
+    } ?: Modifier
 
     val infoBarBgColor = remember(effectiveBg, isDarkTheme) {
         val overlayAlpha = if (isDarkTheme) 0.08f else 0.06f
@@ -2889,6 +2907,7 @@ fun EpubReaderHost(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(effectiveBg)
+                    .then(activeTextureModifier)
                     .padding(top = effectiveTopPadding)
                     .focusRequester(containerFocusRequester)
                     .focusable()
@@ -4186,6 +4205,7 @@ fun EpubReaderHost(
                             .fillMaxWidth()
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
+                            .then(activeTextureModifier)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -4233,6 +4253,7 @@ fun EpubReaderHost(
                             .fillMaxWidth()
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
+                            .then(activeTextureModifier)
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
