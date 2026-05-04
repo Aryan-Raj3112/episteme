@@ -182,29 +182,18 @@ class FolderSyncWorker(
 
             ReaderPerfLog.d("FolderSync phase legacy-sidecar-migration skipped")
 
-            val folderMetadataMap = if (metadataOnly) {
-                ReaderPerfLog.measureSuspend(
-                    name = "FolderSync phase metadata-sidecars",
-                    minLogMs = 25L
-                ) {
-                    LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
-                }
-            } else {
-                ReaderPerfLog.d("FolderSync phase metadata-sidecars skipped during file scan")
-                mutableMapOf<String, FolderBookMetadata>()
+            val folderMetadataMap = ReaderPerfLog.measureSuspend(
+                name = "FolderSync phase metadata-sidecars",
+                minLogMs = 25L,
+                details = { "metadataOnly=$metadataOnly" }
+            ) {
+                LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
             }
+            ReaderPerfLog.d(
+                "FolderSync metadata-sidecars records=${folderMetadataMap.size} metadataOnly=$metadataOnly folder=$folderUriString"
+            )
 
-            val preloadedSidecars = if (metadataOnly) {
-                ReaderPerfLog.measureSuspend(
-                    name = "FolderSync phase annotation-sidecars",
-                    minLogMs = 25L
-                ) {
-                    LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri).toMutableMap()
-                }
-            } else {
-                ReaderPerfLog.d("FolderSync phase annotation-sidecars skipped during file scan")
-                mutableMapOf<String, Pair<Long, String>>()
-            }
+            val preloadedSidecars = mutableMapOf<String, Pair<Long, String>>()
             val existingFolderBooks = ReaderPerfLog.measureSuspend(
                 name = "FolderSync phase load-existing-db",
                 minLogMs = 25L
@@ -249,35 +238,13 @@ class FolderSyncWorker(
                 )
             }
 
-            val processedBookIds = mutableSetOf<String>()
-
-            if (metadataOnly && preloadedSidecars.isNotEmpty()) {
-                Timber.tag("FolderAnnotationSync").d("Phase 1.5: Checking annotation sidecars for existing local books...")
-                for (book in existingFolderBooks) {
-                    processedBookIds.add(book.bookId)
-
-                    val sidecarData = preloadedSidecars[book.bookId]
-
-                    if (sidecarData != null) {
-                        val (remoteTs, jsonPayload) = sidecarData
-
-                        val localFiles = listOf(
-                            File(appContext.filesDir, "annotations/annotation_${book.bookId}.json"),
-                            File(appContext.filesDir, "pdf_rich_text/text_${book.bookId}.json"),
-                            File(appContext.filesDir, "page_layouts/layout_${book.bookId}.json"),
-                            File(appContext.filesDir, "pdf_text_boxes/boxes_${book.bookId}.json")
-                        )
-                        val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
-
-                        if (remoteTs > (localTs + 1000)) {
-                            Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
-                            recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
-                            sidecarsImported++
-                        } else {
-                            Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
-                        }
-                    }
-                }
+            if (metadataOnly) {
+                sidecarsImported += importAnnotationSidecarsForBooks(
+                    folderUri = folderUri,
+                    folderUriString = folderUriString,
+                    books = existingFolderBooks,
+                    phase = "metadata-only"
+                )
             }
 
             if (!metadataOnly) {
@@ -474,25 +441,6 @@ class FolderSyncWorker(
                                             newOrUpdatedItems.clear()
                                         }
 
-                                        if (!processedBookIds.contains(stableId)) {
-                                            val sidecarData = preloadedSidecars[stableId]
-                                            if (sidecarData != null) {
-                                                val (remoteTs, jsonPayload) = sidecarData
-                                                val localFiles = listOf(
-                                                    File(appContext.filesDir, "annotations/annotation_$stableId.json"),
-                                                    File(appContext.filesDir, "pdf_rich_text/text_$stableId.json"),
-                                                    File(appContext.filesDir, "page_layouts/layout_$stableId.json"),
-                                                    File(appContext.filesDir, "pdf_text_boxes/boxes_$stableId.json")
-                                                )
-                                                val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
-
-                                                if (remoteTs > (localTs + 1000)) {
-                                                    Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for new book $stableId. Importing.")
-                                                    recentFilesRepository.importAnnotationBundle(stableId, jsonPayload)
-                                                    sidecarsImported++
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -519,6 +467,21 @@ class FolderSyncWorker(
                         recentFilesRepository.deleteFilePermanently(idsToRemove)
                     }
                 }
+            }
+
+            if (!metadataOnly && !isStopped && !stoppedForUnlinkedFolder) {
+                val booksForAnnotationSync = ReaderPerfLog.measureSuspend(
+                    name = "FolderSync phase load-post-scan-db",
+                    minLogMs = 25L
+                ) {
+                    recentFilesRepository.getFilesBySourceFolder(folderUriString)
+                }
+                sidecarsImported += importAnnotationSidecarsForBooks(
+                    folderUri = folderUri,
+                    folderUriString = folderUriString,
+                    books = booksForAnnotationSync,
+                    phase = "post-scan"
+                )
             }
 
             val elapsed = ReaderPerfLog.elapsedMs(folderStart)
@@ -556,6 +519,62 @@ class FolderSyncWorker(
             Timber.tag("FolderSync").e(e, "Error during folder sync worker execution.")
             return false
         }
+    }
+
+    private suspend fun importAnnotationSidecarsForBooks(
+        folderUri: android.net.Uri,
+        folderUriString: String,
+        books: List<RecentFileItem>,
+        phase: String
+    ): Int {
+        if (books.isEmpty()) {
+            ReaderPerfLog.d("FolderSync phase annotation-sidecars skipped phase=$phase reason=no-books folder=$folderUriString")
+            return 0
+        }
+
+        val preloadedSidecars = ReaderPerfLog.measureSuspend(
+            name = "FolderSync phase annotation-sidecars",
+            minLogMs = 25L,
+            details = { "phase=$phase" }
+        ) {
+            LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri)
+        }
+
+        ReaderPerfLog.d(
+            "FolderSync annotation-sidecars records=${preloadedSidecars.size} books=${books.size} phase=$phase folder=$folderUriString"
+        )
+
+        if (preloadedSidecars.isEmpty()) return 0
+
+        var imported = 0
+        Timber.tag("FolderAnnotationSync").d("Checking annotation sidecars phase=$phase for ${books.size} books...")
+        for (book in books) {
+            if (isStopped || !isFolderStillLinked(folderUriString)) break
+
+            val sidecarData = preloadedSidecars[book.bookId] ?: continue
+            val (remoteTs, jsonPayload) = sidecarData
+
+            val localFiles = listOf(
+                File(appContext.filesDir, "annotations/annotation_${book.bookId}.json"),
+                File(appContext.filesDir, "pdf_rich_text/text_${book.bookId}.json"),
+                File(appContext.filesDir, "page_layouts/layout_${book.bookId}.json"),
+                File(appContext.filesDir, "pdf_text_boxes/boxes_${book.bookId}.json")
+            )
+            val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
+
+            if (remoteTs > (localTs + 1000)) {
+                Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
+                recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
+                imported++
+            } else {
+                Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
+            }
+        }
+
+        ReaderPerfLog.i(
+            "FolderSync annotation-sidecars imported=$imported records=${preloadedSidecars.size} phase=$phase folder=$folderUriString"
+        )
+        return imported
     }
 
     private fun isFolderStillLinked(folderUriString: String): Boolean {

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import com.aryan.reader.ReaderPerfLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -32,10 +33,12 @@ object LocalSyncUtils {
     }
 
     private fun querySyncSubfolderFiles(context: Context, sourceFolderUri: Uri): List<SyncFileEntry> {
+        val start = ReaderPerfLog.nowNanos()
         val resolver = context.contentResolver
         val rootDocId = try {
             DocumentsContract.getTreeDocumentId(sourceFolderUri)
         } catch (_: Exception) {
+            ReaderPerfLog.w("LocalSync direct query skipped: invalid tree uri=$sourceFolderUri")
             return emptyList()
         }
         val syncDocId = syncSubfolderDocId(rootDocId)
@@ -50,7 +53,12 @@ object LocalSyncUtils {
             false
         }
 
-        if (!isSyncDir) return emptyList()
+        if (!isSyncDir) {
+            ReaderPerfLog.d(
+                "LocalSync direct query sync dir missing rootDocId=$rootDocId syncDocId=$syncDocId"
+            )
+            return querySyncSubfolderFilesFallback(context, sourceFolderUri, "missing-direct-sync-dir")
+        }
 
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(sourceFolderUri, syncDocId)
         val projection = arrayOf(
@@ -79,8 +87,44 @@ object LocalSyncUtils {
             }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to query sync subfolder directly")
+            return querySyncSubfolderFilesFallback(context, sourceFolderUri, "direct-query-error")
         }
+        ReaderPerfLog.d(
+            "LocalSync direct query files=${entries.size} elapsed=${ReaderPerfLog.elapsedMs(start)}ms syncDocId=$syncDocId"
+        )
         return entries
+    }
+
+    private fun querySyncSubfolderFilesFallback(
+        context: Context,
+        sourceFolderUri: Uri,
+        reason: String
+    ): List<SyncFileEntry> {
+        val start = ReaderPerfLog.nowNanos()
+        return try {
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri)
+            val syncDir = rootTree?.findFile(SYNC_SUBFOLDER_NAME)
+            if (syncDir == null || !syncDir.isDirectory) {
+                ReaderPerfLog.w("LocalSync fallback query found no sync dir reason=$reason uri=$sourceFolderUri")
+                emptyList()
+            } else {
+                val entries = syncDir.listFiles()
+                    .asSequence()
+                    .filter { it.isFile }
+                    .mapNotNull { file ->
+                        val name = file.name ?: return@mapNotNull null
+                        SyncFileEntry(name = name, uri = file.uri)
+                    }
+                    .toList()
+                ReaderPerfLog.d(
+                    "LocalSync fallback query files=${entries.size} elapsed=${ReaderPerfLog.elapsedMs(start)}ms reason=$reason"
+                )
+                entries
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to query sync subfolder fallback")
+            emptyList()
+        }
     }
 
     private fun getOrCreateSyncDir(rootTree: DocumentFile): DocumentFile? {
@@ -608,9 +652,13 @@ object LocalSyncUtils {
             }
 
             Timber.tag(TAG).d("getAllFolderMetadata: Read ${finalResults.size}/${groupedFiles.size} book records from sync data.")
+            ReaderPerfLog.d(
+                "LocalSync metadata read files=${allFiles.size} groups=${groupedFiles.size} records=${finalResults.size}"
+            )
 
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error scanning sync data folder for metadata")
+            ReaderPerfLog.w("LocalSync metadata read failed uri=$sourceFolderUri")
         }
         return@withContext finalResults
     }
