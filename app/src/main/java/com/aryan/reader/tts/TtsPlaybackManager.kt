@@ -478,6 +478,29 @@ class TtsPlaybackManager(
             .coerceIn(0, 100)
     }
 
+    private fun markSessionFinishedNaturally(chunkIndex: Int) {
+        val safeChunkIndex = if (textChunks.isNotEmpty()) {
+            chunkIndex.coerceIn(0, textChunks.lastIndex)
+        } else {
+            -1
+        }
+
+        Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i(
+            "Setting sessionFinished = true for naturally completed streamed TTS. chunk=$safeChunkIndex, totalChunks=${textChunks.size}"
+        )
+
+        _ttsState.value = _ttsState.value.copy(
+            isPlaying = false,
+            isLoading = false,
+            currentChunkIndex = safeChunkIndex,
+            totalChunks = textChunks.size,
+            bookProgressPercent = calculateBookProgressPercent(safeChunkIndex),
+            currentWordSourceCfi = null,
+            currentWordStartOffset = -1,
+            sessionFinished = true
+        )
+    }
+
     private fun clearPlaylistForContinuation() {
         val filesToDelete = audioFiles.values.toList()
         val streamsToRemove = chunkStreamIds.values.toList()
@@ -900,7 +923,10 @@ class TtsPlaybackManager(
                                     if (player.hasNextMediaItem()) {
                                         player.seekToNextMediaItem()
                                     } else {
-                                        player.stop()
+                                        val finishedChunkIndex = currentMediaItem.mediaId.toIntOrNull()
+                                            ?: currentChunkIndexFromPlayer()
+                                        markSessionFinishedNaturally(finishedChunkIndex)
+                                        player.pause()
                                     }
                                 }
                             }
