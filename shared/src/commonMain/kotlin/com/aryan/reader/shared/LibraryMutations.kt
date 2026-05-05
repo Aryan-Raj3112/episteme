@@ -115,6 +115,60 @@ object SharedLibraryEditor {
         )
     }
 
+    fun removeFolder(
+        state: SharedReaderScreenState,
+        shelfRecords: List<ShelfRecord>,
+        shelfRefs: List<BookShelfRef>,
+        folder: Shelf
+    ): SharedLibraryMutationResult? {
+        if (folder.type != ShelfType.FOLDER) return null
+        val folderBookIds = cleanBookIds(folder.books.map { it.id })
+        if (folderBookIds.isEmpty()) return null
+        val rootSourceFolder = folder.books.firstNotNullOfOrNull { it.sourceFolder }
+        val remainingTabs = state.openTabIds.filterNot { it in folderBookIds }
+        return SharedLibraryMutationResult(
+            state = state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in folderBookIds },
+                selectedBookIds = state.selectedBookIds - folderBookIds,
+                pinnedHomeBookIds = state.pinnedHomeBookIds - folderBookIds,
+                pinnedLibraryBookIds = state.pinnedLibraryBookIds - folderBookIds,
+                openTabIds = remainingTabs,
+                activeTabBookId = state.activeTabBookId?.takeUnless { it in folderBookIds },
+                syncedFolders = if (folder.parentShelfId == null && rootSourceFolder != null) {
+                    state.syncedFolders.filterNot { it.uriString == rootSourceFolder }
+                } else {
+                    state.syncedFolders
+                },
+                libraryFilters = if (rootSourceFolder != null) {
+                    state.libraryFilters.copy(sourceFolders = state.libraryFilters.sourceFolders - rootSourceFolder)
+                } else {
+                    state.libraryFilters
+                },
+                bannerMessage = BannerMessage("Removed folder \"${folder.name}\" and ${folderBookIds.size} book(s) from the app.")
+            ),
+            shelfRecords = shelfRecords,
+            shelfRefs = shelfRefs.filterNot { it.bookId in folderBookIds }
+        )
+    }
+
+    fun markBookOpened(
+        state: SharedReaderScreenState,
+        bookId: String,
+        nowMillis: Long = currentTimestamp()
+    ): SharedReaderScreenState {
+        val cleanedBookId = bookId.trim()
+        if (cleanedBookId.isBlank()) return state
+        return state.copy(
+            rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                if (book.id == cleanedBookId) {
+                    book.copy(isRecent = true, timestamp = nowMillis)
+                } else {
+                    book
+                }
+            }
+        )
+    }
+
     fun addSelectedBooksToShelf(
         state: SharedReaderScreenState,
         shelfRecords: List<ShelfRecord>,

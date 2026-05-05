@@ -35,4 +35,10 @@ sealed interface AppAction {
     data class AppContrastChanged(val option: AppContrastOption) : AppAction
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction
     data class FolderSyncEnabledChanged(val enabled: Boolean) : AppAction
+    data class TabsEnabledChanged(val enabled: Boolean) : AppAction
+    data class BookTabOpened(val bookId: String) : AppAction
+    data class BookTabClosed(val bookId: String) : AppAction
+    data object AllTabsClosed : AppAction
+    data class HomePinToggled(val bookId: String) : AppAction
+    data class LibraryPinToggled(val bookId: String) : AppAction
 }

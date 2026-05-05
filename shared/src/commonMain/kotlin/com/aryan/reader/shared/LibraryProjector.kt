@@ -43,7 +43,8 @@ class LibraryProjector {
                     timestamp = now + index,
                     title = file.name.substringBeforeLast('.'),
                     fileSize = file.size,
-                    sourceFolder = file.path?.parentPath()
+                    sourceFolder = file.sourceFolder ?: file.path?.parentPath(),
+                    isRecent = false
                 )
             }
         }
@@ -148,7 +149,8 @@ private fun String.folderDisplayName(): String {
 data class ImportedFile(
     val name: String,
     val path: String?,
-    val size: Long
+    val size: Long,
+    val sourceFolder: String? = null
 )
 
 expect fun currentTimestamp(): Long

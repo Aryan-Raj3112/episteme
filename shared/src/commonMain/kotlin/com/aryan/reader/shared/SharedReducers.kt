@@ -58,5 +58,44 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.AppContrastChanged -> copy(appContrastOption = action.option)
         is AppAction.SyncEnabledChanged -> copy(isSyncEnabled = action.enabled)
         is AppAction.FolderSyncEnabledChanged -> copy(isFolderSyncEnabled = action.enabled)
+        is AppAction.TabsEnabledChanged -> copy(
+            isTabsEnabled = action.enabled,
+            openTabIds = if (action.enabled) openTabIds else emptyList(),
+            activeTabBookId = if (action.enabled) activeTabBookId else null
+        )
+        is AppAction.BookTabOpened -> {
+            val bookId = action.bookId.trim()
+            if (bookId.isBlank()) {
+                this
+            } else {
+                copy(
+                    isTabsEnabled = true,
+                    openTabIds = (openTabIds - bookId) + bookId,
+                    activeTabBookId = bookId
+                )
+            }
+        }
+        is AppAction.BookTabClosed -> {
+            val remaining = openTabIds.filterNot { it == action.bookId }
+            copy(
+                openTabIds = remaining,
+                activeTabBookId = if (activeTabBookId == action.bookId) remaining.lastOrNull() else activeTabBookId
+            )
+        }
+        AppAction.AllTabsClosed -> copy(openTabIds = emptyList(), activeTabBookId = null)
+        is AppAction.HomePinToggled -> copy(
+            pinnedHomeBookIds = if (action.bookId in pinnedHomeBookIds) {
+                pinnedHomeBookIds - action.bookId
+            } else {
+                pinnedHomeBookIds + action.bookId
+            }
+        )
+        is AppAction.LibraryPinToggled -> copy(
+            pinnedLibraryBookIds = if (action.bookId in pinnedLibraryBookIds) {
+                pinnedLibraryBookIds - action.bookId
+            } else {
+                pinnedLibraryBookIds + action.bookId
+            }
+        )
     }
 }

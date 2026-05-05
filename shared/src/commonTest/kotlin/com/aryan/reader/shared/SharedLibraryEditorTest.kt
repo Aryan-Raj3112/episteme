@@ -119,6 +119,62 @@ class SharedLibraryEditorTest {
         assertEquals("Updated \"New\".", result.state.bannerMessage?.message)
     }
 
+    @Test
+    fun `removeFolder removes folder books tabs pins refs and synced folder metadata`() {
+        val folderBook = book("folder_book").copy(sourceFolder = "C:/Books")
+        val otherBook = book("other")
+        val folder = Shelf(
+            id = "folder_C:/Books",
+            name = "Books",
+            type = ShelfType.FOLDER,
+            books = listOf(folderBook)
+        )
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(folderBook, otherBook),
+            selectedBookIds = setOf("folder_book", "other"),
+            pinnedHomeBookIds = setOf("folder_book"),
+            pinnedLibraryBookIds = setOf("folder_book", "other"),
+            openTabIds = listOf("folder_book", "other"),
+            activeTabBookId = "folder_book",
+            syncedFolders = listOf(SyncedFolder("C:/Books", "Books", lastScanTime = 1L)),
+            libraryFilters = LibraryFilters(sourceFolders = setOf("C:/Books"))
+        )
+        val refs = listOf(
+            BookShelfRef(bookId = "folder_book", shelfId = "manual", addedAt = 1L),
+            BookShelfRef(bookId = "other", shelfId = "manual", addedAt = 2L)
+        )
+
+        val result = SharedLibraryEditor.removeFolder(state, emptyList(), refs, folder)
+
+        requireNotNull(result)
+        assertEquals(listOf("other"), result.state.rawLibraryBooks.ids())
+        assertEquals(setOf("other"), result.state.selectedBookIds)
+        assertTrue(result.state.pinnedHomeBookIds.isEmpty())
+        assertEquals(setOf("other"), result.state.pinnedLibraryBookIds)
+        assertEquals(listOf("other"), result.state.openTabIds)
+        assertNull(result.state.activeTabBookId)
+        assertTrue(result.state.syncedFolders.isEmpty())
+        assertTrue(result.state.libraryFilters.sourceFolders.isEmpty())
+        assertEquals(listOf("other"), result.shelfRefs.map { it.bookId })
+    }
+
+    @Test
+    fun `markBookOpened marks book recent and updates timestamp`() {
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(
+                book("opened").copy(isRecent = false, timestamp = 1L),
+                book("other").copy(isRecent = false, timestamp = 2L)
+            )
+        )
+
+        val result = SharedLibraryEditor.markBookOpened(state, "opened", nowMillis = 99L)
+
+        assertTrue(result.rawLibraryBooks.first { it.id == "opened" }.isRecent)
+        assertEquals(99L, result.rawLibraryBooks.first { it.id == "opened" }.timestamp)
+        assertTrue(!result.rawLibraryBooks.first { it.id == "other" }.isRecent)
+        assertEquals(2L, result.rawLibraryBooks.first { it.id == "other" }.timestamp)
+    }
+
     private fun book(
         id: String,
         title: String? = id,

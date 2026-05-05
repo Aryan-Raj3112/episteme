@@ -42,6 +42,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -99,6 +100,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.AppAction
+import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
@@ -109,10 +111,12 @@ import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
+import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -131,6 +135,7 @@ import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedTextBookFactory
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.toFileType
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -165,6 +170,7 @@ import java.awt.Frame
 import java.io.File
 import java.net.URI
 import java.net.URLEncoder
+import javax.swing.JFileChooser
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -187,7 +193,7 @@ private data class DesktopWebViewRuntimeState(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EpistemeDesktopApp() {
-    val libraryProjector = remember { SharedLibraryStateProjector() }
+    val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
@@ -230,12 +236,20 @@ private fun EpistemeDesktopApp() {
     var shelfRecords by remember { mutableStateOf(initialLibrarySnapshot.shelfRecords) }
     var shelfRefs by remember { mutableStateOf(initialLibrarySnapshot.shelfRefs) }
     var state by remember {
-        val initialBooks = initialLibrarySnapshot.books
+        val initialBooks = initialLibrarySnapshot.books.filter { it.type in DesktopReadableFileTypes }
         val initialTags = initialLibrarySnapshot.tags.ifEmpty { initialBooks.collectTags() }
         val initialState = SharedReaderScreenState(
             rawLibraryBooks = initialBooks,
-            recentFilesLimit = 12,
-            allTags = initialTags
+            recentFilesLimit = initialLibrarySnapshot.recentFilesLimit,
+            allTags = initialTags,
+            syncedFolders = initialLibrarySnapshot.syncedFolders,
+            isTabsEnabled = initialLibrarySnapshot.isTabsEnabled,
+            openTabIds = initialLibrarySnapshot.openTabIds,
+            activeTabBookId = initialLibrarySnapshot.activeTabBookId,
+            pinnedHomeBookIds = initialLibrarySnapshot.pinnedHomeBookIds,
+            pinnedLibraryBookIds = initialLibrarySnapshot.pinnedLibraryBookIds,
+            useStrictFileFilter = initialLibrarySnapshot.useStrictFileFilter,
+            appThemeMode = initialLibrarySnapshot.appThemeMode
         )
         mutableStateOf(
             libraryProjector.project(
@@ -257,6 +271,7 @@ private fun EpistemeDesktopApp() {
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
     var shelfToDelete by remember { mutableStateOf<Shelf?>(null) }
+    var folderToRemove by remember { mutableStateOf<Shelf?>(null) }
     var showAddToShelfDialog by remember { mutableStateOf(false) }
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
@@ -287,7 +302,16 @@ private fun EpistemeDesktopApp() {
                         books = projected.rawLibraryBooks,
                         shelfRecords = records,
                         shelfRefs = refs,
-                        tags = projected.allTags
+                        tags = projected.allTags,
+                        syncedFolders = projected.syncedFolders,
+                        recentFilesLimit = projected.recentFilesLimit,
+                        isTabsEnabled = projected.isTabsEnabled,
+                        openTabIds = projected.openTabIds,
+                        activeTabBookId = projected.activeTabBookId,
+                        pinnedHomeBookIds = projected.pinnedHomeBookIds,
+                        pinnedLibraryBookIds = projected.pinnedLibraryBookIds,
+                        useStrictFileFilter = projected.useStrictFileFilter,
+                        appThemeMode = projected.appThemeMode
                     )
                 )
             }
@@ -313,20 +337,38 @@ private fun EpistemeDesktopApp() {
     }
 
     fun importFiles(files: List<ImportedBookFile>) {
-        val readableFiles = files.filter { it.desktopFileType() in DesktopReadableFileTypes }
-        if (readableFiles.isEmpty() && files.isNotEmpty()) {
+        val importableFiles = files.filter { it.desktopFileType() in DesktopReadableFileTypes }
+        if (importableFiles.isEmpty() && files.isNotEmpty()) {
             updateState(state.withBanner("No supported desktop reader files were selected. EPUB, PDF, TXT, MD, and HTML are supported.", isError = true))
             return
         }
-        val skipped = files.size - readableFiles.size
-        val next = state.withImportedFiles(readableFiles).let {
-            if (skipped > 0) {
-                it.withBanner("Imported supported files. Skipped $skipped file(s) that desktop cannot read yet.")
-            } else {
-                it
+        val skipped = files.size - importableFiles.size
+        val syncedFolders = mergeSyncedFolders(
+            existing = state.syncedFolders,
+            folderRoots = importableFiles.mapNotNull { it.sourceFolder }.distinct(),
+            nowMillis = System.currentTimeMillis()
+        )
+        val next = state.withImportedFiles(importableFiles)
+            .copy(syncedFolders = syncedFolders)
+            .let {
+                when {
+                    skipped > 0 -> it.withBanner("Imported supported files. Skipped $skipped unsupported file(s).")
+                    else -> it
+                }
             }
-        }
         updateState(next)
+    }
+
+    fun importFolder(folder: File) {
+        val files = folder.walkTopDown()
+            .filter { it.isFile }
+            .map { it.toImportedBookFile(sourceFolder = folder.absolutePath) }
+            .toList()
+        if (files.isEmpty()) {
+            updateState(state.withBanner("That folder does not contain any files.", isError = true))
+            return
+        }
+        importFiles(files)
     }
 
     fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
@@ -337,6 +379,7 @@ private fun EpistemeDesktopApp() {
                         book.copy(
                             progressPercentage = progress,
                             timestamp = System.currentTimeMillis(),
+                            isRecent = true,
                             lastPageIndex = pageIndex,
                             readerSettings = session?.reader?.settings ?: book.readerSettings,
                             readerBookmarks = session?.bookmarks ?: book.readerBookmarks
@@ -389,6 +432,12 @@ private fun EpistemeDesktopApp() {
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
     }
 
+    fun recordBookOpened(bookId: String) {
+        val now = System.currentTimeMillis()
+        val next = SharedLibraryEditor.markBookOpened(state, bookId, now)
+        updateState(next.reduce(AppAction.BookTabOpened(bookId)))
+    }
+
     fun openReader(book: BookItem) {
         if (book.type == FileType.PDF) {
             val path = book.path
@@ -407,6 +456,7 @@ private fun EpistemeDesktopApp() {
 
             activePdfDocument = pdf
             activeReaderBookId = book.id
+            recordBookOpened(book.id)
             selectedTab = SharedAppTab.READER
             return
         }
@@ -464,7 +514,60 @@ private fun EpistemeDesktopApp() {
             restoredSession
         }
         activeReaderBookId = book.id
+        recordBookOpened(book.id)
         selectedTab = SharedAppTab.READER
+    }
+
+    fun removeFolder(shelf: Shelf) {
+        val removedBookIds = shelf.books.mapTo(mutableSetOf()) { it.id }
+        val wasReadingRemovedBook = activeReaderBookId in removedBookIds
+        val nextTabBook = state.openTabIds
+            .filterNot { it in removedBookIds }
+            .lastOrNull()
+            ?.let { nextId -> state.rawLibraryBooks.firstOrNull { it.id == nextId } }
+        SharedLibraryEditor.removeFolder(state, shelfRecords, shelfRefs, shelf)?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+            if (wasReadingRemovedBook) {
+                activePdfDocument?.close()
+                activePdfDocument = null
+                activeReaderBookId = null
+                if (nextTabBook != null) {
+                    openReader(nextTabBook)
+                } else {
+                    readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                    selectedTab = SharedAppTab.HOME
+                }
+            }
+        }
+    }
+
+    fun closeReaderTab(book: BookItem) {
+        val wasActive = activeReaderBookId == book.id
+        val remainingIds = state.openTabIds.filterNot { it == book.id }
+        updateState(state.reduce(AppAction.BookTabClosed(book.id)))
+        if (!wasActive) return
+
+        activePdfDocument?.close()
+        activePdfDocument = null
+        activeReaderBookId = null
+        val nextBook = remainingIds.lastOrNull()?.let { nextId ->
+            state.rawLibraryBooks.firstOrNull { it.id == nextId }
+        }
+        if (nextBook != null) {
+            openReader(nextBook)
+        } else {
+            readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+            selectedTab = SharedAppTab.HOME
+        }
+    }
+
+    fun closeAllReaderTabs() {
+        activePdfDocument?.close()
+        activePdfDocument = null
+        activeReaderBookId = null
+        readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+        selectedTab = SharedAppTab.HOME
+        updateState(state.reduce(AppAction.AllTabsClosed))
     }
 
     fun importAndOpenEpub() {
@@ -512,23 +615,38 @@ private fun EpistemeDesktopApp() {
         }
     }
 
-    MaterialTheme(
-        colorScheme = lightColorScheme(
+    val colorScheme = if (state.appThemeMode == AppThemeMode.DARK) {
+        darkColorScheme(
+            primary = Color(0xFF70DBB2),
+            secondary = Color(0xFFD6C2AD),
+            tertiary = Color(0xFFFFB3B7),
+            surface = Color(0xFF111411),
+            surfaceVariant = Color(0xFF3F493F)
+        )
+    } else {
+        lightColorScheme(
             primary = Color(0xFF006C4C),
             secondary = Color(0xFF705D49),
             tertiary = Color(0xFF9C4146),
             surface = Color(0xFFFCFCF8),
             surfaceVariant = Color(0xFFE5E8DE)
         )
-    ) {
+    }
+
+    MaterialTheme(colorScheme = colorScheme) {
         SharedAppShell(
             selectedTab = selectedTab,
             snackbarHostState = snackbarHostState,
+            appThemeMode = state.appThemeMode,
+            isTabsEnabled = state.isTabsEnabled,
             onTabSelected = { selectedTab = it },
             onImportFiles = { importFiles(chooseFiles()) },
+            onImportFolder = { chooseFolder()?.let(::importFolder) },
             onSyncRequested = {
                 updateState(state.reduce(AppAction.BannerShown(BannerMessage("Cloud sync is Android-only for now. Desktop sync will need a separate backend adapter."))))
-            }
+            },
+            onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
+            onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
         ) { tab ->
             when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
@@ -536,6 +654,7 @@ private fun EpistemeDesktopApp() {
                             onImportBooks = {
                                 importFiles(chooseFiles())
                             },
+                            onImportFolder = { chooseFolder()?.let(::importFolder) },
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
@@ -543,7 +662,12 @@ private fun EpistemeDesktopApp() {
                             onShowBookInfo = { bookInfoDialogFor = it },
                             onEditBook = { bookEditDialogFor = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
-                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
+                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
+                            onOpenTab = ::openReader,
+                            onCloseTab = ::closeReaderTab,
+                            onCloseAllTabs = ::closeAllReaderTabs,
+                            onRecentLimitChange = { limit -> updateState(state.reduce(LibraryAction.RecentLimitChanged(limit))) },
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.HomePinToggled(book.id))) }
                         )
 
                         SharedAppTab.LIBRARY -> LibraryScreen(
@@ -554,6 +678,7 @@ private fun EpistemeDesktopApp() {
                             onImportBooks = {
                                 importFiles(chooseFiles())
                             },
+                            onImportFolder = { chooseFolder()?.let(::importFolder) },
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
@@ -563,8 +688,10 @@ private fun EpistemeDesktopApp() {
                             onCreateShelf = { showCreateShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
+                            onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
-                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
+                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
                         )
 
                         SharedAppTab.SHELVES -> ShelvesScreen(
@@ -572,11 +699,14 @@ private fun EpistemeDesktopApp() {
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             selectedBookIds = state.selectedBookIds,
+                            pinnedBookIds = state.pinnedLibraryBookIds,
                             onShowBookInfo = { bookInfoDialogFor = it },
                             onEditBook = { bookEditDialogFor = it },
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
                             onCreateShelf = { showCreateShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
-                            onDeleteShelf = { shelfToDelete = it }
+                            onDeleteShelf = { shelfToDelete = it },
+                            onRemoveFolder = { folderToRemove = it }
                         )
 
                         SharedAppTab.READER -> {
@@ -655,6 +785,19 @@ private fun EpistemeDesktopApp() {
             )
         }
 
+        folderToRemove?.let { folder ->
+            SharedConfirmDialog(
+                title = "Remove folder",
+                body = "Remove \"${folder.name}\" and its ${folder.bookCount} book(s) from the app? Files on disk will not be deleted.",
+                confirmLabel = "Remove",
+                onDismiss = { folderToRemove = null },
+                onConfirm = {
+                    removeFolder(folder)
+                    folderToRemove = null
+                }
+            )
+        }
+
         if (showAddToShelfDialog) {
             SharedAddToShelfDialog(
                 shelves = state.shelves.filter { it.type == ShelfType.MANUAL && it.id != "unshelved" },
@@ -713,6 +856,7 @@ private fun EpistemeDesktopApp() {
 private fun HomeScreen(
     state: SharedReaderScreenState,
     onImportBooks: () -> Unit,
+    onImportFolder: () -> Unit,
     onRead: (BookItem) -> Unit,
     onSelect: (String) -> Unit,
     onClearSelection: () -> Unit,
@@ -720,11 +864,17 @@ private fun HomeScreen(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTagSelectedBooks: () -> Unit,
-    onAddSelectedBooksToShelf: () -> Unit
+    onAddSelectedBooksToShelf: () -> Unit,
+    onOpenTab: (BookItem) -> Unit,
+    onCloseTab: (BookItem) -> Unit,
+    onCloseAllTabs: () -> Unit,
+    onRecentLimitChange: (Int) -> Unit,
+    onTogglePinned: (BookItem) -> Unit
 ) {
     SharedHomeScreen(
         state = state,
         onImportBooks = onImportBooks,
+        onImportFolder = onImportFolder,
         onOpenBook = onRead,
         onToggleSelection = onSelect,
         onClearSelection = onClearSelection,
@@ -732,7 +882,12 @@ private fun HomeScreen(
         onShowBookInfo = onShowBookInfo,
         onEditBook = onEditBook,
         onTagSelectedBooks = onTagSelectedBooks,
-        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf
+        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
+        onOpenTab = onOpenTab,
+        onCloseTab = onCloseTab,
+        onCloseAllTabs = onCloseAllTabs,
+        onRecentLimitChange = onRecentLimitChange,
+        onTogglePinned = onTogglePinned
     )
 }
 
@@ -752,8 +907,11 @@ private fun LibraryScreen(
     onCreateShelf: () -> Unit,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
+    onRemoveFolder: (Shelf) -> Unit,
     onTagSelectedBooks: () -> Unit,
-    onAddSelectedBooksToShelf: () -> Unit
+    onAddSelectedBooksToShelf: () -> Unit,
+    onImportFolder: () -> Unit,
+    onTogglePinned: (BookItem) -> Unit
 ) {
     SharedLibraryScreen(
         state = state,
@@ -770,8 +928,11 @@ private fun LibraryScreen(
         onCreateShelf = onCreateShelf,
         onRenameShelf = onRenameShelf,
         onDeleteShelf = onDeleteShelf,
+        onRemoveFolder = onRemoveFolder,
         onTagSelectedBooks = onTagSelectedBooks,
-        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf
+        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
+        onImportFolder = onImportFolder,
+        onTogglePinned = onTogglePinned
     )
 }
 
@@ -779,24 +940,30 @@ private fun LibraryScreen(
 private fun ShelvesScreen(
     shelves: List<Shelf>,
     selectedBookIds: Set<String>,
+    pinnedBookIds: Set<String>,
     onRead: (BookItem) -> Unit,
     onSelect: (String) -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
+    onTogglePinned: (BookItem) -> Unit,
     onCreateShelf: () -> Unit,
     onRenameShelf: (Shelf) -> Unit,
-    onDeleteShelf: (Shelf) -> Unit
+    onDeleteShelf: (Shelf) -> Unit,
+    onRemoveFolder: (Shelf) -> Unit
 ) {
     SharedShelvesScreen(
         shelves = shelves,
         selectedBookIds = selectedBookIds,
+        pinnedBookIds = pinnedBookIds,
         onOpenBook = onRead,
         onToggleSelection = onSelect,
         onShowBookInfo = onShowBookInfo,
         onEditBook = onEditBook,
+        onTogglePinned = onTogglePinned,
         onCreateShelf = onCreateShelf,
         onRenameShelf = onRenameShelf,
-        onDeleteShelf = onDeleteShelf
+        onDeleteShelf = onDeleteShelf,
+        onRemoveFolder = onRemoveFolder
     )
 }
 
@@ -2243,6 +2410,19 @@ private fun choosePdfFile(): File? {
     return File(directory, file)
 }
 
+private fun chooseFolder(): File? {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Import folder"
+        fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+        isAcceptAllFileFilterUsed = false
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+        chooser.selectedFile
+    } else {
+        null
+    }
+}
+
 private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean = false): SharedReaderScreenState {
     return reduce(AppAction.BannerShown(BannerMessage(message, isError = isError)))
 }
@@ -2250,13 +2430,44 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
 private val DesktopReadableFileTypes = setOf(FileType.EPUB, FileType.PDF, FileType.TXT, FileType.MD, FileType.HTML)
 
 private fun ImportedBookFile.desktopFileType(): FileType {
-    return when (name.substringAfterLast('.', "").lowercase()) {
-        "epub" -> FileType.EPUB
-        "pdf" -> FileType.PDF
-        "txt" -> FileType.TXT
+    return when (val extension = name.substringAfterLast('.', "").lowercase()) {
         "md", "markdown" -> FileType.MD
-        "html", "htm", "xhtml" -> FileType.HTML
-        else -> FileType.UNKNOWN
+        "xhtml" -> FileType.HTML
+        else -> name.toFileType().takeUnless { it == FileType.UNKNOWN && extension.isBlank() } ?: FileType.UNKNOWN
+    }
+}
+
+private fun mergeSyncedFolders(
+    existing: List<SyncedFolder>,
+    folderRoots: List<String>,
+    nowMillis: Long
+): List<SyncedFolder> {
+    if (folderRoots.isEmpty()) return existing
+    val byRoot = existing.associateBy { it.uriString }.toMutableMap()
+    folderRoots.forEach { root ->
+        val rootFile = File(root)
+        byRoot[root] = SyncedFolder(
+            uriString = root,
+            name = rootFile.name.takeIf { it.isNotBlank() } ?: root,
+            lastScanTime = nowMillis,
+            allowedFileTypes = DesktopReadableFileTypes
+        )
+    }
+    return byRoot.values.sortedBy { it.name.lowercase() }
+}
+
+private object DesktopFolderPathResolver : SharedFolderPathResolver {
+    override fun relativeFolderSegments(item: BookItem): List<String> {
+        val sourceFolder = item.sourceFolder ?: return emptyList()
+        val bookPath = item.path ?: return emptyList()
+        val parentFile = File(bookPath).parentFile ?: return emptyList()
+        val paths = runCatching {
+            File(sourceFolder).toPath().toAbsolutePath().normalize() to
+                parentFile.toPath().toAbsolutePath().normalize()
+        }.getOrNull() ?: return emptyList()
+        val (root, parent) = paths
+        if (!parent.startsWith(root) || parent == root) return emptyList()
+        return root.relativize(parent).map { it.toString() }.filter { it.isNotBlank() }
     }
 }
 
@@ -2284,12 +2495,13 @@ private fun Long.toReadableSize(): String {
     }
 }
 
-private fun File.toImportedBookFile(): ImportedBookFile {
+private fun File.toImportedBookFile(sourceFolder: String? = null): ImportedBookFile {
     return ImportedBookFile(
         name = name,
         uriString = null,
         localPath = absolutePath,
-        size = length()
+        size = length(),
+        sourceFolder = sourceFolder
     )
 }
 

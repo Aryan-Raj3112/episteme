@@ -22,11 +22,20 @@ data class SharedLibrarySnapshot(
     val books: List<BookItem> = emptyList(),
     val shelfRecords: List<ShelfRecord> = emptyList(),
     val shelfRefs: List<BookShelfRef> = emptyList(),
-    val tags: List<Tag> = emptyList()
+    val tags: List<Tag> = emptyList(),
+    val syncedFolders: List<SyncedFolder> = emptyList(),
+    val recentFilesLimit: Int = 12,
+    val isTabsEnabled: Boolean = false,
+    val openTabIds: List<String> = emptyList(),
+    val activeTabBookId: String? = null,
+    val pinnedHomeBookIds: Set<String> = emptySet(),
+    val pinnedLibraryBookIds: Set<String> = emptySet(),
+    val useStrictFileFilter: Boolean = false,
+    val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 1
+    private const val SCHEMA_VERSION = 3
 
     private val json = Json {
         prettyPrint = true
@@ -38,11 +47,26 @@ object SharedLibrarySnapshotJson {
             json.parseToJsonElement(rawJson).jsonObject
         }.getOrNull() ?: return SharedLibrarySnapshot()
 
+        val schemaVersion = root.int("schemaVersion", 1)
+        val openTabIds = root.stringArray("openTabIds")
         return SharedLibrarySnapshot(
-            books = root.array("books").mapNotNull { it.asBookItemOrNull() },
+            books = root.array("books")
+                .mapNotNull { it.asBookItemOrNull() }
+                .migrateLegacyRecentState(schemaVersion, openTabIds),
             shelfRecords = root.array("shelves").mapNotNull { it.asShelfRecordOrNull() },
             shelfRefs = root.array("bookShelfRefs").mapNotNull { it.asBookShelfRefOrNull() },
-            tags = root.array("tags").mapNotNull { it.asTagOrNull() }
+            tags = root.array("tags").mapNotNull { it.asTagOrNull() },
+            syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
+            recentFilesLimit = root.int("recentFilesLimit", 12),
+            isTabsEnabled = root.boolean("isTabsEnabled", false),
+            openTabIds = openTabIds,
+            activeTabBookId = root.string("activeTabBookId"),
+            pinnedHomeBookIds = root.stringArray("pinnedHomeBookIds").toSet(),
+            pinnedLibraryBookIds = root.stringArray("pinnedLibraryBookIds").toSet(),
+            useStrictFileFilter = root.boolean("useStrictFileFilter", false),
+            appThemeMode = root.string("appThemeMode")
+                ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
+                ?: AppThemeMode.SYSTEM
         )
     }
 
@@ -53,7 +77,16 @@ object SharedLibrarySnapshotJson {
                 "books" to JsonArray(snapshot.books.map { it.toJsonObject() }),
                 "shelves" to JsonArray(snapshot.shelfRecords.map { it.toJsonObject() }),
                 "bookShelfRefs" to JsonArray(snapshot.shelfRefs.map { it.toJsonObject() }),
-                "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() })
+                "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() }),
+                "syncedFolders" to JsonArray(snapshot.syncedFolders.map { it.toJsonObject() }),
+                "recentFilesLimit" to JsonPrimitive(snapshot.recentFilesLimit),
+                "isTabsEnabled" to JsonPrimitive(snapshot.isTabsEnabled),
+                "openTabIds" to snapshot.openTabIds.asJsonArray(),
+                "activeTabBookId" to snapshot.activeTabBookId.asJson(),
+                "pinnedHomeBookIds" to snapshot.pinnedHomeBookIds.toList().asJsonArray(),
+                "pinnedLibraryBookIds" to snapshot.pinnedLibraryBookIds.toList().asJsonArray(),
+                "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
+                "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name)
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)
@@ -62,6 +95,12 @@ object SharedLibrarySnapshotJson {
 
 private fun JsonObject.array(name: String): List<JsonElement> {
     return runCatching { this[name]?.jsonArray?.toList().orEmpty() }.getOrDefault(emptyList())
+}
+
+private fun JsonObject.stringArray(name: String): List<String> {
+    return array(name).mapNotNull { element ->
+        runCatching { element.jsonPrimitive.content }.getOrNull()
+    }
 }
 
 private fun JsonObject.string(name: String): String? {
@@ -76,6 +115,10 @@ private fun JsonObject.int(name: String): Int? {
     return runCatching { this[name]?.jsonPrimitive?.content?.toIntOrNull() }.getOrNull()
 }
 
+private fun JsonObject.int(name: String, fallback: Int): Int {
+    return int(name) ?: fallback
+}
+
 private fun JsonObject.float(name: String): Float? {
     return runCatching { this[name]?.jsonPrimitive?.floatOrNull }.getOrNull()
 }
@@ -86,6 +129,26 @@ private fun JsonObject.double(name: String): Double? {
 
 private fun JsonObject.boolean(name: String, fallback: Boolean): Boolean {
     return runCatching { this[name]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: fallback
+}
+
+private fun List<BookItem>.migrateLegacyRecentState(schemaVersion: Int, openTabIds: List<String>): List<BookItem> {
+    if (schemaVersion >= 3) return this
+    val openedBookIds = openTabIds.toSet()
+    return map { book ->
+        if (book.isRecent && !book.hasReaderFootprint(openedBookIds)) {
+            book.copy(isRecent = false)
+        } else {
+            book
+        }
+    }
+}
+
+private fun BookItem.hasReaderFootprint(openedBookIds: Set<String>): Boolean {
+    return id in openedBookIds ||
+        lastPageIndex != null ||
+        (progressPercentage ?: 0f) > 0f ||
+        readerSettings != null ||
+        readerBookmarks.isNotEmpty()
 }
 
 private fun JsonElement.asBookItemOrNull(): BookItem? {
@@ -144,6 +207,19 @@ private fun JsonElement.asTagOrNull(): Tag? {
     )
 }
 
+private fun JsonElement.asSyncedFolderOrNull(): SyncedFolder? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return SyncedFolder(
+        uriString = obj.string("uriString") ?: return null,
+        name = obj.string("name") ?: return null,
+        lastScanTime = obj.long("lastScanTime"),
+        allowedFileTypes = obj.stringArray("allowedFileTypes")
+            .mapNotNull { runCatching { FileType.valueOf(it) }.getOrNull() }
+            .toSet()
+            .ifEmpty { FileType.entries.toSet() }
+    )
+}
+
 private fun BookItem.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
@@ -199,10 +275,25 @@ private fun Tag.toJsonObject(): JsonObject {
     )
 }
 
+private fun SyncedFolder.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "uriString" to JsonPrimitive(uriString),
+            "name" to JsonPrimitive(name),
+            "lastScanTime" to JsonPrimitive(lastScanTime),
+            "allowedFileTypes" to allowedFileTypes.map { it.name }.sorted().asJsonArray()
+        )
+    )
+}
+
 private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Float?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Double?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Int?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
+
+private fun List<String>.asJsonArray(): JsonArray {
+    return JsonArray(map { JsonPrimitive(it) })
+}
 
 private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null

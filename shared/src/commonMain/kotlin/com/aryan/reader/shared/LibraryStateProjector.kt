@@ -38,11 +38,16 @@ class SharedLibraryStateProjector(
         val queried = filterBySearch(allLibraryBooks, current.searchQuery)
         val filtered = applyLibraryFilters(queried, current.libraryFilters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
+            .withPinnedFirst(current.pinnedLibraryBookIds)
         val visibleRecentBooks = sortBooks(
             allLibraryBooks.filter { it.isRecent },
             current.sortOrder
-        ).take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
+        )
+            .withPinnedFirst(current.pinnedHomeBookIds)
+            .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
         val openTabs = current.openTabIds.mapNotNull { tabId -> allLibraryBooks.find { it.id == tabId } }
+        val openTabIds = openTabs.map { it.id }
+        val activeTabBookId = current.activeTabBookId?.takeIf { it in openTabIds }
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
             shelfRecords = input.shelfRecords,
@@ -81,6 +86,8 @@ class SharedLibraryStateProjector(
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
+            openTabIds = openTabIds,
+            activeTabBookId = activeTabBookId,
             booksAvailableForAdding = booksAvailableForAdding,
             allTags = input.tags
         )
@@ -301,7 +308,8 @@ fun SharedReaderScreenState.withImportedFiles(
                 timestamp = now + index,
                 title = file.name.substringBeforeLast('.'),
                 fileSize = file.size,
-                sourceFolder = file.localPath?.parentPath()
+                sourceFolder = file.sourceFolder ?: file.localPath?.parentPath(),
+                isRecent = false
             )
         }
     }
@@ -321,4 +329,14 @@ private fun String.parentPath(): String? {
     val normalized = replace('\\', '/')
     val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
     return parent.ifBlank { null }
+}
+
+private fun List<BookItem>.withPinnedFirst(pinnedBookIds: Set<String>): List<BookItem> {
+    if (pinnedBookIds.isEmpty()) return this
+    return withIndex()
+        .sortedWith(
+            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedBookIds }
+                .thenBy { it.index }
+        )
+        .map { it.value }
 }

@@ -11,7 +11,11 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +26,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.aryan.reader.shared.AppThemeMode
 
 enum class SharedAppTab {
     HOME,
@@ -35,11 +44,18 @@ enum class SharedAppTab {
 fun SharedAppShell(
     selectedTab: SharedAppTab,
     snackbarHostState: SnackbarHostState,
+    appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    isTabsEnabled: Boolean = false,
     onTabSelected: (SharedAppTab) -> Unit,
     onImportFiles: () -> Unit,
+    onImportFolder: () -> Unit = {},
     onSyncRequested: () -> Unit,
+    onAppThemeModeChange: (AppThemeMode) -> Unit = {},
+    onTabsEnabledChange: (Boolean) -> Unit = {},
     content: @Composable (SharedAppTab) -> Unit
 ) {
+    var optionsExpanded by remember { mutableStateOf(false) }
+
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Row(
             modifier = Modifier
@@ -75,8 +91,31 @@ fun SharedAppShell(
                 IconButton(onClick = onImportFiles) {
                     Icon(Icons.Default.ImportExport, contentDescription = "Import files")
                 }
+                IconButton(onClick = onImportFolder) {
+                    Icon(Icons.Default.Folder, contentDescription = "Import folder")
+                }
                 IconButton(onClick = onSyncRequested) {
                     Icon(Icons.Default.Sync, contentDescription = "Sync")
+                }
+                IconButton(onClick = { optionsExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                }
+                DropdownMenu(expanded = optionsExpanded, onDismissRequest = { optionsExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (appThemeMode == AppThemeMode.DARK) "Use light theme" else "Use dark theme") },
+                        onClick = {
+                            optionsExpanded = false
+                            onAppThemeModeChange(if (appThemeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK)
+                        }
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text(if (isTabsEnabled) "Disable active tabs" else "Enable active tabs") },
+                        onClick = {
+                            optionsExpanded = false
+                            onTabsEnabledChange(!isTabsEnabled)
+                        }
+                    )
                 }
             }
 

@@ -69,13 +69,13 @@ class SharedLibraryProjectorTest {
     @Test
     fun `LibraryProjector imports only new files and maps extensions and folders`() {
         val projector = LibraryProjector()
-        val state = LibraryState(books = listOf(book("C:/books/existing.pdf", displayName = "existing.pdf")))
+        val state = LibraryState(books = listOf(book("C:/books/existing.pdf", displayName = "existing.pdf", isRecent = false)))
 
         val result = projector.withImportedFiles(
             state,
             listOf(
                 ImportedFile(name = "existing.pdf", path = "C:/books/existing.pdf", size = 1L),
-                ImportedFile(name = "notes.md", path = "C:/books/notes.md", size = 2L),
+                ImportedFile(name = "notes.md", path = "C:/books/notes.md", size = 2L, sourceFolder = "C:/books"),
                 ImportedFile(name = "mystery.bin", path = null, size = 3L)
             )
         )
@@ -83,7 +83,10 @@ class SharedLibraryProjectorTest {
         assertEquals(listOf("C:/books/notes.md", "mystery.bin", "C:/books/existing.pdf"), result.books.ids())
         assertEquals(FileType.MD, result.books[0].type)
         assertEquals("C:/books", result.books[0].sourceFolder)
+        assertFalse(result.books[0].isRecent)
         assertEquals(FileType.UNKNOWN, result.books[1].type)
+        assertFalse(result.books[1].isRecent)
+        assertTrue(projector.home(result).recentBooks.isEmpty())
         assertEquals("Imported 2 file(s). Reader support comes later.", result.message)
     }
 
@@ -95,6 +98,7 @@ class SharedLibraryProjectorTest {
                 state = SharedReaderScreenState(
                     selectedBookIds = setOf("existing", "missing"),
                     openTabIds = listOf("missing", "existing"),
+                    activeTabBookId = "missing",
                     viewingShelfId = "missing_shelf",
                     isAddingBooksToShelf = true,
                     selectedShelfIds = setOf("missing_shelf")
@@ -108,9 +112,56 @@ class SharedLibraryProjectorTest {
 
         assertEquals(setOf("existing"), result.selectedBookIds)
         assertEquals(listOf("existing"), result.openTabs.ids())
+        assertEquals(listOf("existing"), result.openTabIds)
+        assertNull(result.activeTabBookId)
         assertNull(result.viewingShelfId)
         assertFalse(result.isAddingBooksToShelf)
         assertTrue(result.selectedShelfIds.isEmpty())
+    }
+
+    @Test
+    fun `SharedLibraryStateProjector keeps pinned home and library books first`() {
+        val older = book("older", title = "Zulu", timestamp = 1L)
+        val newer = book("newer", title = "Alpha", timestamp = 2L)
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(
+                    rawLibraryBooks = listOf(older, newer),
+                    pinnedHomeBookIds = setOf("older"),
+                    pinnedLibraryBookIds = setOf("older"),
+                    sortOrder = SortOrder.TITLE_ASC
+                ),
+                booksFromStore = listOf(older, newer),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList()
+            )
+        )
+
+        assertEquals(listOf("older", "newer"), result.recentBooks.ids())
+        assertEquals(listOf("older", "newer"), result.libraryBooks.ids())
+    }
+
+    @Test
+    fun `shared app actions manage tabs and pins`() {
+        val opened = SharedReaderScreenState()
+            .reduce(AppAction.BookTabOpened("one"))
+            .reduce(AppAction.BookTabOpened("two"))
+            .reduce(AppAction.HomePinToggled("one"))
+            .reduce(AppAction.LibraryPinToggled("two"))
+
+        assertTrue(opened.isTabsEnabled)
+        assertEquals(listOf("one", "two"), opened.openTabIds)
+        assertEquals("two", opened.activeTabBookId)
+        assertEquals(setOf("one"), opened.pinnedHomeBookIds)
+        assertEquals(setOf("two"), opened.pinnedLibraryBookIds)
+
+        val closedActive = opened.reduce(AppAction.BookTabClosed("two"))
+
+        assertEquals(listOf("one"), closedActive.openTabIds)
+        assertEquals("one", closedActive.activeTabBookId)
+        assertTrue(closedActive.reduce(AppAction.TabsEnabledChanged(false)).openTabIds.isEmpty())
     }
 
     @Test
@@ -150,12 +201,12 @@ class SharedLibraryProjectorTest {
 
     @Test
     fun `SharedReaderScreenState withImportedFiles dedupes imports and reports duplicates`() {
-        val state = SharedReaderScreenState(rawLibraryBooks = listOf(book("/books/existing.epub")))
+        val state = SharedReaderScreenState(rawLibraryBooks = listOf(book("/books/existing.epub", isRecent = false)))
 
         val imported = state.withImportedFiles(
             listOf(
                 ImportedBookFile(name = "existing.epub", uriString = null, localPath = "/books/existing.epub", size = 1L),
-                ImportedBookFile(name = "new.pdf", uriString = "content://new", localPath = null, size = 2L)
+                ImportedBookFile(name = "new.pdf", uriString = "content://new", localPath = null, size = 2L, sourceFolder = "content://folder")
             ),
             now = 10L
         )
@@ -166,7 +217,19 @@ class SharedLibraryProjectorTest {
 
         assertEquals(listOf("content://new", "/books/existing.epub"), imported.rawLibraryBooks.ids())
         assertEquals(FileType.PDF, imported.rawLibraryBooks.first().type)
+        assertEquals("content://folder", imported.rawLibraryBooks.first().sourceFolder)
         assertEquals(11L, imported.rawLibraryBooks.first().timestamp)
+        assertFalse(imported.rawLibraryBooks.first().isRecent)
+        val projected = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = imported,
+                booksFromStore = imported.rawLibraryBooks,
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList()
+            )
+        )
+        assertTrue(projected.recentBooks.isEmpty())
         assertEquals("Imported 1 file(s).", imported.bannerMessage?.message)
         assertEquals("Those files are already in the library.", duplicateOnly.bannerMessage?.message)
     }
