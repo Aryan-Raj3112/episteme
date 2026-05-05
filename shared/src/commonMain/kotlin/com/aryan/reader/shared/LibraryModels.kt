@@ -45,6 +45,8 @@ enum class ReadStatusFilter {
     COMPLETED
 }
 
+const val IN_APP_STORAGE_SOURCE = "IN_APP_STORAGE"
+
 enum class ShelfType {
     MANUAL,
     SMART,

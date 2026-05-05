@@ -257,7 +257,7 @@ fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {
 fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<BookItem> {
     return books.filter { book ->
         val matchType = filters.fileTypes.isEmpty() || book.type in filters.fileTypes
-        val matchFolder = filters.sourceFolders.isEmpty() || book.sourceFolder in filters.sourceFolders
+        val matchFolder = book.matchesSourceFolders(filters.sourceFolders)
         val progress = book.progressPercentage ?: 0f
         val matchStatus = when (filters.readStatus) {
             ReadStatusFilter.ALL -> true
@@ -274,7 +274,7 @@ fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
     return when (sortOrder) {
         SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
         SortOrder.TITLE_ASC -> books.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
-        SortOrder.AUTHOR_ASC -> books.sortedBy { it.author?.lowercase() ?: "" }
+        SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
         SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
         SortOrder.PERCENT_DESC -> books.sortedByDescending { it.progressPercentage ?: 0f }
         SortOrder.SIZE_ASC -> books.sortedBy { it.fileSize }

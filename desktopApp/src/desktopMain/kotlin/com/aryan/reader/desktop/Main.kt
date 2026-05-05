@@ -132,6 +132,7 @@ import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibraryStateProjector
+import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
@@ -302,7 +303,7 @@ private fun EpistemeDesktopApp() {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 libraryDatabase.save(
-                    DesktopLibrarySnapshot(
+                    SharedLibrarySnapshot(
                         books = projected.rawLibraryBooks,
                         shelfRecords = records,
                         shelfRefs = refs,

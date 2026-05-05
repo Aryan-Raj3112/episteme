@@ -33,6 +33,14 @@ fun BookItem.isOpdsStream(): Boolean {
     return path?.startsWith("opds-pse://") == true
 }
 
+fun BookItem.matchesSourceFolders(sourceFolders: Set<String>): Boolean {
+    if (sourceFolders.isEmpty()) return true
+    val matchesInAppStorage = IN_APP_STORAGE_SOURCE in sourceFolders &&
+        sourceFolder == null &&
+        !isOpdsStream()
+    return matchesInAppStorage || sourceFolder in sourceFolders
+}
+
 private fun formatDecimal(value: Double, decimals: Int): String {
     val factor = 10.0.pow(decimals)
     val rounded = (value * factor).roundToInt() / factor

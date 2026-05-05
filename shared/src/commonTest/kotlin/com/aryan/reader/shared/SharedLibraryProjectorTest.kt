@@ -1,10 +1,10 @@
 package com.aryan.reader.shared
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SharedLibraryProjectorTest {
 
@@ -172,6 +172,37 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `shared filters treat in app storage separately from opds streams`() {
+        val localBook = book("local", sourceFolder = null, path = "file:///local/book.epub")
+        val streamedBook = book("streamed", sourceFolder = null, path = "opds-pse://book")
+        val syncedBook = book("synced", sourceFolder = "content://sync", path = "content://synced")
+
+        assertEquals(
+            listOf("local"),
+            applyLibraryFilters(
+                listOf(localBook, streamedBook, syncedBook),
+                LibraryFilters(sourceFolders = setOf(IN_APP_STORAGE_SOURCE))
+            ).ids()
+        )
+        assertEquals(
+            listOf("synced"),
+            applyLibraryFilters(
+                listOf(localBook, streamedBook, syncedBook),
+                LibraryFilters(sourceFolders = setOf("content://sync"))
+            ).ids()
+        )
+    }
+
+    @Test
+    fun `shared sort keeps books without authors last`() {
+        val unknown = book("unknown", title = null, author = null, displayName = "Zulu.epub")
+        val known = book("known", title = null, author = "Ada", displayName = "Beta.epub")
+        val title = book("title", title = "Omega", author = "Grace", displayName = "Alpha.epub")
+
+        assertEquals(listOf("known", "title", "unknown"), sortBooks(listOf(unknown, known, title), SortOrder.AUTHOR_ASC).ids())
+    }
+
+    @Test
     fun `shared screen models expose home and library derived state`() {
         val folderBook = book("folder", sourceFolder = "/books")
         val recent = book("recent")
@@ -224,12 +255,13 @@ class SharedLibraryProjectorTest {
         isRecent: Boolean = true,
         fileSize: Long = 0L,
         sourceFolder: String? = null,
+        path: String? = "/library/$displayName",
         seriesName: String? = null,
         seriesIndex: Double? = null,
         tags: List<Tag> = emptyList()
     ) = BookItem(
         id = id,
-        path = "/library/$displayName",
+        path = path,
         type = type,
         displayName = displayName,
         timestamp = timestamp,
