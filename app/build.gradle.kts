@@ -9,6 +9,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.20"
     alias(libs.plugins.kotlin.ksp)
     id("com.diffplug.spotless") version "8.2.1"
+    alias(libs.plugins.kover)
 }
 
 val localProperties = Properties()
