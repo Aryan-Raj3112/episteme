@@ -212,6 +212,7 @@ fun SharedLibraryScreen(
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
     onCreateShelf: () -> Unit = {},
+    onCreateSmartShelf: () -> Unit = {},
     onRenameShelf: (Shelf) -> Unit = {},
     onDeleteShelf: (Shelf) -> Unit = {},
     onRemoveFolder: (Shelf) -> Unit = {},
@@ -235,6 +236,11 @@ fun SharedLibraryScreen(
                     Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Shelf")
+                }
+                Button(onClick = onCreateSmartShelf) {
+                    Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Smart")
                 }
                 Button(onClick = onImportFolder) {
                     Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -363,6 +369,7 @@ fun SharedShelvesScreen(
     onEditBook: (BookItem) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     onCreateShelf: () -> Unit = {},
+    onCreateSmartShelf: () -> Unit = {},
     onRenameShelf: (Shelf) -> Unit = {},
     onDeleteShelf: (Shelf) -> Unit = {},
     onRemoveFolder: (Shelf) -> Unit = {},
@@ -373,10 +380,17 @@ fun SharedShelvesScreen(
         subtitle = "Series, folders, and tags from library metadata",
         modifier = modifier,
         trailing = {
-            Button(onClick = onCreateShelf) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Shelf")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onCreateShelf) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Shelf")
+                }
+                Button(onClick = onCreateSmartShelf) {
+                    Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Smart")
+                }
             }
         }
     ) {
@@ -948,6 +962,7 @@ private fun ShelfSection(
                 imageVector = when (shelf.type) {
                     ShelfType.FOLDER -> Icons.Default.Folder
                     ShelfType.TAG -> Icons.Default.Tag
+                    ShelfType.SMART -> Icons.Default.FilterList
                     else -> Icons.AutoMirrored.Filled.LibraryBooks
                 },
                 contentDescription = null,
@@ -957,7 +972,7 @@ private fun ShelfSection(
             Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.width(8.dp))
             AssistChip(onClick = {}, label = { Text("${shelf.bookCount}") })
-            if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
+            if ((shelf.type == ShelfType.MANUAL || shelf.type == ShelfType.SMART) && shelf.id != "unshelved") {
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { onRenameShelf(shelf) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Edit, contentDescription = "Rename shelf", modifier = Modifier.size(18.dp))

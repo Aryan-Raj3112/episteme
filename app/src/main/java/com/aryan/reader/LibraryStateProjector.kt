@@ -4,8 +4,8 @@ import com.aryan.reader.data.BookShelfCrossRef
 import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.ShelfEntity
-import com.aryan.reader.data.SmartCollectionEngine
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.shared.SmartCollectionEngine
 
 fun interface FolderPathResolver {
     fun relativeFolderSegments(item: RecentFileItem): List<String>
@@ -183,7 +183,7 @@ class LibraryStateProjector(
             if (shelfEntity.isSmart && shelfEntity.smartRulesJson != null) {
                 val rules = SmartCollectionEngine.fromJson(shelfEntity.smartRulesJson)
                 if (rules != null) {
-                    val matchingBooks = allLibraryFiles.filter { SmartCollectionEngine.evaluate(it, rules) }
+                    val matchingBooks = allLibraryFiles.filter { SmartCollectionEngine.evaluate(it.toSharedBookItem(), rules) }
                     allShelves.add(Shelf(shelfEntity.id, shelfEntity.name, ShelfType.SMART, sortFiles(matchingBooks, sortOrder)))
                     shelvedBookIds.addAll(matchingBooks.map { it.bookId })
                 }

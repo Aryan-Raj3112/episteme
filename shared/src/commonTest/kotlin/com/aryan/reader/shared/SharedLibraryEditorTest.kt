@@ -76,6 +76,42 @@ class SharedLibraryEditorTest {
     }
 
     @Test
+    fun `createSmartShelf stores trimmed shared rules and rejects blank definitions`() {
+        val definition = SmartCollectionDefinition(
+            rules = listOf(
+                SmartRule(SmartField.TITLE, SmartOperator.CONTAINS, "  dune  "),
+                SmartRule(SmartField.AUTHOR, SmartOperator.CONTAINS, " ")
+            )
+        )
+
+        val result = SharedLibraryEditor.createSmartShelf(
+            state = SharedReaderScreenState(),
+            shelfRecords = emptyList(),
+            shelfRefs = emptyList(),
+            name = "  Smart Picks  ",
+            definition = definition,
+            nowMillis = 7L
+        )
+
+        requireNotNull(result)
+        val shelf = result.shelfRecords.single()
+        val decoded = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
+        assertEquals(ShelfRecord("smart_7", "Smart Picks", isSmart = true, smartRulesJson = shelf.smartRulesJson), shelf)
+        assertEquals(listOf(SmartRule(SmartField.TITLE, SmartOperator.CONTAINS, "dune")), decoded?.rules)
+        assertEquals("Created smart shelf \"Smart Picks\".", result.state.bannerMessage?.message)
+        assertNull(
+            SharedLibraryEditor.createSmartShelf(
+                state = SharedReaderScreenState(),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                name = "Blank",
+                definition = SmartCollectionDefinition(rules = listOf(SmartRule(SmartField.TITLE, SmartOperator.CONTAINS, " "))),
+                nowMillis = 8L
+            )
+        )
+    }
+
+    @Test
     fun `tagSelectedBooks reuses matching tags case insensitively`() {
         val favorite = Tag(id = "favorite", name = "Favorite")
         val state = SharedReaderScreenState(

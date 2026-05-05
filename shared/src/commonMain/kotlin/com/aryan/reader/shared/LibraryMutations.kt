@@ -87,6 +87,32 @@ object SharedLibraryEditor {
         )
     }
 
+    fun createSmartShelf(
+        state: SharedReaderScreenState,
+        shelfRecords: List<ShelfRecord>,
+        shelfRefs: List<BookShelfRef>,
+        name: String,
+        definition: SmartCollectionDefinition,
+        nowMillis: Long = currentTimestamp()
+    ): SharedLibraryMutationResult? {
+        val trimmed = cleanShelfName(name) ?: return null
+        val cleanedRules = definition.rules.mapNotNull { rule ->
+            rule.value.trim().takeIf { it.isNotBlank() }?.let { value -> rule.copy(value = value) }
+        }
+        if (cleanedRules.isEmpty()) return null
+        val cleanedDefinition = definition.copy(rules = cleanedRules)
+        return SharedLibraryMutationResult(
+            state = state.copy(bannerMessage = BannerMessage("Created smart shelf \"$trimmed\".")),
+            shelfRecords = shelfRecords + ShelfRecord(
+                id = "smart_$nowMillis",
+                name = trimmed,
+                isSmart = true,
+                smartRulesJson = SmartCollectionEngine.toJson(cleanedDefinition)
+            ),
+            shelfRefs = shelfRefs
+        )
+    }
+
     fun renameShelf(
         state: SharedReaderScreenState,
         shelfRecords: List<ShelfRecord>,

@@ -106,13 +106,22 @@ class SharedLibraryStateProjector(
         val booksById = allLibraryBooks.associateBy { it.id }
 
         shelfRecords.forEach { shelf ->
-            val bookIds = shelfRefs
-                .filter { it.shelfId == shelf.id }
-                .sortedBy { it.addedAt }
-                .map { it.bookId }
-            val books = bookIds.mapNotNull { booksById[it] }
-            shelves.add(Shelf(shelf.id, shelf.name, ShelfType.MANUAL, sortBooks(books, sortOrder)))
-            shelvedBookIds.addAll(bookIds)
+            if (shelf.isSmart && shelf.smartRulesJson != null) {
+                val definition = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
+                if (definition != null) {
+                    val matchingBooks = allLibraryBooks.filter { SmartCollectionEngine.evaluate(it, definition) }
+                    shelves.add(Shelf(shelf.id, shelf.name, ShelfType.SMART, sortBooks(matchingBooks, sortOrder)))
+                    shelvedBookIds.addAll(matchingBooks.map { it.id })
+                }
+            } else {
+                val bookIds = shelfRefs
+                    .filter { it.shelfId == shelf.id }
+                    .sortedBy { it.addedAt }
+                    .map { it.bookId }
+                val books = bookIds.mapNotNull { booksById[it] }
+                shelves.add(Shelf(shelf.id, shelf.name, ShelfType.MANUAL, sortBooks(books, sortOrder)))
+                shelvedBookIds.addAll(bookIds)
+            }
         }
 
         val tagShelves = tags.mapNotNull { tag ->

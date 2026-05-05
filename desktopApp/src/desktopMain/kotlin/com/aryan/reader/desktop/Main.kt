@@ -28,7 +28,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -116,6 +119,10 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SmartCollectionDefinition
+import com.aryan.reader.shared.SmartField
+import com.aryan.reader.shared.SmartOperator
+import com.aryan.reader.shared.SmartRule
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
@@ -269,6 +276,7 @@ private fun EpistemeDesktopApp() {
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
+    var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
     var shelfToDelete by remember { mutableStateOf<Shelf?>(null) }
     var folderToRemove by remember { mutableStateOf<Shelf?>(null) }
@@ -400,6 +408,12 @@ private fun EpistemeDesktopApp() {
 
     fun createShelf(name: String) {
         SharedLibraryEditor.createShelf(state, shelfRecords, shelfRefs, name, System.currentTimeMillis())?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        }
+    }
+
+    fun createSmartShelf(name: String, definition: SmartCollectionDefinition) {
+        SharedLibraryEditor.createSmartShelf(state, shelfRecords, shelfRefs, name, definition, System.currentTimeMillis())?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
         }
     }
@@ -686,6 +700,7 @@ private fun EpistemeDesktopApp() {
                             onShowBookInfo = { bookInfoDialogFor = it },
                             onEditBook = { bookEditDialogFor = it },
                             onCreateShelf = { showCreateShelfDialog = true },
+                            onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
@@ -704,6 +719,7 @@ private fun EpistemeDesktopApp() {
                             onEditBook = { bookEditDialogFor = it },
                             onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
                             onCreateShelf = { showCreateShelfDialog = true },
+                            onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
                             onRemoveFolder = { folderToRemove = it }
@@ -754,6 +770,16 @@ private fun EpistemeDesktopApp() {
                 onConfirm = { name ->
                     createShelf(name)
                     showCreateShelfDialog = false
+                }
+            )
+        }
+
+        if (showCreateSmartShelfDialog) {
+            SmartShelfDialog(
+                onDismiss = { showCreateSmartShelfDialog = false },
+                onConfirm = { name, definition ->
+                    createSmartShelf(name, definition)
+                    showCreateSmartShelfDialog = false
                 }
             )
         }
@@ -905,6 +931,7 @@ private fun LibraryScreen(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onCreateShelf: () -> Unit,
+    onCreateSmartShelf: () -> Unit,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit,
@@ -926,6 +953,7 @@ private fun LibraryScreen(
         onShowBookInfo = onShowBookInfo,
         onEditBook = onEditBook,
         onCreateShelf = onCreateShelf,
+        onCreateSmartShelf = onCreateSmartShelf,
         onRenameShelf = onRenameShelf,
         onDeleteShelf = onDeleteShelf,
         onRemoveFolder = onRemoveFolder,
@@ -947,6 +975,7 @@ private fun ShelvesScreen(
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
     onCreateShelf: () -> Unit,
+    onCreateSmartShelf: () -> Unit,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit
@@ -961,10 +990,198 @@ private fun ShelvesScreen(
         onEditBook = onEditBook,
         onTogglePinned = onTogglePinned,
         onCreateShelf = onCreateShelf,
+        onCreateSmartShelf = onCreateSmartShelf,
         onRenameShelf = onRenameShelf,
         onDeleteShelf = onDeleteShelf,
         onRemoveFolder = onRemoveFolder
     )
+}
+
+private data class DesktopSmartRuleDraft(
+    val field: SmartField = SmartField.TITLE,
+    val operator: SmartOperator = SmartOperator.CONTAINS,
+    val value: String = ""
+) {
+    fun toRule(): SmartRule? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return null
+        return SmartRule(field = field, operator = operator, value = trimmed)
+    }
+}
+
+@Composable
+private fun SmartShelfDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, SmartCollectionDefinition) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var matchAll by remember { mutableStateOf(true) }
+    var rules by remember { mutableStateOf(listOf(DesktopSmartRuleDraft())) }
+    val validRules = rules.mapNotNull { it.toRule() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create smart shelf") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Shelf name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = matchAll,
+                        onClick = { matchAll = true },
+                        label = { Text("All") }
+                    )
+                    FilterChip(
+                        selected = !matchAll,
+                        onClick = { matchAll = false },
+                        label = { Text("Any") }
+                    )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { rules = rules + DesktopSmartRuleDraft() },
+                        enabled = rules.size < 4
+                    ) {
+                        Text("Add rule")
+                    }
+                }
+                rules.forEachIndexed { index, draft ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            SmartRuleDropdown(
+                                label = "Field",
+                                selected = draft.field,
+                                options = SmartField.entries.toList(),
+                                optionLabel = { it.desktopLabel() },
+                                onSelected = { field ->
+                                    rules = rules.updateAt(index) {
+                                        val operator = smartOperatorsFor(field).first()
+                                        copy(field = field, operator = operator, value = "")
+                                    }
+                                }
+                            )
+                            SmartRuleDropdown(
+                                label = "Operator",
+                                selected = draft.operator,
+                                options = smartOperatorsFor(draft.field),
+                                optionLabel = { it.desktopLabel() },
+                                onSelected = { operator ->
+                                    rules = rules.updateAt(index) { copy(operator = operator) }
+                                }
+                            )
+                            if (rules.size > 1) {
+                                TextButton(onClick = { rules = rules.filterIndexed { i, _ -> i != index } }) {
+                                    Text("Remove")
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = draft.value,
+                            onValueChange = { value -> rules = rules.updateAt(index) { copy(value = value) } },
+                            label = { Text(draft.field.valueLabel()) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(name, SmartCollectionDefinition(matchAll = matchAll, rules = validRules))
+                },
+                enabled = name.isNotBlank() && validRules.isNotEmpty()
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun <T> SmartRuleDropdown(
+    label: String,
+    selected: T,
+    options: List<T>,
+    optionLabel: (T) -> String,
+    onSelected: (T) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }) {
+            Text("$label: ${optionLabel(selected)}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(optionLabel(option)) },
+                    onClick = {
+                        expanded = false
+                        onSelected(option)
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun smartOperatorsFor(field: SmartField): List<SmartOperator> {
+    return when (field) {
+        SmartField.PROGRESS -> listOf(SmartOperator.GREATER_THAN, SmartOperator.LESS_THAN, SmartOperator.EQUALS)
+        else -> listOf(SmartOperator.CONTAINS, SmartOperator.EQUALS)
+    }
+}
+
+private fun SmartField.desktopLabel(): String {
+    return when (this) {
+        SmartField.TITLE -> "Title"
+        SmartField.AUTHOR -> "Author"
+        SmartField.PROGRESS -> "Progress"
+        SmartField.FILE_TYPE -> "File type"
+        SmartField.FOLDER -> "Folder"
+        SmartField.TAG -> "Tag"
+    }
+}
+
+private fun SmartField.valueLabel(): String {
+    return when (this) {
+        SmartField.PROGRESS -> "Percent"
+        SmartField.FILE_TYPE -> "Type, e.g. PDF"
+        SmartField.FOLDER -> "Folder path"
+        SmartField.TAG -> "Tag name"
+        SmartField.TITLE -> "Title text"
+        SmartField.AUTHOR -> "Author text"
+    }
+}
+
+private fun SmartOperator.desktopLabel(): String {
+    return when (this) {
+        SmartOperator.EQUALS -> "Equals"
+        SmartOperator.CONTAINS -> "Contains"
+        SmartOperator.GREATER_THAN -> "Greater than"
+        SmartOperator.LESS_THAN -> "Less than"
+    }
+}
+
+private inline fun List<DesktopSmartRuleDraft>.updateAt(
+    index: Int,
+    transform: DesktopSmartRuleDraft.() -> DesktopSmartRuleDraft
+): List<DesktopSmartRuleDraft> {
+    return mapIndexed { i, draft -> if (i == index) draft.transform() else draft }
 }
 
 @Composable

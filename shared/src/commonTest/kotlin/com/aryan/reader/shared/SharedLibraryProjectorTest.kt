@@ -200,6 +200,36 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `SharedLibraryStateProjector builds smart shelves from shared rules`() {
+        val smartRules = SmartCollectionEngine.toJson(
+            SmartCollectionDefinition(
+                rules = listOf(
+                    SmartRule(SmartField.FILE_TYPE, SmartOperator.EQUALS, "PDF"),
+                    SmartRule(SmartField.PROGRESS, SmartOperator.GREATER_THAN, "75")
+                )
+            )
+        )
+        val matching = book("matching", type = FileType.PDF, progressPercentage = 90f)
+        val wrongType = book("wrong_type", type = FileType.EPUB, progressPercentage = 90f)
+        val wrongProgress = book("wrong_progress", type = FileType.PDF, progressPercentage = 20f)
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                booksFromStore = listOf(wrongType, wrongProgress, matching),
+                shelfRecords = listOf(ShelfRecord("smart", "Almost Done PDFs", isSmart = true, smartRulesJson = smartRules)),
+                shelfRefs = emptyList(),
+                tags = emptyList()
+            )
+        )
+
+        val smartShelf = result.shelves.first { it.id == "smart" }
+        assertEquals(ShelfType.SMART, smartShelf.type)
+        assertEquals(listOf("matching"), smartShelf.books.ids())
+        assertEquals(listOf("wrong_progress", "wrong_type"), result.shelves.first { it.id == "unshelved" }.books.ids())
+    }
+
+    @Test
     fun `SharedReaderScreenState withImportedFiles dedupes imports and reports duplicates`() {
         val state = SharedReaderScreenState(rawLibraryBooks = listOf(book("/books/existing.epub", isRecent = false)))
 
