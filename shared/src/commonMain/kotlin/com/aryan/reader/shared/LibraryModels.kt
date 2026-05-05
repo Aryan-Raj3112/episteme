@@ -88,7 +88,8 @@ data class BookItem(
     val tags: List<Tag> = emptyList(),
     val lastPageIndex: Int? = null,
     val readerSettings: ReaderSettings? = null,
-    val readerBookmarks: List<ReaderBookmark> = emptyList()
+    val readerBookmarks: List<ReaderBookmark> = emptyList(),
+    val readerHighlights: List<UserHighlight> = emptyList()
 )
 
 data class Shelf(

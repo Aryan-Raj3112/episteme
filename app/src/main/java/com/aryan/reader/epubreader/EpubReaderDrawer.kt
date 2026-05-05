@@ -791,7 +791,8 @@ private fun HighlightsList(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    if (!highlight.note.isNullOrBlank()) {
+                                    val note = highlight.note
+                                    if (!note.isNullOrBlank()) {
                                         Spacer(Modifier.height(8.dp))
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
@@ -799,7 +800,7 @@ private fun HighlightsList(
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Text(
-                                                text = highlight.note,
+                                                text = note,
                                                 style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
                                                 modifier = Modifier.padding(12.dp),
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant

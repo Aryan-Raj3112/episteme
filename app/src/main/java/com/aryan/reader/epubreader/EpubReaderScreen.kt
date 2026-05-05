@@ -910,18 +910,7 @@ fun EpubReaderHost(
 
     LaunchedEffect(bookmarks) {
         Timber.d("Bookmarks changed, saving...")
-        val stringSet = bookmarks.map { bookmark ->
-            JSONObject().apply {
-                put("cfi", bookmark.cfi)
-                put("chapterTitle", bookmark.chapterTitle)
-                put("label", bookmark.label)
-                put("snippet", bookmark.snippet)
-                bookmark.pageInChapter?.let { put("pageInChapter", it) }
-                bookmark.totalPagesInChapter?.let { put("totalPagesInChapter", it) }
-                put("chapterIndex", bookmark.chapterIndex)
-            }.toString()
-        }
-        onBookmarksChanged(JSONArray(stringSet).toString())
+        onBookmarksChanged(bookmarksToJson(bookmarks))
     }
 
     var activeBookmarkInVerticalView by remember { mutableStateOf<Bookmark?>(null) }

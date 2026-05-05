@@ -107,6 +107,7 @@ import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
@@ -125,6 +126,7 @@ import com.aryan.reader.shared.SmartOperator
 import com.aryan.reader.shared.SmartRule
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
+import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfNormalizedPoint
@@ -164,6 +166,10 @@ import com.aryan.reader.shared.ui.toSharedPdfPoint
 import com.aryan.reader.shared.withImportedFiles
 import com.multiplatform.webview.web.LoadingState
 import com.multiplatform.webview.web.WebView
+import com.multiplatform.webview.jsbridge.IJsMessageHandler
+import com.multiplatform.webview.jsbridge.JsMessage
+import com.multiplatform.webview.jsbridge.rememberWebViewJsBridge
+import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
@@ -390,7 +396,8 @@ private fun EpistemeDesktopApp() {
                             isRecent = true,
                             lastPageIndex = pageIndex,
                             readerSettings = session?.reader?.settings ?: book.readerSettings,
-                            readerBookmarks = session?.bookmarks ?: book.readerBookmarks
+                            readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
+                            readerHighlights = session?.highlights ?: book.readerHighlights
                         )
                     } else {
                         book
@@ -519,7 +526,8 @@ private fun EpistemeDesktopApp() {
             book = loadedBook,
             settings = restoredSettings,
             initialPageIndex = book.lastPageIndex ?: 0,
-            bookmarks = book.readerBookmarks
+            bookmarks = book.readerBookmarks,
+            highlights = book.readerHighlights
         )
         val restoredProgress = book.progressPercentage
         readerSession = if (book.lastPageIndex == null && restoredProgress != null) {
@@ -2154,6 +2162,17 @@ private fun ReaderScreen(
             if (webViewRuntimeState.initialized) {
                 DesktopEpubWebView(
                     html = html,
+                    onHighlightCreated = { highlight ->
+                        val highlights = session.highlights.toMutableList()
+                        EpubAnnotationSerializer.processAndAddHighlight(
+                            newCfi = highlight.cfi,
+                            newText = highlight.text,
+                            newColor = highlight.color,
+                            chapterIndex = highlight.chapterIndex,
+                            currentList = highlights
+                        )
+                        onSessionChange(session.copy(highlights = highlights))
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -2169,8 +2188,31 @@ private fun ReaderScreen(
 @Composable
 private fun DesktopEpubWebView(
     html: String,
+    onHighlightCreated: (UserHighlight) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val scope = rememberCoroutineScope()
+    val bridge = rememberWebViewJsBridge()
+
+    DisposableEffect(bridge) {
+        val handler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerHighlightCreated"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                EpubAnnotationSerializer.parseHighlightJson(message.params)?.let { highlight ->
+                    scope.launch { latestOnHighlightCreated(highlight) }
+                }
+            }
+        }
+        bridge.register(handler)
+        onDispose { bridge.unregister(handler) }
+    }
+
     key(html) {
         val state = rememberWebViewStateWithHTMLData(
             data = html,
@@ -2184,7 +2226,8 @@ private fun DesktopEpubWebView(
             WebView(
                 state = state,
                 modifier = Modifier.fillMaxSize(),
-                captureBackPresses = false
+                captureBackPresses = false,
+                webViewJsBridge = bridge
             )
 
             val loadingState = state.loadingState

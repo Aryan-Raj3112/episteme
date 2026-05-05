@@ -148,7 +148,8 @@ private fun BookItem.hasReaderFootprint(openedBookIds: Set<String>): Boolean {
         lastPageIndex != null ||
         (progressPercentage ?: 0f) > 0f ||
         readerSettings != null ||
-        readerBookmarks.isNotEmpty()
+        readerBookmarks.isNotEmpty() ||
+        readerHighlights.isNotEmpty()
 }
 
 private fun JsonElement.asBookItemOrNull(): BookItem? {
@@ -173,7 +174,8 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         tags = obj.array("tags").mapNotNull { it.asTagOrNull() },
         lastPageIndex = obj.int("lastPageIndex"),
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
-        readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() }
+        readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
+        readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() }
     )
 }
 
@@ -239,7 +241,8 @@ private fun BookItem.toJsonObject(): JsonObject {
             "tags" to JsonArray(tags.map { it.toJsonObject() }),
             "lastPageIndex" to lastPageIndex.asJson(),
             "readerSettings" to readerSettings.asJson(),
-            "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() })
+            "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
+            "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() })
         )
     )
 }
@@ -324,6 +327,24 @@ private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
     )
 }
 
+private fun JsonElement.asReaderHighlightOrNull(): UserHighlight? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val cfi = obj.string("cfi") ?: return null
+    val text = obj.string("text") ?: return null
+    val chapterIndex = obj.int("chapterIndex") ?: return null
+    val color = obj.string("colorId")
+        ?.let { colorId -> HighlightColor.entries.firstOrNull { it.id == colorId } }
+        ?: HighlightColor.YELLOW
+    return UserHighlight(
+        id = obj.string("id") ?: return null,
+        cfi = cfi,
+        text = text,
+        color = color,
+        chapterIndex = chapterIndex,
+        note = obj.string("note")?.takeIf { it.isNotBlank() }
+    )
+}
+
 private fun ReaderSettings?.asJson(): JsonElement {
     val settings = this ?: return JsonNull
     return JsonObject(
@@ -347,6 +368,19 @@ private fun ReaderBookmark.toJsonObject(): JsonObject {
             "pageIndex" to JsonPrimitive(pageIndex),
             "chapterTitle" to JsonPrimitive(chapterTitle),
             "preview" to JsonPrimitive(preview)
+        )
+    )
+}
+
+private fun UserHighlight.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "id" to JsonPrimitive(id),
+            "cfi" to JsonPrimitive(cfi),
+            "text" to JsonPrimitive(text),
+            "colorId" to JsonPrimitive(color.id),
+            "chapterIndex" to JsonPrimitive(chapterIndex),
+            "note" to note.asJson()
         )
     )
 }

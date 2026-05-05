@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.UserHighlight
+
 data class ReaderBookmark(
     val id: String,
     val pageIndex: Int,
@@ -17,6 +19,7 @@ data class ReaderSearchResult(
 data class ReaderSessionState(
     val reader: PaginatedReaderState,
     val bookmarks: List<ReaderBookmark> = emptyList(),
+    val highlights: List<UserHighlight> = emptyList(),
     val searchQuery: String = "",
     val searchResults: List<ReaderSearchResult> = emptyList(),
     val activeSearchResultIndex: Int = -1
@@ -35,7 +38,8 @@ class ReaderEngine(
         book: SharedEpubBook,
         settings: ReaderSettings = ReaderSettings(),
         initialPageIndex: Int = 0,
-        bookmarks: List<ReaderBookmark> = emptyList()
+        bookmarks: List<ReaderBookmark> = emptyList(),
+        highlights: List<UserHighlight> = emptyList()
     ): ReaderSessionState {
         val pages = paginator.paginate(book, settings)
         return ReaderSessionState(
@@ -48,7 +52,10 @@ class ReaderEngine(
             bookmarks = bookmarks
                 .filter { it.pageIndex in pages.indices }
                 .distinctBy { it.pageIndex }
-                .sortedBy { it.pageIndex }
+                .sortedBy { it.pageIndex },
+            highlights = highlights
+                .filter { it.chapterIndex in book.chapters.indices }
+                .distinctBy { it.id }
         )
     }
 

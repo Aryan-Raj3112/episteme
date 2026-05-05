@@ -48,6 +48,16 @@ class SharedLibrarySnapshotJsonTest {
                             chapterTitle = "Chapter",
                             preview = "A useful paragraph"
                         )
+                    ),
+                    readerHighlights = listOf(
+                        UserHighlight(
+                            id = "highlight_1",
+                            cfi = "desktop:0:12",
+                            text = "useful paragraph",
+                            color = HighlightColor.YELLOW,
+                            chapterIndex = 0,
+                            note = "Remember this"
+                        )
                     )
                 )
             ),

@@ -12,6 +12,7 @@ import com.aryan.reader.shared.BannerMessage as SharedBannerMessage
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.BookShelfRef as SharedBookShelfRef
 import com.aryan.reader.shared.CustomAppTheme as SharedCustomAppTheme
+import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.LibraryFilters as SharedLibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter as SharedReadStatusFilter
@@ -38,7 +39,8 @@ fun RecentFileItem.toSharedBookItem(): SharedBookItem {
         sourceFolder = sourceFolderUri,
         seriesName = seriesName,
         seriesIndex = seriesIndex,
-        tags = tags.map { it.toSharedTag() }
+        tags = tags.map { it.toSharedTag() },
+        readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
     )
 }
 

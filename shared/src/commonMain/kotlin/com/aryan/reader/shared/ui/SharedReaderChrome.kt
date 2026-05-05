@@ -178,14 +178,16 @@ fun SharedReaderScreen(
                     ReaderHtmlDocumentBuilder.verticalDocument(
                         book = readerState.book,
                         settings = settings,
-                        searchQuery = session.searchQuery
+                        searchQuery = session.searchQuery,
+                        highlights = session.highlights
                     )
                 } else {
                     ReaderHtmlDocumentBuilder.pageDocument(
                         book = readerState.book,
                         page = page,
                         settings = settings,
-                        searchQuery = session.searchQuery
+                        searchQuery = session.searchQuery,
+                        highlights = session.highlights
                     )
                 }
                 readerContent(html, background)

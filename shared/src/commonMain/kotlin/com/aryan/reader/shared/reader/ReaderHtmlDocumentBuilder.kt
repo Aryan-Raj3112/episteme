@@ -12,14 +12,23 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.UserHighlight
+import kotlin.math.roundToInt
 
 object ReaderHtmlDocumentBuilder {
-    fun verticalDocument(book: SharedEpubBook, settings: ReaderSettings, searchQuery: String = ""): String {
+    fun verticalDocument(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        searchQuery: String = "",
+        highlights: List<UserHighlight> = emptyList()
+    ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
+            val chapterHtml = chapter.toHtml(searchQuery).applyUserHighlights(highlights.filter { it.chapterIndex == index })
             """
-            <section class="chapter" id="chapter-$index">
+            <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index">
               <h1 class="chapter-title">${chapter.title.escapeHtml()}</h1>
-              ${chapter.toHtml(searchQuery)}
+              $chapterHtml
             </section>
             """.trimIndent()
         }.joinToString("\n")
@@ -32,7 +41,13 @@ object ReaderHtmlDocumentBuilder {
         )
     }
 
-    fun pageDocument(book: SharedEpubBook, page: ReaderPage?, settings: ReaderSettings, searchQuery: String = ""): String {
+    fun pageDocument(
+        book: SharedEpubBook,
+        page: ReaderPage?,
+        settings: ReaderSettings,
+        searchQuery: String = "",
+        highlights: List<UserHighlight> = emptyList()
+    ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
             "<section class=\"page\"></section>"
@@ -45,10 +60,11 @@ object ReaderHtmlDocumentBuilder {
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("\n") { it.toHtml(searchQuery) }
                 ?: page.text.textToParagraphHtml(searchQuery)
+            val pageHtml = blocks.applyUserHighlights(highlights.filter { it.belongsToPage(page) })
             """
-            <section class="page">
+            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}">
               <h1 class="chapter-title">${page.chapterTitle.escapeHtml()}</h1>
-              $blocks
+              $pageHtml
             </section>
             """.trimIndent()
         }
@@ -155,6 +171,7 @@ object ReaderHtmlDocumentBuilder {
                   background: color-mix(in srgb, var(--reader-highlight) 72%, transparent);
                   border-radius: 2px;
                 }
+                ${HighlightColor.entries.joinToString("\n") { ".${it.cssClass} { background: ${it.color.toCssHex()}; }" }}
                 #reader-selection-menu {
                   position: fixed;
                   z-index: 99999;
@@ -245,7 +262,22 @@ object ReaderHtmlDocumentBuilder {
                     if (!selection || selection.rangeCount === 0) return;
                     var range = selection.getRangeAt(0);
                     var marker = document.createElement('mark');
-                    marker.className = 'reader-user-highlight';
+                    marker.className = 'reader-user-highlight user-highlight-yellow';
+                    var container = range.commonAncestorContainer;
+                    if (container && container.nodeType !== 1) container = container.parentElement;
+                    var readerHost = container && container.closest ? container.closest('[data-reader-chapter-index]') : null;
+                    var chapterIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10) : 0;
+                    var pageIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-page-index') || '-1', 10) : -1;
+                    var cfi = 'desktop:' + chapterIndex + ':' + pageIndex + ':' + Date.now() + ':' + Math.random().toString(36).slice(2);
+                    var text = selection.toString().trim();
+                    if (window.kmpJsBridge && text.length > 0) {
+                      window.kmpJsBridge.callNative('readerHighlightCreated', JSON.stringify({
+                        cfi: cfi,
+                        text: text,
+                        colorId: 'yellow',
+                        chapterIndex: chapterIndex
+                      }));
+                    }
                     try {
                       range.surroundContents(marker);
                     } catch (error) {
@@ -341,11 +373,36 @@ object ReaderHtmlDocumentBuilder {
         }
     }
 
+    private fun String.applyUserHighlights(highlights: List<UserHighlight>): String {
+        return highlights.fold(this) { html, highlight ->
+            val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
+            val escapedText = text.escapeHtml()
+            val markedText = """<mark class="reader-user-highlight ${highlight.color.cssClass}">$escapedText</mark>"""
+            html.replace(escapedText, markedText)
+        }
+    }
+
+    private fun UserHighlight.belongsToPage(page: ReaderPage): Boolean {
+        if (chapterIndex != page.chapterIndex) return false
+        val prefix = "desktop:${page.chapterIndex}:"
+        val desktopPageIndex = cfi
+            .takeIf { it.startsWith(prefix) }
+            ?.removePrefix(prefix)
+            ?.substringBefore(':')
+            ?.toIntOrNull()
+        return desktopPageIndex == null || desktopPageIndex < 0 || desktopPageIndex == page.pageIndex
+    }
+
     private fun String.escapeHtml(): String {
         return replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&#39;")
+    }
+
+    private fun androidx.compose.ui.graphics.Color.toCssHex(): String {
+        fun channel(value: Float): String = (value * 255f).roundToInt().coerceIn(0, 255).toString(16).padStart(2, '0')
+        return "#${channel(red)}${channel(green)}${channel(blue)}"
     }
 }
