@@ -252,6 +252,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.9")
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("org.json:json:20251224")
+    testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("org.slf4j:slf4j-nop:2.0.17")
 }
 
