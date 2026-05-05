@@ -94,6 +94,7 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.SharedLibraryEditor
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
@@ -709,27 +710,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun createAndAssignTag(name: String, bookIds: Set<String>) {
-        val trimmedName = name.trim()
-        if (trimmedName.isBlank() || bookIds.isEmpty()) return
+        val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
+        if (sanitizedBookIds.isEmpty()) return
 
         viewModelScope.launch {
             val tagId = UUID.randomUUID().toString()
             val colors = listOf(0xFFE57373, 0xFFF06292, 0xFFBA68C8, 0xFF9575CD, 0xFF7986CB, 0xFF64B5F6, 0xFF4FC3F7, 0xFF4DD0E1, 0xFF4DB6AC, 0xFF81C784, 0xFFAED581, 0xFFFF8A65, 0xFFA1887F, 0xFF90A4AE)
             val color = colors.random().toInt()
-
-            val tag = TagEntity(tagId, trimmedName, color, System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            val tag = SharedLibraryEditor.createTag(name, tagId, color)?.toTagEntity(now) ?: return@launch
             recentFilesRepository.createTag(tag)
 
-            bookIds.forEach { bookId ->
+            sanitizedBookIds.forEach { bookId ->
                 recentFilesRepository.assignTagToBook(bookId, tagId)
             }
         }
     }
 
     fun toggleTagForBooks(tagId: String, bookIds: Set<String>, assign: Boolean) {
-        if (tagId.isBlank() || bookIds.isEmpty()) return
+        val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
+        if (tagId.isBlank() || sanitizedBookIds.isEmpty()) return
         viewModelScope.launch {
-            bookIds.forEach { bookId ->
+            sanitizedBookIds.forEach { bookId ->
                 if (assign) {
                     recentFilesRepository.assignTagToBook(bookId, tagId)
                 } else {
@@ -4592,21 +4594,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun createShelf(name: String) {
-        if (name.isNotBlank()) {
-            viewModelScope.launch {
-                val shelfId = UUID.randomUUID().toString()
-                val shelf = com.aryan.reader.data.ShelfEntity(
-                    id = shelfId,
-                    name = name,
-                    isSmart = false,
-                    smartRulesJson = null,
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )
-                recentFilesRepository.addShelf(shelf)
-                dismissCreateShelfDialog()
-                syncShelfChangeToFirestore(shelfId)
-            }
+        val shelfId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val shelf = SharedLibraryEditor.createShelfRecord(name, shelfId)?.toShelfEntity(now) ?: return
+        viewModelScope.launch {
+            recentFilesRepository.addShelf(shelf)
+            dismissCreateShelfDialog()
+            syncShelfChangeToFirestore(shelfId)
         }
     }
 
@@ -4651,12 +4645,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun renameShelf(shelfId: String, newName: String) {
-        if (shelfId.isBlank() || newName.isBlank()) {
+        val cleanName = SharedLibraryEditor.cleanShelfName(newName)
+        if (!SharedLibraryEditor.canMutateShelf(shelfId) || cleanName == null) {
             dismissRenameShelfDialog()
             return
         }
         viewModelScope.launch {
-            recentFilesRepository.renameShelf(shelfId, newName)
+            recentFilesRepository.renameShelf(shelfId, cleanName)
             syncShelfChangeToFirestore(shelfId)
             _internalState.update { it.copy(viewingShelfId = shelfId) }
             persistLibraryLandingState()
@@ -4665,7 +4660,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun deleteShelf(shelfId: String) {
-        if (shelfId.isBlank() || shelfId == "unshelved") {
+        if (!SharedLibraryEditor.canMutateShelf(shelfId)) {
             dismissDeleteShelfDialog()
             return
         }
@@ -4697,21 +4692,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeContextualItemsFromShelf() {
         val shelfId = _internalState.value.viewingShelfId
-        if (shelfId.isNullOrBlank() || shelfId == "unshelved") {
+        if (!SharedLibraryEditor.canMutateShelf(shelfId)) {
             clearContextualAction()
             return
         }
+        val targetShelfId = shelfId ?: return
 
-        val bookIdsToRemove = _internalState.value.contextualActionItems.map { it.bookId }
+        val bookIdsToRemove = SharedLibraryEditor.cleanBookIds(_internalState.value.contextualActionItems.map { it.bookId })
         if (bookIdsToRemove.isEmpty()) {
             clearContextualAction()
             return
         }
 
         viewModelScope.launch {
-            recentFilesRepository.removeBooksFromShelf(shelfId, bookIdsToRemove)
+            recentFilesRepository.removeBooksFromShelf(targetShelfId, bookIdsToRemove.toList())
             clearContextualAction()
-            syncShelfChangeToFirestore(shelfId)
+            syncShelfChangeToFirestore(targetShelfId)
         }
     }
 
@@ -4755,6 +4751,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteSelectedShelves() {
         val shelvesToDelete = _internalState.value.contextualActionShelfIds
+            .filterTo(mutableSetOf()) { SharedLibraryEditor.canMutateShelf(it) }
         if (shelvesToDelete.isEmpty()) {
             clearShelfContextualAction()
             return
@@ -4814,8 +4811,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun addBooksToShelf(shelfId: String) {
-        val bookIdsToAdd = _internalState.value.booksSelectedForAdding
-        if (bookIdsToAdd.isEmpty()) {
+        val bookIdsToAdd = SharedLibraryEditor.cleanBookIds(_internalState.value.booksSelectedForAdding)
+        if (!SharedLibraryEditor.canMutateShelf(shelfId) || bookIdsToAdd.isEmpty()) {
             dismissAddBooksToShelf()
             return
         }

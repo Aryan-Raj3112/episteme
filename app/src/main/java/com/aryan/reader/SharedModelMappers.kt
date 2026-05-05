@@ -50,12 +50,32 @@ fun TagEntity.toSharedTag(): SharedTag {
     )
 }
 
+fun SharedTag.toTagEntity(createdAt: Long): TagEntity {
+    return TagEntity(
+        id = id,
+        name = name,
+        color = color,
+        createdAt = createdAt
+    )
+}
+
 fun ShelfEntity.toSharedShelfRecord(): ShelfRecord {
     return ShelfRecord(
         id = id,
         name = name,
         isSmart = isSmart,
         smartRulesJson = smartRulesJson
+    )
+}
+
+fun ShelfRecord.toShelfEntity(createdAt: Long, updatedAt: Long = createdAt): ShelfEntity {
+    return ShelfEntity(
+        id = id,
+        name = name,
+        isSmart = isSmart,
+        smartRulesJson = smartRulesJson,
+        createdAt = createdAt,
+        updatedAt = updatedAt
     )
 }
 

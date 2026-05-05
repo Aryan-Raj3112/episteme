@@ -129,6 +129,7 @@ import com.aryan.reader.shared.BookShelfRef
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
+import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
@@ -143,11 +144,26 @@ import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.SharedTextBookFactory
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
+import com.aryan.reader.shared.ui.SharedAddToShelfDialog
+import com.aryan.reader.shared.ui.SharedAppShell
+import com.aryan.reader.shared.ui.SharedAppTab
+import com.aryan.reader.shared.ui.SharedBookEditDialog
+import com.aryan.reader.shared.ui.SharedBookInfoDialog
+import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
+import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
+import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
+import com.aryan.reader.shared.ui.SharedReaderScreen
+import com.aryan.reader.shared.ui.SharedScreenScaffold
 import com.aryan.reader.shared.ui.SharedShelvesScreen
+import com.aryan.reader.shared.ui.SharedTextInputDialog
+import com.aryan.reader.shared.ui.pageBoundsFromSharedPdfPoint
+import com.aryan.reader.shared.ui.sharedPdfHitTest
+import com.aryan.reader.shared.ui.toSharedPdfPoint
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
@@ -179,8 +195,6 @@ fun main() = application {
         EpistemeDesktopApp()
     }
 }
-
-private enum class DesktopTab { HOME, LIBRARY, SHELVES, READER }
 
 private data class DesktopWebViewRuntimeState(
     val initialized: Boolean = false,
@@ -254,7 +268,7 @@ private fun EpistemeDesktopApp() {
             )
         )
     }
-    var selectedTab by remember { mutableStateOf(DesktopTab.HOME) }
+    var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
@@ -322,98 +336,43 @@ private fun EpistemeDesktopApp() {
     }
 
     fun removeSelectedBooks() {
-        if (state.selectedBookIds.isEmpty()) return
-        val selected = state.selectedBookIds
-        replaceLibrary(
-            state.copy(
-                rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in selected },
-                selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Removed ${selected.size} book(s) from the desktop library.")
-            ),
-            refs = shelfRefs.filterNot { it.bookId in selected }
-        )
+        SharedLibraryEditor.removeSelectedBooks(state, shelfRecords, shelfRefs)?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        }
     }
 
     fun createShelf(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isBlank()) return
-        val id = "shelf_${System.currentTimeMillis()}"
-        replaceLibrary(
-            state.copy(bannerMessage = BannerMessage("Created shelf \"$trimmed\".")),
-            records = shelfRecords + ShelfRecord(id = id, name = trimmed)
-        )
+        SharedLibraryEditor.createShelf(state, shelfRecords, shelfRefs, name, System.currentTimeMillis())?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        }
     }
 
     fun renameShelf(shelf: Shelf, name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isBlank()) return
-        replaceLibrary(
-            state.copy(bannerMessage = BannerMessage("Renamed shelf to \"$trimmed\".")),
-            records = shelfRecords.map { if (it.id == shelf.id) it.copy(name = trimmed) else it }
-        )
+        SharedLibraryEditor.renameShelf(state, shelfRecords, shelfRefs, shelf, name)?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        }
     }
 
     fun deleteShelf(shelf: Shelf) {
-        replaceLibrary(
-            state.copy(bannerMessage = BannerMessage("Deleted shelf \"${shelf.name}\".")),
-            records = shelfRecords.filterNot { it.id == shelf.id },
-            refs = shelfRefs.filterNot { it.shelfId == shelf.id }
-        )
+        val result = SharedLibraryEditor.deleteShelf(state, shelfRecords, shelfRefs, shelf)
+        replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
     }
 
     fun addSelectedBooksToShelf(shelfId: String) {
-        val selected = state.selectedBookIds
-        if (selected.isEmpty()) return
-        val existing = shelfRefs.mapTo(mutableSetOf()) { it.bookId to it.shelfId }
-        val now = System.currentTimeMillis()
-        val additions = selected.mapNotNull { bookId ->
-            if (!existing.add(bookId to shelfId)) null else BookShelfRef(bookId = bookId, shelfId = shelfId, addedAt = now)
+        SharedLibraryEditor.addSelectedBooksToShelf(state, shelfRecords, shelfRefs, shelfId, System.currentTimeMillis())?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
         }
-        replaceLibrary(
-            state.copy(
-                selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Added ${additions.size} book(s) to shelf.")
-            ),
-            refs = shelfRefs + additions
-        )
     }
 
     fun tagSelectedBooks(tagName: String) {
-        val selected = state.selectedBookIds
-        val trimmed = tagName.trim()
-        if (selected.isEmpty() || trimmed.isBlank()) return
-        val existingTag = state.allTags.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
-        val tag = existingTag ?: Tag(
-            id = trimmed.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "tag_${System.currentTimeMillis()}" },
-            name = trimmed,
-            color = 0xFF64B5F6.toInt()
-        )
-        val allTags = (state.allTags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
-        val books = state.rawLibraryBooks.map { book ->
-            if (book.id in selected && book.tags.none { it.id == tag.id }) {
-                book.copy(tags = (book.tags + tag).sortedBy { it.name.lowercase() })
-            } else {
-                book
-            }
+        SharedLibraryEditor.tagSelectedBooks(state, shelfRecords, shelfRefs, tagName, System.currentTimeMillis())?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
         }
-        replaceLibrary(
-            state.copy(
-                rawLibraryBooks = books,
-                allTags = allTags,
-                selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Tagged ${selected.size} book(s) with \"${tag.name}\".")
-            )
-        )
     }
 
     fun updateBookMetadata(updated: BookItem) {
-        replaceLibrary(
-            state.copy(
-                rawLibraryBooks = state.rawLibraryBooks.map { if (it.id == updated.id) updated.copy(timestamp = System.currentTimeMillis()) else it },
-                allTags = (state.allTags + updated.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
-                bannerMessage = BannerMessage("Updated \"${updated.cardTitleForMessage()}\".")
-            )
-        )
+        val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
+        replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
     }
 
     fun openReader(book: BookItem) {
@@ -434,12 +393,12 @@ private fun EpistemeDesktopApp() {
 
             activePdfDocument = pdf
             activeReaderBookId = book.id
-            selectedTab = DesktopTab.READER
+            selectedTab = SharedAppTab.READER
             return
         }
 
-        if (book.type != FileType.EPUB) {
-            updateState(state.withBanner("${book.type.name} reader support comes later. EPUB and PDF are available on desktop."))
+        if (book.type !in setOf(FileType.EPUB, FileType.TXT, FileType.MD, FileType.HTML)) {
+            updateState(state.withBanner("${book.type.name} reader support comes later. EPUB, PDF, TXT, MD, and HTML are available on desktop."))
             return
         }
 
@@ -447,11 +406,31 @@ private fun EpistemeDesktopApp() {
             val path = book.path
             if (path.isNullOrBlank()) {
                 SampleReaderBooks.desktopWelcomeBook()
-            } else {
+            } else if (book.type == FileType.EPUB) {
                 DesktopEpubLoader.load(File(path))
+            } else {
+                val file = File(path)
+                val raw = file.readText()
+                if (book.type == FileType.HTML) {
+                    SharedTextBookFactory.fromHtml(
+                        id = file.absolutePath,
+                        fileName = file.name,
+                        title = book.title?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
+                        html = raw,
+                        author = book.author
+                    )
+                } else {
+                    SharedTextBookFactory.fromPlainText(
+                        id = file.absolutePath,
+                        fileName = file.name,
+                        title = book.title?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
+                        plainText = raw,
+                        author = book.author
+                    )
+                }
             }
         }.getOrElse { error ->
-            updateState(state.withBanner("Could not open EPUB: ${error.message ?: "unknown error"}", isError = true))
+            updateState(state.withBanner("Could not open ${book.type.name}: ${error.message ?: "unknown error"}", isError = true))
             return
         }
 
@@ -459,7 +438,7 @@ private fun EpistemeDesktopApp() {
         activePdfDocument = null
         readerSession = readerEngine.createSession(loadedBook, readerSession.reader.settings)
         activeReaderBookId = book.id
-        selectedTab = DesktopTab.READER
+        selectedTab = SharedAppTab.READER
     }
 
     fun importAndOpenEpub() {
@@ -516,57 +495,17 @@ private fun EpistemeDesktopApp() {
             surfaceVariant = Color(0xFFE5E8DE)
         )
     ) {
-        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
-                    NavigationRailItem(
-                        selected = selectedTab == DesktopTab.HOME,
-                        onClick = { selectedTab = DesktopTab.HOME },
-                        icon = { Icon(Icons.Default.Home, contentDescription = null) },
-                        label = { Text("Home") }
-                    )
-                    NavigationRailItem(
-                        selected = selectedTab == DesktopTab.LIBRARY,
-                        onClick = { selectedTab = DesktopTab.LIBRARY },
-                        icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null) },
-                        label = { Text("Library") }
-                    )
-                    NavigationRailItem(
-                        selected = selectedTab == DesktopTab.SHELVES,
-                        onClick = { selectedTab = DesktopTab.SHELVES },
-                        icon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                        label = { Text("Shelves") }
-                    )
-                    NavigationRailItem(
-                        selected = selectedTab == DesktopTab.READER,
-                        onClick = { selectedTab = DesktopTab.READER },
-                        icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
-                        label = { Text("Reader") }
-                    )
-                    Spacer(Modifier.weight(1f))
-                    IconButton(
-                        onClick = {
-                            importFiles(chooseFiles())
-                        }
-                    ) {
-                        Icon(Icons.Default.ImportExport, contentDescription = "Import files")
-                    }
-                    IconButton(
-                        onClick = {
-                            updateState(state.reduce(AppAction.BannerShown(BannerMessage("Cloud sync is Android-only for now. Desktop sync will need a separate backend adapter."))))
-                        }
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = "Sync")
-                    }
-                }
-
-                Box(Modifier.fillMaxSize()) {
-                    when (selectedTab) {
-                        DesktopTab.HOME -> HomeScreen(
+        SharedAppShell(
+            selectedTab = selectedTab,
+            snackbarHostState = snackbarHostState,
+            onTabSelected = { selectedTab = it },
+            onImportFiles = { importFiles(chooseFiles()) },
+            onSyncRequested = {
+                updateState(state.reduce(AppAction.BannerShown(BannerMessage("Cloud sync is Android-only for now. Desktop sync will need a separate backend adapter."))))
+            }
+        ) { tab ->
+            when (tab) {
+                        SharedAppTab.HOME -> HomeScreen(
                             state = state,
                             onImportBooks = {
                                 importFiles(chooseFiles())
@@ -581,7 +520,7 @@ private fun EpistemeDesktopApp() {
                             onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
                         )
 
-                        DesktopTab.LIBRARY -> LibraryScreen(
+                        SharedAppTab.LIBRARY -> LibraryScreen(
                             state = state,
                             selectedLibraryTab = selectedLibraryTab,
                             onLibraryTabChange = { selectedLibraryTab = it },
@@ -602,7 +541,7 @@ private fun EpistemeDesktopApp() {
                             onAddSelectedBooksToShelf = { showAddToShelfDialog = true }
                         )
 
-                        DesktopTab.SHELVES -> ShelvesScreen(
+                        SharedAppTab.SHELVES -> ShelvesScreen(
                             shelves = state.shelves,
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
@@ -614,7 +553,7 @@ private fun EpistemeDesktopApp() {
                             onDeleteShelf = { shelfToDelete = it }
                         )
 
-                        DesktopTab.READER -> {
+                        SharedAppTab.READER -> {
                             val pdfDocument = activePdfDocument
                             if (pdfDocument != null) {
                                 PdfReaderScreen(
@@ -659,13 +598,11 @@ private fun EpistemeDesktopApp() {
                                 )
                             }
                         }
-                    }
-                }
             }
         }
 
         if (showCreateShelfDialog) {
-            TextInputDialog(
+            SharedTextInputDialog(
                 title = "Create shelf",
                 label = "Shelf name",
                 initialValue = "",
@@ -679,7 +616,7 @@ private fun EpistemeDesktopApp() {
         }
 
         shelfToRename?.let { shelf ->
-            TextInputDialog(
+            SharedTextInputDialog(
                 title = "Rename shelf",
                 label = "Shelf name",
                 initialValue = shelf.name,
@@ -693,7 +630,7 @@ private fun EpistemeDesktopApp() {
         }
 
         shelfToDelete?.let { shelf ->
-            ConfirmDialog(
+            SharedConfirmDialog(
                 title = "Delete shelf",
                 body = "Delete \"${shelf.name}\"? Books stay in your library.",
                 confirmLabel = "Delete",
@@ -706,7 +643,7 @@ private fun EpistemeDesktopApp() {
         }
 
         if (showAddToShelfDialog) {
-            AddToShelfDialog(
+            SharedAddToShelfDialog(
                 shelves = state.shelves.filter { it.type == ShelfType.MANUAL && it.id != "unshelved" },
                 onDismiss = { showAddToShelfDialog = false },
                 onCreateShelf = {
@@ -721,7 +658,7 @@ private fun EpistemeDesktopApp() {
         }
 
         if (showTagSelectionDialog) {
-            TextInputDialog(
+            SharedTextInputDialog(
                 title = "Tag selected books",
                 label = "Tag name",
                 initialValue = state.allTags.firstOrNull()?.name.orEmpty(),
@@ -735,7 +672,7 @@ private fun EpistemeDesktopApp() {
         }
 
         bookInfoDialogFor?.let { book ->
-            BookInfoDialog(
+            SharedBookInfoDialog(
                 book = book,
                 onDismiss = { bookInfoDialogFor = null },
                 onEdit = {
@@ -746,7 +683,7 @@ private fun EpistemeDesktopApp() {
         }
 
         bookEditDialogFor?.let { book ->
-            BookEditDialog(
+            SharedBookEditDialog(
                 book = book,
                 knownTags = state.allTags,
                 onDismiss = { bookEditDialogFor = null },
@@ -757,222 +694,6 @@ private fun EpistemeDesktopApp() {
             )
         }
     }
-}
-
-@Composable
-private fun TextInputDialog(
-    title: String,
-    label: String,
-    initialValue: String,
-    confirmLabel: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var value by remember(initialValue) { mutableStateOf(initialValue) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                label = { Text(label) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) {
-                Text(confirmLabel)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-private fun ConfirmDialog(
-    title: String,
-    body: String,
-    confirmLabel: String,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(body) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(confirmLabel)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-private fun AddToShelfDialog(
-    shelves: List<Shelf>,
-    onDismiss: () -> Unit,
-    onCreateShelf: () -> Unit,
-    onShelfSelected: (Shelf) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add to shelf") },
-        text = {
-            if (shelves.isEmpty()) {
-                Text("Create a shelf first, then add selected books to it.")
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(shelves, key = { it.id }) { shelf ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }
-                        ) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(10.dp))
-                                Text(shelf.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${shelf.bookCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onCreateShelf) {
-                Text("New shelf")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-private fun BookInfoDialog(
-    book: BookItem,
-    onDismiss: () -> Unit,
-    onEdit: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(book.cardTitleForMessage()) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                InfoRow("File", book.displayName)
-                InfoRow("Type", book.type.name)
-                InfoRow("Author", book.author.orEmpty().ifBlank { "Unknown" })
-                InfoRow("Path", book.path.orEmpty().ifBlank { "Not available" })
-                InfoRow("Size", book.fileSize.toReadableSize())
-                InfoRow("Progress", "${(book.progressPercentage ?: 0f).toInt()}%")
-                if (!book.seriesName.isNullOrBlank()) {
-                    InfoRow("Series", listOfNotNull(book.seriesName, book.seriesIndex?.toString()).joinToString(" #"))
-                }
-                if (book.tags.isNotEmpty()) {
-                    InfoRow("Tags", book.tags.joinToString { it.name })
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onEdit) {
-                Text("Edit")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun BookEditDialog(
-    book: BookItem,
-    knownTags: List<Tag>,
-    onDismiss: () -> Unit,
-    onSave: (BookItem) -> Unit
-) {
-    var title by remember(book.id) { mutableStateOf(book.title.orEmpty()) }
-    var author by remember(book.id) { mutableStateOf(book.author.orEmpty()) }
-    var seriesName by remember(book.id) { mutableStateOf(book.seriesName.orEmpty()) }
-    var seriesIndex by remember(book.id) { mutableStateOf(book.seriesIndex?.toString().orEmpty()) }
-    var tagText by remember(book.id) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit book") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = author, onValueChange = { author = it }, label = { Text("Author") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = seriesName, onValueChange = { seriesName = it }, label = { Text("Series") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = seriesIndex, onValueChange = { seriesIndex = it }, label = { Text("Series index") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = tagText, onValueChange = { tagText = it }, label = { Text("Tags, comma separated") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                if (knownTags.isNotEmpty()) {
-                    Text("Existing: ${knownTags.joinToString { it.name }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val parsedTags = tagText.split(',')
-                        .map { it.trim() }
-                        .filter { it.isNotBlank() }
-                        .distinctBy { it.lowercase() }
-                        .map { name ->
-                            knownTags.firstOrNull { it.name.equals(name, ignoreCase = true) }
-                                ?: Tag(
-                                    id = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "tag_${System.currentTimeMillis()}" },
-                                    name = name,
-                                    color = 0xFF64B5F6.toInt()
-                                )
-                        }
-                    onSave(
-                        book.copy(
-                            title = title.trim().ifBlank { null },
-                            author = author.trim().ifBlank { null },
-                            seriesName = seriesName.trim().ifBlank { null },
-                            seriesIndex = seriesIndex.toDoubleOrNull(),
-                            tags = parsedTags
-                        )
-                    )
-                }
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }
 
 @Composable
@@ -1178,7 +899,7 @@ private fun PdfReaderScreen(
         }
     }
 
-    ScreenScaffold(
+    SharedScreenScaffold(
         title = document.title,
         subtitle = "PDF - Page ${pageIndex + 1} of ${document.pageCount}",
         trailing = {
@@ -1265,7 +986,7 @@ private fun PdfReaderScreen(
                     item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("Annotations", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        PdfAnnotationToolDock(
+                        SharedPdfAnnotationToolDock(
                             selectedTool = selectedTool,
                             selectedColor = selectedColor,
                             strokeWidth = strokeWidth,
@@ -1372,7 +1093,7 @@ private fun PdfReaderScreen(
                                             onTap = { start ->
                                                 val text = textDraft.trim()
                                                 if (text.isNotEmpty()) {
-                                                    val bounds = pageBoundsFromPoint(start, pageCanvasSize)
+                                                    val bounds = pageBoundsFromSharedPdfPoint(start, pageCanvasSize)
                                                     annotations.add(
                                                         SharedPdfAnnotation(
                                                             id = "text_${System.currentTimeMillis()}",
@@ -1394,15 +1115,15 @@ private fun PdfReaderScreen(
                                         detectDragGestures(
                                             onDragStart = { start ->
                                                 if (selectedTool != PdfInkTool.ERASER) {
-                                                activeStroke = listOf(start.toPdfPoint(pageCanvasSize))
+                                                activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
                                             }
                                             },
                                             onDrag = { change, _ ->
                                                 if (selectedTool == PdfInkTool.ERASER) {
                                                     val point = change.position
-                                                    annotations.removeAll { it.pageIndex == pageIndex && it.hitTest(point, pageCanvasSize) }
+                                                    annotations.removeAll { it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize) }
                                                 } else {
-                                                    activeStroke = activeStroke + change.position.toPdfPoint(pageCanvasSize)
+                                                    activeStroke = activeStroke + change.position.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
                                                 }
                                             },
                                             onDragEnd = {
@@ -1431,7 +1152,7 @@ private fun PdfReaderScreen(
                                 bitmap = pageRender.image,
                                 contentDescription = "PDF page ${pageIndex + 1}"
                             )
-                            PdfAnnotationOverlay(
+                            SharedPdfAnnotationOverlay(
                                 annotations = annotations.filter { it.pageIndex == pageIndex },
                                 activeStroke = activeStroke,
                                 canvasSize = pageCanvasSize
@@ -1439,207 +1160,6 @@ private fun PdfReaderScreen(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PdfAnnotationToolDock(
-    selectedTool: PdfInkTool,
-    selectedColor: Int,
-    strokeWidth: Float,
-    onToolSelected: (PdfInkTool) -> Unit,
-    onColorSelected: (Int) -> Unit,
-    onStrokeWidthChange: (Float) -> Unit,
-    onUndo: () -> Unit,
-    onClearPage: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PdfToolButton(PdfInkTool.PEN, selectedTool, onToolSelected)
-            PdfToolButton(PdfInkTool.HIGHLIGHTER, selectedTool, onToolSelected)
-            PdfToolButton(PdfInkTool.PENCIL, selectedTool, onToolSelected)
-            PdfToolButton(PdfInkTool.FOUNTAIN_PEN, selectedTool, onToolSelected)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PdfToolButton(PdfInkTool.HIGHLIGHTER_ROUND, selectedTool, onToolSelected)
-            PdfToolButton(PdfInkTool.TEXT, selectedTool, onToolSelected)
-            PdfToolButton(PdfInkTool.ERASER, selectedTool, onToolSelected)
-            IconButton(onClick = onUndo) {
-                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Undo annotation")
-            }
-            IconButton(onClick = onClearPage) {
-                Icon(Icons.Default.Delete, contentDescription = "Clear page annotations")
-            }
-        }
-        Text("Color", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val palette = if (selectedTool == PdfInkTool.HIGHLIGHTER || selectedTool == PdfInkTool.HIGHLIGHTER_ROUND) {
-                SharedPdfAnnotationDefaults.highlighterPalette
-            } else {
-                SharedPdfAnnotationDefaults.penPalette
-            }
-            palette.forEach { argb ->
-                Surface(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .border(
-                            width = if (argb == selectedColor) 3.dp else 1.dp,
-                            color = if (argb == selectedColor) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.25f),
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                        .clickable { onColorSelected(argb) },
-                    color = Color(argb),
-                    shape = RoundedCornerShape(14.dp),
-                    content = {}
-                )
-            }
-        }
-        Text("Thickness ${String.format("%.1f", strokeWidth)}", style = MaterialTheme.typography.labelLarge)
-        Slider(
-            value = strokeWidth,
-            onValueChange = onStrokeWidthChange,
-            valueRange = 1f..28f
-        )
-    }
-}
-
-@Composable
-private fun PdfToolButton(
-    tool: PdfInkTool,
-    selectedTool: PdfInkTool,
-    onToolSelected: (PdfInkTool) -> Unit
-) {
-    val selected = tool == selectedTool
-    val icon = when (tool) {
-        PdfInkTool.PEN -> Icons.Default.Draw
-        PdfInkTool.HIGHLIGHTER -> Icons.Default.Brush
-        PdfInkTool.HIGHLIGHTER_ROUND -> Icons.Default.FormatColorText
-        PdfInkTool.ERASER -> Icons.Default.Remove
-        PdfInkTool.FOUNTAIN_PEN -> Icons.Default.EditNote
-        PdfInkTool.PENCIL -> Icons.Default.Brush
-        PdfInkTool.TEXT -> Icons.Default.TextFields
-    }
-    Surface(
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        IconButton(onClick = { onToolSelected(tool) }) {
-            Icon(icon, contentDescription = tool.name.lowercase().replace('_', ' '))
-        }
-    }
-}
-
-@Composable
-private fun PdfAnnotationOverlay(
-    annotations: List<SharedPdfAnnotation>,
-    activeStroke: List<PdfPagePoint>,
-    canvasSize: IntSize
-) {
-    Canvas(Modifier.fillMaxSize()) {
-        annotations.forEach { annotation ->
-            when (annotation.kind) {
-                PdfAnnotationKind.INK -> {
-                    if (annotation.points.size > 1) {
-                        drawPath(
-                            path = annotation.points.toPath(canvasSize),
-                            color = Color(annotation.colorArgb),
-                            style = Stroke(
-                                width = annotation.strokeWidth,
-                                cap = StrokeCap.Round
-                            )
-                        )
-                    }
-                }
-                PdfAnnotationKind.TEXT -> {
-                    val bounds = annotation.bounds ?: return@forEach
-                    drawRect(
-                        color = Color(annotation.backgroundArgb).copy(alpha = 0.18f),
-                        topLeft = Offset(bounds.left * canvasSize.width, bounds.top * canvasSize.height),
-                        size = androidx.compose.ui.geometry.Size(
-                            (bounds.right - bounds.left) * canvasSize.width,
-                            (bounds.bottom - bounds.top) * canvasSize.height
-                        )
-                    )
-                }
-            }
-        }
-        if (activeStroke.size > 1) {
-            drawPath(
-                path = activeStroke.toPath(canvasSize),
-                color = Color(0xFF1976D2),
-                style = Stroke(width = 2.5f, cap = StrokeCap.Round)
-            )
-        }
-    }
-    annotations.filter { it.kind == PdfAnnotationKind.TEXT && it.text.isNotBlank() }.forEach { annotation ->
-        val bounds = annotation.bounds ?: return@forEach
-        Text(
-            text = annotation.text,
-            color = Color(annotation.colorArgb),
-            fontSize = annotation.fontSize.sp,
-            fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier
-                .padding(
-                    start = (bounds.left * canvasSize.width).dp,
-                    top = (bounds.top * canvasSize.height).dp
-                )
-                .background(Color(annotation.backgroundArgb).copy(alpha = 0.18f), RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 4.dp)
-        )
-    }
-}
-
-private fun Offset.toPdfPoint(size: IntSize): PdfPagePoint {
-    val width = size.width.coerceAtLeast(1)
-    val height = size.height.coerceAtLeast(1)
-    return PdfPagePoint(
-        x = (x / width).coerceIn(0f, 1f),
-        y = (y / height).coerceIn(0f, 1f),
-        timestamp = System.currentTimeMillis()
-    )
-}
-
-private fun List<PdfPagePoint>.toPath(size: IntSize): Path {
-    val path = Path()
-    forEachIndexed { index, point ->
-        val x = point.x * size.width
-        val y = point.y * size.height
-        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-    }
-    return path
-}
-
-private fun pageBoundsFromPoint(point: Offset, size: IntSize): PdfPageBounds {
-    val width = size.width.coerceAtLeast(1)
-    val height = size.height.coerceAtLeast(1)
-    val left = (point.x / width).coerceIn(0f, 0.92f)
-    val top = (point.y / height).coerceIn(0f, 0.95f)
-    return PdfPageBounds(
-        left = left,
-        top = top,
-        right = (left + 0.32f).coerceAtMost(1f),
-        bottom = (top + 0.08f).coerceAtMost(1f)
-    )
-}
-
-private fun SharedPdfAnnotation.hitTest(point: Offset, size: IntSize): Boolean {
-    return when (kind) {
-        PdfAnnotationKind.TEXT -> {
-            val bounds = bounds ?: return false
-            val rect = Rect(
-                bounds.left * size.width,
-                bounds.top * size.height,
-                bounds.right * size.width,
-                bounds.bottom * size.height
-            )
-            rect.contains(point)
-        }
-        PdfAnnotationKind.INK -> {
-            points.any {
-                abs((it.x * size.width) - point.x) <= strokeWidth + 8f &&
-                    abs((it.y * size.height) - point.y) <= strokeWidth + 8f
             }
         }
     }
@@ -1666,169 +1186,30 @@ private fun ReaderScreen(
     onOpenPdf: () -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
-    val readerState = session.reader
-    val page = readerState.currentPage
-    val settings = readerState.settings
-    val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
-    val foreground = if (settings.darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
-    val searchHighlight = if (settings.darkMode) Color(0xFF675A00) else Color(0xFFFFE36E)
-    val textAlign = settings.textAlign.toComposeTextAlign()
-    val fontFamily = settings.fontFamily.toComposeFontFamily()
-    val verticalListState = rememberLazyListState()
-
-    LaunchedEffect(settings.readingMode, page?.chapterIndex) {
-        if (settings.readingMode == ReaderReadingMode.VERTICAL && page != null) {
-            verticalListState.animateScrollToItem(page.chapterIndex)
-        }
-    }
-
-    ScreenScaffold(
-        title = readerState.book.title,
-        subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
-        trailing = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpenEpub) {
-                    Text("Open EPUB")
-                }
-                TextButton(onClick = onOpenPdf) {
-                    Text("Open PDF")
-                }
-                Text("${readerState.progress.toInt()}%")
-                IconButton(onClick = { onSessionChange(readerEngine.toggleBookmark(session)) }) {
-                    Icon(
-                        if (session.currentBookmark == null) Icons.Default.BookmarkBorder else Icons.Default.Bookmark,
-                        contentDescription = "Bookmark"
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        onSessionChange(session.copy(reader = readerState.copy(settings = settings.copy(darkMode = !settings.darkMode))))
-                    }
-                ) {
-                    Text(if (settings.darkMode) "Light" else "Dark")
-                }
-            }
-        }
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+    SharedReaderScreen(
+        session = session,
+        readerEngine = readerEngine,
+        onSessionChange = onSessionChange,
+        onOpenEpub = onOpenEpub,
+        onOpenPdf = onOpenPdf
+    ) { html, background ->
+        Surface(
+            color = background,
+            shape = RoundedCornerShape(8.dp),
             modifier = Modifier
-                .fillMaxSize()
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when {
-                        event.key == Key.DirectionRight || event.key == Key.PageDown -> {
-                            onSessionChange(readerEngine.next(session))
-                            true
-                        }
-
-                        event.key == Key.DirectionLeft || event.key == Key.PageUp -> {
-                            onSessionChange(readerEngine.previous(session))
-                            true
-                        }
-
-                        event.key == Key.MoveHome -> {
-                            onSessionChange(readerEngine.goToPage(session, 0))
-                            true
-                        }
-
-                        event.key == Key.MoveEnd -> {
-                            onSessionChange(readerEngine.goToPage(session, readerState.pages.lastIndex))
-                            true
-                        }
-
-                        event.isCtrlPressed && event.key == Key.G -> {
-                            onSessionChange(readerEngine.nextSearchResult(session))
-                            true
-                        }
-
-                        else -> false
-                    }
-                }
-                .focusable()
+                .fillMaxWidth()
+                .weight(1f)
         ) {
-            ReaderSidebar(
-                session = session,
-                onSearchChange = { onSessionChange(readerEngine.search(session, it)) },
-                onPreviousSearchResult = { onSessionChange(readerEngine.previousSearchResult(session)) },
-                onNextSearchResult = { onSessionChange(readerEngine.nextSearchResult(session)) },
-                onGoToChapter = { onSessionChange(readerEngine.goToChapter(session, it)) },
-                onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) }
-            )
-
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ReaderSettingsBar(
-                    session = session,
-                    readerEngine = readerEngine,
-                    onSessionChange = onSessionChange
+            if (webViewRuntimeState.initialized) {
+                DesktopEpubWebView(
+                    html = html,
+                    modifier = Modifier.fillMaxSize()
                 )
-
-                Surface(
-                    color = background,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                        ReaderHtmlDocumentBuilder.verticalDocument(
-                            book = readerState.book,
-                            settings = settings,
-                            searchQuery = session.searchQuery
-                        )
-                    } else {
-                        ReaderHtmlDocumentBuilder.pageDocument(
-                            book = readerState.book,
-                            page = page,
-                            settings = settings,
-                            searchQuery = session.searchQuery
-                        )
-                    }
-                    if (webViewRuntimeState.initialized) {
-                        DesktopEpubWebView(
-                            html = html,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        DesktopWebViewRuntimeIndicator(
-                            state = webViewRuntimeState,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Slider(
-                        value = if (readerState.pages.size <= 1) 0f else readerState.currentPageIndex.toFloat() / readerState.pages.lastIndex,
-                        onValueChange = { progress -> onSessionChange(readerEngine.goToProgress(session, progress)) },
-                        enabled = readerState.pages.size > 1
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            enabled = readerState.canGoPrevious,
-                            onClick = { onSessionChange(readerEngine.previous(session)) }
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
-                            Text("Previous")
-                        }
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                                "Continuous mode - page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
-                            } else {
-                                "Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
-                            }
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Button(
-                            enabled = readerState.canGoNext,
-                            onClick = { onSessionChange(readerEngine.next(session)) }
-                        ) {
-                            Text("Next")
-                            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
-                        }
-                    }
-                }
+            } else {
+                DesktopWebViewRuntimeIndicator(
+                    state = webViewRuntimeState,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
     }
@@ -1900,94 +1281,6 @@ private fun DesktopWebViewRuntimeIndicator(
                     modifier = Modifier.width(260.dp)
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ReaderSettingsBar(
-    session: ReaderSessionState,
-    readerEngine: ReaderEngine,
-    onSessionChange: (ReaderSessionState) -> Unit
-) {
-    val settings = session.reader.settings
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(
-                selected = settings.readingMode == ReaderReadingMode.PAGINATED,
-                onClick = {
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
-                },
-                label = { Text("Pages") }
-            )
-            FilterChip(
-                selected = settings.readingMode == ReaderReadingMode.VERTICAL,
-                onClick = {
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
-                },
-                label = { Text("Vertical") }
-            )
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.START,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.START))) },
-                label = { Text("Left") }
-            )
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY))) },
-                label = { Text("Justify") }
-            )
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.CENTER,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.CENTER))) },
-                label = { Text("Center") }
-            )
-            listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
-                FilterChip(
-                    selected = settings.fontFamily == family,
-                    onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(fontFamily = family))) },
-                    label = { Text(family) }
-                )
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Font ${settings.fontSize}")
-            Slider(
-                value = settings.fontSize.toFloat(),
-                onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(fontSize = value.toInt())))
-                },
-                valueRange = 14f..30f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Margin ${settings.margin}")
-            Slider(
-                value = settings.margin.toFloat(),
-                onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(margin = value.toInt())))
-                },
-                valueRange = 16f..112f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Spacing ${String.format("%.2f", settings.lineSpacing)}")
-            Slider(
-                value = settings.lineSpacing,
-                onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(lineSpacing = value)))
-                },
-                valueRange = 1.1f..2.1f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Width ${settings.pageWidth}")
-            Slider(
-                value = settings.pageWidth.toFloat(),
-                onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(pageWidth = value.toInt())))
-                },
-                valueRange = 520f..1100f,
-                modifier = Modifier.width(140.dp)
-            )
         }
     }
 }
