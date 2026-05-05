@@ -116,6 +116,17 @@ fun SharedPdfAnnotationOverlay(
     Canvas(Modifier.fillMaxSize()) {
         annotations.forEach { annotation ->
             when (annotation.kind) {
+                PdfAnnotationKind.HIGHLIGHT -> {
+                    val bounds = annotation.bounds ?: return@forEach
+                    drawRect(
+                        color = Color(annotation.colorArgb),
+                        topLeft = Offset(bounds.left * canvasSize.width, bounds.top * canvasSize.height),
+                        size = androidx.compose.ui.geometry.Size(
+                            (bounds.right - bounds.left) * canvasSize.width,
+                            (bounds.bottom - bounds.top) * canvasSize.height
+                        )
+                    )
+                }
                 PdfAnnotationKind.INK -> {
                     if (annotation.points.size > 1) {
                         drawPath(
@@ -218,6 +229,7 @@ fun pageBoundsFromSharedPdfPoint(point: Offset, size: IntSize): PdfPageBounds {
 
 fun SharedPdfAnnotation.sharedPdfHitTest(point: Offset, size: IntSize): Boolean {
     return when (kind) {
+        PdfAnnotationKind.HIGHLIGHT,
         PdfAnnotationKind.TEXT -> {
             val bounds = bounds ?: return false
             val rect = Rect(

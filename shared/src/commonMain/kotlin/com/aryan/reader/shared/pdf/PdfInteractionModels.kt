@@ -8,7 +8,8 @@ import kotlin.math.roundToInt
 
 enum class PdfAnnotationKind {
     INK,
-    TEXT
+    TEXT,
+    HIGHLIGHT
 }
 
 enum class PdfInkTool {
@@ -51,6 +52,8 @@ data class SharedPdfAnnotation(
     val fontSize: Float = 16f,
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
+    val rangeStartIndex: Int? = null,
+    val rangeEndIndex: Int? = null,
     val createdAt: Long = 0L
 )
 

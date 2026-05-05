@@ -151,11 +151,143 @@ object ReaderHtmlDocumentBuilder {
                   color: inherit;
                   border-radius: 2px;
                 }
+                .reader-user-highlight {
+                  background: color-mix(in srgb, var(--reader-highlight) 72%, transparent);
+                  border-radius: 2px;
+                }
+                #reader-selection-menu {
+                  position: fixed;
+                  z-index: 99999;
+                  display: none;
+                  gap: 4px;
+                  align-items: center;
+                  padding: 4px;
+                  border-radius: 8px;
+                  background: color-mix(in srgb, var(--reader-bg) 92%, var(--reader-fg));
+                  border: 1px solid color-mix(in srgb, var(--reader-fg) 18%, transparent);
+                  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+                }
+                #reader-selection-menu button {
+                  border: 0;
+                  border-radius: 6px;
+                  padding: 6px 9px;
+                  background: transparent;
+                  color: var(--reader-fg);
+                  font: 600 12px system-ui, sans-serif;
+                  cursor: pointer;
+                }
+                #reader-selection-menu button:hover {
+                  background: color-mix(in srgb, var(--reader-fg) 10%, transparent);
+                }
                 a { color: inherit; text-decoration-thickness: 0.08em; }
               </style>
             </head>
             <body data-search="${searchQuery.escapeHtml()}">
               $body
+              <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
+                <button type="button" data-action="copy">Copy</button>
+                <button type="button" data-action="highlight">Highlight</button>
+                <button type="button" data-action="find">Find</button>
+                <button type="button" data-action="translate">Translate</button>
+                <button type="button" data-action="clear">Clear</button>
+              </div>
+              <script>
+                (function () {
+                  var menu = document.getElementById('reader-selection-menu');
+                  var savedRange = null;
+                  function selectionText() {
+                    var selection = window.getSelection();
+                    return selection ? selection.toString().trim() : '';
+                  }
+                  function hideMenu() {
+                    menu.style.display = 'none';
+                  }
+                  function showMenu(event) {
+                    var selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0 || selectionText().length === 0) {
+                      hideMenu();
+                      return;
+                    }
+                    savedRange = selection.getRangeAt(0).cloneRange();
+                    if (savedRange.collapsed) {
+                      hideMenu();
+                      return;
+                    }
+                    menu.style.left = Math.max(8, Math.min(window.innerWidth - 360, event.clientX)) + 'px';
+                    menu.style.top = Math.max(8, Math.min(window.innerHeight - 54, event.clientY)) + 'px';
+                    menu.style.display = 'flex';
+                  }
+                  function restoreRange() {
+                    if (!savedRange) return false;
+                    var selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(savedRange);
+                    return true;
+                  }
+                  function copyText(text) {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(text);
+                      return;
+                    }
+                    var textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.setAttribute('readonly', 'true');
+                    textarea.style.position = 'fixed';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                  }
+                  function highlightRange() {
+                    if (!restoreRange()) return;
+                    var selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0) return;
+                    var range = selection.getRangeAt(0);
+                    var marker = document.createElement('mark');
+                    marker.className = 'reader-user-highlight';
+                    try {
+                      range.surroundContents(marker);
+                    } catch (error) {
+                      marker.appendChild(range.extractContents());
+                      range.insertNode(marker);
+                    }
+                    selection.removeAllRanges();
+                    hideMenu();
+                  }
+                  menu.addEventListener('mousedown', function (event) {
+                    event.preventDefault();
+                  });
+                  menu.addEventListener('click', function (event) {
+                    var action = event.target && event.target.getAttribute('data-action');
+                    var text = selectionText();
+                    if (!text && restoreRange()) text = selectionText();
+                    if (!text) {
+                      hideMenu();
+                      return;
+                    }
+                    if (action === 'copy') copyText(text);
+                    if (action === 'highlight') highlightRange();
+                    if (action === 'find') window.find(text);
+                    if (action === 'translate') window.open('https://translate.google.com/?sl=auto&tl=en&text=' + encodeURIComponent(text) + '&op=translate', '_blank');
+                    if (action === 'clear') {
+                      window.getSelection().removeAllRanges();
+                      hideMenu();
+                    }
+                    if (action !== 'highlight' && action !== 'clear') hideMenu();
+                  });
+                  document.addEventListener('contextmenu', function (event) {
+                    if (selectionText().length > 0) {
+                      event.preventDefault();
+                      showMenu(event);
+                    }
+                  });
+                  document.addEventListener('scroll', hideMenu, true);
+                  document.addEventListener('mousedown', function (event) {
+                    if (event.button === 0 && !menu.contains(event.target)) hideMenu();
+                  });
+                })();
+              </script>
             </body>
             </html>
         """.trimIndent()

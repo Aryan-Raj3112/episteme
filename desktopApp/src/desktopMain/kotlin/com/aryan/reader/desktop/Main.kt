@@ -1,15 +1,16 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -21,35 +22,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.automirrored.filled.NavigateBefore
-import androidx.compose.material.icons.automirrored.filled.NavigateNext
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Draw
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.FormatColorText
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.ImportExport
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -58,12 +36,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -78,15 +52,12 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -94,8 +65,13 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -131,22 +107,30 @@ import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
-import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedLibrarySnapshot
+import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.Tag
-import com.aryan.reader.shared.withImportedFiles
-import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfNormalizedPoint
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.PdfSelectionGeometry
+import com.aryan.reader.shared.pdf.PdfTextCharBounds
+import com.aryan.reader.shared.pdf.PdfZoomSpec
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.reader.ReaderEngine
-import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
-import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedTextBookFactory
-import com.aryan.reader.shared.reader.SampleReaderBooks
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -165,26 +149,22 @@ import com.aryan.reader.shared.ui.SharedTextInputDialog
 import com.aryan.reader.shared.ui.pageBoundsFromSharedPdfPoint
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
-import com.aryan.reader.shared.pdf.PdfAnnotationKind
-import com.aryan.reader.shared.pdf.PdfInkTool
-import com.aryan.reader.shared.pdf.PdfPageBounds
-import com.aryan.reader.shared.pdf.PdfPagePoint
-import com.aryan.reader.shared.pdf.PdfZoomSpec
-import com.aryan.reader.shared.pdf.SharedPdfAnnotation
-import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
-import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
-import dev.datlag.kcef.KCEF
+import com.aryan.reader.shared.withImportedFiles
 import com.multiplatform.webview.web.LoadingState
 import com.multiplatform.webview.web.WebView
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
+import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import java.net.URI
+import java.net.URLEncoder
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -333,7 +313,40 @@ private fun EpistemeDesktopApp() {
     }
 
     fun importFiles(files: List<ImportedBookFile>) {
-        updateState(state.withImportedFiles(files))
+        val readableFiles = files.filter { it.desktopFileType() in DesktopReadableFileTypes }
+        if (readableFiles.isEmpty() && files.isNotEmpty()) {
+            updateState(state.withBanner("No supported desktop reader files were selected. EPUB, PDF, TXT, MD, and HTML are supported.", isError = true))
+            return
+        }
+        val skipped = files.size - readableFiles.size
+        val next = state.withImportedFiles(readableFiles).let {
+            if (skipped > 0) {
+                it.withBanner("Imported supported files. Skipped $skipped file(s) that desktop cannot read yet.")
+            } else {
+                it
+            }
+        }
+        updateState(next)
+    }
+
+    fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
+        activeReaderBookId?.let { bookId ->
+            updateState(
+                state.copy(rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                    if (book.id == bookId) {
+                        book.copy(
+                            progressPercentage = progress,
+                            timestamp = System.currentTimeMillis(),
+                            lastPageIndex = pageIndex,
+                            readerSettings = session?.reader?.settings ?: book.readerSettings,
+                            readerBookmarks = session?.bookmarks ?: book.readerBookmarks
+                        )
+                    } else {
+                        book
+                    }
+                })
+            )
+        }
     }
 
     fun removeSelectedBooks() {
@@ -437,7 +450,19 @@ private fun EpistemeDesktopApp() {
 
         activePdfDocument?.close()
         activePdfDocument = null
-        readerSession = readerEngine.createSession(loadedBook, readerSession.reader.settings)
+        val restoredSettings = book.readerSettings ?: readerSession.reader.settings
+        val restoredSession = readerEngine.createSession(
+            book = loadedBook,
+            settings = restoredSettings,
+            initialPageIndex = book.lastPageIndex ?: 0,
+            bookmarks = book.readerBookmarks
+        )
+        val restoredProgress = book.progressPercentage
+        readerSession = if (book.lastPageIndex == null && restoredProgress != null) {
+            readerEngine.goToProgress(restoredSession, restoredProgress.coerceIn(0f, 100f) / 100f)
+        } else {
+            restoredSession
+        }
         activeReaderBookId = book.id
         selectedTab = SharedAppTab.READER
     }
@@ -559,20 +584,13 @@ private fun EpistemeDesktopApp() {
                             if (pdfDocument != null) {
                                 PdfReaderScreen(
                                     document = pdfDocument,
+                                    initialPageIndex = activeReaderBookId
+                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
+                                        ?: 0,
                                     onOpenPdf = ::importAndOpenPdf,
                                     onOpenEpub = ::importAndOpenEpub,
-                                    onProgressChange = { progress ->
-                                        activeReaderBookId?.let { bookId ->
-                                            updateState(
-                                                state.copy(rawLibraryBooks = state.rawLibraryBooks.map { book ->
-                                                    if (book.id == bookId) {
-                                                        book.copy(progressPercentage = progress, timestamp = System.currentTimeMillis())
-                                                    } else {
-                                                        book
-                                                    }
-                                                })
-                                            )
-                                        }
+                                    onPageStateChange = { page, progress ->
+                                        updateActiveBookReadingState(page, progress)
                                     }
                                 )
                             } else {
@@ -581,17 +599,11 @@ private fun EpistemeDesktopApp() {
                                     readerEngine = readerEngine,
                                     onSessionChange = { updated ->
                                         readerSession = updated
-                                        activeReaderBookId?.let { bookId ->
-                                            updateState(
-                                                state.copy(rawLibraryBooks = state.rawLibraryBooks.map { book ->
-                                                    if (book.id == bookId) {
-                                                        book.copy(progressPercentage = updated.reader.progress, timestamp = System.currentTimeMillis())
-                                                    } else {
-                                                        book
-                                                    }
-                                                })
-                                            )
-                                        }
+                                        updateActiveBookReadingState(
+                                            pageIndex = updated.reader.currentPageIndex,
+                                            progress = updated.reader.progress,
+                                            session = updated
+                                        )
                                     },
                                     onOpenEpub = ::importAndOpenEpub,
                                     onOpenPdf = ::importAndOpenPdf,
@@ -791,11 +803,12 @@ private fun ShelvesScreen(
 @Composable
 private fun PdfReaderScreen(
     document: DesktopPdfDocument,
+    initialPageIndex: Int,
     onOpenPdf: () -> Unit,
     onOpenEpub: () -> Unit,
-    onProgressChange: (Float) -> Unit
+    onPageStateChange: (pageIndex: Int, progress: Float) -> Unit
 ) {
-    var pageIndex by remember(document.path) { mutableStateOf(0) }
+    var pageIndex by remember(document.path) { mutableStateOf(initialPageIndex.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))) }
     val zoomSpec = remember { PdfZoomSpec() }
     var scale by remember(document.path) { mutableStateOf(zoomSpec.default) }
     var searchQuery by remember(document.path) { mutableStateOf("") }
@@ -810,8 +823,20 @@ private fun PdfReaderScreen(
     var textDraft by remember(document.path) { mutableStateOf("") }
     var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
     var activeStroke by remember(document.path, pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    var isTextSelectionMode by remember(document.path) { mutableStateOf(false) }
+    var selectionStartIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
+    var selectionEndIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
+    var selectionStartHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
+    var selectionEndHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
+    var textSelection by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
+    var selectionMenuOffset by remember(document.path, pageIndex) { mutableStateOf<Offset?>(null) }
     val annotations = remember(document.path) { mutableStateListOf<SharedPdfAnnotation>() }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
+    val clipboardManager = LocalClipboardManager.current
+    val density = LocalDensity.current
+    val pageVerticalScrollState = rememberScrollState()
+    val pageHorizontalScrollState = rememberScrollState()
+    val currentTextSelection by rememberUpdatedState(textSelection)
 
     LaunchedEffect(document.path) {
         annotations.clear()
@@ -824,7 +849,7 @@ private fun PdfReaderScreen(
         }
     }
 
-    LaunchedEffect(document.path, annotations.size) {
+    LaunchedEffect(document.path, annotations.toList()) {
         val snapshot = annotations.toList()
         withContext(Dispatchers.IO) {
             runCatching {
@@ -846,13 +871,20 @@ private fun PdfReaderScreen(
         if (normalized.isBlank()) {
             emptyList()
         } else {
-            document.textPages.mapIndexedNotNull { index, text ->
-                val matchIndex = text.indexOf(normalized, ignoreCase = true)
-                if (matchIndex < 0) {
-                    null
-                } else {
-                    ReaderPdfSearchResult(index, text.previewAround(matchIndex, normalized.length))
+            document.textPages.flatMapIndexed { index, text ->
+                val matches = mutableListOf<ReaderPdfSearchResult>()
+                var startIndex = 0
+                while (startIndex < text.length) {
+                    val matchIndex = text.indexOf(normalized, startIndex, ignoreCase = true)
+                    if (matchIndex < 0) break
+                    matches += ReaderPdfSearchResult(
+                        pageIndex = index,
+                        preview = text.previewAround(matchIndex, normalized.length),
+                        matchIndex = matchIndex
+                    )
+                    startIndex = matchIndex + normalized.length.coerceAtLeast(1)
                 }
+                matches
             }
         }
     }
@@ -860,6 +892,86 @@ private fun PdfReaderScreen(
     fun goToPage(target: Int) {
         pageIndex = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
         activeStroke = emptyList()
+        selectionStartIndex = null
+        selectionEndIndex = null
+        selectionStartHit = null
+        selectionEndHit = null
+        textSelection = null
+        selectionMenuOffset = null
+    }
+
+    fun copySelection() {
+        textSelection?.text?.takeIf { it.isNotBlank() }?.let {
+            clipboardManager.setText(AnnotatedString(it))
+        }
+        selectionMenuOffset = null
+    }
+
+    fun highlightSelection() {
+        val selection = textSelection ?: return
+        val now = System.currentTimeMillis()
+        val highlightBounds = DesktopPdfium.textRectsForRange(
+            document = document,
+            pageIndex = pageIndex,
+            startIndex = selection.startIndex,
+            endIndex = selection.endIndex,
+            viewportWidth = pageCanvasSize.width,
+            viewportHeight = pageCanvasSize.height
+        ).map { it.toPdfPageBounds() }
+            .filter { it.right > it.left && it.bottom > it.top }
+            .mergePdfBoundsByLine()
+            .ifEmpty { selection.lineBounds }
+        logPdfSelection(
+            "highlight_create page=${pageIndex + 1} " +
+                "range=${selection.startIndex}..${selection.endIndex} " +
+                "chars=${selection.text.length} lines=${highlightBounds.size} " +
+                "text=\"${selection.text.logPreview()}\""
+        )
+        logPdfSelection(
+            "highlight_store page=${pageIndex + 1} " +
+                "range=${selection.startIndex}..${selection.endIndex} " +
+                "mode=dynamic_range"
+        )
+        highlightBounds.forEachIndexed { index, bounds ->
+            logPdfSelection(
+                "highlight_bound page=${pageIndex + 1} index=$index " +
+                    "left=${bounds.left.formatLogFloat()} top=${bounds.top.formatLogFloat()} " +
+                    "right=${bounds.right.formatLogFloat()} bottom=${bounds.bottom.formatLogFloat()}"
+            )
+        }
+        annotations.add(
+            SharedPdfAnnotation(
+                id = "highlight_${now}",
+                pageIndex = pageIndex,
+                kind = PdfAnnotationKind.HIGHLIGHT,
+                tool = PdfInkTool.HIGHLIGHTER,
+                bounds = highlightBounds.firstOrNull(),
+                text = selection.text,
+                colorArgb = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
+                rangeStartIndex = selection.startIndex,
+                rangeEndIndex = selection.endIndex,
+                createdAt = now
+            )
+        )
+        textSelection = null
+        selectionStartIndex = null
+        selectionEndIndex = null
+        selectionStartHit = null
+        selectionEndHit = null
+        selectionMenuOffset = null
+    }
+
+    fun searchSelection() {
+        val selection = textSelection ?: return
+        searchQuery = selection.text.take(120)
+        activeSearchIndex = -1
+        selectionMenuOffset = null
+    }
+
+    fun translateSelection() {
+        val selection = textSelection ?: return
+        openExternalUrl("https://translate.google.com/?sl=auto&tl=en&text=${selection.text.urlEncode()}&op=translate")
+        selectionMenuOffset = null
     }
 
     fun goToSearchResult(targetIndex: Int) {
@@ -874,28 +986,42 @@ private fun PdfReaderScreen(
     }
 
     LaunchedEffect(document.path, pageIndex) {
-        onProgressChange(((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f)
+        onPageStateChange(pageIndex, ((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f)
     }
 
     LaunchedEffect(document.path, pageIndex, scale) {
         renderJob?.cancel()
+        val requestedPageIndex = pageIndex
+        val requestedScale = scale
         renderJob = launch {
             delay(90)
             isRendering = true
             renderError = null
+            val pageSize = document.pageSizes[requestedPageIndex]
             val safeScale = zoomSpec.safeRenderScale(
-                document.pageSizes[pageIndex].width,
-                document.pageSizes[pageIndex].height,
-                scale
+                pageSize.width,
+                pageSize.height,
+                requestedScale
             )
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    DesktopPdfium.renderPage(document, pageIndex, safeScale)
+                    DesktopPdfium.renderPage(document, requestedPageIndex, safeScale)
                 }
+            }
+            if (requestedPageIndex != pageIndex || requestedScale != scale) {
+                return@launch
             }
             renderedPage = result.getOrNull()
             renderError = result.exceptionOrNull()?.message
                 ?: if (renderedPage == null) "Failed to render page." else null
+            renderedPage?.let { render ->
+                logPdfSelection(
+                    "render page=${requestedPageIndex + 1} " +
+                        "requestedScale=${requestedScale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
+                        "pageSize=${pageSize.width.formatLogFloat()}x${pageSize.height.formatLogFloat()} " +
+                        "bitmap=${render.width}x${render.height} capped=${safeScale < zoomSpec.clamp(requestedScale)}"
+                )
+            }
             isRendering = false
         }
     }
@@ -927,6 +1053,22 @@ private fun PdfReaderScreen(
                         }
                         event.key == Key.DirectionRight -> {
                             goToPage(pageIndex + 1)
+                            true
+                        }
+                        event.key == Key.PageUp -> {
+                            goToPage(pageIndex - 1)
+                            true
+                        }
+                        event.key == Key.PageDown -> {
+                            goToPage(pageIndex + 1)
+                            true
+                        }
+                        event.key == Key.MoveHome -> {
+                            goToPage(0)
+                            true
+                        }
+                        event.key == Key.MoveEnd -> {
+                            goToPage(document.pageCount - 1)
                             true
                         }
                         event.isCtrlPressed && event.key == Key.Equals -> {
@@ -987,6 +1129,21 @@ private fun PdfReaderScreen(
                     item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("Annotations", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        FilterChip(
+                            selected = isTextSelectionMode,
+                            onClick = {
+                                isTextSelectionMode = !isTextSelectionMode
+                                if (!isTextSelectionMode) {
+                                    textSelection = null
+                                    selectionStartIndex = null
+                                    selectionEndIndex = null
+                                    selectionStartHit = null
+                                    selectionEndHit = null
+                                    selectionMenuOffset = null
+                                }
+                            },
+                            label = { Text("Select text") }
+                        )
                         SharedPdfAnnotationToolDock(
                             selectedTool = selectedTool,
                             selectedColor = selectedColor,
@@ -1039,7 +1196,11 @@ private fun PdfReaderScreen(
                         item {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    if (searchResults.isEmpty()) "No matches" else "${(activeSearchIndex + 1).coerceAtLeast(0)} of ${searchResults.size}",
+                                    when {
+                                        searchResults.isEmpty() -> "No matches"
+                                        activeSearchIndex in searchResults.indices -> "${activeSearchIndex + 1} of ${searchResults.size}"
+                                        else -> "${searchResults.size} matches"
+                                    },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -1052,7 +1213,7 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
-                    items(searchResults, key = { "${it.pageIndex}_${it.preview}" }) { result ->
+                    items(searchResults, key = { "${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
                         Surface(
                             color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(6.dp),
@@ -1075,7 +1236,8 @@ private fun PdfReaderScreen(
                     .weight(1f)
                     .fillMaxHeight()
                     .background(Color(0xFFE8E5DC), RoundedCornerShape(8.dp))
-                    .verticalScroll(rememberScrollState())
+                    .horizontalScroll(pageHorizontalScrollState)
+                    .verticalScroll(pageVerticalScrollState)
                     .padding(24.dp),
                 contentAlignment = Alignment.TopCenter
             ) {
@@ -1084,12 +1246,155 @@ private fun PdfReaderScreen(
                     renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
                     renderedPage != null -> {
                         val pageRender = renderedPage!!
+                        val pageWidthDp = with(density) { pageRender.width.toDp() }
+                        val pageHeightDp = with(density) { pageRender.height.toDp() }
+                        val pageRenderScale = pageRender.width / document.pageSizes[pageIndex].width
+                        val pageAnnotations = remember(annotations.toList(), pageIndex, pageCanvasSize) {
+                            annotations
+                                .filter { it.pageIndex == pageIndex }
+                                .flatMap { annotation ->
+                                    annotation.toRenderablePdfAnnotations(document, pageIndex, pageCanvasSize)
+                                }
+                        }
                         Box(
                             modifier = Modifier
-                                .size(pageRender.width.dp, pageRender.height.dp)
-                                .onSizeChanged { pageCanvasSize = it }
-                                .pointerInput(pageIndex, selectedTool, selectedColor, strokeWidth, textDraft) {
-                                    if (selectedTool == PdfInkTool.TEXT) {
+                                .size(pageWidthDp, pageHeightDp)
+                                .onSizeChanged { size ->
+                                    if (pageCanvasSize != size) {
+                                        logPdfSelection(
+                                            "layout page=${pageIndex + 1} " +
+                                                "canvas=${size.formatLogSize()} bitmap=${pageRender.width}x${pageRender.height} " +
+                                                "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()}"
+                                        )
+                                    }
+                                    pageCanvasSize = size
+                                }
+                                .pointerInput(pageIndex, pageCanvasSize) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                                                val point = event.changes.firstOrNull()?.position ?: continue
+                                                val selection = currentTextSelection
+                                                if (selection != null) {
+                                                    selectionMenuOffset = point
+                                                    logPdfSelection(
+                                                        "menu_open page=${pageIndex + 1} " +
+                                                            "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                                            "range=${selection.startIndex}..${selection.endIndex} " +
+                                                            "chars=${selection.text.length}"
+                                                    )
+                                                    event.changes.forEach { it.consume() }
+                                                }
+                                            } else if (
+                                                event.type == PointerEventType.Press &&
+                                                event.buttons.isPrimaryPressed &&
+                                                currentTextSelection != null &&
+                                                selectionMenuOffset == null
+                                            ) {
+                                                selectionMenuOffset = null
+                                                textSelection = null
+                                                selectionStartHit = null
+                                                selectionEndHit = null
+                                            }
+                                        }
+                                    }
+                                }
+                                .pointerInput(
+                                    pageIndex,
+                                    isTextSelectionMode,
+                                    selectedTool,
+                                    selectedColor,
+                                    strokeWidth,
+                                    textDraft,
+                                    document.textCharsByPage,
+                                    pageCanvasSize,
+                                    pageRender.width,
+                                    pageRender.height
+                                ) {
+                                    if (isTextSelectionMode) {
+                                        detectDragGestures(
+                                            onDragStart = { start ->
+                                                selectionMenuOffset = null
+                                                val hit = document.charHitAt(pageIndex, start, pageCanvasSize)
+                                                selectionStartHit = hit
+                                                selectionStartIndex = hit?.index
+                                                selectionEndHit = null
+                                                selectionEndIndex = null
+                                                logPdfSelection(
+                                                    "drag_start page=${pageIndex + 1} " +
+                                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${pageRender.width}x${pageRender.height} " +
+                                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                                        hit.formatLogHit("start")
+                                                )
+                                                textSelection = null
+                                            },
+                                            onDrag = { change, _ ->
+                                                val startIndex = selectionStartIndex
+                                                val hit = document.charHitAt(pageIndex, change.position, pageCanvasSize)
+                                                selectionEndHit = hit
+                                                val endIndex = hit?.index
+                                                val previousEndIndex = selectionEndIndex
+                                                selectionEndIndex = endIndex
+                                                if (endIndex != previousEndIndex || textSelection == null) {
+                                                    textSelection = if (startIndex != null && endIndex != null) {
+                                                        document.selectionBetweenIndexes(
+                                                            pageIndex = pageIndex,
+                                                            startIndex = startIndex,
+                                                            endIndex = endIndex,
+                                                            canvasSize = pageCanvasSize,
+                                                            useNativeBounds = false
+                                                        )
+                                                    } else {
+                                                        null
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                val startIndex = selectionStartIndex
+                                                val endIndex = selectionEndIndex
+                                                val selection = if (startIndex != null && endIndex != null) {
+                                                    document.selectionBetweenIndexes(
+                                                        pageIndex = pageIndex,
+                                                        startIndex = startIndex,
+                                                        endIndex = endIndex,
+                                                        canvasSize = pageCanvasSize,
+                                                        useNativeBounds = true
+                                                    )?.also { textSelection = it }
+                                                } else {
+                                                    textSelection
+                                                }
+                                                logPdfSelection(
+                                                    "drag_end page=${pageIndex + 1} " +
+                                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${pageRender.width}x${pageRender.height} " +
+                                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                                        selectionStartHit.formatLogHit("start") + " " +
+                                                        selectionEndHit.formatLogHit("end") + " " +
+                                                        "range=${selection?.startIndex}..${selection?.endIndex} " +
+                                                        "chars=${selection?.text?.length ?: 0} " +
+                                                        "lines=${selection?.lineBounds?.size ?: 0} " +
+                                                        "text=\"${selection?.text.orEmpty().logPreview()}\""
+                                                )
+                                                selectionStartIndex = null
+                                                selectionEndIndex = null
+                                                selectionStartHit = null
+                                                selectionEndHit = null
+                                            },
+                                            onDragCancel = {
+                                                logPdfSelection(
+                                                    "drag_cancel page=${pageIndex + 1} " +
+                                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${pageRender.width}x${pageRender.height} " +
+                                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                                        selectionStartHit.formatLogHit("start") + " " +
+                                                        selectionEndHit.formatLogHit("end")
+                                                )
+                                                selectionStartIndex = null
+                                                selectionEndIndex = null
+                                                selectionStartHit = null
+                                                selectionEndHit = null
+                                            }
+                                        )
+                                    } else if (selectedTool == PdfInkTool.TEXT) {
                                         detectTapGestures(
                                             onTap = { start ->
                                                 val text = textDraft.trim()
@@ -1116,8 +1421,8 @@ private fun PdfReaderScreen(
                                         detectDragGestures(
                                             onDragStart = { start ->
                                                 if (selectedTool != PdfInkTool.ERASER) {
-                                                activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
-                                            }
+                                                    activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
+                                                }
                                             },
                                             onDrag = { change, _ ->
                                                 if (selectedTool == PdfInkTool.ERASER) {
@@ -1151,12 +1456,48 @@ private fun PdfReaderScreen(
                         ) {
                             Image(
                                 bitmap = pageRender.image,
-                                contentDescription = "PDF page ${pageIndex + 1}"
+                                contentDescription = "PDF page ${pageIndex + 1}",
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            PdfTextSelectionOverlay(
+                                selection = textSelection,
+                                canvasSize = pageCanvasSize
                             )
                             SharedPdfAnnotationOverlay(
-                                annotations = annotations.filter { it.pageIndex == pageIndex },
+                                annotations = pageAnnotations,
                                 activeStroke = activeStroke,
                                 canvasSize = pageCanvasSize
+                            )
+                            if (textSelection != null && selectionMenuOffset != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .pointerInput(pageIndex, selectionMenuOffset) {
+                                            detectTapGestures {
+                                                selectionMenuOffset = null
+                                                textSelection = null
+                                                selectionStartHit = null
+                                                selectionEndHit = null
+                                            }
+                                        }
+                                )
+                            }
+                            PdfSelectionMenu(
+                                selection = textSelection,
+                                menuOffset = selectionMenuOffset,
+                                canvasSize = pageCanvasSize,
+                                onCopy = ::copySelection,
+                                onHighlight = ::highlightSelection,
+                                onSearch = ::searchSelection,
+                                onTranslate = ::translateSelection,
+                                onClear = {
+                                    textSelection = null
+                                    selectionStartIndex = null
+                                    selectionEndIndex = null
+                                    selectionStartHit = null
+                                    selectionEndHit = null
+                                    selectionMenuOffset = null
+                                }
                             )
                         }
                     }
@@ -1168,8 +1509,233 @@ private fun PdfReaderScreen(
 
 private data class ReaderPdfSearchResult(
     val pageIndex: Int,
-    val preview: String
+    val preview: String,
+    val matchIndex: Int
 )
+
+private data class DesktopPdfTextSelection(
+    val text: String,
+    val lineBounds: List<PdfPageBounds>,
+    val startIndex: Int,
+    val endIndex: Int
+)
+
+private data class DesktopPdfCharHit(
+    val index: Int,
+    val source: String,
+    val point: Offset,
+    val normalized: PdfNormalizedPoint
+)
+
+@Composable
+private fun PdfTextSelectionOverlay(
+    selection: DesktopPdfTextSelection?,
+    canvasSize: IntSize
+) {
+    val bounds = selection?.lineBounds.orEmpty()
+    if (bounds.isEmpty()) return
+    Canvas(Modifier.fillMaxSize()) {
+        bounds.forEach { rect ->
+            drawRect(
+                color = Color(0x663B82F6),
+                topLeft = Offset(rect.left * canvasSize.width, rect.top * canvasSize.height),
+                size = androidx.compose.ui.geometry.Size(
+                    (rect.right - rect.left) * canvasSize.width,
+                    (rect.bottom - rect.top) * canvasSize.height
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun PdfSelectionMenu(
+    selection: DesktopPdfTextSelection?,
+    menuOffset: Offset?,
+    canvasSize: IntSize,
+    onCopy: () -> Unit,
+    onHighlight: () -> Unit,
+    onSearch: () -> Unit,
+    onTranslate: () -> Unit,
+    onClear: () -> Unit
+) {
+    selection ?: return
+    val anchor = menuOffset ?: return
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.padding(
+            start = anchor.x.coerceIn(
+                PdfSelectionMenuMarginPx,
+                (canvasSize.width.toFloat() - PdfSelectionMenuWidthPx).coerceAtLeast(PdfSelectionMenuMarginPx)
+            ).dp,
+            top = anchor.y.coerceIn(
+                PdfSelectionMenuMarginPx,
+                (canvasSize.height.toFloat() - PdfSelectionMenuHeightPx).coerceAtLeast(PdfSelectionMenuMarginPx)
+            ).dp
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onCopy) { Text("Copy") }
+            TextButton(onClick = onHighlight) { Text("Highlight") }
+            TextButton(onClick = onSearch) { Text("Find") }
+            TextButton(onClick = onTranslate) { Text("Translate") }
+            TextButton(onClick = onClear) { Text("Clear") }
+        }
+    }
+}
+
+private fun DesktopPdfDocument.charHitAt(
+    pageIndex: Int,
+    point: Offset,
+    canvasSize: IntSize
+): DesktopPdfCharHit? {
+    val normalized = PdfSelectionGeometry.normalizedPoint(
+        pointX = point.x,
+        pointY = point.y,
+        viewportWidth = canvasSize.width,
+        viewportHeight = canvasSize.height
+    ) ?: return null
+    val nativeIndex = DesktopPdfium.charIndexAt(
+        document = this,
+        pageIndex = pageIndex,
+        normalizedX = normalized.x,
+        normalizedY = normalized.y,
+        viewportWidth = canvasSize.width,
+        viewportHeight = canvasSize.height
+    )
+    if (nativeIndex != null) {
+        return DesktopPdfCharHit(
+            index = nativeIndex,
+            source = "native",
+            point = point,
+            normalized = normalized
+        )
+    }
+    val fallback = PdfSelectionGeometry.nearestCharOnLine(
+        chars = textCharsByPage.getOrNull(pageIndex).orEmpty().visiblePdfTextBounds(),
+        point = normalized
+    ) ?: return null
+    return DesktopPdfCharHit(
+        index = fallback.index,
+        source = "fallback_line",
+        point = point,
+        normalized = normalized
+    )
+}
+
+private fun DesktopPdfDocument.selectionBetweenIndexes(
+    pageIndex: Int,
+    startIndex: Int,
+    endIndex: Int,
+    canvasSize: IntSize,
+    useNativeBounds: Boolean = true
+): DesktopPdfTextSelection? {
+    val chars = textCharsByPage.getOrNull(pageIndex).orEmpty()
+    if (chars.isEmpty() || abs(startIndex - endIndex) < 1) return null
+    val firstIndex = minOf(startIndex, endIndex)
+    val lastIndex = maxOf(startIndex, endIndex)
+    val selectedChars = chars.filter { it.index in firstIndex..lastIndex }
+    val text = selectedChars.joinToString("") { it.char.toString() }
+        .replace(Regex("[ \\t\\x0B\\f\\r]+"), " ")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .trim()
+    if (text.isBlank()) return null
+    val fallbackBounds = PdfSelectionGeometry.lineBoundsForChars(selectedChars.visiblePdfTextBounds())
+    val nativeBounds = if (useNativeBounds) {
+        DesktopPdfium.textRectsForRange(
+            document = this,
+            pageIndex = pageIndex,
+            startIndex = firstIndex,
+            endIndex = lastIndex,
+            viewportWidth = canvasSize.width,
+            viewportHeight = canvasSize.height
+        ).map { it.toPdfPageBounds() }
+            .filter { it.right > it.left && it.bottom > it.top }
+            .mergePdfBoundsByLine()
+    } else {
+        emptyList()
+    }
+    return DesktopPdfTextSelection(
+        text = text,
+        lineBounds = nativeBounds.ifEmpty { fallbackBounds },
+        startIndex = firstIndex,
+        endIndex = lastIndex
+    )
+}
+
+private fun DesktopPdfTextRect.toPdfPageBounds(): PdfPageBounds {
+    return PdfPageBounds(
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom
+    )
+}
+
+private fun SharedPdfAnnotation.toRenderablePdfAnnotations(
+    document: DesktopPdfDocument,
+    pageIndex: Int,
+    canvasSize: IntSize
+): List<SharedPdfAnnotation> {
+    val startIndex = rangeStartIndex
+    val endIndex = rangeEndIndex
+    if (kind != PdfAnnotationKind.HIGHLIGHT || startIndex == null || endIndex == null) {
+        return listOf(this)
+    }
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) {
+        return listOf(this)
+    }
+    val dynamicBounds = DesktopPdfium.textRectsForRange(
+        document = document,
+        pageIndex = pageIndex,
+        startIndex = startIndex,
+        endIndex = endIndex,
+        viewportWidth = canvasSize.width,
+        viewportHeight = canvasSize.height
+    ).map { it.toPdfPageBounds() }
+        .filter { it.right > it.left && it.bottom > it.top }
+        .mergePdfBoundsByLine()
+
+    return dynamicBounds.ifEmpty { listOfNotNull(bounds).ifEmpty { emptyList() } }
+        .mapIndexed { index, dynamicBounds ->
+            copy(
+                id = "${id}_line_$index",
+                bounds = dynamicBounds
+            )
+        }
+}
+
+private fun List<PdfPageBounds>.mergePdfBoundsByLine(): List<PdfPageBounds> {
+    return PdfSelectionGeometry.mergeBoundsByLine(this)
+}
+
+private fun List<DesktopPdfTextChar>.visiblePdfTextBounds(): List<PdfTextCharBounds> {
+    return asSequence()
+        .filter { it.hasBounds && !it.char.isISOControl() }
+        .map { it.toPdfTextCharBounds() }
+        .toList()
+}
+
+private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
+    return PdfTextCharBounds(
+        index = index,
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom
+    )
+}
+
+private const val PdfSelectionMenuWidthPx = 360f
+private const val PdfSelectionMenuHeightPx = 54f
+private const val PdfSelectionMenuMarginPx = 6f
 
 private fun desktopPdfAnnotationFile(documentPath: String): File {
     val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
@@ -1608,7 +2174,7 @@ private fun ReaderSidebar(
                     Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                items(session.searchResults, key = { "${it.pageIndex}_${it.preview}" }) { result ->
+                items(session.searchResults, key = { "${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
                         shape = RoundedCornerShape(6.dp),
@@ -1681,6 +2247,19 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
     return reduce(AppAction.BannerShown(BannerMessage(message, isError = isError)))
 }
 
+private val DesktopReadableFileTypes = setOf(FileType.EPUB, FileType.PDF, FileType.TXT, FileType.MD, FileType.HTML)
+
+private fun ImportedBookFile.desktopFileType(): FileType {
+    return when (name.substringAfterLast('.', "").lowercase()) {
+        "epub" -> FileType.EPUB
+        "pdf" -> FileType.PDF
+        "txt" -> FileType.TXT
+        "md", "markdown" -> FileType.MD
+        "html", "htm", "xhtml" -> FileType.HTML
+        else -> FileType.UNKNOWN
+    }
+}
+
 private fun List<BookItem>.collectTags(): List<Tag> {
     return flatMap { it.tags }.distinctBy { it.id }.sortedBy { it.name.lowercase() }
 }
@@ -1699,7 +2278,7 @@ private fun Long.toReadableSize(): String {
         unitIndex += 1
     }
     return if (unitIndex == 0) {
-        "${this} ${units[unitIndex]}"
+        "$this ${units[unitIndex]}"
     } else {
         "${String.format("%.1f", value)} ${units[unitIndex]}"
     }
@@ -1712,6 +2291,48 @@ private fun File.toImportedBookFile(): ImportedBookFile {
         localPath = absolutePath,
         size = length()
     )
+}
+
+private fun openExternalUrl(url: String) {
+    runCatching {
+        if (Desktop.isDesktopSupported()) {
+            Desktop.getDesktop().browse(URI(url))
+        }
+    }
+}
+
+private fun String.urlEncode(): String {
+    return URLEncoder.encode(this, Charsets.UTF_8.name())
+}
+
+private const val PdfSelectionLogTag = "EpistemePdfSelection"
+
+private fun logPdfSelection(message: String) {
+    println("$PdfSelectionLogTag $message")
+}
+
+private fun String.logPreview(maxLength: Int = 96): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
+private fun Float.formatLogFloat(): String {
+    return String.format("%.3f", this)
+}
+
+private fun IntSize.formatLogSize(): String {
+    return "${width}x${height}"
+}
+
+private fun DesktopPdfCharHit?.formatLogHit(prefix: String): String {
+    if (this == null) {
+        return "${prefix}Index=null ${prefix}Source=none ${prefix}X=null ${prefix}Y=null ${prefix}Nx=null ${prefix}Ny=null"
+    }
+    return "${prefix}Index=$index ${prefix}Source=$source " +
+        "${prefix}X=${point.x.formatLogFloat()} ${prefix}Y=${point.y.formatLogFloat()} " +
+        "${prefix}Nx=${normalized.x.formatLogFloat()} ${prefix}Ny=${normalized.y.formatLogFloat()}"
 }
 
 private fun String.previewAround(index: Int, queryLength: Int): String {

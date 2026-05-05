@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
@@ -162,7 +163,8 @@ fun SharedReaderScreen(
                 onPreviousSearchResult = { onSessionChange(readerEngine.previousSearchResult(session)) },
                 onNextSearchResult = { onSessionChange(readerEngine.nextSearchResult(session)) },
                 onGoToChapter = { onSessionChange(readerEngine.goToChapter(session, it)) },
-                onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) }
+                onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) },
+                onGoToSearchResult = { onSessionChange(readerEngine.goToSearchResult(session, it)) }
             )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -320,7 +322,8 @@ private fun SharedReaderSidebar(
     onPreviousSearchResult: () -> Unit,
     onNextSearchResult: () -> Unit,
     onGoToChapter: (Int) -> Unit,
-    onGoToPage: (Int) -> Unit
+    onGoToPage: (Int) -> Unit,
+    onGoToSearchResult: (Int) -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -418,11 +421,14 @@ private fun SharedReaderSidebar(
                     Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                items(session.searchResults, key = { "${it.pageIndex}_${it.preview}" }) { result ->
+                itemsIndexed(
+                    session.searchResults,
+                    key = { _, result -> "${result.pageIndex}_${result.matchIndex}_${result.preview}" }
+                ) { index, result ->
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
                         shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onGoToPage(result.pageIndex) }
+                        modifier = Modifier.fillMaxWidth().clickable { onGoToSearchResult(index) }
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
                             Text("Page ${result.pageIndex + 1} - ${result.chapterTitle}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

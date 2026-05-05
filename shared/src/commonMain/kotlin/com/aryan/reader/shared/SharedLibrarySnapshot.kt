@@ -13,6 +13,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedReaderTextAlign
 
 data class SharedLibrarySnapshot(
     val books: List<BookItem> = emptyList(),
@@ -68,6 +72,10 @@ private fun JsonObject.long(name: String, fallback: Long = 0L): Long {
     return runCatching { this[name]?.jsonPrimitive?.longOrNull }.getOrNull() ?: fallback
 }
 
+private fun JsonObject.int(name: String): Int? {
+    return runCatching { this[name]?.jsonPrimitive?.content?.toIntOrNull() }.getOrNull()
+}
+
 private fun JsonObject.float(name: String): Float? {
     return runCatching { this[name]?.jsonPrimitive?.floatOrNull }.getOrNull()
 }
@@ -99,7 +107,10 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         sourceFolder = obj.string("sourceFolder"),
         seriesName = obj.string("seriesName"),
         seriesIndex = obj.double("seriesIndex"),
-        tags = obj.array("tags").mapNotNull { it.asTagOrNull() }
+        tags = obj.array("tags").mapNotNull { it.asTagOrNull() },
+        lastPageIndex = obj.int("lastPageIndex"),
+        readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
+        readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() }
     )
 }
 
@@ -149,7 +160,10 @@ private fun BookItem.toJsonObject(): JsonObject {
             "sourceFolder" to sourceFolder.asJson(),
             "seriesName" to seriesName.asJson(),
             "seriesIndex" to seriesIndex.asJson(),
-            "tags" to JsonArray(tags.map { it.toJsonObject() })
+            "tags" to JsonArray(tags.map { it.toJsonObject() }),
+            "lastPageIndex" to lastPageIndex.asJson(),
+            "readerSettings" to readerSettings.asJson(),
+            "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() })
         )
     )
 }
@@ -189,3 +203,59 @@ private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: J
 private fun Float?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Double?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Int?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
+
+private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val defaults = ReaderSettings()
+    return ReaderSettings(
+        fontSize = obj.int("fontSize") ?: defaults.fontSize,
+        lineSpacing = obj.float("lineSpacing") ?: defaults.lineSpacing,
+        margin = obj.int("margin") ?: defaults.margin,
+        darkMode = obj.boolean("darkMode", defaults.darkMode),
+        readingMode = obj.string("readingMode")
+            ?.let { runCatching { ReaderReadingMode.valueOf(it) }.getOrNull() }
+            ?: defaults.readingMode,
+        textAlign = obj.string("textAlign")
+            ?.let { runCatching { SharedReaderTextAlign.valueOf(it) }.getOrNull() }
+            ?: defaults.textAlign,
+        pageWidth = obj.int("pageWidth") ?: defaults.pageWidth,
+        fontFamily = obj.string("fontFamily") ?: defaults.fontFamily
+    )
+}
+
+private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return ReaderBookmark(
+        id = obj.string("id") ?: return null,
+        pageIndex = obj.int("pageIndex") ?: return null,
+        chapterTitle = obj.string("chapterTitle") ?: "",
+        preview = obj.string("preview") ?: ""
+    )
+}
+
+private fun ReaderSettings?.asJson(): JsonElement {
+    val settings = this ?: return JsonNull
+    return JsonObject(
+        mapOf(
+            "fontSize" to JsonPrimitive(settings.fontSize),
+            "lineSpacing" to JsonPrimitive(settings.lineSpacing),
+            "margin" to JsonPrimitive(settings.margin),
+            "darkMode" to JsonPrimitive(settings.darkMode),
+            "readingMode" to JsonPrimitive(settings.readingMode.name),
+            "textAlign" to JsonPrimitive(settings.textAlign.name),
+            "pageWidth" to JsonPrimitive(settings.pageWidth),
+            "fontFamily" to JsonPrimitive(settings.fontFamily)
+        )
+    )
+}
+
+private fun ReaderBookmark.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "id" to JsonPrimitive(id),
+            "pageIndex" to JsonPrimitive(pageIndex),
+            "chapterTitle" to JsonPrimitive(chapterTitle),
+            "preview" to JsonPrimitive(preview)
+        )
+    )
+}

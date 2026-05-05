@@ -1,5 +1,8 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.ReaderSettings
+
 enum class FileType {
     PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT, UNKNOWN
 }
@@ -82,7 +85,10 @@ data class BookItem(
     val sourceFolder: String? = null,
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
-    val tags: List<Tag> = emptyList()
+    val tags: List<Tag> = emptyList(),
+    val lastPageIndex: Int? = null,
+    val readerSettings: ReaderSettings? = null,
+    val readerBookmarks: List<ReaderBookmark> = emptyList()
 )
 
 data class Shelf(

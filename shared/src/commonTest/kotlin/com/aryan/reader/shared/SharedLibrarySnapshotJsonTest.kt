@@ -1,5 +1,9 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -24,7 +28,26 @@ class SharedLibrarySnapshotJsonTest {
                     sourceFolder = "C:/Books",
                     seriesName = "Series",
                     seriesIndex = 2.0,
-                    tags = listOf(tag)
+                    tags = listOf(tag),
+                    lastPageIndex = 4,
+                    readerSettings = ReaderSettings(
+                        fontSize = 22,
+                        lineSpacing = 1.7f,
+                        margin = 64,
+                        darkMode = true,
+                        readingMode = ReaderReadingMode.VERTICAL,
+                        textAlign = SharedReaderTextAlign.JUSTIFY,
+                        pageWidth = 840,
+                        fontFamily = "Serif"
+                    ),
+                    readerBookmarks = listOf(
+                        ReaderBookmark(
+                            id = "book_4",
+                            pageIndex = 4,
+                            chapterTitle = "Chapter",
+                            preview = "A useful paragraph"
+                        )
+                    )
                 )
             ),
             shelfRecords = listOf(ShelfRecord(id = "shelf", name = "Shelf", isSmart = true, smartRulesJson = "{}")),

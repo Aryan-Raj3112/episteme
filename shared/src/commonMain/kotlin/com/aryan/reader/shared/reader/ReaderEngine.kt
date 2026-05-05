@@ -10,7 +10,8 @@ data class ReaderBookmark(
 data class ReaderSearchResult(
     val pageIndex: Int,
     val chapterTitle: String,
-    val preview: String
+    val preview: String,
+    val matchIndex: Int = 0
 )
 
 data class ReaderSessionState(
@@ -32,14 +33,22 @@ class ReaderEngine(
 ) {
     fun createSession(
         book: SharedEpubBook,
-        settings: ReaderSettings = ReaderSettings()
+        settings: ReaderSettings = ReaderSettings(),
+        initialPageIndex: Int = 0,
+        bookmarks: List<ReaderBookmark> = emptyList()
     ): ReaderSessionState {
+        val pages = paginator.paginate(book, settings)
         return ReaderSessionState(
             reader = PaginatedReaderState(
                 book = book,
-                pages = paginator.paginate(book, settings),
+                pages = pages,
+                currentPageIndex = initialPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)),
                 settings = settings
-            )
+            ),
+            bookmarks = bookmarks
+                .filter { it.pageIndex in pages.indices }
+                .distinctBy { it.pageIndex }
+                .sortedBy { it.pageIndex }
         )
     }
 
@@ -97,17 +106,22 @@ class ReaderEngine(
         val results = if (normalized.isBlank()) {
             emptyList()
         } else {
-            state.reader.pages.mapNotNull { page ->
-                val index = page.text.indexOf(normalized, ignoreCase = true)
-                if (index < 0) {
-                    null
-                } else {
-                    ReaderSearchResult(
-                        pageIndex = page.pageIndex,
-                        chapterTitle = page.chapterTitle,
-                        preview = page.text.previewAround(index, normalized.length)
-                    )
+            state.reader.pages.flatMap { page ->
+                val matches = mutableListOf<ReaderSearchResult>()
+                var startIndex = 0
+                while (startIndex < page.text.length) {
+                    val index = page.text.indexOf(normalized, startIndex, ignoreCase = true)
+                    if (index < 0) break
+                    matches +=
+                        ReaderSearchResult(
+                            pageIndex = page.pageIndex,
+                            chapterTitle = page.chapterTitle,
+                            preview = page.text.previewAround(index, normalized.length),
+                            matchIndex = index
+                        )
+                    startIndex = index + normalized.length.coerceAtLeast(1)
                 }
+                matches
             }
         }
         val activeIndex = results.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }
@@ -128,10 +142,7 @@ class ReaderEngine(
         } else {
             0
         }
-        return state.copy(
-            reader = state.reader.copy(currentPageIndex = state.searchResults[nextIndex].pageIndex),
-            activeSearchResultIndex = nextIndex
-        )
+        return goToSearchResult(state, nextIndex)
     }
 
     fun previousSearchResult(state: ReaderSessionState): ReaderSessionState {
@@ -141,9 +152,15 @@ class ReaderEngine(
         } else {
             state.searchResults.lastIndex
         }
+        return goToSearchResult(state, nextIndex)
+    }
+
+    fun goToSearchResult(state: ReaderSessionState, resultIndex: Int): ReaderSessionState {
+        if (state.searchResults.isEmpty()) return state
+        val targetIndex = resultIndex.coerceIn(0, state.searchResults.lastIndex)
         return state.copy(
-            reader = state.reader.copy(currentPageIndex = state.searchResults[nextIndex].pageIndex),
-            activeSearchResultIndex = nextIndex
+            reader = state.reader.copy(currentPageIndex = state.searchResults[targetIndex].pageIndex),
+            activeSearchResultIndex = targetIndex
         )
     }
 }
