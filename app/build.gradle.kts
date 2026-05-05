@@ -151,6 +151,22 @@ android {
         }
     }
 }
+
+kover {
+    reports {
+        filters {
+            excludes {
+                classes(
+                    "*.BuildConfig",
+                    "*.ComposableSingletons*",
+                    "*_Impl",
+                    "*Database_Impl",
+                    "*Dao_Impl"
+                )
+            }
+        }
+    }
+}
 //noinspection UseTomlInstead
 dependencies {
 

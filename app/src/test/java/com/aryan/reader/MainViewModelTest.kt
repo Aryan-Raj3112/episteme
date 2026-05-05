@@ -3,6 +3,7 @@ package com.aryan.reader
 import android.app.Application
 import android.content.SharedPreferences
 import android.content.res.Resources
+import android.net.Uri
 import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -11,6 +12,7 @@ import androidx.work.WorkManager
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingResult
 import com.aryan.reader.data.*
+import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.tts.TtsController
@@ -239,6 +241,51 @@ class MainViewModelTest {
         val state = viewModel.uiState.first { it.isTabsEnabled }
         assertTrue(state.isTabsEnabled)
         verify { mockEditor.putBoolean("tabs_enabled", true) }
+    }
+
+    @Test
+    fun `setRenderMode persists mode without touching saved epub position`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.setRenderMode(RenderMode.PAGINATED)
+
+        val state = viewModel.uiState.first { it.renderMode == RenderMode.PAGINATED }
+        assertEquals(RenderMode.PAGINATED, state.renderMode)
+        verify { mockEditor.putString(KEY_RENDER_MODE, RenderMode.PAGINATED.name) }
+        coVerify(exactly = 0) {
+            anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `saveEpubReadingPosition forwards cfi locator and progress to repository`() = runTest {
+        val uriString = "content://books/one"
+        val uri = mockUri(uriString)
+        val locator = Locator(chapterIndex = 5, blockIndex = 77, charOffset = 14)
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByUri(uriString) } returns RecentFileItem(
+            bookId = "book-1",
+            uriString = uriString,
+            type = FileType.EPUB,
+            displayName = "One.epub",
+            timestamp = 1L
+        )
+        coEvery {
+            anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(any(), any(), any(), any())
+        } just Runs
+
+        viewModel.saveEpubReadingPosition(uri, locator, "/4/2/6:14", 37.25f)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        coVerify {
+            anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(
+                uriString = uriString,
+                locator = locator,
+                cfiForWebView = "/4/2/6:14",
+                progress = 37.25f
+            )
+        }
     }
 
     @Test
@@ -907,6 +954,13 @@ class MainViewModelTest {
         isRecent = isRecent,
         title = title
     )
+
+    private fun mockUri(uriString: String): Uri {
+        return mockk<Uri>().also { uri ->
+            every { uri.toString() } returns uriString
+            every { uri.scheme } returns uriString.substringBefore(":", "")
+        }
+    }
 
     private fun shelfEntity(id: String, name: String) = ShelfEntity(
         id = id,

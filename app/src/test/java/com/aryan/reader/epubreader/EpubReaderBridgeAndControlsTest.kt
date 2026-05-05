@@ -150,6 +150,24 @@ class EpubReaderBridgeAndControlsTest {
     }
 
     @Test
+    fun `cfi bridge preserves full reading position cfi payloads for save and bookmark callbacks`() {
+        val saved = mutableListOf<String>()
+        val bookmark = mutableListOf<String>()
+        val bridge = CfiJsBridge(
+            onCfiReady = { saved.add(it) },
+            onCfiForBookmarkReady = { bookmark.add(it) },
+            onScrollFinishedCallback = {}
+        )
+        val cfi = "/6/4[chapter]!/4/2/8:137"
+
+        bridge.onCfiExtracted(JSONObject().put("cfi", cfi).put("log", JSONArray().put("exact")).toString())
+        bridge.onCfiForBookmarkExtracted(JSONObject().put("cfi", cfi).put("log", JSONArray()).toString())
+
+        assertEquals(listOf(cfi), saved)
+        assertEquals(listOf(cfi), bookmark)
+    }
+
+    @Test
     fun `updateAutoScrollJs emits start and stop commands`() {
         val webView = mockk<WebView>(relaxed = true)
 

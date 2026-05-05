@@ -101,7 +101,7 @@ class SingleFileImporter(private val context: Context) {
 
         try {
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
-                writer.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>${originalBookNameHint}</title>\n")
+                writer.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>${generatedHtmlTitle(originalBookNameHint)}</title>\n")
 
                 if (isCsv) {
                     writer.write("<style>\ntable { border-collapse: collapse; width: 100%; font-family: sans-serif; }\nth, td { border: 1px solid currentColor; padding: 8px; }\n</style>\n")
@@ -511,6 +511,7 @@ class SingleFileImporter(private val context: Context) {
             var inStyle = false
             var inBody = false
             var pageNum = 1
+            val headBuilder = java.lang.StringBuilder()
             val currentChapterBuilder = java.lang.StringBuilder()
 
             var line: String?
@@ -531,19 +532,9 @@ class SingleFileImporter(private val context: Context) {
                 }
 
                 if (!inBody) {
-                    if (trimmed.startsWith("<title", ignoreCase = true)) {
-                        val t = trimmed.substringAfter(">").substringBefore("</title>")
-                        if (t.isNotBlank()) title = t
-                    }
-                    val authorMatch = Regex("<meta[^>]+name=\"author\"[^>]+content=\"([^\"]+)\"").find(
-                        line
-                    )
-                        ?: Regex("<meta[^>]+property=\"article:author\"[^>]+content=\"([^\"]+)\"").find(
-                            line
-                        )
-                    if (authorMatch != null) {
-                        author = authorMatch.groupValues[1]
-                    }
+                    headBuilder.append(line).append('\n')
+                    extractHtmlTitle(headBuilder.toString())?.let { title = it }
+                    extractHtmlAuthor(headBuilder.toString())?.let { author = it }
 
                     if (trimmed.startsWith("<style", ignoreCase = true)) {
                         inStyle = true
@@ -576,7 +567,7 @@ class SingleFileImporter(private val context: Context) {
                     }
 
                     if (trimmed.startsWith("<p") || trimmed.startsWith("<div") ||
-                        trimmed.startsWith("<h") || trimmed.startsWith("<section") ||
+                        trimmed.startsWithHtmlHeadingTag() || trimmed.startsWith("<section") ||
                         trimmed.contains("<page-break>") ||
                         (trimmed.isNotBlank() && !trimmed.startsWith("<") && !trimmed.startsWith("<!"))) {
                         inBody = true
@@ -644,6 +635,54 @@ class SingleFileImporter(private val context: Context) {
         }
 
         return@withContext book
+    }
+
+    private fun String.startsWithHtmlHeadingTag(): Boolean {
+        return length >= 3 &&
+            this[0] == '<' &&
+            this[1].lowercaseChar() == 'h' &&
+            this[2] in '1'..'6'
+    }
+
+    private fun generatedHtmlTitle(originalBookNameHint: String): String {
+        if (!originalBookNameHint.endsWith(".txt", ignoreCase = true)) return originalBookNameHint
+
+        val innerName = originalBookNameHint.dropLast(4)
+        return if (innerName.contains('.') && com.aryan.reader.isCodeOrDataFileName(innerName)) {
+            innerName
+        } else {
+            originalBookNameHint
+        }
+    }
+
+    private fun extractHtmlTitle(line: String): String? {
+        val match = Regex(
+            pattern = "<\\s*title\\b[^>]*>(.*?)<\\s*/\\s*title\\s*>",
+            options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).find(line) ?: return null
+
+        return Jsoup.parse(match.groupValues[1]).text().takeIf { it.isNotBlank() }
+    }
+
+    private fun extractHtmlAuthor(line: String): String? {
+        val metaTag = Regex(
+            pattern = "<\\s*meta\\b[^>]*>",
+            options = setOf(RegexOption.IGNORE_CASE)
+        ).find(line)?.value ?: return null
+
+        val name = Regex(
+            pattern = "\\b(?:name|property)\\s*=\\s*['\"]([^'\"]+)['\"]",
+            options = setOf(RegexOption.IGNORE_CASE)
+        ).find(metaTag)?.groupValues?.get(1) ?: return null
+
+        if (!name.equals("author", ignoreCase = true) && !name.equals("article:author", ignoreCase = true)) {
+            return null
+        }
+
+        return Regex(
+            pattern = "\\bcontent\\s*=\\s*['\"]([^'\"]+)['\"]",
+            options = setOf(RegexOption.IGNORE_CASE)
+        ).find(metaTag)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }
 
     private fun sanitizeHtmlFragment(html: String): String {
