@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -34,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -44,6 +47,7 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import kotlin.math.abs
 
 @Composable
@@ -113,10 +117,19 @@ fun SharedPdfAnnotationOverlay(
     activeStroke: List<PdfPagePoint>,
     canvasSize: IntSize,
     activeStrokeColorArgb: Int = 0xFF1976D2.toInt(),
-    activeStrokeWidth: Float = 2.5f
+    activeStrokeWidth: Float = 2.5f,
+    selectedAnnotationId: String? = null
 ) {
     Canvas(Modifier.fillMaxSize()) {
         annotations.forEach { annotation ->
+            val isSelected = annotation.matchesSelectedAnnotation(selectedAnnotationId)
+            if (isSelected && annotation.kind == PdfAnnotationKind.INK && annotation.points.size > 1) {
+                drawPath(
+                    path = annotation.points.toSharedPdfPath(canvasSize),
+                    color = Color(0xFF1976D2).copy(alpha = 0.32f),
+                    style = Stroke(width = annotation.strokeWidth + 6f, cap = StrokeCap.Round)
+                )
+            }
             when (annotation.kind) {
                 PdfAnnotationKind.HIGHLIGHT -> {
                     val bounds = annotation.bounds ?: return@forEach
@@ -153,6 +166,24 @@ fun SharedPdfAnnotationOverlay(
                     )
                 }
             }
+            if (isSelected) {
+                when (annotation.kind) {
+                    PdfAnnotationKind.HIGHLIGHT,
+                    PdfAnnotationKind.TEXT -> {
+                        val bounds = annotation.bounds ?: return@forEach
+                        drawRect(
+                            color = Color(0xFF1976D2),
+                            topLeft = Offset(bounds.left * canvasSize.width, bounds.top * canvasSize.height),
+                            size = androidx.compose.ui.geometry.Size(
+                                (bounds.right - bounds.left) * canvasSize.width,
+                                (bounds.bottom - bounds.top) * canvasSize.height
+                            ),
+                            style = Stroke(width = 2f)
+                        )
+                    }
+                    PdfAnnotationKind.INK -> Unit
+                }
+            }
         }
         if (activeStroke.size > 1) {
             drawPath(
@@ -169,6 +200,7 @@ fun SharedPdfAnnotationOverlay(
             color = Color(annotation.colorArgb),
             fontSize = annotation.fontSize.sp,
             fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
+            fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
             modifier = Modifier
                 .padding(
                     start = (bounds.left * canvasSize.width).dp,
@@ -178,6 +210,67 @@ fun SharedPdfAnnotationOverlay(
                 .padding(horizontal = 6.dp, vertical = 4.dp)
         )
     }
+}
+
+@Composable
+fun SharedPdfPageNumberOverlay(
+    pageIndex: Int,
+    pageCount: Int,
+    modifier: Modifier = Modifier,
+    isDarkPage: Boolean = false
+) {
+    if (pageCount <= 0 || pageIndex !in 0 until pageCount) return
+    val textColor = if (isDarkPage) Color.White else Color.Black
+    Box(modifier = modifier.fillMaxSize()) {
+        Text(
+            text = "${pageIndex + 1}/$pageCount",
+            color = textColor.copy(alpha = 0.5f),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 12.dp)
+        )
+    }
+}
+
+@Composable
+fun SharedPdfEmbeddedAnnotationOverlay(
+    annotations: List<SharedPdfEmbeddedAnnotation>,
+    canvasSize: IntSize,
+    selectedAnnotationId: String? = null
+) {
+    if (annotations.isEmpty() || canvasSize.width <= 0 || canvasSize.height <= 0) return
+    Canvas(Modifier.fillMaxSize()) {
+        annotations.forEach { annotation ->
+            val bounds = annotation.bounds
+            val isSelected = annotation.id == selectedAnnotationId
+            val color = if (isSelected) Color(0xFF1976D2) else Color(0xFFFF9800)
+            val topLeft = Offset(bounds.left * canvasSize.width, bounds.top * canvasSize.height)
+            val size = androidx.compose.ui.geometry.Size(
+                (bounds.right - bounds.left) * canvasSize.width,
+                (bounds.bottom - bounds.top) * canvasSize.height
+            )
+            drawRect(
+                color = color.copy(alpha = if (isSelected) 0.12f else 0.07f),
+                topLeft = topLeft,
+                size = size
+            )
+            drawRect(
+                color = color,
+                topLeft = topLeft,
+                size = size,
+                style = Stroke(width = if (isSelected) 2.5f else 1.25f)
+            )
+        }
+    }
+}
+
+private fun SharedPdfAnnotation.matchesSelectedAnnotation(selectedAnnotationId: String?): Boolean {
+    if (selectedAnnotationId == null) return false
+    return id == selectedAnnotationId || id.startsWith("${selectedAnnotationId}_line_")
 }
 
 @Composable
@@ -249,6 +342,19 @@ fun SharedPdfAnnotation.sharedPdfHitTest(point: Offset, size: IntSize): Boolean 
             }
         }
     }
+}
+
+fun SharedPdfEmbeddedAnnotation.sharedPdfEmbeddedHitTest(
+    point: Offset,
+    size: IntSize,
+    tolerancePx: Float = 24f
+): Boolean {
+    val rect = bounds
+    val left = (rect.left * size.width) - tolerancePx
+    val top = (rect.top * size.height) - tolerancePx
+    val right = (rect.right * size.width) + tolerancePx
+    val bottom = (rect.bottom * size.height) + tolerancePx
+    return point.x in left..right && point.y in top..bottom
 }
 
 private fun List<PdfPagePoint>.toSharedPdfPath(size: IntSize): Path {

@@ -57,6 +57,78 @@ data class SharedPdfAnnotation(
     val createdAt: Long = 0L
 )
 
+@Serializable
+data class SharedPdfEmbeddedAnnotation(
+    val id: String,
+    val pageIndex: Int,
+    val index: Int,
+    val subtype: Int,
+    val bounds: PdfPageBounds,
+    val contents: String = "",
+    val author: String = "",
+    val name: String = "",
+    val inReplyTo: String = "",
+    val replies: List<SharedPdfEmbeddedAnnotation> = emptyList()
+) {
+    val hasVisibleText: Boolean
+        get() = contents.isNotBlank() || replies.any { it.hasVisibleText }
+}
+
+object SharedPdfEmbeddedAnnotationThreads {
+    fun group(
+        annotations: List<SharedPdfEmbeddedAnnotation>,
+        geometryTolerance: Float = 0.02f
+    ): List<SharedPdfEmbeddedAnnotation> {
+        if (annotations.isEmpty()) return emptyList()
+
+        val byName = annotations
+            .filter { it.name.isNotBlank() }
+            .associateBy { it.name }
+        val childrenByParentId = mutableMapOf<String, MutableList<SharedPdfEmbeddedAnnotation>>()
+        val roots = mutableListOf<SharedPdfEmbeddedAnnotation>()
+
+        annotations.forEach { annotation ->
+            val parent = byName[annotation.inReplyTo]
+            if (parent != null && parent.id != annotation.id) {
+                childrenByParentId.getOrPut(parent.id) { mutableListOf() } += annotation
+            } else {
+                roots += annotation
+            }
+        }
+
+        fun attachReplies(
+            annotation: SharedPdfEmbeddedAnnotation,
+            visitedIds: Set<String> = emptySet()
+        ): SharedPdfEmbeddedAnnotation {
+            if (annotation.id in visitedIds) return annotation.copy(replies = emptyList())
+            val nextVisited = visitedIds + annotation.id
+            val replies = childrenByParentId[annotation.id]
+                .orEmpty()
+                .map { attachReplies(it, nextVisited) }
+            return annotation.copy(replies = annotation.replies + replies)
+        }
+
+        val groupedRoots = mutableListOf<MutableList<SharedPdfEmbeddedAnnotation>>()
+        roots.map { attachReplies(it) }.forEach { annotation ->
+            val group = groupedRoots.firstOrNull { existingGroup ->
+                existingGroup.firstOrNull()?.bounds?.inflatedBy(geometryTolerance)?.intersects(annotation.bounds) == true
+            }
+            if (group == null) {
+                groupedRoots += mutableListOf(annotation)
+            } else {
+                group += annotation
+            }
+        }
+
+        return groupedRoots
+            .mapNotNull { group ->
+                val root = group.firstOrNull() ?: return@mapNotNull null
+                root.copy(replies = root.replies + group.drop(1))
+            }
+            .filter { it.hasVisibleText }
+    }
+}
+
 data class PdfToolConfig(
     val colorArgb: Int,
     val strokeWidth: Float
@@ -117,6 +189,22 @@ object SharedPdfAnnotationSerializer {
             runCatching { json.decodeFromString<List<SharedPdfAnnotation>>(raw) }.getOrDefault(emptyList())
         }
     }
+}
+
+private fun PdfPageBounds.inflatedBy(amount: Float): PdfPageBounds {
+    return PdfPageBounds(
+        left = (left - amount).coerceAtLeast(0f),
+        top = (top - amount).coerceAtLeast(0f),
+        right = (right + amount).coerceAtMost(1f),
+        bottom = (bottom + amount).coerceAtMost(1f)
+    )
+}
+
+private fun PdfPageBounds.intersects(other: PdfPageBounds): Boolean {
+    return left <= other.right &&
+        right >= other.left &&
+        top <= other.bottom &&
+        bottom >= other.top
 }
 
 data class PdfZoomSpec(

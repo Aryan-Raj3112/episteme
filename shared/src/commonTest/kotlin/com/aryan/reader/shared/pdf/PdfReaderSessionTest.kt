@@ -118,6 +118,55 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `bookmark actions toggle and normalize pages`() {
+        val state = SharedPdfReaderState.initial(pageCount = 4)
+            .reduce(
+                SharedPdfReaderAction.BookmarksLoaded(
+                    listOf(
+                        SharedPdfBookmark(pageIndex = 2, label = "Two"),
+                        SharedPdfBookmark(pageIndex = 99, label = "Invalid"),
+                        SharedPdfBookmark(pageIndex = 2, label = "Duplicate")
+                    )
+                )
+            )
+            .reduce(SharedPdfReaderAction.BookmarkToggled(pageIndex = 1, createdAt = 10L))
+            .reduce(SharedPdfReaderAction.BookmarkToggled(pageIndex = 2))
+
+        assertEquals(listOf(1), state.bookmarks.map { it.pageIndex })
+        assertEquals("Page 2", state.bookmarks.single().label)
+    }
+
+    @Test
+    fun `bookmark serializer round trips store and legacy arrays`() {
+        val bookmarks = listOf(
+            SharedPdfBookmark(pageIndex = 0, label = "Start", createdAt = 11L),
+            SharedPdfBookmark(pageIndex = 3, label = "Appendix", createdAt = 22L)
+        )
+
+        assertEquals(bookmarks, SharedPdfBookmarkSerializer.decode(SharedPdfBookmarkSerializer.encode(bookmarks)))
+        assertEquals(
+            listOf(SharedPdfBookmark(pageIndex = 1, label = "Legacy", createdAt = 33L)),
+            SharedPdfBookmarkSerializer.decode("""[{"pageIndex":1,"label":"Legacy","createdAt":33}]""")
+        )
+    }
+
+    @Test
+    fun `annotation selection update and delete are shared`() {
+        val first = annotation("first", pageIndex = 0)
+        val second = annotation("second", pageIndex = 1)
+        val updated = second.copy(text = "changed", colorArgb = 0xFF222222.toInt())
+
+        val state = SharedPdfReaderState.initial(pageCount = 2)
+            .reduce(SharedPdfReaderAction.AnnotationsLoaded(listOf(first, second)))
+            .reduce(SharedPdfReaderAction.AnnotationSelected("second"))
+            .reduce(SharedPdfReaderAction.AnnotationUpdated(updated))
+            .reduce(SharedPdfReaderAction.AnnotationDeleted("second"))
+
+        assertEquals(listOf(first), state.annotations)
+        assertEquals(null, state.selectedAnnotationId)
+    }
+
+    @Test
     fun `search engine finds all case-insensitive matches with previews`() {
         val results = SharedPdfSearchEngine.search(
             pageTexts = listOf("Alpha beta alpha", "nothing", "ALPHA at the end"),
@@ -126,7 +175,25 @@ class PdfReaderSessionTest {
 
         assertEquals(listOf(0, 0, 2), results.map { it.pageIndex })
         assertEquals(listOf(0, 11, 0), results.map { it.matchIndex })
+        assertEquals(listOf(5, 5, 5), results.map { it.matchLength })
         assertTrue(results.first().preview.contains("Alpha"))
+    }
+
+    @Test
+    fun `search index reuses indexed page text and preserves raw match ranges`() {
+        val index = SharedPdfSearchIndex(pageCount = 3)
+        index.putPage(0, "Alpha beta")
+        index.putPage(1, "hello,\nworld appears here")
+        index.putPage(2, "alpha again")
+
+        val punctuationResults = index.search("hello, world")
+        val alphaResults = index.search("alp")
+
+        assertEquals(3, index.indexedPageCount)
+        assertEquals(listOf(1), punctuationResults.map { it.pageIndex })
+        assertEquals(0, punctuationResults.single().matchIndex)
+        assertEquals("hello,\nworld".length, punctuationResults.single().matchLength)
+        assertEquals(listOf(0, 2), alphaResults.map { it.pageIndex })
     }
 
     @Test
