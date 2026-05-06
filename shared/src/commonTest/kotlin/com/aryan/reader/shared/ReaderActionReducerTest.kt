@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
@@ -25,6 +26,9 @@ class ReaderActionReducerTest {
         val previous = pageTwo.reduce(ReaderAction.PreviousPage, engine)
         assertEquals(0, previous.reader.currentPageIndex)
 
+        val pageByNumber = previous.reduce(ReaderAction.GoToPageNumber(2), engine)
+        assertEquals(1, pageByNumber.reader.currentPageIndex)
+
         val lastPage = previous.reduce(ReaderAction.GoToProgress(1f), engine)
         assertEquals(lastPage.reader.pages.lastIndex, lastPage.reader.currentPageIndex)
 
@@ -36,7 +40,7 @@ class ReaderActionReducerTest {
         assertTrue(searched.activeSearchResultIndex >= 0)
 
         val nextSearch = searched.reduce(ReaderAction.NextSearchResult, engine)
-        assertEquals((searched.activeSearchResultIndex + 1) % searched.searchResults.size, nextSearch.activeSearchResultIndex)
+        assertEquals(searched.activeSearchResultIndex + 1, nextSearch.activeSearchResultIndex)
 
         val directSearch = searched.reduce(ReaderAction.GoToSearchResult(0), engine)
         assertEquals(0, directSearch.activeSearchResultIndex)
@@ -46,6 +50,88 @@ class ReaderActionReducerTest {
 
         val unbookmarked = bookmarked.reduce(ReaderAction.ToggleBookmark, engine)
         assertTrue(unbookmarked.bookmarks.isEmpty())
+    }
+
+    @Test
+    fun `search options and search chrome state are owned by shared reducer`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            book = SharedEpubBook(
+                id = "search",
+                fileName = "search.epub",
+                title = "Search",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "one",
+                        title = "One",
+                        plainText = "Alpha alphabet alpha ALPHA"
+                    )
+                )
+            ),
+            settings = compactSettings()
+        )
+
+        val opened = session.reduce(ReaderAction.SearchOpened, engine)
+        val caseSensitive = opened
+            .reduce(ReaderAction.SearchOptionsChanged(ReaderSearchOptions(matchCase = true)), engine)
+            .reduce(ReaderAction.SearchChanged("alpha"), engine)
+        val wholeWords = caseSensitive
+            .reduce(
+                ReaderAction.SearchOptionsChanged(
+                    ReaderSearchOptions(matchCase = true, wholeWords = true)
+                ),
+                engine
+            )
+        val hiddenPanel = wholeWords.reduce(ReaderAction.SearchResultsPanelToggled, engine)
+        val closed = hiddenPanel.reduce(ReaderAction.SearchClosed, engine)
+
+        assertTrue(opened.isSearchActive)
+        assertEquals(2, caseSensitive.searchResults.size)
+        assertEquals(1, wholeWords.searchResults.size)
+        assertEquals(false, hiddenPanel.showSearchResultsPanel)
+        assertEquals("", closed.searchQuery)
+        assertTrue(closed.searchResults.isEmpty())
+    }
+
+    @Test
+    fun `search navigation resumes from page position after page slider moves off a match`() {
+        val engine = ReaderEngine()
+        val book = SharedEpubBook(
+            id = "spaced-search",
+            fileName = "spaced.epub",
+            title = "Spaced",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = buildString {
+                        append("needle\n\n")
+                        repeat(320) { index ->
+                            append("Paragraph ")
+                            append(index)
+                            append(" contains filler words for pagination only.\n\n")
+                        }
+                        append("final needle")
+                    }
+                )
+            )
+        )
+        val session = engine.createSession(book, settings = compactSettings())
+        val searched = session.reduce(ReaderAction.SearchChanged("needle"), engine)
+        val middlePage = searched.reader.pages.indices.first { pageIndex ->
+            searched.searchResults.none { result -> result.pageIndex == pageIndex }
+        }
+
+        val moved = searched.reduce(ReaderAction.GoToPage(middlePage), engine)
+        val next = moved.reduce(ReaderAction.NextSearchResult, engine)
+        val previous = moved.reduce(ReaderAction.PreviousSearchResult, engine)
+
+        assertEquals(2, searched.searchResults.size)
+        assertEquals(-1, moved.activeSearchResultIndex)
+        assertTrue(moved.canGoToPreviousSearchResult)
+        assertTrue(moved.canGoToNextSearchResult)
+        assertEquals(1, next.activeSearchResultIndex)
+        assertEquals(0, previous.activeSearchResultIndex)
     }
 
     @Test
@@ -75,6 +161,8 @@ class ReaderActionReducerTest {
             engine
         )
         assertTrue(dark.reader.settings.darkMode)
+        assertEquals(-16777216L, dark.reader.settings.backgroundColorArgb)
+        assertEquals(-1L, dark.reader.settings.textColorArgb)
     }
 
     @Test

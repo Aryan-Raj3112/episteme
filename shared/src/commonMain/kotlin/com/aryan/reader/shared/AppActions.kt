@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.ReaderSearchOptions
 
 sealed interface LibraryAction {
     data class SearchChanged(val query: String) : LibraryAction
@@ -18,11 +19,16 @@ sealed interface ReaderAction {
     data object NextPage : ReaderAction
     data object PreviousPage : ReaderAction
     data class GoToPage(val pageIndex: Int) : ReaderAction
+    data class GoToPageNumber(val pageNumber: Int) : ReaderAction
     data class GoToProgress(val progress: Float) : ReaderAction
     data class GoToChapter(val chapterIndex: Int) : ReaderAction
     data class GoToLocator(val locator: ReaderLocator) : ReaderAction
     data class GoToSearchResult(val resultIndex: Int) : ReaderAction
     data class SearchChanged(val query: String) : ReaderAction
+    data object SearchOpened : ReaderAction
+    data object SearchClosed : ReaderAction
+    data object SearchResultsPanelToggled : ReaderAction
+    data class SearchOptionsChanged(val options: ReaderSearchOptions) : ReaderAction
     data object NextSearchResult : ReaderAction
     data object PreviousSearchResult : ReaderAction
     data object ToggleBookmark : ReaderAction

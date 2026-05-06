@@ -37,7 +37,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 5
+    private const val SCHEMA_VERSION = 6
 
     private val json = Json {
         prettyPrint = true
@@ -121,6 +121,10 @@ private fun JsonObject.string(name: String): String? {
 
 private fun JsonObject.long(name: String, fallback: Long = 0L): Long {
     return runCatching { this[name]?.jsonPrimitive?.longOrNull }.getOrNull() ?: fallback
+}
+
+private fun JsonObject.nullableLong(name: String): Long? {
+    return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull }.getOrNull()
 }
 
 private fun JsonObject.int(name: String): Int? {
@@ -305,6 +309,7 @@ private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: J
 private fun Float?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Double?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Int?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
+private fun Long?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 
 private fun List<String>.asJsonArray(): JsonArray {
     return JsonArray(map { JsonPrimitive(it) })
@@ -333,7 +338,20 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
         themeId = obj.string("themeId"),
         textureId = obj.string("textureId"),
         textureAlpha = obj.float("textureAlpha") ?: defaults.textureAlpha,
-        customFontPath = obj.string("customFontPath")
+        customFontPath = obj.string("customFontPath"),
+        backgroundColorArgb = obj.nullableLong("backgroundColorArgb"),
+        textColorArgb = obj.nullableLong("textColorArgb"),
+        systemUiMode = obj.string("systemUiMode")
+            ?.let { runCatching { SystemUiMode.valueOf(it) }.getOrNull() }
+            ?: defaults.systemUiMode,
+        pageInfoMode = obj.string("pageInfoMode")
+            ?.let { runCatching { PageInfoMode.valueOf(it) }.getOrNull() }
+            ?: defaults.pageInfoMode,
+        pageInfoPosition = obj.string("pageInfoPosition")
+            ?.let { runCatching { PageInfoPosition.valueOf(it) }.getOrNull() }
+            ?: defaults.pageInfoPosition,
+        seamlessChapterNavigation = obj.boolean("seamlessChapterNavigation", defaults.seamlessChapterNavigation),
+        chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier
     )
 }
 
@@ -442,7 +460,14 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "themeId" to settings.themeId.asJson(),
             "textureId" to settings.textureId.asJson(),
             "textureAlpha" to JsonPrimitive(settings.textureAlpha),
-            "customFontPath" to settings.customFontPath.asJson()
+            "customFontPath" to settings.customFontPath.asJson(),
+            "backgroundColorArgb" to settings.backgroundColorArgb.asJson(),
+            "textColorArgb" to settings.textColorArgb.asJson(),
+            "systemUiMode" to JsonPrimitive(settings.systemUiMode.name),
+            "pageInfoMode" to JsonPrimitive(settings.pageInfoMode.name),
+            "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
+            "seamlessChapterNavigation" to JsonPrimitive(settings.seamlessChapterNavigation),
+            "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier)
         )
     )
 }

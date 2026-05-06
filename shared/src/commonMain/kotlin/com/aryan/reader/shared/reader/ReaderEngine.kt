@@ -15,14 +15,29 @@ data class ReaderSearchResult(
     val pageIndex: Int,
     val chapterTitle: String,
     val preview: String,
-    val matchIndex: Int = 0
+    val matchIndex: Int = 0,
+    val chapterIndex: Int = 0,
+    val locator: ReaderLocator = ReaderLocator(
+        chapterIndex = chapterIndex,
+        pageIndex = pageIndex,
+        startOffset = matchIndex,
+        textQuote = preview
+    )
+)
+
+data class ReaderSearchOptions(
+    val matchCase: Boolean = false,
+    val wholeWords: Boolean = false
 )
 
 data class ReaderSessionState(
     val reader: PaginatedReaderState,
     val bookmarks: List<ReaderBookmark> = emptyList(),
     val highlights: List<UserHighlight> = emptyList(),
+    val isSearchActive: Boolean = false,
+    val showSearchResultsPanel: Boolean = true,
     val searchQuery: String = "",
+    val searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
     val searchResults: List<ReaderSearchResult> = emptyList(),
     val activeSearchResultIndex: Int = -1
 ) {
@@ -31,6 +46,20 @@ data class ReaderSessionState(
 
     val activeSearchResult: ReaderSearchResult?
         get() = searchResults.getOrNull(activeSearchResultIndex)
+
+    val canGoToPreviousSearchResult: Boolean
+        get() = when {
+            activeSearchResultIndex > 0 -> true
+            activeSearchResultIndex >= 0 -> false
+            else -> searchResults.any { it.pageIndex <= reader.currentPageIndex }
+        }
+
+    val canGoToNextSearchResult: Boolean
+        get() = when {
+            activeSearchResultIndex in 0 until searchResults.lastIndex -> true
+            activeSearchResultIndex >= 0 -> false
+            else -> searchResults.any { it.pageIndex >= reader.currentPageIndex }
+        }
 }
 
 class ReaderEngine(
@@ -80,6 +109,10 @@ class ReaderEngine(
         )
     }
 
+    fun goToPageNumber(state: ReaderSessionState, pageNumber: Int): ReaderSessionState {
+        return goToPage(state, pageNumber - 1)
+    }
+
     fun goToProgress(state: ReaderSessionState, progress: Float): ReaderSessionState {
         if (state.reader.pages.isEmpty()) return state
         val target = ((state.reader.pages.lastIndex) * progress.coerceIn(0f, 1f)).toInt()
@@ -101,7 +134,31 @@ class ReaderEngine(
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
-        return state.copy(reader = paginator.repaginate(state.reader, settings))
+        val updated = state.copy(reader = paginator.repaginate(state.reader, settings))
+        return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
+    }
+
+    fun openSearch(state: ReaderSessionState): ReaderSessionState {
+        return state.copy(isSearchActive = true, showSearchResultsPanel = true)
+    }
+
+    fun closeSearch(state: ReaderSessionState): ReaderSessionState {
+        return state.copy(
+            isSearchActive = false,
+            showSearchResultsPanel = true,
+            searchQuery = "",
+            searchResults = emptyList(),
+            activeSearchResultIndex = -1
+        )
+    }
+
+    fun toggleSearchResultsPanel(state: ReaderSessionState): ReaderSessionState {
+        return state.copy(showSearchResultsPanel = !state.showSearchResultsPanel)
+    }
+
+    fun updateSearchOptions(state: ReaderSessionState, options: ReaderSearchOptions): ReaderSessionState {
+        val updated = state.copy(searchOptions = options)
+        return if (updated.searchQuery.isBlank()) updated else search(updated, updated.searchQuery)
     }
 
     fun toggleBookmark(state: ReaderSessionState): ReaderSessionState {
@@ -220,14 +277,23 @@ class ReaderEngine(
                 val matches = mutableListOf<ReaderSearchResult>()
                 var startIndex = 0
                 while (startIndex < page.text.length) {
-                    val index = page.text.indexOf(normalized, startIndex, ignoreCase = true)
+                    val index = page.text.indexOfSearch(normalized, startIndex, state.searchOptions)
                     if (index < 0) break
+                    val endIndex = (index + normalized.length).coerceAtMost(page.text.length)
                     matches +=
                         ReaderSearchResult(
                             pageIndex = page.pageIndex,
                             chapterTitle = page.chapterTitle,
                             preview = page.text.previewAround(index, normalized.length),
-                            matchIndex = index
+                            matchIndex = index,
+                            chapterIndex = page.chapterIndex,
+                            locator = ReaderLocator(
+                                chapterIndex = page.chapterIndex,
+                                pageIndex = page.pageIndex,
+                                startOffset = page.startOffset + index,
+                                endOffset = page.startOffset + endIndex,
+                                textQuote = page.text.substring(index, endIndex)
+                            )
                         )
                     startIndex = index + normalized.length.coerceAtLeast(1)
                 }
@@ -238,38 +304,44 @@ class ReaderEngine(
             .takeIf { it >= 0 }
             ?: if (results.isNotEmpty()) 0 else -1
         val updated = state.copy(
+            isSearchActive = state.isSearchActive || normalized.isNotBlank(),
+            showSearchResultsPanel = state.showSearchResultsPanel || normalized.isNotBlank(),
             searchQuery = query,
             searchResults = results,
             activeSearchResultIndex = activeIndex
         )
-        return updated.activeSearchResult?.let { goToPage(updated, it.pageIndex) } ?: updated
+        return updated.activeSearchResult?.let { goToSearchResult(updated, activeIndex) } ?: updated
     }
 
     fun nextSearchResult(state: ReaderSessionState): ReaderSessionState {
-        if (state.searchResults.isEmpty()) return state
-        val nextIndex = if (state.activeSearchResultIndex < state.searchResults.lastIndex) {
+        val targetIndex = if (state.activeSearchResultIndex >= 0) {
             state.activeSearchResultIndex + 1
         } else {
-            0
+            state.searchResults.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }
         }
-        return goToSearchResult(state, nextIndex)
+        if (targetIndex !in state.searchResults.indices) return state
+        return goToSearchResult(state, targetIndex)
     }
 
     fun previousSearchResult(state: ReaderSessionState): ReaderSessionState {
-        if (state.searchResults.isEmpty()) return state
-        val nextIndex = if (state.activeSearchResultIndex > 0) {
+        val targetIndex = if (state.activeSearchResultIndex >= 0) {
             state.activeSearchResultIndex - 1
         } else {
-            state.searchResults.lastIndex
+            state.searchResults.indexOfLast { it.pageIndex <= state.reader.currentPageIndex }
         }
-        return goToSearchResult(state, nextIndex)
+        if (targetIndex !in state.searchResults.indices) return state
+        return goToSearchResult(state, targetIndex)
     }
 
     fun goToSearchResult(state: ReaderSessionState, resultIndex: Int): ReaderSessionState {
         if (state.searchResults.isEmpty()) return state
         val targetIndex = resultIndex.coerceIn(0, state.searchResults.lastIndex)
+        val result = state.searchResults[targetIndex]
+        val targetPage = state.reader.pages.indexOfFirst { page -> page.contains(result.locator) }
+            .takeIf { it >= 0 }
+            ?: result.pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
         return state.copy(
-            reader = state.reader.copy(currentPageIndex = state.searchResults[targetIndex].pageIndex),
+            reader = state.reader.copy(currentPageIndex = targetPage),
             activeSearchResultIndex = targetIndex
         )
     }
@@ -312,4 +384,20 @@ private fun String.previewAround(index: Int, queryLength: Int): String {
     val prefix = if (start > 0) "..." else ""
     val suffix = if (end < length) "..." else ""
     return prefix + substring(start, end).replace(Regex("\\s+"), " ").trim() + suffix
+}
+
+private fun String.indexOfSearch(query: String, startIndex: Int, options: ReaderSearchOptions): Int {
+    var index = indexOf(query, startIndex, ignoreCase = !options.matchCase)
+    if (!options.wholeWords) return index
+    while (index >= 0) {
+        val before = getOrNull(index - 1)
+        val after = getOrNull(index + query.length)
+        if (!before.isWordChar() && !after.isWordChar()) return index
+        index = indexOf(query, index + query.length.coerceAtLeast(1), ignoreCase = !options.matchCase)
+    }
+    return -1
+}
+
+private fun Char?.isWordChar(): Boolean {
+    return this != null && (isLetterOrDigit() || this == '_')
 }

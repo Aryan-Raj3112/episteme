@@ -26,6 +26,8 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -50,19 +52,28 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.PageInfoMode
+import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import kotlin.math.roundToInt
 
 @Composable
 fun SharedScreenScaffold(
@@ -100,12 +111,15 @@ fun SharedReaderScreen(
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
+    onPickCustomFont: (() -> String?)? = null,
     readerContent: @Composable ColumnScope.(html: String, background: Color) -> Unit
 ) {
     val readerState = session.reader
     val page = readerState.currentPage
     val settings = readerState.settings
-    val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+    val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+    val pageInfoText = readerState.pageInfoText()
+    val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
     }
@@ -127,8 +141,12 @@ fun SharedReaderScreen(
                     bottom = false,
                     isBookmarked = session.currentBookmark != null,
                     isDarkMode = settings.darkMode,
+                    isSearchActive = session.isSearchActive,
                     onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
-                    onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) }
+                    onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
+                    onToggleSearch = {
+                        dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
+                    }
                 )
             }
         }
@@ -165,6 +183,11 @@ fun SharedReaderScreen(
                             true
                         }
 
+                        event.isCtrlPressed && event.key == Key.F -> {
+                            dispatch(ReaderAction.SearchOpened)
+                            true
+                        }
+
                         else -> false
                     }
                 }
@@ -175,8 +198,11 @@ fun SharedReaderScreen(
                 onSearchChange = { dispatch(ReaderAction.SearchChanged(it)) },
                 onPreviousSearchResult = { dispatch(ReaderAction.PreviousSearchResult) },
                 onNextSearchResult = { dispatch(ReaderAction.NextSearchResult) },
+                onOpenSearch = { dispatch(ReaderAction.SearchOpened) },
+                onCloseSearch = { dispatch(ReaderAction.SearchClosed) },
+                onToggleSearchResultsPanel = { dispatch(ReaderAction.SearchResultsPanelToggled) },
+                onSearchOptionsChange = { dispatch(ReaderAction.SearchOptionsChanged(it)) },
                 onGoToChapter = { dispatch(ReaderAction.GoToChapter(it)) },
-                onGoToPage = { dispatch(ReaderAction.GoToPage(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.GoToLocator(it.locator)) },
                 onGoToSearchResult = { dispatch(ReaderAction.GoToSearchResult(it)) },
                 toolbarPreferences = toolbarPreferences,
@@ -199,14 +225,20 @@ fun SharedReaderScreen(
                 SharedReaderSettingsBar(
                     session = session,
                     toolbarPreferences = toolbarPreferences,
+                    onPickCustomFont = onPickCustomFont,
                     onReaderAction = { action -> dispatch(action) }
                 )
+
+                if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
+                    Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
 
                 val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
                     ReaderHtmlDocumentBuilder.verticalDocument(
                         book = readerState.book,
                         settings = settings,
                         searchQuery = session.searchQuery,
+                        searchOptions = session.searchOptions,
                         highlights = session.highlights,
                         highlightPalette = highlightPalette
                     )
@@ -216,6 +248,7 @@ fun SharedReaderScreen(
                         page = page,
                         settings = settings,
                         searchQuery = session.searchQuery,
+                        searchOptions = session.searchOptions,
                         highlights = session.highlights,
                         highlightPalette = highlightPalette
                     )
@@ -224,10 +257,9 @@ fun SharedReaderScreen(
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (toolbarPreferences.isVisible(ReaderTool.SLIDER)) {
-                        Slider(
-                            value = if (readerState.pages.size <= 1) 0f else readerState.currentPageIndex.toFloat() / readerState.pages.lastIndex,
-                            onValueChange = { progress -> dispatch(ReaderAction.GoToProgress(progress)) },
-                            enabled = readerState.pages.size > 1
+                        SharedReaderPageSlider(
+                            session = session,
+                            onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) }
                         )
                     }
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -239,13 +271,9 @@ fun SharedReaderScreen(
                             Text("Previous")
                         }
                         Spacer(Modifier.weight(1f))
-                        Text(
-                            if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                                "Continuous mode - page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
-                            } else {
-                                "Page ${readerState.currentPageIndex + 1} of ${readerState.pages.size}"
-                            }
-                        )
+                        if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
+                            Text(pageInfoText)
+                        }
                         Spacer(Modifier.weight(1f))
                         Button(
                             enabled = readerState.canGoNext,
@@ -260,8 +288,12 @@ fun SharedReaderScreen(
                         bottom = true,
                         isBookmarked = session.currentBookmark != null,
                         isDarkMode = settings.darkMode,
+                        isSearchActive = session.isSearchActive,
                         onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
-                        onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) }
+                        onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
+                        onToggleSearch = {
+                            dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
+                        }
                     )
                 }
             }
@@ -275,8 +307,10 @@ private fun SharedReaderQuickActions(
     bottom: Boolean,
     isBookmarked: Boolean,
     isDarkMode: Boolean,
+    isSearchActive: Boolean,
     onToggleBookmark: () -> Unit,
-    onToggleTheme: () -> Unit
+    onToggleTheme: () -> Unit,
+    onToggleSearch: () -> Unit
 ) {
     val tools = toolbarPreferences.orderedVisibleTools()
         .filter { it.supportsDesktopQuickAction && toolbarPreferences.isBottom(it) == bottom }
@@ -296,6 +330,13 @@ private fun SharedReaderQuickActions(
                     Text(if (isDarkMode) "Light" else "Dark")
                 }
 
+                ReaderTool.SEARCH -> IconButton(onClick = onToggleSearch) {
+                    Icon(
+                        if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                        contentDescription = "Search"
+                    )
+                }
+
                 else -> Unit
             }
         }
@@ -306,6 +347,7 @@ private fun SharedReaderQuickActions(
 private fun SharedReaderSettingsBar(
     session: ReaderSessionState,
     toolbarPreferences: ReaderToolbarPreferences,
+    onPickCustomFont: (() -> String?)?,
     onReaderAction: (ReaderAction) -> Unit
 ) {
     val settings = session.reader.settings
@@ -352,10 +394,33 @@ private fun SharedReaderSettingsBar(
             )
             listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
                 FilterChip(
-                    selected = settings.fontFamily == family,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = family))) },
+                    selected = settings.customFontPath == null && settings.fontFamily == family,
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = family, customFontPath = null))) },
                     label = { Text(family) }
                 )
+            }
+            TextButton(
+                enabled = onPickCustomFont != null,
+                onClick = {
+                    onPickCustomFont?.invoke()?.takeIf { it.isNotBlank() }?.let { path ->
+                        onReaderAction(
+                            ReaderAction.SettingsChanged(
+                                settings.copy(fontFamily = path.substringAfterLast('/').substringAfterLast('\\'), customFontPath = path)
+                            )
+                        )
+                    }
+                }
+            ) {
+                Text("Custom font")
+            }
+            if (settings.customFontPath != null) {
+                TextButton(
+                    onClick = {
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = "Default", customFontPath = null)))
+                    }
+                ) {
+                    Text("Clear custom")
+                }
             }
         }
 
@@ -449,6 +514,184 @@ private fun SharedReaderSettingsBar(
             )
         }
         }
+
+        if (toolbarPreferences.isVisible(ReaderTool.THEME)) {
+            SharedReaderThemeControls(settings = settings, onReaderAction = onReaderAction)
+        }
+
+        if (toolbarPreferences.isVisible(ReaderTool.VISUAL_OPTIONS)) {
+            SharedReaderVisualOptionsControls(settings = settings, onReaderAction = onReaderAction)
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderThemeControls(
+    settings: ReaderSettings,
+    onReaderAction: (ReaderAction) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            Text("Theme")
+            BuiltInReaderThemes.forEach { theme ->
+                val swatch = if (theme.backgroundColor == Color.Unspecified) {
+                    MaterialTheme.colorScheme.surface
+                } else {
+                    theme.backgroundColor
+                }
+                FilterChip(
+                    selected = settings.themeId == theme.id || (settings.themeId == null && theme.id == "system"),
+                    onClick = { onReaderAction(ReaderAction.ThemeChanged(theme)) },
+                    label = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .width(12.dp)
+                                    .height(12.dp)
+                                    .background(swatch, RoundedCornerShape(2.dp))
+                            )
+                            Text(theme.name)
+                        }
+                    }
+                )
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            Text("Texture")
+            FilterChip(
+                selected = settings.textureId == null,
+                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = null))) },
+                label = { Text("None") }
+            )
+            ReaderTexture.entries.forEach { texture ->
+                FilterChip(
+                    selected = settings.textureId == texture.id,
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = texture.id))) },
+                    label = { Text(texture.displayName) }
+                )
+            }
+            Text("${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%")
+            Slider(
+                value = settings.textureAlpha.coerceIn(0f, 1f),
+                onValueChange = { value -> onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureAlpha = value))) },
+                valueRange = 0f..1f,
+                modifier = Modifier.width(130.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderVisualOptionsControls(
+    settings: ReaderSettings,
+    onReaderAction: (ReaderAction) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            Text("System UI")
+            SystemUiMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = settings.systemUiMode == mode,
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(systemUiMode = mode))) },
+                    label = { Text(mode.title) }
+                )
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            Text("Page info")
+            PageInfoMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = settings.pageInfoMode == mode,
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoMode = mode))) },
+                    label = { Text(mode.title) }
+                )
+            }
+            PageInfoPosition.entries.forEach { position ->
+                FilterChip(
+                    selected = settings.pageInfoPosition == position,
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoPosition = position))) },
+                    label = { Text(position.title) }
+                )
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            FilterChip(
+                selected = settings.seamlessChapterNavigation,
+                onClick = {
+                    onReaderAction(
+                        ReaderAction.SettingsChanged(
+                            settings.copy(seamlessChapterNavigation = !settings.seamlessChapterNavigation)
+                        )
+                    )
+                },
+                label = { Text("Seamless chapters") }
+            )
+            Text("Pull ${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x")
+            Slider(
+                value = settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2.0f),
+                onValueChange = { value ->
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(chapterTurnDragMultiplier = value)))
+                },
+                valueRange = 0.5f..2.0f,
+                modifier = Modifier.width(140.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderPageSlider(
+    session: ReaderSessionState,
+    onPageNumberChange: (Int) -> Unit
+) {
+    val readerState = session.reader
+    val totalPages = readerState.pages.size.coerceAtLeast(1)
+    val sliderMax = totalPages.coerceAtLeast(2)
+    val currentPageNumber = (readerState.currentPageIndex + 1).coerceIn(1, totalPages)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("$currentPageNumber / $totalPages")
+        Slider(
+            value = currentPageNumber.toFloat(),
+            onValueChange = { value -> onPageNumberChange(value.roundToInt().coerceIn(1, totalPages)) },
+            valueRange = 1f..sliderMax.toFloat(),
+            steps = if (totalPages > 2) totalPages - 2 else 0,
+            enabled = totalPages > 1,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            readerState.currentPage?.chapterTitle.orEmpty(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(180.dp)
+        )
     }
 }
 
@@ -458,8 +701,11 @@ private fun SharedReaderSidebar(
     onSearchChange: (String) -> Unit,
     onPreviousSearchResult: () -> Unit,
     onNextSearchResult: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onToggleSearchResultsPanel: () -> Unit,
+    onSearchOptionsChange: (ReaderSearchOptions) -> Unit,
     onGoToChapter: (Int) -> Unit,
-    onGoToPage: (Int) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
     onGoToSearchResult: (Int) -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
@@ -568,16 +814,48 @@ private fun SharedReaderSidebar(
             if (toolbarPreferences.isVisible(ReaderTool.SEARCH)) {
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        TextButton(onClick = if (session.isSearchActive) onCloseSearch else onOpenSearch) {
+                            Text(if (session.isSearchActive) "Close" else "Open")
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = session.searchQuery,
-                        onValueChange = onSearchChange,
-                        label = { Text("Find in book") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (session.searchQuery.isNotBlank() && session.searchResults.isNotEmpty()) {
+                    if (session.isSearchActive) {
+                        OutlinedTextField(
+                            value = session.searchQuery,
+                            onValueChange = onSearchChange,
+                            label = { Text("Find in book") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
+                        ) {
+                            FilterChip(
+                                selected = session.searchOptions.matchCase,
+                                onClick = {
+                                    onSearchOptionsChange(session.searchOptions.copy(matchCase = !session.searchOptions.matchCase))
+                                },
+                                label = { Text("Match case") }
+                            )
+                            FilterChip(
+                                selected = session.searchOptions.wholeWords,
+                                onClick = {
+                                    onSearchOptionsChange(session.searchOptions.copy(wholeWords = !session.searchOptions.wholeWords))
+                                },
+                                label = { Text("Whole words") }
+                            )
+                            if (session.searchQuery.isNotBlank()) {
+                                TextButton(onClick = onToggleSearchResultsPanel) {
+                                    Text(if (session.showSearchResultsPanel) "Hide results" else "Show results")
+                                }
+                            }
+                        }
+                    }
+                    if (session.isSearchActive && session.searchQuery.isNotBlank() && session.searchResults.isNotEmpty()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -588,23 +866,29 @@ private fun SharedReaderSidebar(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = onPreviousSearchResult) {
+                            TextButton(
+                                enabled = session.canGoToPreviousSearchResult,
+                                onClick = onPreviousSearchResult
+                            ) {
                                 Text("Prev")
                             }
-                            TextButton(onClick = onNextSearchResult) {
+                            TextButton(
+                                enabled = session.canGoToNextSearchResult,
+                                onClick = onNextSearchResult
+                            ) {
                                 Text("Next")
                             }
                         }
                     }
                 }
-                if (session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
+                if (session.isSearchActive && session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
                     item {
                         Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                } else {
+                } else if (session.isSearchActive && session.showSearchResultsPanel) {
                     itemsIndexed(
                         session.searchResults,
-                        key = { _, result -> "${result.pageIndex}_${result.matchIndex}_${result.preview}" }
+                        key = { _, result -> "${result.pageIndex}_${result.matchIndex}_${result.chapterIndex}_${result.preview}" }
                     ) { index, result ->
                         Surface(
                             color = MaterialTheme.colorScheme.surface,
@@ -810,4 +1094,21 @@ private fun ReaderToolbarPreferences.moveTool(tool: ReaderTool, delta: Int): Rea
     val moved = order.removeAt(index)
     order.add(target, moved)
     return withToolOrder(order)
+}
+
+private fun Long.toComposeColor(): Color {
+    val value = this and 0xFFFFFFFFL
+    val alpha = ((value shr 24) and 0xFF) / 255f
+    val red = ((value shr 16) and 0xFF) / 255f
+    val green = ((value shr 8) and 0xFF) / 255f
+    val blue = (value and 0xFF) / 255f
+    return Color(red = red, green = green, blue = blue, alpha = alpha.takeIf { it > 0f } ?: 1f)
+}
+
+private fun PaginatedReaderState.pageInfoText(): String {
+    val current = currentPageIndex + 1
+    val total = pages.size.coerceAtLeast(1)
+    val mode = if (settings.readingMode == ReaderReadingMode.VERTICAL) "Continuous" else "Page"
+    val chapter = currentPage?.chapterTitle?.takeIf { it.isNotBlank() }
+    return listOfNotNull("$mode $current of $total", chapter).joinToString(" - ")
 }

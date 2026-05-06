@@ -21,7 +21,7 @@ enum class ReaderTool(
     SLIDER("slider", "Navigation Slider", "Bottom Bar"),
     TOC("toc", "Sidebar", "Bottom Bar"),
     FORMAT("format", "Text Formatting", "Bottom Bar"),
-    SEARCH("search", "Search", "Bottom Bar"),
+    SEARCH("search", "Search", "Bottom Bar", supportsDesktopQuickAction = true),
     AI_FEATURES("ai_features", "AI Features", "Bottom Bar"),
     TTS_CONTROLS("tts_controls", "TTS Controls", "Bottom Bar"),
     READING_MODE("reading_mode", "Reading Mode", "Overflow Menu"),

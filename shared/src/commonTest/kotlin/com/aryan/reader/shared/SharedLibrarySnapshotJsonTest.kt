@@ -47,7 +47,14 @@ class SharedLibrarySnapshotJsonTest {
                         themeId = "sepia",
                         textureId = "paper",
                         textureAlpha = 0.35f,
-                        customFontPath = "C:/Fonts/custom.ttf"
+                        customFontPath = "C:/Fonts/custom.ttf",
+                        backgroundColorArgb = -328967L,
+                        textColorArgb = -12345678L,
+                        systemUiMode = SystemUiMode.HIDDEN,
+                        pageInfoMode = PageInfoMode.SYNC,
+                        pageInfoPosition = PageInfoPosition.TOP,
+                        seamlessChapterNavigation = false,
+                        chapterTurnDragMultiplier = 1.6f
                     ),
                     readerBookmarks = listOf(
                         ReaderBookmark(

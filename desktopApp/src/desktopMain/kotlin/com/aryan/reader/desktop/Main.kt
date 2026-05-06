@@ -790,6 +790,9 @@ private fun EpistemeDesktopApp() {
                                     onHighlightPaletteChange = { palette ->
                                         updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
                                     },
+                                    onPickCustomFont = {
+                                        chooseFontFile()?.toURI()?.toString()
+                                    },
                                     webViewRuntimeState = webViewRuntimeState
                                 )
                             }
@@ -2176,6 +2179,7 @@ private fun ReaderScreen(
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
+    onPickCustomFont: () -> String?,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     SharedReaderScreen(
@@ -2187,7 +2191,8 @@ private fun ReaderScreen(
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         highlightPalette = highlightPalette,
-        onHighlightPaletteChange = onHighlightPaletteChange
+        onHighlightPaletteChange = onHighlightPaletteChange,
+        onPickCustomFont = onPickCustomFont
     ) { html, background ->
         Surface(
             color = background,
@@ -2692,6 +2697,16 @@ private fun chooseEpubFile(): File? {
 private fun choosePdfFile(): File? {
     val dialog = FileDialog(null as Frame?, "Open PDF", FileDialog.LOAD).apply {
         file = "*.pdf"
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
+private fun chooseFontFile(): File? {
+    val dialog = FileDialog(null as Frame?, "Choose font", FileDialog.LOAD).apply {
+        file = "*.ttf;*.otf"
         isVisible = true
     }
     val directory = dialog.directory ?: return null

@@ -14,6 +14,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
 import kotlin.math.roundToInt
 
@@ -22,11 +23,12 @@ object ReaderHtmlDocumentBuilder {
         book: SharedEpubBook,
         settings: ReaderSettings,
         searchQuery: String = "",
+        searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
-            val chapterHtml = chapter.toHtml(searchQuery).applyUserHighlights(highlights.filter { it.chapterIndex == index })
+            val chapterHtml = chapter.toHtml(searchQuery, searchOptions).applyUserHighlights(highlights.filter { it.chapterIndex == index })
             """
             <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}">
               <h1 class="chapter-title">${chapter.title.escapeHtml()}</h1>
@@ -42,6 +44,7 @@ object ReaderHtmlDocumentBuilder {
             bookCss = book.css.values.joinToString("\n"),
             body = body,
             searchQuery = searchQuery,
+            searchOptions = searchOptions,
             highlightPalette = highlightPalette
         )
     }
@@ -51,6 +54,7 @@ object ReaderHtmlDocumentBuilder {
         page: ReaderPage?,
         settings: ReaderSettings,
         searchQuery: String = "",
+        searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
     ): String {
@@ -64,8 +68,8 @@ object ReaderHtmlDocumentBuilder {
                     start in page.startOffset..page.endOffset
                 }
                 .takeIf { it.isNotEmpty() }
-                ?.joinToString("\n") { it.toHtml(searchQuery) }
-                ?: page.text.textToParagraphHtml(searchQuery)
+                ?.joinToString("\n") { it.toHtml(searchQuery, searchOptions) }
+                ?: page.text.textToParagraphHtml(searchQuery, searchOptions)
             val pageHtml = blocks.applyUserHighlights(highlights.filter { it.belongsToPage(page) })
             """
             <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
@@ -82,6 +86,7 @@ object ReaderHtmlDocumentBuilder {
             bookCss = book.css.values.joinToString("\n"),
             body = body,
             searchQuery = searchQuery,
+            searchOptions = searchOptions,
             highlightPalette = highlightPalette
         )
     }
@@ -92,22 +97,35 @@ object ReaderHtmlDocumentBuilder {
         bookCss: String,
         body: String,
         searchQuery: String,
+        searchOptions: ReaderSearchOptions,
         highlightPalette: ReaderHighlightPalette
     ): String {
-        val bg = if (settings.darkMode) "#171A17" else "#FFFCF5"
-        val fg = if (settings.darkMode) "#E7E3D8" else "#24231F"
+        val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
+        val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
         val highlight = if (settings.darkMode) "#675A00" else "#FFE36E"
         val align = when (settings.textAlign) {
             SharedReaderTextAlign.START -> "left"
             SharedReaderTextAlign.JUSTIFY -> "justify"
             SharedReaderTextAlign.CENTER -> "center"
         }
-        val family = when (settings.fontFamily) {
-            "Serif" -> "Georgia, 'Times New Roman', serif"
-            "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
-            "Mono" -> "'Roboto Mono', Consolas, monospace"
-            else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        val customFontUrl = settings.customFontPath?.takeIf { it.isNotBlank() }?.toCssFontUrl()
+        val customFontCss = customFontUrl?.let {
+            "@font-face { font-family: 'ReaderCustomFont'; src: url('$it'); font-display: swap; }"
+        }.orEmpty()
+        val family = if (customFontUrl != null) {
+            "'ReaderCustomFont', Georgia, 'Times New Roman', serif"
+        } else {
+            when (settings.fontFamily) {
+                "Serif" -> "Georgia, 'Times New Roman', serif"
+                "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
+                "Mono" -> "'Roboto Mono', Consolas, monospace"
+                else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            }
         }
+        val textureOverlayCss = settings.textureId
+            ?.takeIf { settings.textureAlpha > 0.01f }
+            ?.toTextureOverlayCss(settings.textureAlpha, settings.darkMode)
+            .orEmpty()
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
         }
@@ -120,6 +138,7 @@ object ReaderHtmlDocumentBuilder {
               <title>${title.escapeHtml()}</title>
               <style>
                 $bookCss
+                $customFontCss
                 :root {
                   color-scheme: ${if (settings.darkMode) "dark" else "light"};
                   --reader-bg: $bg;
@@ -149,11 +168,15 @@ object ReaderHtmlDocumentBuilder {
                   box-sizing: border-box;
                   padding: var(--reader-margin-y) var(--reader-margin-x);
                   overflow-wrap: anywhere;
+                  position: relative;
                 }
+                $textureOverlayCss
                 .chapter, .page {
                   max-width: var(--reader-page-width);
                   margin: 0 auto 48px;
                   text-align: var(--reader-align);
+                  position: relative;
+                  z-index: 1;
                 }
                 .chapter-title {
                   text-align: left;
@@ -379,52 +402,124 @@ object ReaderHtmlDocumentBuilder {
         """.trimIndent()
     }
 
-    private fun SharedEpubChapter.toHtml(searchQuery: String): String {
+    private fun SharedEpubChapter.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         htmlContent.takeIf { it.isNotBlank() }?.let { return it }
         semanticBlocks.takeIf { it.isNotEmpty() }?.let { blocks ->
-            return blocks.joinToString("\n") { it.toHtml(searchQuery) }
+            return blocks.joinToString("\n") { it.toHtml(searchQuery, searchOptions) }
         }
-        return plainText.textToParagraphHtml(searchQuery)
+        return plainText.textToParagraphHtml(searchQuery, searchOptions)
     }
 
-    private fun SemanticBlock.toHtml(searchQuery: String): String {
+    private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         return when (this) {
-            is SemanticHeader -> "<h${level.coerceIn(1, 6)}>${text.highlightAndEscape(searchQuery)}</h${level.coerceIn(1, 6)}>"
-            is SemanticParagraph -> "<p>${text.highlightAndEscape(searchQuery)}</p>"
-            is SemanticListItem -> "<li>${text.highlightAndEscape(searchQuery)}</li>"
+            is SemanticHeader -> "<h${level.coerceIn(1, 6)}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
+            is SemanticParagraph -> "<p>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticListItem -> "<li>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
             is SemanticList -> {
                 val tag = if (isOrdered) "ol" else "ul"
-                "<$tag>${items.joinToString("") { it.toHtml(searchQuery) }}</$tag>"
+                "<$tag>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
             }
             is SemanticImage -> "<figure><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"></figure>"
-            is SemanticMath -> svgContent ?: "<pre>${altText.orEmpty().highlightAndEscape(searchQuery)}</pre>"
+            is SemanticMath -> svgContent ?: "<pre>${altText.orEmpty().highlightAndEscape(searchQuery, searchOptions)}</pre>"
             is SemanticSpacer -> if (isExplicitLineBreak) "<br>" else "<div style=\"height:1em\"></div>"
             is SemanticTable -> rows.joinToString("", "<table><tbody>", "</tbody></table>") { row ->
                 row.joinToString("", "<tr>", "</tr>") { cell ->
                     val tag = if (cell.isHeader) "th" else "td"
-                    "<$tag colspan=\"${cell.colspan.coerceAtLeast(1)}\">${cell.content.joinToString("") { it.toHtml(searchQuery) }}</$tag>"
+                    "<$tag colspan=\"${cell.colspan.coerceAtLeast(1)}\">${cell.content.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
                 }
             }
-            is SemanticFlexContainer -> children.joinToString("", "<div>", "</div>") { it.toHtml(searchQuery) }
-            is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery) }
-            is SemanticTextBlock -> "<p>${text.highlightAndEscape(searchQuery)}</p>"
+            is SemanticFlexContainer -> children.joinToString("", "<div>", "</div>") { it.toHtml(searchQuery, searchOptions) }
+            is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery, searchOptions) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery, searchOptions) }
+            is SemanticTextBlock -> "<p>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
         }
     }
 
-    private fun String.textToParagraphHtml(searchQuery: String): String {
+    private fun String.textToParagraphHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         return split(Regex("\\n\\s*\\n"))
             .filter { it.isNotBlank() }
-            .joinToString("\n") { "<p>${it.trim().highlightAndEscape(searchQuery)}</p>" }
+            .joinToString("\n") { "<p>${it.trim().highlightAndEscape(searchQuery, searchOptions)}</p>" }
             .ifBlank { "<p></p>" }
     }
 
-    private fun String.highlightAndEscape(searchQuery: String): String {
+    private fun String.highlightAndEscape(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         val escaped = escapeHtml()
         val query = searchQuery.trim()
-        if (query.length < 2) return escaped
-        return escaped.replace(Regex(Regex.escape(query.escapeHtml()), RegexOption.IGNORE_CASE)) {
-            "<span class=\"reader-highlight\">${it.value}</span>"
+        if (query.isEmpty()) return escaped
+        val escapedQuery = Regex.escape(query.escapeHtml())
+        val pattern = if (searchOptions.wholeWords) {
+            "(^|[^A-Za-z0-9_])($escapedQuery)(?=$|[^A-Za-z0-9_])"
+        } else {
+            "($escapedQuery)"
         }
+        val options: Set<RegexOption> = if (searchOptions.matchCase) emptySet() else setOf(RegexOption.IGNORE_CASE)
+        return escaped.replace(Regex(pattern, options)) {
+            val leading = if (searchOptions.wholeWords) it.groupValues[1] else ""
+            val value = if (searchOptions.wholeWords) it.groupValues[2] else it.groupValues[1]
+            "$leading<span class=\"reader-highlight\">$value</span>"
+        }
+    }
+
+    private fun Long.toCssColor(): String {
+        val value = this and 0xFFFFFFFFL
+        val red = ((value shr 16) and 0xFF).toString(16).padStart(2, '0')
+        val green = ((value shr 8) and 0xFF).toString(16).padStart(2, '0')
+        val blue = (value and 0xFF).toString(16).padStart(2, '0')
+        return "#$red$green$blue"
+    }
+
+    private fun String.toCssFontUrl(): String {
+        val trimmed = trim()
+        val normalizedInput = trimmed.replace("\\", "/")
+        val withScheme = when {
+            normalizedInput.startsWith("file:///") -> normalizedInput
+            normalizedInput.startsWith("file:/") -> "file:///" + normalizedInput.removePrefix("file:/")
+            normalizedInput.contains("://") -> normalizedInput
+            normalizedInput.matches(Regex("^[A-Za-z]:/.*")) -> "file:///$normalizedInput"
+            else -> normalizedInput
+        }
+        return withScheme
+            .replace(" ", "%20")
+            .replace("'", "%27")
+            .replace(")", "%29")
+            .replace("(", "%28")
+    }
+
+    private fun String.toTextureOverlayCss(alpha: Float, darkMode: Boolean): String {
+        val texture = when (this) {
+            ReaderTexture.NATURAL_WHITE.id,
+            ReaderTexture.PAPER.id -> "radial-gradient(circle at 20% 30%, rgba(0,0,0,.09) 0 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.22), rgba(0,0,0,.04))"
+            ReaderTexture.NATURAL_BLACK.id,
+            ReaderTexture.SLATE.id -> "radial-gradient(circle at 20% 30%, rgba(255,255,255,.12) 0 1px, transparent 1px), linear-gradient(120deg, rgba(255,255,255,.08), rgba(0,0,0,.18))"
+            ReaderTexture.LIGHT_VENEER.id,
+            ReaderTexture.RETINA_WOOD.id -> "repeating-linear-gradient(90deg, rgba(120,76,32,.10) 0 3px, rgba(255,255,255,.09) 3px 7px)"
+            ReaderTexture.GREY_WASH.id -> "repeating-linear-gradient(135deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,.08) 2px 5px)"
+            ReaderTexture.CLASSY_FABRIC.id,
+            ReaderTexture.CANVAS.id -> "repeating-linear-gradient(0deg, rgba(255,255,255,.08) 0 1px, transparent 1px 4px), repeating-linear-gradient(90deg, rgba(0,0,0,.08) 0 1px, transparent 1px 4px)"
+            ReaderTexture.RETRO_INTRO.id,
+            ReaderTexture.EINK.id -> "radial-gradient(circle, rgba(0,0,0,.12) 0 1px, transparent 1px)"
+            else -> "linear-gradient(135deg, rgba(255,255,255,.08), rgba(0,0,0,.08))"
+        }
+        val size = when (this) {
+            ReaderTexture.EINK.id,
+            ReaderTexture.RETRO_INTRO.id,
+            ReaderTexture.PAPER.id,
+            ReaderTexture.NATURAL_WHITE.id,
+            ReaderTexture.NATURAL_BLACK.id -> "7px 7px, 100% 100%"
+            else -> "auto"
+        }
+        return """
+                body::before {
+                  content: "";
+                  position: fixed;
+                  inset: 0;
+                  pointer-events: none;
+                  background-image: $texture;
+                  background-size: $size;
+                  opacity: ${alpha.coerceIn(0f, 1f)};
+                  mix-blend-mode: ${if (darkMode) "screen" else "multiply"};
+                  z-index: 0;
+                }
+        """.trimIndent()
     }
 
     private fun String.applyUserHighlights(highlights: List<UserHighlight>): String {
