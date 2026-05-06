@@ -13,6 +13,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.UserHighlight
 import kotlin.math.roundToInt
 
@@ -21,14 +22,17 @@ object ReaderHtmlDocumentBuilder {
         book: SharedEpubBook,
         settings: ReaderSettings,
         searchQuery: String = "",
-        highlights: List<UserHighlight> = emptyList()
+        highlights: List<UserHighlight> = emptyList(),
+        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
             val chapterHtml = chapter.toHtml(searchQuery).applyUserHighlights(highlights.filter { it.chapterIndex == index })
             """
-            <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index">
+            <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}">
               <h1 class="chapter-title">${chapter.title.escapeHtml()}</h1>
-              $chapterHtml
+              <div class="reader-content" data-reader-content-start="0">
+                $chapterHtml
+              </div>
             </section>
             """.trimIndent()
         }.joinToString("\n")
@@ -37,7 +41,8 @@ object ReaderHtmlDocumentBuilder {
             settings = settings,
             bookCss = book.css.values.joinToString("\n"),
             body = body,
-            searchQuery = searchQuery
+            searchQuery = searchQuery,
+            highlightPalette = highlightPalette
         )
     }
 
@@ -46,7 +51,8 @@ object ReaderHtmlDocumentBuilder {
         page: ReaderPage?,
         settings: ReaderSettings,
         searchQuery: String = "",
-        highlights: List<UserHighlight> = emptyList()
+        highlights: List<UserHighlight> = emptyList(),
+        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
@@ -62,9 +68,11 @@ object ReaderHtmlDocumentBuilder {
                 ?: page.text.textToParagraphHtml(searchQuery)
             val pageHtml = blocks.applyUserHighlights(highlights.filter { it.belongsToPage(page) })
             """
-            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}">
+            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
               <h1 class="chapter-title">${page.chapterTitle.escapeHtml()}</h1>
-              $pageHtml
+              <div class="reader-content" data-reader-content-start="${page.startOffset}">
+                $pageHtml
+              </div>
             </section>
             """.trimIndent()
         }
@@ -73,7 +81,8 @@ object ReaderHtmlDocumentBuilder {
             settings = settings,
             bookCss = book.css.values.joinToString("\n"),
             body = body,
-            searchQuery = searchQuery
+            searchQuery = searchQuery,
+            highlightPalette = highlightPalette
         )
     }
 
@@ -82,7 +91,8 @@ object ReaderHtmlDocumentBuilder {
         settings: ReaderSettings,
         bookCss: String,
         body: String,
-        searchQuery: String
+        searchQuery: String,
+        highlightPalette: ReaderHighlightPalette
     ): String {
         val bg = if (settings.darkMode) "#171A17" else "#FFFCF5"
         val fg = if (settings.darkMode) "#E7E3D8" else "#24231F"
@@ -97,6 +107,9 @@ object ReaderHtmlDocumentBuilder {
             "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
             "Mono" -> "'Roboto Mono', Consolas, monospace"
             else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        }
+        val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
+            """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
         }
         return """
             <!doctype html>
@@ -182,6 +195,8 @@ object ReaderHtmlDocumentBuilder {
                   display: none;
                   gap: 4px;
                   align-items: center;
+                  flex-wrap: wrap;
+                  max-width: min(560px, calc(100vw - 16px));
                   padding: 4px;
                   border-radius: 8px;
                   background: color-mix(in srgb, var(--reader-bg) 92%, var(--reader-fg));
@@ -207,7 +222,7 @@ object ReaderHtmlDocumentBuilder {
               $body
               <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
                 <button type="button" data-action="copy">Copy</button>
-                <button type="button" data-action="highlight">Highlight</button>
+                $highlightButtons
                 <button type="button" data-action="find">Find</button>
                 <button type="button" data-action="translate">Translate</button>
                 <button type="button" data-action="clear">Clear</button>
@@ -260,26 +275,61 @@ object ReaderHtmlDocumentBuilder {
                     document.execCommand('copy');
                     document.body.removeChild(textarea);
                   }
-                  function highlightRange() {
+                  function selectionOffsetsWithin(host, range) {
+                    var before = range.cloneRange();
+                    before.selectNodeContents(host);
+                    try {
+                      before.setEnd(range.startContainer, range.startOffset);
+                    } catch (error) {
+                      return { start: null, end: null };
+                    }
+                    var rawText = range.toString();
+                    var leadingWhitespace = rawText.length - rawText.replace(/^\s+/, '').length;
+                    var selectedText = rawText.trim();
+                    var start = before.toString().length + leadingWhitespace;
+                    return { start: start, end: start + selectedText.length };
+                  }
+                  function highlightRange(colorId) {
                     if (!restoreRange()) return;
                     var selection = window.getSelection();
                     if (!selection || selection.rangeCount === 0) return;
                     var range = selection.getRangeAt(0);
                     var marker = document.createElement('mark');
-                    marker.className = 'reader-user-highlight user-highlight-yellow';
+                    marker.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
                     var container = range.commonAncestorContainer;
                     if (container && container.nodeType !== 1) container = container.parentElement;
-                    var readerHost = container && container.closest ? container.closest('[data-reader-chapter-index]') : null;
+                    var contentHost = container && container.closest ? container.closest('.reader-content') : null;
+                    var readerHost = contentHost && contentHost.closest
+                      ? contentHost.closest('[data-reader-chapter-index]')
+                      : (container && container.closest ? container.closest('[data-reader-chapter-index]') : null);
                     var chapterIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10) : 0;
+                    var chapterId = readerHost ? readerHost.getAttribute('data-reader-chapter-id') : null;
                     var pageIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-page-index') || '-1', 10) : -1;
-                    var cfi = 'desktop:' + chapterIndex + ':' + pageIndex + ':' + Date.now() + ':' + Math.random().toString(36).slice(2);
+                    var offsetHost = contentHost || readerHost;
+                    var fallbackStart = readerHost ? readerHost.getAttribute('data-reader-page-start') : '0';
+                    var pageStart = offsetHost ? parseInt(offsetHost.getAttribute('data-reader-content-start') || fallbackStart || '0', 10) : 0;
+                    var offsets = offsetHost ? selectionOffsetsWithin(offsetHost, range) : { start: null, end: null };
+                    var startOffset = offsets.start === null ? null : pageStart + offsets.start;
+                    var endOffset = offsets.end === null ? null : pageStart + offsets.end;
                     var text = selection.toString().trim();
+                    var cfi = startOffset === null || endOffset === null
+                      ? 'desktop:' + chapterIndex + ':' + pageIndex + ':' + Date.now()
+                      : 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
                     if (window.kmpJsBridge && text.length > 0) {
                       window.kmpJsBridge.callNative('readerHighlightCreated', JSON.stringify({
                         cfi: cfi,
                         text: text,
-                        colorId: 'yellow',
-                        chapterIndex: chapterIndex
+                        colorId: colorId || 'yellow',
+                        chapterIndex: chapterIndex,
+                        locator: {
+                          chapterIndex: chapterIndex,
+                          chapterId: chapterId,
+                          pageIndex: pageIndex >= 0 ? pageIndex : null,
+                          startOffset: startOffset,
+                          endOffset: endOffset,
+                          textQuote: text,
+                          cfi: cfi
+                        }
                       }));
                     }
                     try {
@@ -303,7 +353,7 @@ object ReaderHtmlDocumentBuilder {
                       return;
                     }
                     if (action === 'copy') copyText(text);
-                    if (action === 'highlight') highlightRange();
+                    if (action === 'highlight') highlightRange(event.target.getAttribute('data-color-id') || 'yellow');
                     if (action === 'find') window.find(text);
                     if (action === 'translate') window.open('https://translate.google.com/?sl=auto&tl=en&text=' + encodeURIComponent(text) + '&op=translate', '_blank');
                     if (action === 'clear') {
@@ -387,7 +437,15 @@ object ReaderHtmlDocumentBuilder {
     }
 
     private fun UserHighlight.belongsToPage(page: ReaderPage): Boolean {
-        if (chapterIndex != page.chapterIndex) return false
+        val normalizedLocator = locator.withFallbacks(chapterIndex = chapterIndex, cfi = cfi, textQuote = text)
+        val locatorChapterIndex = normalizedLocator.chapterIndex ?: chapterIndex
+        if (locatorChapterIndex != page.chapterIndex) return false
+        if (normalizedLocator.hasTextRange) {
+            val start = normalizedLocator.startOffset ?: return false
+            val end = normalizedLocator.endOffset ?: start
+            return start <= page.endOffset && end >= page.startOffset
+        }
+        normalizedLocator.pageIndex?.let { return it == page.pageIndex }
         val prefix = "desktop:${page.chapterIndex}:"
         val desktopPageIndex = cfi
             .takeIf { it.startsWith(prefix) }

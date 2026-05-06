@@ -16,7 +16,16 @@ class EpubAnnotationSerializerTest {
                 text = "A marked sentence",
                 color = HighlightColor.BLUE,
                 chapterIndex = 2,
-                note = "Important"
+                note = "Important",
+                locator = ReaderLocator(
+                    chapterIndex = 2,
+                    chapterId = "chapter-2",
+                    pageIndex = 5,
+                    startOffset = 120,
+                    endOffset = 137,
+                    textQuote = "A marked sentence",
+                    cfi = "epubcfi(/6/2!/4/2)"
+                )
             )
         )
 
@@ -30,6 +39,8 @@ class EpubAnnotationSerializerTest {
         assertEquals(highlights, decoded)
         assertEquals(HighlightColor.YELLOW, legacyDecoded.single().color)
         assertEquals(null, legacyDecoded.single().note)
+        assertEquals(1, legacyDecoded.single().locator.chapterIndex)
+        assertEquals("legacy", legacyDecoded.single().locator.cfi)
         assertTrue(legacyDecoded.single().id.startsWith("highlight_"))
     }
 
@@ -42,7 +53,15 @@ class EpubAnnotationSerializerTest {
             snippet = "A useful bookmark",
             pageInChapter = 3,
             totalPagesInChapter = 9,
-            chapterIndex = 1
+            chapterIndex = 1,
+            locator = ReaderLocator(
+                chapterIndex = 1,
+                pageIndex = 2,
+                startOffset = 80,
+                endOffset = 110,
+                textQuote = "A useful bookmark",
+                cfi = "epubcfi(/6/4!/4/8)"
+            )
         )
 
         val decoded = EpubAnnotationSerializer.parseBookmarksJson(
@@ -91,5 +110,54 @@ class EpubAnnotationSerializerTest {
         assertEquals("Updated", highlights.first().text)
         assertEquals(HighlightColor.GREEN, highlights.first().color)
         assertNotEquals(initialId, highlights.last().id)
+    }
+
+    @Test
+    fun `processAndAddHighlight matches shared locator ranges when cfi changes`() {
+        val highlights = mutableListOf<UserHighlight>()
+        val locator = ReaderLocator(
+            chapterIndex = 0,
+            pageIndex = 3,
+            startOffset = 42,
+            endOffset = 58,
+            textQuote = "Stable quote",
+            cfi = "desktop:0:42:58"
+        )
+
+        EpubAnnotationSerializer.processAndAddHighlight(
+            newCfi = "desktop:0:42:58",
+            newText = "Stable quote",
+            newColor = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            currentList = highlights,
+            locator = locator
+        )
+        val initialId = highlights.single().id
+
+        EpubAnnotationSerializer.processAndAddHighlight(
+            newCfi = "changed-cfi",
+            newText = "Stable quote updated",
+            newColor = HighlightColor.BLUE,
+            chapterIndex = 0,
+            currentList = highlights,
+            locator = locator.copy(cfi = "changed-cfi", textQuote = "Stable quote updated")
+        )
+
+        assertEquals(1, highlights.size)
+        assertEquals(initialId, highlights.single().id)
+        assertEquals(HighlightColor.BLUE, highlights.single().color)
+        assertEquals(42, highlights.single().locator.startOffset)
+    }
+
+    @Test
+    fun `legacy desktop cfi values hydrate shared locators`() {
+        val oldDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:123456:abc")
+        val rangedDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:40:55")
+
+        assertEquals(2, oldDesktopLocator.chapterIndex)
+        assertEquals(7, oldDesktopLocator.pageIndex)
+        assertEquals(2, rangedDesktopLocator.chapterIndex)
+        assertEquals(40, rangedDesktopLocator.startOffset)
+        assertEquals(55, rangedDesktopLocator.endOffset)
     }
 }

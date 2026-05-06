@@ -111,7 +111,9 @@ import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
+import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.SharedFileCapabilities
@@ -266,7 +268,8 @@ private fun EpistemeDesktopApp() {
             pinnedLibraryBookIds = initialLibrarySnapshot.pinnedLibraryBookIds,
             useStrictFileFilter = initialLibrarySnapshot.useStrictFileFilter,
             appThemeMode = initialLibrarySnapshot.appThemeMode,
-            readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences
+            readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
+            readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette
         )
         mutableStateOf(
             libraryProjector.project(
@@ -330,7 +333,8 @@ private fun EpistemeDesktopApp() {
                         pinnedLibraryBookIds = projected.pinnedLibraryBookIds,
                         useStrictFileFilter = projected.useStrictFileFilter,
                         appThemeMode = projected.appThemeMode,
-                        readerToolbarPreferences = projected.readerToolbarPreferences
+                        readerToolbarPreferences = projected.readerToolbarPreferences,
+                        readerHighlightPalette = projected.readerHighlightPalette
                     )
                 )
             }
@@ -781,6 +785,10 @@ private fun EpistemeDesktopApp() {
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
+                                    },
+                                    highlightPalette = state.readerHighlightPalette,
+                                    onHighlightPaletteChange = { palette ->
+                                        updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
                                     },
                                     webViewRuntimeState = webViewRuntimeState
                                 )
@@ -2166,6 +2174,8 @@ private fun ReaderScreen(
     onOpenPdf: () -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    highlightPalette: ReaderHighlightPalette,
+    onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     SharedReaderScreen(
@@ -2175,7 +2185,9 @@ private fun ReaderScreen(
         onOpenEpub = onOpenEpub,
         onOpenPdf = onOpenPdf,
         toolbarPreferences = toolbarPreferences,
-        onToolbarPreferencesChange = onToolbarPreferencesChange
+        onToolbarPreferencesChange = onToolbarPreferencesChange,
+        highlightPalette = highlightPalette,
+        onHighlightPaletteChange = onHighlightPaletteChange
     ) { html, background ->
         Surface(
             color = background,
@@ -2188,15 +2200,7 @@ private fun ReaderScreen(
                 DesktopEpubWebView(
                     html = html,
                     onHighlightCreated = { highlight ->
-                        val highlights = session.highlights.toMutableList()
-                        EpubAnnotationSerializer.processAndAddHighlight(
-                            newCfi = highlight.cfi,
-                            newText = highlight.text,
-                            newColor = highlight.color,
-                            chapterIndex = highlight.chapterIndex,
-                            currentList = highlights
-                        )
-                        onSessionChange(session.copy(highlights = highlights))
+                        onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
                     modifier = Modifier.fillMaxSize()
                 )

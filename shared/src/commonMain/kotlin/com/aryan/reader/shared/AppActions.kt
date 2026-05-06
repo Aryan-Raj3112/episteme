@@ -20,15 +20,28 @@ sealed interface ReaderAction {
     data class GoToPage(val pageIndex: Int) : ReaderAction
     data class GoToProgress(val progress: Float) : ReaderAction
     data class GoToChapter(val chapterIndex: Int) : ReaderAction
+    data class GoToLocator(val locator: ReaderLocator) : ReaderAction
     data class GoToSearchResult(val resultIndex: Int) : ReaderAction
     data class SearchChanged(val query: String) : ReaderAction
     data object NextSearchResult : ReaderAction
     data object PreviousSearchResult : ReaderAction
     data object ToggleBookmark : ReaderAction
+    data class ToggleBookmarkAtLocator(
+        val locator: ReaderLocator,
+        val title: String? = null,
+        val preview: String? = null
+    ) : ReaderAction
     data class SettingsChanged(val settings: ReaderSettings) : ReaderAction
     data class RenderModeChanged(val renderMode: RenderMode) : ReaderAction
     data class ThemeChanged(val theme: ReaderTheme) : ReaderAction
     data class FormatChanged(val settings: FormatSettings) : ReaderAction
+    data class HighlightCreated(val highlight: UserHighlight) : ReaderAction
+    data class HighlightUpdated(
+        val highlightId: String,
+        val color: HighlightColor? = null,
+        val note: String? = null
+    ) : ReaderAction
+    data class HighlightDeleted(val highlightId: String) : ReaderAction
 }
 
 sealed interface AppAction {
@@ -49,4 +62,5 @@ sealed interface AppAction {
     data class ReaderToolVisibilityChanged(val tool: ReaderTool, val hidden: Boolean) : AppAction
     data class ReaderToolPlacementChanged(val tool: ReaderTool, val bottom: Boolean) : AppAction
     data class ReaderToolOrderChanged(val toolOrder: List<ReaderTool>) : AppAction
+    data class ReaderHighlightPaletteChanged(val palette: ReaderHighlightPalette) : AppAction
 }

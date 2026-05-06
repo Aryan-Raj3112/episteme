@@ -112,6 +112,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.ReaderToolOrderChanged -> copy(
             readerToolbarPreferences = readerToolbarPreferences.withToolOrder(action.toolOrder)
         )
+        is AppAction.ReaderHighlightPaletteChanged -> copy(
+            readerHighlightPalette = action.palette.sanitized()
+        )
     }
 }
 
@@ -122,11 +125,18 @@ fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine):
         is ReaderAction.GoToPage -> readerEngine.goToPage(this, action.pageIndex)
         is ReaderAction.GoToProgress -> readerEngine.goToProgress(this, action.progress)
         is ReaderAction.GoToChapter -> readerEngine.goToChapter(this, action.chapterIndex)
+        is ReaderAction.GoToLocator -> readerEngine.goToLocator(this, action.locator)
         is ReaderAction.GoToSearchResult -> readerEngine.goToSearchResult(this, action.resultIndex)
         is ReaderAction.SearchChanged -> readerEngine.search(this, action.query)
         ReaderAction.NextSearchResult -> readerEngine.nextSearchResult(this)
         ReaderAction.PreviousSearchResult -> readerEngine.previousSearchResult(this)
         ReaderAction.ToggleBookmark -> readerEngine.toggleBookmark(this)
+        is ReaderAction.ToggleBookmarkAtLocator -> readerEngine.toggleBookmarkAtLocator(
+            state = this,
+            locator = action.locator,
+            chapterTitle = action.title,
+            preview = action.preview
+        )
         is ReaderAction.SettingsChanged -> readerEngine.updateSettings(this, action.settings)
         is ReaderAction.RenderModeChanged -> readerEngine.updateSettings(
             this,
@@ -134,5 +144,13 @@ fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine):
         )
         is ReaderAction.ThemeChanged -> readerEngine.updateSettings(this, action.theme.toReaderSettings(reader.settings))
         is ReaderAction.FormatChanged -> readerEngine.updateSettings(this, action.settings.toReaderSettings(reader.settings))
+        is ReaderAction.HighlightCreated -> readerEngine.upsertHighlight(this, action.highlight)
+        is ReaderAction.HighlightUpdated -> readerEngine.updateHighlight(
+            state = this,
+            highlightId = action.highlightId,
+            color = action.color,
+            note = action.note
+        )
+        is ReaderAction.HighlightDeleted -> readerEngine.deleteHighlight(this, action.highlightId)
     }
 }

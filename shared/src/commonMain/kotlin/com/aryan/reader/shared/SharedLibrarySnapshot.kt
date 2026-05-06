@@ -32,11 +32,12 @@ data class SharedLibrarySnapshot(
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val useStrictFileFilter: Boolean = false,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences()
+    val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
+    val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 4
+    private const val SCHEMA_VERSION = 5
 
     private val json = Json {
         prettyPrint = true
@@ -71,7 +72,11 @@ object SharedLibrarySnapshotJson {
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderToolbarPreferencesOrNull()
-                ?: ReaderToolbarPreferences()
+                ?: ReaderToolbarPreferences(),
+            readerHighlightPalette = root["readerHighlightPalette"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderHighlightPaletteOrNull()
+                ?: ReaderHighlightPalette()
         )
     }
 
@@ -92,7 +97,8 @@ object SharedLibrarySnapshotJson {
                 "pinnedLibraryBookIds" to snapshot.pinnedLibraryBookIds.toList().asJsonArray(),
                 "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
                 "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name),
-                "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject()
+                "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
+                "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject()
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)
@@ -346,13 +352,29 @@ private fun JsonElement.asReaderToolbarPreferencesOrNull(): ReaderToolbarPrefere
     ).sanitized()
 }
 
+private fun JsonElement.asReaderHighlightPaletteOrNull(): ReaderHighlightPalette? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val colors = obj.stringArray("colorIds")
+        .mapNotNull { colorId -> HighlightColor.entries.firstOrNull { it.id == colorId || it.name == colorId } }
+    return ReaderHighlightPalette(colors = colors).sanitized()
+}
+
 private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val pageIndex = obj.int("pageIndex") ?: return null
     return ReaderBookmark(
         id = obj.string("id") ?: return null,
-        pageIndex = obj.int("pageIndex") ?: return null,
+        pageIndex = pageIndex,
         chapterTitle = obj.string("chapterTitle") ?: "",
-        preview = obj.string("preview") ?: ""
+        preview = obj.string("preview") ?: "",
+        locator = obj["locator"]
+            ?.takeUnless { it is JsonNull }
+            ?.asReaderLocatorOrNull()
+            ?.withFallbacks(pageIndex = pageIndex, textQuote = obj.string("preview") ?: "")
+            ?: ReaderLocator(
+                pageIndex = pageIndex,
+                textQuote = obj.string("preview") ?: ""
+            )
     )
 }
 
@@ -370,7 +392,34 @@ private fun JsonElement.asReaderHighlightOrNull(): UserHighlight? {
         text = text,
         color = color,
         chapterIndex = chapterIndex,
-        note = obj.string("note")?.takeIf { it.isNotBlank() }
+        note = obj.string("note")?.takeIf { it.isNotBlank() },
+        locator = obj["locator"]
+            ?.takeUnless { it is JsonNull }
+            ?.asReaderLocatorOrNull()
+            ?.withFallbacks(
+                chapterIndex = chapterIndex,
+                cfi = cfi,
+                textQuote = text
+            )
+            ?: ReaderLocator.fromLegacy(
+                chapterIndex = chapterIndex,
+                cfi = cfi,
+                textQuote = text
+            )
+    )
+}
+
+private fun JsonElement.asReaderLocatorOrNull(): ReaderLocator? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return ReaderLocator(
+        chapterIndex = obj.int("chapterIndex"),
+        chapterId = obj.string("chapterId"),
+        href = obj.string("href"),
+        pageIndex = obj.int("pageIndex"),
+        startOffset = obj.int("startOffset"),
+        endOffset = obj.int("endOffset"),
+        textQuote = obj.string("textQuote"),
+        cfi = obj.string("cfi")
     )
 }
 
@@ -409,13 +458,22 @@ private fun ReaderToolbarPreferences.toJsonObject(): JsonObject {
     )
 }
 
+private fun ReaderHighlightPalette.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "colorIds" to sanitized().colors.map { it.id }.asJsonArray()
+        )
+    )
+}
+
 private fun ReaderBookmark.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
             "id" to JsonPrimitive(id),
             "pageIndex" to JsonPrimitive(pageIndex),
             "chapterTitle" to JsonPrimitive(chapterTitle),
-            "preview" to JsonPrimitive(preview)
+            "preview" to JsonPrimitive(preview),
+            "locator" to locator.toJsonObject()
         )
     )
 }
@@ -428,7 +486,23 @@ private fun UserHighlight.toJsonObject(): JsonObject {
             "text" to JsonPrimitive(text),
             "colorId" to JsonPrimitive(color.id),
             "chapterIndex" to JsonPrimitive(chapterIndex),
-            "note" to note.asJson()
+            "note" to note.asJson(),
+            "locator" to locator.toJsonObject()
         )
+    )
+}
+
+private fun ReaderLocator.toJsonObject(): JsonObject {
+    return JsonObject(
+        buildMap {
+            chapterIndex?.let { put("chapterIndex", JsonPrimitive(it)) }
+            chapterId?.let { put("chapterId", JsonPrimitive(it)) }
+            href?.let { put("href", JsonPrimitive(it)) }
+            pageIndex?.let { put("pageIndex", JsonPrimitive(it)) }
+            startOffset?.let { put("startOffset", JsonPrimitive(it)) }
+            endOffset?.let { put("endOffset", JsonPrimitive(it)) }
+            textQuote?.let { put("textQuote", JsonPrimitive(it)) }
+            cfi?.let { put("cfi", JsonPrimitive(it)) }
+        }
     )
 }

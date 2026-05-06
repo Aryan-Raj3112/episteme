@@ -63,16 +63,36 @@ object EpubAnnotationSerializer {
         newText: String,
         newColor: HighlightColor,
         chapterIndex: Int,
-        currentList: MutableList<UserHighlight>
+        currentList: MutableList<UserHighlight>,
+        locator: ReaderLocator = ReaderLocator.fromLegacy(
+            chapterIndex = chapterIndex,
+            cfi = newCfi,
+            textQuote = newText
+        )
     ): String {
+        val normalizedLocator = locator.withFallbacks(
+            chapterIndex = chapterIndex,
+            cfi = newCfi,
+            textQuote = newText
+        )
         val exactMatchIndex = currentList.indexOfFirst {
-            it.chapterIndex == chapterIndex && it.cfi == newCfi
+            it.chapterIndex == chapterIndex &&
+                (it.cfi == newCfi || it.locator.sameLocation(normalizedLocator))
         }
 
         if (exactMatchIndex != -1) {
             val existing = currentList[exactMatchIndex]
-            currentList[exactMatchIndex] = existing.copy(color = newColor, text = newText)
-            return existing.cfi
+            currentList[exactMatchIndex] = existing.copy(
+                cfi = newCfi,
+                color = newColor,
+                text = newText,
+                locator = existing.locator.copy(cfi = newCfi, textQuote = newText).withFallbacks(
+                    chapterIndex = chapterIndex,
+                    cfi = newCfi,
+                    textQuote = newText
+                )
+            )
+            return newCfi
         }
 
         currentList.add(
@@ -82,7 +102,8 @@ object EpubAnnotationSerializer {
                 text = newText,
                 color = newColor,
                 chapterIndex = chapterIndex,
-                note = null
+                note = null,
+                locator = normalizedLocator
             )
         )
         return newCfi
@@ -106,6 +127,7 @@ object EpubAnnotationSerializer {
                 pageInChapter?.let { put("pageInChapter", JsonPrimitive(it)) }
                 totalPagesInChapter?.let { put("totalPagesInChapter", JsonPrimitive(it)) }
                 put("chapterIndex", JsonPrimitive(chapterIndex))
+                put("locator", locator.toJsonObject())
             }
         )
     }
@@ -122,7 +144,22 @@ object EpubAnnotationSerializer {
             snippet = string("snippet") ?: "",
             pageInChapter = int("pageInChapter"),
             totalPagesInChapter = int("totalPagesInChapter"),
-            chapterIndex = chapterIndex
+            chapterIndex = chapterIndex,
+            locator = this["locator"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderLocatorOrNull()
+                ?.withFallbacks(
+                    chapterIndex = chapterIndex,
+                    cfi = cfi,
+                    pageIndex = int("pageInChapter")?.minus(1),
+                    textQuote = string("snippet") ?: ""
+                )
+                ?: ReaderLocator.fromLegacy(
+                    chapterIndex = chapterIndex,
+                    cfi = cfi,
+                    pageIndex = int("pageInChapter")?.minus(1),
+                    textQuote = string("snippet") ?: ""
+                )
         )
     }
 
@@ -139,7 +176,20 @@ object EpubAnnotationSerializer {
             text = text,
             color = color,
             chapterIndex = chapterIndex,
-            note = note
+            note = note,
+            locator = this["locator"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderLocatorOrNull()
+                ?.withFallbacks(
+                    chapterIndex = chapterIndex,
+                    cfi = cfi,
+                    textQuote = text
+                )
+                ?: ReaderLocator.fromLegacy(
+                    chapterIndex = chapterIndex,
+                    cfi = cfi,
+                    textQuote = text
+                )
         )
     }
 
@@ -151,8 +201,38 @@ object EpubAnnotationSerializer {
                 "text" to JsonPrimitive(text),
                 "colorId" to JsonPrimitive(color.id),
                 "chapterIndex" to JsonPrimitive(chapterIndex),
-                "note" to (note ?: "").asJson()
+                "note" to (note ?: "").asJson(),
+                "locator" to locator.toJsonObject()
             )
+        )
+    }
+
+    private fun ReaderLocator.toJsonObject(): JsonObject {
+        return JsonObject(
+            buildMap {
+                chapterIndex?.let { put("chapterIndex", JsonPrimitive(it)) }
+                chapterId?.let { put("chapterId", JsonPrimitive(it)) }
+                href?.let { put("href", JsonPrimitive(it)) }
+                pageIndex?.let { put("pageIndex", JsonPrimitive(it)) }
+                startOffset?.let { put("startOffset", JsonPrimitive(it)) }
+                endOffset?.let { put("endOffset", JsonPrimitive(it)) }
+                textQuote?.let { put("textQuote", JsonPrimitive(it)) }
+                cfi?.let { put("cfi", JsonPrimitive(it)) }
+            }
+        )
+    }
+
+    private fun JsonElement.asReaderLocatorOrNull(): ReaderLocator? {
+        val obj = runCatching { jsonObject }.getOrNull() ?: return null
+        return ReaderLocator(
+            chapterIndex = obj.int("chapterIndex"),
+            chapterId = obj.string("chapterId"),
+            href = obj.string("href"),
+            pageIndex = obj.int("pageIndex"),
+            startOffset = obj.int("startOffset"),
+            endOffset = obj.int("endOffset"),
+            textQuote = obj.string("textQuote"),
+            cfi = obj.string("cfi")
         )
     }
 

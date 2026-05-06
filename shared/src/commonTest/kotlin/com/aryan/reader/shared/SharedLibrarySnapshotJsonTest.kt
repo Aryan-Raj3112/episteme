@@ -54,17 +54,32 @@ class SharedLibrarySnapshotJsonTest {
                             id = "book_4",
                             pageIndex = 4,
                             chapterTitle = "Chapter",
-                            preview = "A useful paragraph"
+                            preview = "A useful paragraph",
+                            locator = ReaderLocator(
+                                chapterIndex = 0,
+                                pageIndex = 4,
+                                startOffset = 100,
+                                endOffset = 180,
+                                textQuote = "A useful paragraph"
+                            )
                         )
                     ),
                     readerHighlights = listOf(
                         UserHighlight(
                             id = "highlight_1",
-                            cfi = "desktop:0:12",
+                            cfi = "desktop:0:128:144",
                             text = "useful paragraph",
                             color = HighlightColor.YELLOW,
                             chapterIndex = 0,
-                            note = "Remember this"
+                            note = "Remember this",
+                            locator = ReaderLocator(
+                                chapterIndex = 0,
+                                pageIndex = 4,
+                                startOffset = 128,
+                                endOffset = 144,
+                                textQuote = "useful paragraph",
+                                cfi = "desktop:0:128:144"
+                            )
                         )
                     )
                 )
@@ -85,7 +100,10 @@ class SharedLibrarySnapshotJsonTest {
                 hiddenToolIds = setOf(ReaderTool.SEARCH.id),
                 toolOrder = listOf(ReaderTool.BOOKMARK, ReaderTool.THEME, ReaderTool.SEARCH),
                 bottomToolIds = setOf(ReaderTool.BOOKMARK.id)
-            ).sanitized()
+            ).sanitized(),
+            readerHighlightPalette = ReaderHighlightPalette(
+                colors = listOf(HighlightColor.YELLOW, HighlightColor.CYAN)
+            )
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))

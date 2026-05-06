@@ -78,6 +78,46 @@ class ReaderActionReducerTest {
     }
 
     @Test
+    fun `annotation actions use shared locators for navigation and edits`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook(), settings = compactSettings())
+            .reduce(ReaderAction.GoToPage(1), engine)
+        val page = session.reader.currentPage ?: error("Expected current page")
+        val locator = ReaderLocator(
+            chapterIndex = page.chapterIndex,
+            pageIndex = page.pageIndex,
+            startOffset = page.startOffset + 4,
+            endOffset = page.startOffset + 18,
+            textQuote = "shared locator",
+            cfi = "desktop:${page.chapterIndex}:${page.startOffset + 4}:${page.startOffset + 18}"
+        )
+
+        val highlighted = session.reduce(
+            ReaderAction.HighlightCreated(
+                UserHighlight(
+                    id = "highlight-1",
+                    cfi = locator.cfi ?: "desktop",
+                    text = "shared locator",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = page.chapterIndex,
+                    locator = locator
+                )
+            ),
+            engine
+        )
+        val noted = highlighted.reduce(ReaderAction.HighlightUpdated("highlight-1", note = "Keep this"), engine)
+        val recolored = noted.reduce(ReaderAction.HighlightUpdated("highlight-1", color = HighlightColor.GREEN), engine)
+        val jumped = session.reduce(ReaderAction.GoToLocator(locator), engine)
+        val deleted = recolored.reduce(ReaderAction.HighlightDeleted("highlight-1"), engine)
+
+        assertEquals(locator.startOffset, highlighted.highlights.single().locator.startOffset)
+        assertEquals("Keep this", recolored.highlights.single().note)
+        assertEquals(HighlightColor.GREEN, recolored.highlights.single().color)
+        assertEquals(page.pageIndex, jumped.reader.currentPageIndex)
+        assertTrue(deleted.highlights.isEmpty())
+    }
+
+    @Test
     fun `format action maps Android style reader appearance to shared reader settings`() {
         val engine = ReaderEngine()
         val session = engine.createSession(

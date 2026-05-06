@@ -9,7 +9,13 @@ data class EpubBookmark(
     val snippet: String,
     val pageInChapter: Int?,
     val totalPagesInChapter: Int?,
-    val chapterIndex: Int
+    val chapterIndex: Int,
+    val locator: ReaderLocator = ReaderLocator.fromLegacy(
+        chapterIndex = chapterIndex,
+        cfi = cfi,
+        pageIndex = pageInChapter?.minus(1),
+        textQuote = snippet
+    )
 )
 
 enum class HighlightColor(val id: String, val color: Color, val cssClass: String) {
@@ -29,13 +35,133 @@ enum class HighlightColor(val id: String, val color: Color, val cssClass: String
     WHITE("white", Color(0xFFF5F5F5), "user-highlight-white")
 }
 
+data class ReaderLocator(
+    val chapterIndex: Int? = null,
+    val chapterId: String? = null,
+    val href: String? = null,
+    val pageIndex: Int? = null,
+    val startOffset: Int? = null,
+    val endOffset: Int? = null,
+    val textQuote: String? = null,
+    val cfi: String? = null
+) {
+    val hasTextRange: Boolean
+        get() = startOffset != null && endOffset != null && endOffset >= startOffset
+
+    fun withFallbacks(
+        chapterIndex: Int? = null,
+        chapterId: String? = null,
+        href: String? = null,
+        pageIndex: Int? = null,
+        startOffset: Int? = null,
+        endOffset: Int? = null,
+        textQuote: String? = null,
+        cfi: String? = null
+    ): ReaderLocator {
+        return copy(
+            chapterIndex = this.chapterIndex ?: chapterIndex,
+            chapterId = this.chapterId ?: chapterId,
+            href = this.href ?: href,
+            pageIndex = this.pageIndex ?: pageIndex,
+            startOffset = this.startOffset ?: startOffset,
+            endOffset = this.endOffset ?: endOffset,
+            textQuote = this.textQuote ?: textQuote,
+            cfi = this.cfi ?: cfi
+        )
+    }
+
+    fun sameLocation(other: ReaderLocator): Boolean {
+        val sameChapter = chapterIndex == null || other.chapterIndex == null || chapterIndex == other.chapterIndex
+        if (!sameChapter) return false
+
+        if (hasTextRange && other.hasTextRange) {
+            return startOffset == other.startOffset && endOffset == other.endOffset
+        }
+
+        if (pageIndex != null && other.pageIndex != null) {
+            return pageIndex == other.pageIndex
+        }
+
+        return cfi != null && cfi == other.cfi
+    }
+
+    companion object {
+        fun fromLegacy(
+            chapterIndex: Int? = null,
+            cfi: String? = null,
+            pageIndex: Int? = null,
+            textQuote: String? = null
+        ): ReaderLocator {
+            val desktopParts = cfi
+                ?.takeIf { it.startsWith("desktop:") }
+                ?.split(':')
+                .orEmpty()
+            val parsedChapterIndex = desktopParts.getOrNull(1)?.toIntOrNull()
+            val parsedStartOffset = if (desktopParts.size == 4) desktopParts.getOrNull(2)?.toIntOrNull() else null
+            val parsedEndOffset = if (desktopParts.size == 4) desktopParts.getOrNull(3)?.toIntOrNull() else null
+            val parsedPageIndex = when {
+                pageIndex != null -> pageIndex
+                desktopParts.size == 3 || desktopParts.size >= 5 -> desktopParts.getOrNull(2)?.toIntOrNull()
+                else -> null
+            }
+            return ReaderLocator(
+                chapterIndex = chapterIndex ?: parsedChapterIndex,
+                pageIndex = parsedPageIndex,
+                startOffset = parsedStartOffset,
+                endOffset = parsedEndOffset,
+                textQuote = textQuote,
+                cfi = cfi
+            )
+        }
+    }
+}
+
+data class ReaderHighlightPalette(
+    val colors: List<HighlightColor> = defaultColors
+) {
+    fun sanitized(): ReaderHighlightPalette {
+        val distinct = colors.distinct().filter { it in HighlightColor.entries }
+        return copy(colors = distinct.ifEmpty { defaultColors })
+    }
+
+    fun contains(color: HighlightColor): Boolean {
+        return color in sanitized().colors
+    }
+
+    fun withColor(color: HighlightColor, enabled: Boolean): ReaderHighlightPalette {
+        val next = if (enabled) {
+            colors + color
+        } else {
+            colors - color
+        }
+        return copy(colors = next).sanitized()
+    }
+
+    companion object {
+        val defaultColors: List<HighlightColor>
+            get() = listOf(
+                HighlightColor.YELLOW,
+                HighlightColor.GREEN,
+                HighlightColor.BLUE,
+                HighlightColor.RED,
+                HighlightColor.PURPLE,
+                HighlightColor.ORANGE
+            )
+    }
+}
+
 data class UserHighlight(
     val id: String,
     val cfi: String,
     val text: String,
     val color: HighlightColor,
     val chapterIndex: Int,
-    val note: String? = null
+    val note: String? = null,
+    val locator: ReaderLocator = ReaderLocator.fromLegacy(
+        chapterIndex = chapterIndex,
+        cfi = cfi,
+        textQuote = text
+    )
 )
 
 fun escapeJsString(value: String): String {

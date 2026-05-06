@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -49,10 +50,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderAction
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -93,6 +98,8 @@ fun SharedReaderScreen(
     onOpenPdf: () -> Unit,
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
+    highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     readerContent: @Composable ColumnScope.(html: String, background: Color) -> Unit
 ) {
     val readerState = session.reader
@@ -170,9 +177,22 @@ fun SharedReaderScreen(
                 onNextSearchResult = { dispatch(ReaderAction.NextSearchResult) },
                 onGoToChapter = { dispatch(ReaderAction.GoToChapter(it)) },
                 onGoToPage = { dispatch(ReaderAction.GoToPage(it)) },
+                onGoToBookmark = { dispatch(ReaderAction.GoToLocator(it.locator)) },
                 onGoToSearchResult = { dispatch(ReaderAction.GoToSearchResult(it)) },
                 toolbarPreferences = toolbarPreferences,
-                onToolbarPreferencesChange = onToolbarPreferencesChange
+                onToolbarPreferencesChange = onToolbarPreferencesChange,
+                highlightPalette = highlightPalette,
+                onHighlightPaletteChange = onHighlightPaletteChange,
+                onGoToHighlight = { dispatch(ReaderAction.GoToLocator(it.locator)) },
+                onHighlightColorChange = { highlight, color ->
+                    dispatch(ReaderAction.HighlightUpdated(highlight.id, color = color))
+                },
+                onHighlightNoteChange = { highlight, note ->
+                    dispatch(ReaderAction.HighlightUpdated(highlight.id, note = note))
+                },
+                onHighlightDelete = { highlight ->
+                    dispatch(ReaderAction.HighlightDeleted(highlight.id))
+                }
             )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -187,7 +207,8 @@ fun SharedReaderScreen(
                         book = readerState.book,
                         settings = settings,
                         searchQuery = session.searchQuery,
-                        highlights = session.highlights
+                        highlights = session.highlights,
+                        highlightPalette = highlightPalette
                     )
                 } else {
                     ReaderHtmlDocumentBuilder.pageDocument(
@@ -195,7 +216,8 @@ fun SharedReaderScreen(
                         page = page,
                         settings = settings,
                         searchQuery = session.searchQuery,
-                        highlights = session.highlights
+                        highlights = session.highlights,
+                        highlightPalette = highlightPalette
                     )
                 }
                 readerContent(html, background)
@@ -438,9 +460,16 @@ private fun SharedReaderSidebar(
     onNextSearchResult: () -> Unit,
     onGoToChapter: (Int) -> Unit,
     onGoToPage: (Int) -> Unit,
+    onGoToBookmark: (ReaderBookmark) -> Unit,
     onGoToSearchResult: (Int) -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
-    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    highlightPalette: ReaderHighlightPalette,
+    onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
+    onGoToHighlight: (UserHighlight) -> Unit,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onHighlightNoteChange: (UserHighlight, String) -> Unit,
+    onHighlightDelete: (UserHighlight) -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -491,7 +520,7 @@ private fun SharedReaderSidebar(
                         Surface(
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { onGoToPage(bookmark.pageIndex) }
+                            modifier = Modifier.fillMaxWidth().clickable { onGoToBookmark(bookmark) }
                         ) {
                             Column(
                                 modifier = Modifier
@@ -503,6 +532,36 @@ private fun SharedReaderSidebar(
                             }
                         }
                     }
+                }
+            }
+
+            if (toolbarPreferences.isVisible(ReaderTool.BOOKMARK)) {
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Highlights", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                if (session.highlights.isEmpty()) {
+                    item {
+                        Text("No highlights yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    items(session.highlights, key = { it.id }) { highlight ->
+                        SharedHighlightListItem(
+                            session = session,
+                            highlight = highlight,
+                            palette = highlightPalette,
+                            onGoToHighlight = onGoToHighlight,
+                            onColorChange = onHighlightColorChange,
+                            onNoteChange = onHighlightNoteChange,
+                            onDelete = onHighlightDelete
+                        )
+                    }
+                }
+                item {
+                    SharedHighlightPaletteEditor(
+                        palette = highlightPalette,
+                        onPaletteChange = onHighlightPaletteChange
+                    )
                 }
             }
 
@@ -610,6 +669,128 @@ private fun SharedReaderSidebar(
                         Text(tool.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedHighlightListItem(
+    session: ReaderSessionState,
+    highlight: UserHighlight,
+    palette: ReaderHighlightPalette,
+    onGoToHighlight: (UserHighlight) -> Unit,
+    onColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onNoteChange: (UserHighlight, String) -> Unit,
+    onDelete: (UserHighlight) -> Unit
+) {
+    val locator = highlight.locator.withFallbacks(
+        chapterIndex = highlight.chapterIndex,
+        cfi = highlight.cfi,
+        textQuote = highlight.text
+    )
+    val chapterTitle = session.reader.book.chapters
+        .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
+        ?.title
+        ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
+    val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
+    val colors = palette.sanitized().colors
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(8.dp)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    modifier = Modifier
+                        .width(12.dp)
+                        .height(12.dp)
+                        .background(highlight.color.color, RoundedCornerShape(2.dp))
+                )
+                Text(
+                    listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            ) {
+                colors.forEach { color ->
+                    FilterChip(
+                        selected = highlight.color == color,
+                        onClick = { onColorChange(highlight, color) },
+                        label = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(10.dp)
+                                        .height(10.dp)
+                                        .background(color.color, RoundedCornerShape(2.dp))
+                                )
+                                Text(color.id)
+                            }
+                        }
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = highlight.note.orEmpty(),
+                onValueChange = { onNoteChange(highlight, it) },
+                label = { Text("Note") },
+                maxLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+            TextButton(onClick = { onDelete(highlight) }) {
+                Text("Delete")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedHighlightPaletteEditor(
+    palette: ReaderHighlightPalette,
+    onPaletteChange: (ReaderHighlightPalette) -> Unit
+) {
+    val sanitized = palette.sanitized()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Palette", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            HighlightColor.entries.forEach { color ->
+                FilterChip(
+                    selected = sanitized.contains(color),
+                    onClick = {
+                        onPaletteChange(sanitized.withColor(color, enabled = !sanitized.contains(color)))
+                    },
+                    label = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .width(10.dp)
+                                    .height(10.dp)
+                                    .background(color.color, RoundedCornerShape(2.dp))
+                            )
+                            Text(color.id)
+                        }
+                    }
+                )
             }
         }
     }

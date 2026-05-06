@@ -20,10 +20,7 @@ data class SharedEpubChapter(
     val baseHref: String? = null
 )
 
-data class ReaderLocator(
-    val chapterIndex: Int = 0,
-    val charOffset: Int = 0
-)
+typealias ReaderLocator = com.aryan.reader.shared.ReaderLocator
 
 enum class ReaderReadingMode {
     PAGINATED,

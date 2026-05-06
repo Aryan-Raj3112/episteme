@@ -34,4 +34,18 @@ class ReaderToolbarPreferencesTest {
         assertEquals(ReaderTool.BOOKMARK, state.readerToolbarPreferences.toolOrder.first())
         assertEquals(ReaderTool.THEME, state.readerToolbarPreferences.toolOrder[1])
     }
+
+    @Test
+    fun `highlight palette reducer sanitizes colors`() {
+        val state = SharedReaderScreenState()
+            .reduce(
+                AppAction.ReaderHighlightPaletteChanged(
+                    ReaderHighlightPalette(
+                        colors = listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.YELLOW)
+                    )
+                )
+            )
+
+        assertEquals(listOf(HighlightColor.CYAN, HighlightColor.YELLOW), state.readerHighlightPalette.colors)
+    }
 }

@@ -1,12 +1,14 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.UserHighlight
 
 data class ReaderBookmark(
     val id: String,
     val pageIndex: Int,
     val chapterTitle: String,
-    val preview: String
+    val preview: String,
+    val locator: ReaderLocator = ReaderLocator(pageIndex = pageIndex, textQuote = preview)
 )
 
 data class ReaderSearchResult(
@@ -54,7 +56,8 @@ class ReaderEngine(
                 .distinctBy { it.pageIndex }
                 .sortedBy { it.pageIndex },
             highlights = highlights
-                .filter { it.chapterIndex in book.chapters.indices }
+                .map { it.withNormalizedLocator() }
+                .filter { (it.locator.chapterIndex ?: it.chapterIndex) in book.chapters.indices }
                 .distinctBy { it.id }
         )
     }
@@ -88,24 +91,124 @@ class ReaderEngine(
         return if (pageIndex >= 0) goToPage(state, pageIndex) else state
     }
 
+    fun goToLocator(state: ReaderSessionState, locator: ReaderLocator): ReaderSessionState {
+        val pageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
+            .takeIf { it >= 0 }
+            ?: locator.pageIndex
+            ?.takeIf { it in state.reader.pages.indices }
+            ?: return state
+        return goToPage(state, pageIndex)
+    }
+
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
         return state.copy(reader = paginator.repaginate(state.reader, settings))
     }
 
     fun toggleBookmark(state: ReaderSessionState): ReaderSessionState {
         val page = state.reader.currentPage ?: return state
-        val existing = state.bookmarks.firstOrNull { it.pageIndex == state.reader.currentPageIndex }
+        val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
+        val locator = ReaderLocator(
+            chapterIndex = page.chapterIndex,
+            chapterId = chapter?.id,
+            pageIndex = page.pageIndex,
+            startOffset = page.startOffset,
+            endOffset = page.endOffset,
+            textQuote = page.text.preview()
+        )
+        return toggleBookmarkAtLocator(
+            state = state,
+            locator = locator,
+            chapterTitle = page.chapterTitle,
+            preview = page.text.preview()
+        )
+    }
+
+    fun toggleBookmarkAtLocator(
+        state: ReaderSessionState,
+        locator: ReaderLocator,
+        chapterTitle: String? = null,
+        preview: String? = null
+    ): ReaderSessionState {
+        val targetPageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
+            .takeIf { it >= 0 }
+            ?: locator.pageIndex
+            ?.takeIf { it in state.reader.pages.indices }
+            ?: state.reader.currentPageIndex
+        val page = state.reader.pages.getOrNull(targetPageIndex) ?: return state
+        val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
+        val normalizedLocator = locator.withFallbacks(
+            chapterIndex = page.chapterIndex,
+            chapterId = chapter?.id,
+            pageIndex = targetPageIndex,
+            startOffset = page.startOffset,
+            endOffset = page.endOffset,
+            textQuote = preview ?: page.text.preview()
+        )
+        val existing = state.bookmarks.firstOrNull {
+            it.pageIndex == targetPageIndex || it.locator.sameLocation(normalizedLocator)
+        }
         val updated = if (existing != null) {
             state.bookmarks - existing
         } else {
             state.bookmarks + ReaderBookmark(
-                id = "${state.reader.book.id}_${state.reader.currentPageIndex}",
-                pageIndex = state.reader.currentPageIndex,
-                chapterTitle = page.chapterTitle,
-                preview = page.text.preview()
+                id = "${state.reader.book.id}_$targetPageIndex",
+                pageIndex = targetPageIndex,
+                chapterTitle = chapterTitle ?: page.chapterTitle,
+                preview = preview ?: page.text.preview(),
+                locator = normalizedLocator
             )
         }
         return state.copy(bookmarks = updated.sortedBy { it.pageIndex })
+    }
+
+    fun upsertHighlight(state: ReaderSessionState, highlight: UserHighlight): ReaderSessionState {
+        if (highlight.text.isBlank()) return state
+        val normalized = highlight.withNormalizedLocator()
+        val existingIndex = state.highlights.indexOfFirst {
+            it.id == normalized.id ||
+                (it.chapterIndex == normalized.chapterIndex && it.locator.sameLocation(normalized.locator))
+        }
+        val updated = state.highlights.toMutableList()
+        if (existingIndex >= 0) {
+            updated[existingIndex] = updated[existingIndex].copy(
+                cfi = normalized.cfi,
+                text = normalized.text,
+                color = normalized.color,
+                chapterIndex = normalized.chapterIndex,
+                locator = normalized.locator
+            )
+        } else {
+            updated += normalized
+        }
+        return state.copy(
+            highlights = updated
+                .filter { (it.locator.chapterIndex ?: it.chapterIndex) in state.reader.book.chapters.indices }
+                .distinctBy { it.id }
+        )
+    }
+
+    fun updateHighlight(
+        state: ReaderSessionState,
+        highlightId: String,
+        color: HighlightColor? = null,
+        note: String? = null
+    ): ReaderSessionState {
+        return state.copy(
+            highlights = state.highlights.map { highlight ->
+                if (highlight.id == highlightId) {
+                    highlight.copy(
+                        color = color ?: highlight.color,
+                        note = if (note != null) note.takeIf { it.isNotBlank() } else highlight.note
+                    )
+                } else {
+                    highlight
+                }
+            }
+        )
+    }
+
+    fun deleteHighlight(state: ReaderSessionState, highlightId: String): ReaderSessionState {
+        return state.copy(highlights = state.highlights.filterNot { it.id == highlightId })
     }
 
     fun search(state: ReaderSessionState, query: String): ReaderSessionState {
@@ -170,6 +273,31 @@ class ReaderEngine(
             activeSearchResultIndex = targetIndex
         )
     }
+}
+
+private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
+    val targetChapter = locator.chapterIndex
+    if (targetChapter != null && targetChapter != chapterIndex) return false
+    if (locator.hasTextRange) {
+        val start = locator.startOffset ?: return false
+        val end = locator.endOffset ?: start
+        return start <= endOffset && end >= startOffset
+    }
+    val targetPage = locator.pageIndex
+    return targetPage != null && targetPage == pageIndex
+}
+
+private fun UserHighlight.withNormalizedLocator(): UserHighlight {
+    val normalizedLocator = locator.copy(textQuote = text).withFallbacks(
+        chapterIndex = chapterIndex,
+        cfi = cfi,
+        textQuote = text
+    )
+    return copy(
+        chapterIndex = normalizedLocator.chapterIndex ?: chapterIndex,
+        cfi = normalizedLocator.cfi ?: cfi,
+        locator = normalizedLocator
+    )
 }
 
 private fun String.preview(): String {
