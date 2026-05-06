@@ -1,5 +1,8 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticImage
+import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
@@ -71,6 +74,35 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-active-chapter-index=\"1\""))
         assertTrue(html.contains("data-reader-active-start-offset=\"7\""))
         assertTrue(html.contains("scrollToActiveLocator"))
+    }
+
+    @Test
+    fun `page document keeps semantic images anchored to surrounding text page`() {
+        val book = SharedEpubBook(
+            id = "book",
+            fileName = "book.epub",
+            title = "Book",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = "Before image after image.",
+                    semanticBlocks = listOf(
+                        SemanticParagraph("Before image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 0),
+                        SemanticImage("data:image/png;base64,abc", "Cover", null, null, CssStyle(), null, null),
+                        SemanticParagraph("after image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 13)
+                    )
+                )
+            )
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = book,
+            page = ReaderPage(0, 0, "One", "Before image after image.", 0, 24),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("""<img src="data:image/png;base64,abc" alt="Cover""""))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

@@ -150,6 +150,15 @@ class EpubAnnotationSerializerTest {
     }
 
     @Test
+    fun `highlight bridge parser accepts raw or wrapped json payloads`() {
+        val payload = """{"cfi":"desktop:0:4:9","text":"word","colorId":"yellow","chapterIndex":0,"locator":{"chapterIndex":0,"startOffset":4,"endOffset":9,"textQuote":"word","cfi":"desktop:0:4:9"}}"""
+        val wrappedPayload = "\"${payload.replace("\"", "\\\"")}\""
+
+        assertEquals(4, EpubAnnotationSerializer.parseHighlightJsonLenient(payload)?.locator?.startOffset)
+        assertEquals(9, EpubAnnotationSerializer.parseHighlightJsonLenient(wrappedPayload)?.locator?.endOffset)
+    }
+
+    @Test
     fun `legacy desktop cfi values hydrate shared locators`() {
         val oldDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:123456:abc")
         val timestampFallbackLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:1780000000000")

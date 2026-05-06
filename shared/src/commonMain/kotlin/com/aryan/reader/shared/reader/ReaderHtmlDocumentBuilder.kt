@@ -12,10 +12,13 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.unit.isSpecified
 import kotlin.math.roundToInt
 
 object ReaderHtmlDocumentBuilder {
@@ -26,7 +29,8 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
-        navigationLocator: ReaderLocator? = null
+        navigationLocator: ReaderLocator? = null,
+        pages: List<ReaderPage> = emptyList()
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
             val chapterText = chapter.normalizedReaderText()
@@ -53,7 +57,8 @@ object ReaderHtmlDocumentBuilder {
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
-            navigationLocator = navigationLocator
+            navigationLocator = navigationLocator,
+            pageAnchors = pages
         )
     }
 
@@ -72,10 +77,7 @@ object ReaderHtmlDocumentBuilder {
             "<section class=\"page\"></section>"
         } else {
             val blocks = chapter.semanticBlocks
-                .filter { block ->
-                    val start = (block as? SemanticTextBlock)?.startCharOffsetInSource ?: return@filter false
-                    start in page.startOffset..page.endOffset
-                }
+                .blocksForPage(page)
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("") { it.toHtml(searchQuery, searchOptions) }
                 ?: page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
@@ -101,7 +103,8 @@ object ReaderHtmlDocumentBuilder {
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
-            navigationLocator = navigationLocator
+            navigationLocator = navigationLocator,
+            pageAnchors = emptyList()
         )
     }
 
@@ -113,7 +116,8 @@ object ReaderHtmlDocumentBuilder {
         searchQuery: String,
         searchOptions: ReaderSearchOptions,
         highlightPalette: ReaderHighlightPalette,
-        navigationLocator: ReaderLocator?
+        navigationLocator: ReaderLocator?,
+        pageAnchors: List<ReaderPage>
     ): String {
         val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
         val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
@@ -145,6 +149,7 @@ object ReaderHtmlDocumentBuilder {
             """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
+        val pageAnchorJson = pageAnchors.toPageAnchorJson()
         return """
             <!doctype html>
             <html>
@@ -270,6 +275,10 @@ object ReaderHtmlDocumentBuilder {
                 (function () {
                   var menu = document.getElementById('reader-selection-menu');
                   var savedRange = null;
+                  var readerPageAnchors = $pageAnchorJson;
+                  var lastReportedPageIndex = -1;
+                  var lastReportedStartOffset = -1;
+                  var reportTimer = null;
                   function numberAttribute(element, name, fallback) {
                     if (!element) return fallback;
                     var value = parseInt(element.getAttribute(name) || '', 10);
@@ -279,18 +288,40 @@ object ReaderHtmlDocumentBuilder {
                     if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value));
                     return String(value).replace(/"/g, '\\"');
                   }
-                  function scrollToActiveLocator() {
-                    var chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                  function scrollToLocator(locator) {
+                    locator = locator || {};
+                    var chapterIndex = locator.chapterIndex;
+                    if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
+                      chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                    }
                     if (chapterIndex === null || chapterIndex === '') return;
                     var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
                     if (!chapter) return;
-                    var activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                    var activeStart = locator.startOffset;
+                    if (activeStart === undefined || activeStart === null) {
+                      activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                    }
                     var exact = activeStart === null
                       ? null
-                      : document.querySelector('[data-reader-start-offset="' + selectorValue(activeStart) + '"]');
+                      : chapter.querySelector('[data-reader-start-offset="' + selectorValue(activeStart) + '"]');
                     var target = exact || chapter;
                     var content = chapter.querySelector('.reader-content') || chapter;
                     if (!exact && activeStart !== null && content) {
+                      var parsedStart = parseInt(activeStart, 10);
+                      var parsedEnd = parseInt(locator.endOffset === undefined || locator.endOffset === null ? activeStart : locator.endOffset, 10);
+                      if (Number.isFinite(parsedStart)) {
+                        var rangeEnd = Number.isFinite(parsedEnd) && parsedEnd > parsedStart ? parsedEnd : parsedStart + 1;
+                        var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd);
+                        if (exactRange) {
+                          var rangeRects = exactRange.getClientRects();
+                          var rangeRect = rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect();
+                          exactRange.detach && exactRange.detach();
+                          if (rangeRect && (rangeRect.top !== 0 || rangeRect.bottom !== 0)) {
+                            window.scrollTo({ top: Math.max(0, rangeRect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                            return;
+                          }
+                        }
+                      }
                       var contentStart = numberAttribute(content, 'data-reader-content-start', numberAttribute(chapter, 'data-reader-page-start', 0));
                       var contentEnd = numberAttribute(content, 'data-reader-content-end', numberAttribute(chapter, 'data-reader-page-end', contentStart));
                       if (contentEnd > contentStart && activeStart > contentStart) {
@@ -303,6 +334,134 @@ object ReaderHtmlDocumentBuilder {
                     }
                     var rect = target.getBoundingClientRect();
                     window.scrollTo({ top: Math.max(0, rect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                  }
+                  function scrollToActiveLocator() {
+                    scrollToLocator({
+                      chapterIndex: document.body.getAttribute('data-reader-active-chapter-index'),
+                      startOffset: numberAttribute(document.body, 'data-reader-active-start-offset', null)
+                    });
+                  }
+                  window.readerScrollToLocator = scrollToLocator;
+                  function textNodesUnder(root) {
+                    var nodes = [];
+                    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                      acceptNode: function (node) {
+                        if (!node.nodeValue || node.nodeValue.trim().length === 0) return NodeFilter.FILTER_REJECT;
+                        var parent = node.parentElement;
+                        if (parent && parent.closest && parent.closest('#reader-selection-menu')) return NodeFilter.FILTER_REJECT;
+                        return NodeFilter.FILTER_ACCEPT;
+                      }
+                    });
+                    var node;
+                    while ((node = walker.nextNode())) nodes.push(node);
+                    return nodes;
+                  }
+                  function firstVisibleOffsetInContent(content) {
+                    var nodes = textNodesUnder(content);
+                    var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
+                    var offset = contentStart;
+                    var viewportTop = Math.max(8, window.innerHeight * 0.08);
+                    var viewportBottom = window.innerHeight - 8;
+                    for (var n = 0; n < nodes.length; n++) {
+                      var node = nodes[n];
+                      var text = node.nodeValue || '';
+                      var whole = document.createRange();
+                      whole.selectNodeContents(node);
+                      var rects = whole.getClientRects();
+                      whole.detach && whole.detach();
+                      var visible = false;
+                      for (var r = 0; r < rects.length; r++) {
+                        if (rects[r].bottom >= viewportTop && rects[r].top <= viewportBottom) {
+                          visible = true;
+                          break;
+                        }
+                      }
+                      if (!visible) {
+                        offset += text.length;
+                        continue;
+                      }
+                      for (var i = 0; i < text.length; i++) {
+                        if (!text[i] || /^\s$/.test(text[i])) continue;
+                        var charRange = document.createRange();
+                        charRange.setStart(node, i);
+                        charRange.setEnd(node, Math.min(i + 1, text.length));
+                        var charRect = charRange.getBoundingClientRect();
+                        charRange.detach && charRange.detach();
+                        if (charRect.bottom >= viewportTop && charRect.top <= viewportBottom) {
+                          return { offset: offset + i, textNode: node };
+                        }
+                      }
+                      offset += text.length;
+                    }
+                    return { offset: contentStart, textNode: null };
+                  }
+                  function snippetFromContentOffset(content, startOffset) {
+                    var nodes = textNodesUnder(content);
+                    var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
+                    var remaining = Math.max(0, startOffset - contentStart);
+                    var text = '';
+                    for (var n = 0; n < nodes.length; n++) {
+                      var value = nodes[n].nodeValue || '';
+                      if (remaining >= value.length) {
+                        remaining -= value.length;
+                        continue;
+                      }
+                      text += value.substring(remaining);
+                      remaining = 0;
+                      if (text.length >= 160) break;
+                    }
+                    return text.replace(/\s+/g, ' ').trim().substring(0, 140);
+                  }
+                  function pageForLocator(chapterIndex, offset) {
+                    if (!readerPageAnchors.length) return null;
+                    var sameChapter = readerPageAnchors.filter(function (page) { return page.chapterIndex === chapterIndex; });
+                    if (!sameChapter.length) return null;
+                    var best = sameChapter[0];
+                    for (var p = 0; p < sameChapter.length; p++) {
+                      var page = sameChapter[p];
+                      if (offset >= page.startOffset && offset < page.endOffset) return page;
+                      if (Math.abs(page.startOffset - offset) < Math.abs(best.startOffset - offset)) best = page;
+                    }
+                    return best;
+                  }
+                  function currentVisiblePosition() {
+                    var chapters = document.querySelectorAll('[data-reader-chapter-index]');
+                    for (var i = 0; i < chapters.length; i++) {
+                      var chapter = chapters[i];
+                      var rect = chapter.getBoundingClientRect();
+                      if (rect.bottom < 8 || rect.top > window.innerHeight - 8) continue;
+                      var content = chapter.querySelector('.reader-content') || chapter;
+                      var chapterIndex = numberAttribute(chapter, 'data-reader-chapter-index', 0);
+                      var visible = firstVisibleOffsetInContent(content);
+                      var page = pageForLocator(chapterIndex, visible.offset) || readerPageAnchors[0];
+                      if (!page) return null;
+                      return {
+                        pageIndex: page.pageIndex,
+                        chapterIndex: chapterIndex,
+                        startOffset: visible.offset,
+                        endOffset: visible.offset,
+                        textQuote: snippetFromContentOffset(content, visible.offset),
+                        cfi: 'desktop:' + chapterIndex + ':' + visible.offset + ':' + visible.offset
+                      };
+                    }
+                    return null;
+                  }
+                  function reportVisiblePage() {
+                    var position = currentVisiblePosition();
+                    if (!position) return;
+                    if (position.pageIndex === lastReportedPageIndex && Math.abs(position.startOffset - lastReportedStartOffset) < 8) return;
+                    lastReportedPageIndex = position.pageIndex;
+                    lastReportedStartOffset = position.startOffset;
+                    if (window.kmpJsBridge) {
+                      window.kmpJsBridge.callNative('readerPositionChanged', JSON.stringify(position));
+                    }
+                  }
+                  function scheduleVisiblePageReport() {
+                    if (reportTimer !== null) window.clearTimeout(reportTimer);
+                    reportTimer = window.setTimeout(function () {
+                      reportTimer = null;
+                      reportVisiblePage();
+                    }, 140);
                   }
                   function selectionText() {
                     var selection = window.getSelection();
@@ -349,19 +508,149 @@ object ReaderHtmlDocumentBuilder {
                     document.body.removeChild(textarea);
                   }
                   function selectionOffsetsWithin(host, range) {
-                    var before = range.cloneRange();
-                    before.selectNodeContents(host);
-                    try {
-                      before.setEnd(range.startContainer, range.startOffset);
-                    } catch (error) {
+                    var rawStart = offsetForBoundary(host, range.startContainer, range.startOffset);
+                    var rawEnd = offsetForBoundary(host, range.endContainer, range.endOffset);
+                    if (rawStart === null || rawEnd === null || rawEnd < rawStart) {
                       return { start: null, end: null };
                     }
-                    var rawText = range.toString();
-                    var leadingWhitespace = rawText.length - rawText.replace(/^\s+/, '').length;
-                    var selectedText = rawText.trim();
-                    var start = before.toString().length + leadingWhitespace;
-                    return { start: start, end: start + selectedText.length };
+                    var selectedText = textBetweenOffsets(host, rawStart, rawEnd);
+                    var trimmedText = selectedText.trim();
+                    if (!trimmedText) return { start: null, end: null };
+                    var leadingWhitespace = selectedText.length - selectedText.replace(/^\s+/, '').length;
+                    var trailingWhitespace = selectedText.length - selectedText.replace(/\s+$/, '').length;
+                    return { start: rawStart + leadingWhitespace, end: rawEnd - trailingWhitespace };
                   }
+                  function offsetForBoundary(host, container, offset) {
+                    var nodes = textNodesUnder(host);
+                    var boundary = document.createRange();
+                    try {
+                      boundary.setStart(container, offset);
+                      boundary.collapse(true);
+                    } catch (error) {
+                      boundary.detach && boundary.detach();
+                      return null;
+                    }
+                    var cursor = 0;
+                    for (var n = 0; n < nodes.length; n++) {
+                      var node = nodes[n];
+                      var length = (node.nodeValue || '').length;
+                      if (node === container) {
+                        boundary.detach && boundary.detach();
+                        return cursor + Math.max(0, Math.min(length, offset));
+                      }
+                      var nodeRange = document.createRange();
+                      nodeRange.selectNodeContents(node);
+                      var nodeEndsBeforeBoundary = nodeRange.compareBoundaryPoints(Range.END_TO_START, boundary) <= 0;
+                      nodeRange.detach && nodeRange.detach();
+                      if (nodeEndsBeforeBoundary) {
+                        cursor += length;
+                      } else {
+                        boundary.detach && boundary.detach();
+                        return cursor;
+                      }
+                    }
+                    boundary.detach && boundary.detach();
+                    return cursor;
+                  }
+                  function textBetweenOffsets(host, startOffset, endOffset) {
+                    var nodes = textNodesUnder(host);
+                    var cursor = 0;
+                    var text = '';
+                    for (var n = 0; n < nodes.length; n++) {
+                      var value = nodes[n].nodeValue || '';
+                      var next = cursor + value.length;
+                      if (next <= startOffset) {
+                        cursor = next;
+                        continue;
+                      }
+                      if (cursor >= endOffset) break;
+                      var startInNode = Math.max(0, startOffset - cursor);
+                      var endInNode = Math.min(value.length, endOffset - cursor);
+                      if (endInNode > startInNode) text += value.substring(startInNode, endInNode);
+                      cursor = next;
+                    }
+                    return text;
+                  }
+                  function unwrapReaderHighlights() {
+                    var marks = Array.prototype.slice.call(document.querySelectorAll('mark.reader-user-highlight'));
+                    marks.forEach(function (mark) {
+                      var parent = mark.parentNode;
+                      if (!parent) return;
+                      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+                      parent.removeChild(mark);
+                      parent.normalize();
+                    });
+                  }
+                  function rangeForOffsets(chapterIndex, startOffset, endOffset) {
+                    var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
+                    if (!chapter) return null;
+                    var content = chapter.querySelector('.reader-content') || chapter;
+                    var nodes = textNodesUnder(content);
+                    var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
+                    var cursor = contentStart;
+                    var startNode = null;
+                    var startInNode = 0;
+                    var endNode = null;
+                    var endInNode = 0;
+                    for (var n = 0; n < nodes.length; n++) {
+                      var node = nodes[n];
+                      var length = (node.nodeValue || '').length;
+                      var next = cursor + length;
+                      if (!startNode && startOffset >= cursor && startOffset <= next) {
+                        startNode = node;
+                        startInNode = Math.max(0, Math.min(length, startOffset - cursor));
+                      }
+                      if (!endNode && endOffset >= cursor && endOffset <= next) {
+                        endNode = node;
+                        endInNode = Math.max(0, Math.min(length, endOffset - cursor));
+                        break;
+                      }
+                      cursor = next;
+                    }
+                    if (!startNode || !endNode) return null;
+                    var range = document.createRange();
+                    range.setStart(startNode, startInNode);
+                    range.setEnd(endNode, endInNode);
+                    return range;
+                  }
+                  function applyHighlightObject(highlight) {
+                    if (!highlight) return;
+                    var locator = highlight.locator || {};
+                    var chapterIndex = locator.chapterIndex;
+                    if (chapterIndex === undefined || chapterIndex === null) chapterIndex = highlight.chapterIndex;
+                    var startOffset = locator.startOffset;
+                    var endOffset = locator.endOffset;
+                    if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) return;
+                    var range = rangeForOffsets(chapterIndex, startOffset, endOffset);
+                    if (!range || range.collapsed) return;
+                    var marker = document.createElement('mark');
+                    marker.className = 'reader-user-highlight user-highlight-' + (highlight.colorId || 'yellow');
+                    if (highlight.id) marker.setAttribute('data-reader-highlight-id', highlight.id);
+                    marker.setAttribute('data-reader-start-offset', String(startOffset));
+                    marker.setAttribute('data-reader-end-offset', String(endOffset));
+                    try {
+                      range.surroundContents(marker);
+                    } catch (error) {
+                      marker.appendChild(range.extractContents());
+                      range.insertNode(marker);
+                    }
+                  }
+                  window.readerApplyHighlights = function (highlights) {
+                    var previousX = window.scrollX;
+                    var previousY = window.scrollY;
+                    unwrapReaderHighlights();
+                    if (Array.isArray(highlights)) {
+                      highlights
+                        .slice()
+                        .sort(function (a, b) {
+                          var aStart = (a.locator && a.locator.startOffset) || 0;
+                          var bStart = (b.locator && b.locator.startOffset) || 0;
+                          return bStart - aStart;
+                        })
+                        .forEach(applyHighlightObject);
+                    }
+                    window.scrollTo({ top: previousY, left: previousX, behavior: 'auto' });
+                  };
                   function highlightRange(colorId) {
                     if (!restoreRange()) return;
                     var selection = window.getSelection();
@@ -447,11 +736,15 @@ object ReaderHtmlDocumentBuilder {
                     }
                   });
                   document.addEventListener('scroll', hideMenu, true);
+                  document.addEventListener('scroll', scheduleVisiblePageReport, true);
+                  window.addEventListener('scroll', scheduleVisiblePageReport, { passive: true });
                   document.addEventListener('mousedown', function (event) {
                     if (event.button === 0 && !menu.contains(event.target)) hideMenu();
                   });
                   scrollToActiveLocator();
+                  reportVisiblePage();
                   window.addEventListener('load', scrollToActiveLocator, { once: true });
+                  window.addEventListener('load', reportVisiblePage, { once: true });
                 })();
               </script>
             </body>
@@ -467,27 +760,55 @@ object ReaderHtmlDocumentBuilder {
         return normalizedReaderText().textToParagraphHtml(searchQuery, searchOptions)
     }
 
-    private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
-        return when (this) {
-            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
-            is SemanticParagraph -> "<p${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
-            is SemanticListItem -> "<li${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
-            is SemanticList -> {
-                val tag = if (isOrdered) "ol" else "ul"
-                "<$tag>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
-            }
-            is SemanticImage -> "<figure><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"></figure>"
-            is SemanticMath -> svgContent ?: "<pre>${altText.orEmpty().highlightAndEscape(searchQuery, searchOptions)}</pre>"
-            is SemanticSpacer -> if (isExplicitLineBreak) "<br>" else "<div style=\"height:1em\"></div>"
-            is SemanticTable -> rows.joinToString("", "<table><tbody>", "</tbody></table>") { row ->
-                row.joinToString("", "<tr>", "</tr>") { cell ->
-                    val tag = if (cell.isHeader) "th" else "td"
-                    "<$tag colspan=\"${cell.colspan.coerceAtLeast(1)}\">${cell.content.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
+    private fun List<SemanticBlock>.blocksForPage(page: ReaderPage): List<SemanticBlock> {
+        return filterIndexed { index, block ->
+            when (block) {
+                is SemanticTextBlock -> block.intersects(page.startOffset, page.endOffset)
+                else -> {
+                    val previousText = asSequence()
+                        .take(index)
+                        .filterIsInstance<SemanticTextBlock>()
+                        .lastOrNull()
+                    val nextText = asSequence()
+                        .drop(index + 1)
+                        .filterIsInstance<SemanticTextBlock>()
+                        .firstOrNull()
+                    val anchor = previousText?.let { it.startCharOffsetInSource + it.text.length }
+                        ?: nextText?.startCharOffsetInSource
+                        ?: 0
+                    anchor in page.startOffset..page.endOffset
                 }
             }
-            is SemanticFlexContainer -> children.joinToString("", "<div>", "</div>") { it.toHtml(searchQuery, searchOptions) }
+        }
+    }
+
+    private fun SemanticTextBlock.intersects(startOffset: Int, endOffset: Int): Boolean {
+        val start = startCharOffsetInSource
+        val end = start + text.length
+        return start < endOffset && end > startOffset
+    }
+
+    private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
+        return when (this) {
+            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
+            is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticListItem -> "<li${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
+            is SemanticList -> {
+                val tag = if (isOrdered) "ol" else "ul"
+                "<$tag${styleAttribute()}>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
+            }
+            is SemanticImage -> "<figure${styleAttribute()}><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"${imageSizeAttribute()}></figure>"
+            is SemanticMath -> svgContent ?: "<pre${styleAttribute()}>${altText.orEmpty().highlightAndEscape(searchQuery, searchOptions)}</pre>"
+            is SemanticSpacer -> if (isExplicitLineBreak) "<br>" else "<div${styleAttribute("height:1em")}></div>"
+            is SemanticTable -> rows.joinToString("", "<table${styleAttribute()}><tbody>", "</tbody></table>") { row ->
+                row.joinToString("", "<tr>", "</tr>") { cell ->
+                    val tag = if (cell.isHeader) "th" else "td"
+                    "<$tag colspan=\"${cell.colspan.coerceAtLeast(1)}\"${cell.style.toStyleAttribute()}>${cell.content.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
+                }
+            }
+            is SemanticFlexContainer -> children.joinToString("", "<div${styleAttribute()}>", "</div>") { it.toHtml(searchQuery, searchOptions) }
             is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery, searchOptions) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-            is SemanticTextBlock -> "<p${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticTextBlock -> "<p${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
         }
     }
 
@@ -559,6 +880,61 @@ object ReaderHtmlDocumentBuilder {
                 append(" data-reader-cfi=\"${it.escapeHtml()}\"")
             }
         }
+    }
+
+    private fun SemanticBlock.styleAttribute(extra: String? = null): String {
+        return style.toStyleAttribute(extra)
+    }
+
+    private fun CssStyle.toStyleAttribute(extra: String? = null): String {
+        val declarations = mutableListOf<String>()
+        extra?.takeIf { it.isNotBlank() }?.let { declarations += it }
+        if (fontSize.isSpecified) declarations += "font-size:${fontSize.value}px"
+        if (wordSpacing.isSpecified) declarations += "word-spacing:${wordSpacing.value}px"
+        if (spanStyle.color.isSpecified) declarations += "color:${spanStyle.color.toCssHex()}"
+        if (spanStyle.background.isSpecified) declarations += "background-color:${spanStyle.background.toCssHex()}"
+        spanStyle.fontWeight?.let { declarations += "font-weight:${it.weight}" }
+        spanStyle.fontStyle?.let { declarations += "font-style:${it.toString().substringAfterLast('.').lowercase()}" }
+        spanStyle.textDecoration
+            ?.takeIf { it.toString() != "None" }
+            ?.let { declarations += "text-decoration:${it.toString().lowercase()}" }
+        fontFamilies.firstOrNull()?.takeIf { it.isNotBlank() }?.let {
+            declarations += "font-family:'${it.escapeHtml()}'"
+        }
+        paragraphStyle.textAlign
+            ?.takeIf { it.toString() != "Unspecified" }
+            ?.let { align ->
+            declarations += "text-align:${align.toString().lowercase()}"
+        }
+        val block = blockStyle
+        if (block.backgroundColor.isSpecified) declarations += "background-color:${block.backgroundColor.toCssHex()}"
+        if (block.width.isSpecified) declarations += "width:${block.width.value}px"
+        if (block.maxWidth.isSpecified) declarations += "max-width:${block.maxWidth.value}px"
+        if (block.height.isSpecified) declarations += "height:${block.height.value}px"
+        if (block.margin.top.isSpecified && block.margin.top.value != 0f) declarations += "margin-top:${block.margin.top.value}px"
+        if (block.margin.right.isSpecified && block.margin.right.value != 0f) declarations += "margin-right:${block.margin.right.value}px"
+        if (block.margin.bottom.isSpecified && block.margin.bottom.value != 0f) declarations += "margin-bottom:${block.margin.bottom.value}px"
+        if (block.margin.left.isSpecified && block.margin.left.value != 0f) declarations += "margin-left:${block.margin.left.value}px"
+        if (block.padding.top.isSpecified && block.padding.top.value != 0f) declarations += "padding-top:${block.padding.top.value}px"
+        if (block.padding.right.isSpecified && block.padding.right.value != 0f) declarations += "padding-right:${block.padding.right.value}px"
+        if (block.padding.bottom.isSpecified && block.padding.bottom.value != 0f) declarations += "padding-bottom:${block.padding.bottom.value}px"
+        if (block.padding.left.isSpecified && block.padding.left.value != 0f) declarations += "padding-left:${block.padding.left.value}px"
+        block.float?.takeIf { it.isNotBlank() }?.let { declarations += "float:$it" }
+        block.clear?.takeIf { it.isNotBlank() }?.let { declarations += "clear:$it" }
+        block.display?.takeIf { it.isNotBlank() }?.let { declarations += "display:$it" }
+        block.flexDirection?.takeIf { it.isNotBlank() }?.let { declarations += "flex-direction:$it" }
+        block.justifyContent?.takeIf { it.isNotBlank() }?.let { declarations += "justify-content:$it" }
+        block.alignItems?.takeIf { it.isNotBlank() }?.let { declarations += "align-items:$it" }
+        block.borderCollapse?.takeIf { it.isNotBlank() }?.let { declarations += "border-collapse:$it" }
+        return if (declarations.isEmpty()) "" else " style=\"${declarations.joinToString(";").escapeHtml()}\""
+    }
+
+    private fun SemanticImage.imageSizeAttribute(): String {
+        val declarations = buildList {
+            intrinsicWidth?.takeIf { it > 0f }?.let { add("width:${it}px") }
+            intrinsicHeight?.takeIf { it > 0f }?.let { add("height:${it}px") }
+        }
+        return if (declarations.isEmpty()) "" else " style=\"${declarations.joinToString(";")}\""
     }
 
     private fun String.highlightAndEscape(searchQuery: String, searchOptions: ReaderSearchOptions): String {
@@ -807,6 +1183,13 @@ object ReaderHtmlDocumentBuilder {
             cfi?.takeIf { it.isNotBlank() }?.let { add("data-reader-active-cfi=\"${it.escapeHtml()}\"") }
         }
         return if (attributes.isEmpty()) "" else " " + attributes.joinToString(" ")
+    }
+
+    private fun List<ReaderPage>.toPageAnchorJson(): String {
+        if (isEmpty()) return "[]"
+        return joinToString(prefix = "[", postfix = "]") { page ->
+            """{"pageIndex":${page.pageIndex},"chapterIndex":${page.chapterIndex},"startOffset":${page.startOffset},"endOffset":${page.endOffset}}"""
+        }
     }
 
     private data class TextSegment(

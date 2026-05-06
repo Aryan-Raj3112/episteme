@@ -127,6 +127,7 @@ fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine):
         is ReaderAction.GoToProgress -> readerEngine.goToProgress(this, action.progress)
         is ReaderAction.GoToChapter -> readerEngine.goToChapter(this, action.chapterIndex)
         is ReaderAction.GoToLocator -> readerEngine.goToLocator(this, action.locator)
+        is ReaderAction.VisiblePageChanged -> readerEngine.syncVisiblePage(this, action.pageIndex, action.locator)
         is ReaderAction.GoToSearchResult -> readerEngine.goToSearchResult(this, action.resultIndex)
         is ReaderAction.SearchChanged -> readerEngine.search(this, action.query)
         ReaderAction.SearchOpened -> readerEngine.openSearch(this)

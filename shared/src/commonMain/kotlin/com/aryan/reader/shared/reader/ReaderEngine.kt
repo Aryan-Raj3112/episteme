@@ -40,10 +40,13 @@ data class ReaderSessionState(
     val searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
     val searchResults: List<ReaderSearchResult> = emptyList(),
     val activeSearchResultIndex: Int = -1,
-    val navigationLocator: ReaderLocator? = null
+    val navigationLocator: ReaderLocator? = null,
+    val navigationRequestId: Long = 0L
 ) {
     val currentBookmark: ReaderBookmark?
-        get() = bookmarks.firstOrNull { it.pageIndex == reader.currentPageIndex }
+        get() = navigationLocator
+            ?.let { locator -> bookmarks.firstOrNull { it.locator.sameLocation(locator) } }
+            ?: bookmarks.firstOrNull { it.pageIndex == reader.currentPageIndex && !it.locator.hasTextRange }
 
     val activeSearchResult: ReaderSearchResult?
         get() = searchResults.getOrNull(activeSearchResultIndex)
@@ -84,9 +87,9 @@ class ReaderEngine(
         return ReaderSessionState(
             reader = reader,
             bookmarks = bookmarks
-                .filter { it.pageIndex in pages.indices }
-                .distinctBy { it.pageIndex }
-                .sortedBy { it.pageIndex },
+                .mapNotNull { it.normalizedForBook(book, pages) }
+                .distinctBy { it.locationKey() }
+                .sortedWith(compareBy<ReaderBookmark> { it.pageIndex }.thenBy { it.locator.startOffset ?: -1 }),
             highlights = highlights
                 .map { it.withNormalizedLocator() }
                 .filter { (it.locator.chapterIndex ?: it.chapterIndex) in book.chapters.indices }
@@ -111,7 +114,8 @@ class ReaderEngine(
         return state.copy(
             reader = state.reader.copy(currentPageIndex = target),
             activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target },
-            navigationLocator = page?.toLocator(state.reader.book)
+            navigationLocator = page?.toLocator(state.reader.book),
+            navigationRequestId = state.navigationRequestId + 1
         )
     }
 
@@ -138,7 +142,7 @@ class ReaderEngine(
             ?: return state
         val page = state.reader.pages.getOrNull(pageIndex) ?: return state
         val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
-        val normalizedLocator = locator.withFallbacks(
+        val normalizedLocator = locator.copy(pageIndex = pageIndex).withFallbacks(
             chapterIndex = page.chapterIndex,
             chapterId = chapter?.id,
             href = chapter?.baseHref,
@@ -151,7 +155,19 @@ class ReaderEngine(
         return state.copy(
             reader = state.reader.copy(currentPageIndex = pageIndex),
             activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == pageIndex },
-            navigationLocator = normalizedLocator
+            navigationLocator = normalizedLocator,
+            navigationRequestId = state.navigationRequestId + 1
+        )
+    }
+
+    fun syncVisiblePage(state: ReaderSessionState, pageIndex: Int, locator: ReaderLocator? = null): ReaderSessionState {
+        val target = pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+        val normalizedLocator = locator?.normalizedForPage(state, target)
+        if (target == state.reader.currentPageIndex && normalizedLocator == null) return state
+        return state.copy(
+            reader = state.reader.copy(currentPageIndex = target),
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target },
+            navigationLocator = normalizedLocator ?: state.navigationLocator
         )
     }
 
@@ -186,19 +202,23 @@ class ReaderEngine(
     fun toggleBookmark(state: ReaderSessionState): ReaderSessionState {
         val page = state.reader.currentPage ?: return state
         val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
-        val locator = ReaderLocator(
-            chapterIndex = page.chapterIndex,
-            chapterId = chapter?.id,
-            pageIndex = page.pageIndex,
-            startOffset = page.startOffset,
-            endOffset = page.endOffset,
-            textQuote = page.text.preview()
-        )
+        val locator = state.navigationLocator
+            ?.takeIf { it.belongsTo(page) }
+            ?.normalizedForPage(state, page.pageIndex)
+            ?: ReaderLocator(
+                chapterIndex = page.chapterIndex,
+                chapterId = chapter?.id,
+                pageIndex = page.pageIndex,
+                startOffset = page.startOffset,
+                endOffset = page.endOffset,
+                textQuote = page.text.preview()
+            )
+        val preview = locator.textQuote?.takeIf { it.isNotBlank() } ?: page.text.preview()
         return toggleBookmarkAtLocator(
             state = state,
             locator = locator,
             chapterTitle = page.chapterTitle,
-            preview = page.text.preview()
+            preview = preview
         )
     }
 
@@ -215,29 +235,36 @@ class ReaderEngine(
             ?: state.reader.currentPageIndex
         val page = state.reader.pages.getOrNull(targetPageIndex) ?: return state
         val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
-        val normalizedLocator = locator.withFallbacks(
+        val normalizedLocator = locator.copy(pageIndex = targetPageIndex).withFallbacks(
             chapterIndex = page.chapterIndex,
             chapterId = chapter?.id,
+            href = chapter?.baseHref,
             pageIndex = targetPageIndex,
             startOffset = page.startOffset,
             endOffset = page.endOffset,
-            textQuote = preview ?: page.text.preview()
+            textQuote = preview ?: page.text.preview(),
+            cfi = locator.cfi ?: "desktop:${page.chapterIndex}:${locator.startOffset ?: page.startOffset}:${locator.endOffset ?: locator.startOffset ?: page.startOffset}"
         )
         val existing = state.bookmarks.firstOrNull {
-            it.pageIndex == targetPageIndex || it.locator.sameLocation(normalizedLocator)
+            it.locator.sameLocation(normalizedLocator) ||
+                (!normalizedLocator.hasTextRange && it.pageIndex == targetPageIndex)
         }
         val updated = if (existing != null) {
             state.bookmarks - existing
         } else {
             state.bookmarks + ReaderBookmark(
-                id = "${state.reader.book.id}_$targetPageIndex",
+                id = bookmarkId(state.reader.book.id, targetPageIndex, normalizedLocator),
                 pageIndex = targetPageIndex,
                 chapterTitle = chapterTitle ?: page.chapterTitle,
                 preview = preview ?: page.text.preview(),
                 locator = normalizedLocator
             )
         }
-        return state.copy(bookmarks = updated.sortedBy { it.pageIndex })
+        return state.copy(
+            bookmarks = updated.sortedWith(
+                compareBy<ReaderBookmark> { it.pageIndex }.thenBy { it.locator.startOffset ?: -1 }
+            )
+        )
     }
 
     fun upsertHighlight(state: ReaderSessionState, highlight: UserHighlight): ReaderSessionState {
@@ -367,12 +394,13 @@ class ReaderEngine(
         return state.copy(
             reader = state.reader.copy(currentPageIndex = targetPage),
             activeSearchResultIndex = targetIndex,
-            navigationLocator = result.locator.withFallbacks(
+            navigationLocator = result.locator.copy(pageIndex = targetPage).withFallbacks(
                 chapterIndex = page?.chapterIndex,
                 chapterId = chapter?.id,
                 href = chapter?.baseHref,
                 pageIndex = targetPage
-            )
+            ),
+            navigationRequestId = state.navigationRequestId + 1
         )
     }
 }
@@ -391,6 +419,82 @@ private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
     }
     val targetPage = locator.pageIndex
     return targetPage != null && targetPage == pageIndex
+}
+
+private fun ReaderBookmark.normalizedForBook(book: SharedEpubBook, pages: List<ReaderPage>): ReaderBookmark? {
+    val targetPageIndex = pages.indexOfFirst { page -> page.contains(locator) }
+        .takeIf { it >= 0 }
+        ?: pageIndex.takeIf { it in pages.indices }
+        ?: return null
+    val page = pages.getOrNull(targetPageIndex) ?: return null
+    val chapter = book.chapters.getOrNull(page.chapterIndex)
+    val normalizedLocator = locator.copy(pageIndex = targetPageIndex).withFallbacks(
+        chapterIndex = page.chapterIndex,
+        chapterId = chapter?.id,
+        href = chapter?.baseHref,
+        pageIndex = targetPageIndex,
+        startOffset = page.startOffset,
+        endOffset = page.endOffset,
+        textQuote = preview.ifBlank { page.text.preview() },
+        cfi = locator.cfi ?: page.toDesktopCfi()
+    )
+    return copy(
+        pageIndex = targetPageIndex,
+        chapterTitle = chapterTitle.ifBlank { page.chapterTitle },
+        preview = preview.ifBlank { normalizedLocator.textQuote ?: page.text.preview() },
+        locator = normalizedLocator
+    )
+}
+
+private fun ReaderBookmark.locationKey(): String {
+    val locator = locator
+    return listOf(
+        locator.chapterIndex,
+        locator.pageIndex,
+        locator.startOffset,
+        locator.endOffset,
+        locator.cfi
+    ).joinToString(":")
+}
+
+private fun bookmarkId(bookId: String, pageIndex: Int, locator: ReaderLocator): String {
+    val chapter = locator.chapterIndex ?: -1
+    val start = locator.startOffset ?: -1
+    val end = locator.endOffset ?: start
+    return "${bookId}_${pageIndex}_${chapter}_${start}_${end}"
+}
+
+private fun ReaderLocator.belongsTo(page: ReaderPage): Boolean {
+    val targetChapter = chapterIndex
+    if (targetChapter != null && targetChapter != page.chapterIndex) return false
+    if (pageIndex == page.pageIndex) return true
+    val start = startOffset
+    val end = endOffset ?: start
+    if (start != null && end != null) {
+        return if (start == end) {
+            start in page.startOffset..page.endOffset
+        } else {
+            start < page.endOffset && end > page.startOffset
+        }
+    }
+    return pageIndex == page.pageIndex
+}
+
+private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex: Int): ReaderLocator? {
+    val page = state.reader.pages.getOrNull(pageIndex) ?: return null
+    val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
+    val start = startOffset ?: page.startOffset
+    val end = (endOffset ?: start).coerceAtLeast(start)
+    return copy(pageIndex = page.pageIndex).withFallbacks(
+        chapterIndex = page.chapterIndex,
+        chapterId = chapter?.id,
+        href = chapter?.baseHref,
+        pageIndex = page.pageIndex,
+        startOffset = start,
+        endOffset = end,
+        textQuote = textQuote ?: page.text.preview(),
+        cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
+    )
 }
 
 private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {

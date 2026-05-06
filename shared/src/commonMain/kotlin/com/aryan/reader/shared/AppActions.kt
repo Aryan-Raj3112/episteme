@@ -23,6 +23,7 @@ sealed interface ReaderAction {
     data class GoToProgress(val progress: Float) : ReaderAction
     data class GoToChapter(val chapterIndex: Int) : ReaderAction
     data class GoToLocator(val locator: ReaderLocator) : ReaderAction
+    data class VisiblePageChanged(val pageIndex: Int, val locator: ReaderLocator? = null) : ReaderAction
     data class GoToSearchResult(val resultIndex: Int) : ReaderAction
     data class SearchChanged(val query: String) : ReaderAction
     data object SearchOpened : ReaderAction

@@ -133,6 +133,7 @@ import com.aryan.reader.shared.SmartRule
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfNormalizedPoint
@@ -151,6 +152,7 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedTextBookFactory
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
+import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
@@ -175,6 +177,7 @@ import com.multiplatform.webview.jsbridge.IJsMessageHandler
 import com.multiplatform.webview.jsbridge.JsMessage
 import com.multiplatform.webview.jsbridge.rememberWebViewJsBridge
 import com.multiplatform.webview.web.WebViewNavigator
+import com.multiplatform.webview.web.rememberWebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
@@ -182,6 +185,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
@@ -2193,7 +2202,7 @@ private fun ReaderScreen(
         highlightPalette = highlightPalette,
         onHighlightPaletteChange = onHighlightPaletteChange,
         onPickCustomFont = onPickCustomFont
-    ) { html, background ->
+    ) { html, background, navigationTarget, highlights, onVisiblePageChanged ->
         Surface(
             color = background,
             shape = RoundedCornerShape(8.dp),
@@ -2204,9 +2213,12 @@ private fun ReaderScreen(
             if (webViewRuntimeState.initialized) {
                 DesktopEpubWebView(
                     html = html,
+                    navigationTarget = navigationTarget,
+                    highlights = highlights,
                     onHighlightCreated = { highlight ->
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
+                    onVisiblePageChanged = onVisiblePageChanged,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -2222,15 +2234,20 @@ private fun ReaderScreen(
 @Composable
 private fun DesktopEpubWebView(
     html: String,
+    navigationTarget: ReaderContentNavigationTarget,
+    highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
+    onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
     val scope = rememberCoroutineScope()
+    val navigator = rememberWebViewNavigator()
     val bridge = rememberWebViewJsBridge()
 
     DisposableEffect(bridge) {
-        val handler = object : IJsMessageHandler {
+        val highlightHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerHighlightCreated"
 
             override fun handle(
@@ -2238,13 +2255,30 @@ private fun DesktopEpubWebView(
                 navigator: WebViewNavigator?,
                 callback: (String) -> Unit
             ) {
-                EpubAnnotationSerializer.parseHighlightJson(message.params)?.let { highlight ->
+                EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)?.let { highlight ->
                     scope.launch { latestOnHighlightCreated(highlight) }
                 }
             }
         }
-        bridge.register(handler)
-        onDispose { bridge.unregister(handler) }
+        val positionHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerPositionChanged"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                message.params.readerPositionOrNull()?.let { position ->
+                    scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
+                }
+            }
+        }
+        bridge.register(highlightHandler)
+        bridge.register(positionHandler)
+        onDispose {
+            bridge.unregister(highlightHandler)
+            bridge.unregister(positionHandler)
+        }
     }
 
     key(html) {
@@ -2261,8 +2295,26 @@ private fun DesktopEpubWebView(
                 state = state,
                 modifier = Modifier.fillMaxSize(),
                 captureBackPresses = false,
+                navigator = navigator,
                 webViewJsBridge = bridge
             )
+
+            LaunchedEffect(
+                navigationTarget.requestId,
+                navigationTarget.readingMode,
+                state.loadingState
+            ) {
+                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+                val locator = navigationTarget.locator ?: return@LaunchedEffect
+                navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
+            }
+
+            LaunchedEffect(highlights, navigationTarget.readingMode, state.loadingState) {
+                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+                navigator.evaluateJavaScript("window.readerApplyHighlights && window.readerApplyHighlights(${EpubAnnotationSerializer.highlightsToJson(highlights)});")
+            }
 
             val loadingState = state.loadingState
             if (loadingState is LoadingState.Loading) {
@@ -2272,6 +2324,50 @@ private fun DesktopEpubWebView(
                 )
             }
         }
+    }
+}
+
+private data class DesktopReaderPosition(
+    val pageIndex: Int,
+    val locator: ReaderLocator?
+)
+
+private fun String.readerPositionOrNull(): DesktopReaderPosition? {
+    fun parse(rawJson: String): DesktopReaderPosition? = runCatching {
+        val obj = Json.parseToJsonElement(rawJson).jsonObject
+        val pageIndex = obj["pageIndex"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.intOrNull
+            ?: return@runCatching null
+        val locator = ReaderLocator(
+            chapterIndex = obj["chapterIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            pageIndex = pageIndex,
+            startOffset = obj["startOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            endOffset = obj["endOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            textQuote = obj["textQuote"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+            cfi = obj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull
+        )
+        DesktopReaderPosition(pageIndex, locator)
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
+
+private fun ReaderLocator.toReaderLocatorJson(): String {
+    return buildString {
+        append("{")
+        val values = buildList {
+            chapterIndex?.let { add("\"chapterIndex\":$it") }
+            pageIndex?.let { add("\"pageIndex\":$it") }
+            startOffset?.let { add("\"startOffset\":$it") }
+            endOffset?.let { add("\"endOffset\":$it") }
+        }
+        append(values.joinToString(","))
+        append("}")
     }
 }
 

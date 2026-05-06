@@ -51,6 +51,15 @@ object EpubAnnotationSerializer {
         return runCatching { json.parseToJsonElement(rawJson).jsonObject.asHighlightOrNull() }.getOrNull()
     }
 
+    fun parseHighlightJsonLenient(rawJson: String?): UserHighlight? {
+        if (rawJson.isNullOrBlank()) return null
+        parseHighlightJson(rawJson)?.let { return it }
+        val unwrapped = runCatching {
+            json.parseToJsonElement(rawJson).jsonPrimitive.content
+        }.getOrNull()
+        return parseHighlightJson(unwrapped)
+    }
+
     fun highlightsToJson(highlights: Collection<UserHighlight>): String {
         return json.encodeToString(
             JsonElement.serializer(),

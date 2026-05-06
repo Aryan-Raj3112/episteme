@@ -224,6 +224,42 @@ class ReaderActionReducerTest {
     }
 
     @Test
+    fun `visible page sync updates slider position without creating navigation request`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook(), settings = compactSettings())
+        val navigated = session.reduce(ReaderAction.GoToPage(1), engine)
+        val requestId = navigated.navigationRequestId
+        val synced = navigated.reduce(ReaderAction.VisiblePageChanged(3), engine)
+
+        assertEquals(3, synced.reader.currentPageIndex)
+        assertEquals(requestId, synced.navigationRequestId)
+        assertEquals(navigated.navigationLocator, synced.navigationLocator)
+    }
+
+    @Test
+    fun `visible locator sync feeds top visible bookmark location`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook(), settings = compactSettings())
+        val page = session.reader.pages[1]
+        val locator = ReaderLocator(
+            chapterIndex = page.chapterIndex,
+            pageIndex = page.pageIndex,
+            startOffset = page.startOffset + 25,
+            endOffset = page.startOffset + 25,
+            textQuote = "top visible text",
+            cfi = "desktop:${page.chapterIndex}:${page.startOffset + 25}:${page.startOffset + 25}"
+        )
+
+        val synced = session.reduce(ReaderAction.VisiblePageChanged(page.pageIndex, locator), engine)
+        val bookmarked = synced.reduce(ReaderAction.ToggleBookmark, engine)
+
+        assertEquals(locator.startOffset, synced.navigationLocator?.startOffset)
+        assertEquals(locator.startOffset, bookmarked.bookmarks.single().locator.startOffset)
+        assertEquals("top visible text", bookmarked.bookmarks.single().preview)
+        assertTrue(bookmarked.reduce(ReaderAction.ToggleBookmark, engine).bookmarks.isEmpty())
+    }
+
+    @Test
     fun `format action maps Android style reader appearance to shared reader settings`() {
         val engine = ReaderEngine()
         val session = engine.createSession(

@@ -81,6 +81,12 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.math.roundToInt
 
+data class ReaderContentNavigationTarget(
+    val locator: ReaderLocator?,
+    val requestId: Long,
+    val readingMode: ReaderReadingMode
+)
+
 @Composable
 fun SharedScreenScaffold(
     title: String,
@@ -118,7 +124,13 @@ fun SharedReaderScreen(
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     onPickCustomFont: (() -> String?)? = null,
-    readerContent: @Composable ColumnScope.(html: String, background: Color) -> Unit
+    readerContent: @Composable ColumnScope.(
+        html: String,
+        background: Color,
+        navigationTarget: ReaderContentNavigationTarget,
+        highlights: List<UserHighlight>,
+        onVisiblePageChanged: (Int, ReaderLocator?) -> Unit
+    ) -> Unit
 ) {
     val readerState = session.reader
     val page = readerState.currentPage
@@ -233,28 +245,59 @@ fun SharedReaderScreen(
                 }
 
                 val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                    ReaderHtmlDocumentBuilder.verticalDocument(
-                        book = readerState.book,
-                        settings = settings,
-                        searchQuery = session.searchQuery,
-                        searchOptions = session.searchOptions,
-                        highlights = session.highlights,
-                        highlightPalette = highlightPalette,
-                        navigationLocator = navigationLocator
-                    )
+                    remember(
+                        readerState.book,
+                        settings,
+                        session.searchQuery,
+                        session.searchOptions,
+                        highlightPalette,
+                        readerState.pages
+                    ) {
+                        ReaderHtmlDocumentBuilder.verticalDocument(
+                            book = readerState.book,
+                            settings = settings,
+                            searchQuery = session.searchQuery,
+                            searchOptions = session.searchOptions,
+                            highlights = emptyList(),
+                            highlightPalette = highlightPalette,
+                            navigationLocator = null,
+                            pages = readerState.pages
+                        )
+                    }
                 } else {
-                    ReaderHtmlDocumentBuilder.pageDocument(
-                        book = readerState.book,
-                        page = page,
-                        settings = settings,
-                        searchQuery = session.searchQuery,
-                        searchOptions = session.searchOptions,
-                        highlights = session.highlights,
-                        highlightPalette = highlightPalette,
-                        navigationLocator = navigationLocator
-                    )
+                    remember(
+                        readerState.book,
+                        page,
+                        settings,
+                        session.searchQuery,
+                        session.searchOptions,
+                        session.highlights,
+                        highlightPalette,
+                        navigationLocator
+                    ) {
+                        ReaderHtmlDocumentBuilder.pageDocument(
+                            book = readerState.book,
+                            page = page,
+                            settings = settings,
+                            searchQuery = session.searchQuery,
+                            searchOptions = session.searchOptions,
+                            highlights = session.highlights,
+                            highlightPalette = highlightPalette,
+                            navigationLocator = navigationLocator
+                        )
+                    }
                 }
-                readerContent(html, background)
+                readerContent(
+                    html,
+                    background,
+                    ReaderContentNavigationTarget(
+                        locator = navigationLocator,
+                        requestId = session.navigationRequestId,
+                        readingMode = settings.readingMode
+                    ),
+                    if (settings.readingMode == ReaderReadingMode.VERTICAL) session.highlights else emptyList(),
+                    { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) }
+                )
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (toolbarPreferences.isVisible(ReaderTool.SLIDER)) {
