@@ -190,6 +190,29 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `move keeps text box size and clamps to page`() {
+        val moved = PdfPageBounds(0.2f, 0.3f, 0.5f, 0.45f).movedBy(
+            deltaXPx = 100f,
+            deltaYPx = -120f,
+            canvasSize = IntSize(1_000, 1_000)
+        )
+        val clamped = moved.movedBy(
+            deltaXPx = 1_000f,
+            deltaYPx = 1_000f,
+            canvasSize = IntSize(1_000, 1_000)
+        )
+
+        assertTrue(abs((moved.right - moved.left) - 0.3f) < 0.001f)
+        assertTrue(abs((moved.bottom - moved.top) - 0.15f) < 0.001f)
+        assertTrue(abs(moved.left - 0.3f) < 0.001f)
+        assertTrue(abs(moved.top - 0.18f) < 0.001f)
+        assertTrue(abs(clamped.left - 0.7f) < 0.001f)
+        assertTrue(abs(clamped.top - 0.85f) < 0.001f)
+        assertEquals(1f, clamped.right)
+        assertEquals(1f, clamped.bottom)
+    }
+
+    @Test
     fun `normalizeTextDraft trims and normalizes line endings`() {
         assertEquals(
             "Line one\nLine two",

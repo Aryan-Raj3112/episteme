@@ -94,6 +94,7 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextFontPreset
 import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
+import com.aryan.reader.shared.pdf.movedBy
 import com.aryan.reader.shared.pdf.resizedBy
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
@@ -328,6 +329,11 @@ fun SharedPdfTextBoxEditorOverlay(
     val handleSize = 10.dp
     val handleTouchSize = 38.dp
     val handleTouchSizePx = with(density) { handleTouchSize.toPx() }
+    val moveHandleWidth = 54.dp
+    val moveHandleHeight = 24.dp
+    val moveHandleWidthPx = with(density) { moveHandleWidth.toPx() }
+    val moveHandleHeightPx = with(density) { moveHandleHeight.toPx() }
+    val moveHandleBelow = topPx + heightPx + moveHandleHeightPx + 10f <= canvasSize.height
 
     LaunchedEffect(id, style) {
         focusRequester.requestFocus()
@@ -416,6 +422,64 @@ fun SharedPdfTextBoxEditorOverlay(
                         .size(handleSize)
                         .background(Color(0xFF64B5F6), CircleShape)
                         .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (leftPx + (widthPx / 2f) - (moveHandleWidthPx / 2f)).roundToInt(),
+                        if (moveHandleBelow) {
+                            (topPx + heightPx + 8f).roundToInt()
+                        } else {
+                            (topPx - moveHandleHeightPx - 8f).roundToInt()
+                        }
+                    )
+                }
+                .size(width = moveHandleWidth, height = moveHandleHeight)
+                .clip(CircleShape)
+                .background(Color(0xFF64B5F6))
+                .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
+                .pointerInput(id, canvasSize) {
+                    detectDragGestures(
+                        onDragStart = {
+                            isResizing = true
+                        },
+                        onDragEnd = {
+                            isResizing = false
+                            onBoundsChange(liveBounds)
+                        },
+                        onDragCancel = {
+                            isResizing = false
+                            liveBounds = bounds
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            liveBounds = liveBounds.movedBy(
+                                deltaXPx = dragAmount.x,
+                                deltaYPx = dragAmount.y,
+                                canvasSize = canvasSize
+                            )
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(Modifier.size(width = 24.dp, height = 10.dp)) {
+                val lineColor = Color.White.copy(alpha = 0.92f)
+                drawLine(
+                    color = lineColor,
+                    start = Offset(size.width * 0.2f, size.height * 0.25f),
+                    end = Offset(size.width * 0.8f, size.height * 0.25f),
+                    strokeWidth = 2f
+                )
+                drawLine(
+                    color = lineColor,
+                    start = Offset(size.width * 0.2f, size.height * 0.75f),
+                    end = Offset(size.width * 0.8f, size.height * 0.75f),
+                    strokeWidth = 2f
                 )
             }
         }

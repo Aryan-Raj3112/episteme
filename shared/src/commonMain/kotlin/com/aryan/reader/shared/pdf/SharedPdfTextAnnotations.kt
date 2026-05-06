@@ -292,6 +292,25 @@ fun PdfPageBounds.resizedBy(
     ).coercedToPage()
 }
 
+fun PdfPageBounds.movedBy(
+    deltaXPx: Float,
+    deltaYPx: Float,
+    canvasSize: IntSize
+): PdfPageBounds {
+    val pageWidthPx = canvasSize.width.coerceAtLeast(1).toFloat()
+    val pageHeightPx = canvasSize.height.coerceAtLeast(1).toFloat()
+    val widthPx = ((right - left) * pageWidthPx).coerceIn(1f, pageWidthPx)
+    val heightPx = ((bottom - top) * pageHeightPx).coerceIn(1f, pageHeightPx)
+    val nextLeftPx = ((left * pageWidthPx) + deltaXPx).coerceIn(0f, (pageWidthPx - widthPx).coerceAtLeast(0f))
+    val nextTopPx = ((top * pageHeightPx) + deltaYPx).coerceIn(0f, (pageHeightPx - heightPx).coerceAtLeast(0f))
+    return PdfPageBounds(
+        left = nextLeftPx / pageWidthPx,
+        top = nextTopPx / pageHeightPx,
+        right = (nextLeftPx + widthPx) / pageWidthPx,
+        bottom = (nextTopPx + heightPx) / pageHeightPx
+    ).coercedToPage()
+}
+
 fun SharedPdfAnnotation.sharedPdfTextStyle(): SharedPdfTextStyleConfig {
     return SharedPdfTextStyleConfig(
         colorArgb = colorArgb,

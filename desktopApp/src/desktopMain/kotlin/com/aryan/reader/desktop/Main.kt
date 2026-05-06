@@ -1408,6 +1408,17 @@ private fun PdfReaderScreen(
         }
     }
 
+    fun persistActiveTextDraftIfReady(draft: SharedPdfTextDraft) {
+        val annotation = draft.toAnnotation()
+        if (annotation.text.isNotEmpty()) {
+            activeTextDraft = null
+            textStyleConfig = draft.style
+            dispatchPdf(SharedPdfReaderAction.AnnotationAdded(annotation))
+        } else {
+            activeTextDraft = draft
+        }
+    }
+
     fun startActiveTextDraft(pageIndex: Int, anchor: Offset, canvasSize: IntSize) {
         if (canvasSize.width <= 0 || canvasSize.height <= 0) return
         commitActiveTextDraft()
@@ -1425,7 +1436,7 @@ private fun PdfReaderScreen(
     }
 
     fun updateActiveTextDraft(text: String, canvasSize: IntSize) {
-        activeTextDraft = activeTextDraft?.withText(text, canvasSize)
+        activeTextDraft?.withText(text, canvasSize)?.let(::persistActiveTextDraftIfReady)
     }
 
     fun updateActiveTextDraftBounds(bounds: PdfPageBounds) {
