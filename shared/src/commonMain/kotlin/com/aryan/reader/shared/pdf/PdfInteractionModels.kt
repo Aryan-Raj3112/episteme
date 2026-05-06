@@ -52,6 +52,10 @@ data class SharedPdfAnnotation(
     val fontSize: Float = 16f,
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
+    val isUnderline: Boolean = false,
+    val isStrikeThrough: Boolean = false,
+    val fontPath: String? = null,
+    val fontName: String? = null,
     val rangeStartIndex: Int? = null,
     val rangeEndIndex: Int? = null,
     val createdAt: Long = 0L
@@ -136,10 +140,10 @@ data class PdfToolConfig(
 
 object SharedPdfAnnotationDefaults {
     val penPalette: List<Int> = listOf(
-        0xFF111111.toInt(),
-        0xFFD32F2F.toInt(),
-        0xFF1976D2.toInt(),
-        0xFF388E3C.toInt(),
+        0xFF000000.toInt(),
+        0xFFFF0000.toInt(),
+        0xFF0000FF.toInt(),
+        0xFF4CAF50.toInt(),
         0xFFFFFFFF.toInt()
     )
 
@@ -153,13 +157,13 @@ object SharedPdfAnnotationDefaults {
 
     fun configFor(tool: PdfInkTool): PdfToolConfig {
         return when (tool) {
-            PdfInkTool.PEN -> PdfToolConfig(0xFF111111.toInt(), 2.5f)
-            PdfInkTool.FOUNTAIN_PEN -> PdfToolConfig(0xFF111111.toInt(), 3.5f)
-            PdfInkTool.PENCIL -> PdfToolConfig(0xFF616161.toInt(), 1.8f)
-            PdfInkTool.HIGHLIGHTER -> PdfToolConfig(0x8CFFEB3B.toInt(), 12f)
-            PdfInkTool.HIGHLIGHTER_ROUND -> PdfToolConfig(0x8CFF9800.toInt(), 16f)
-            PdfInkTool.ERASER -> PdfToolConfig(0x00000000, 18f)
-            PdfInkTool.TEXT -> PdfToolConfig(0xFF111111.toInt(), 1f)
+            PdfInkTool.PEN -> PdfToolConfig(0xFFFF0000.toInt(), 0.008f)
+            PdfInkTool.FOUNTAIN_PEN -> PdfToolConfig(0xFF0000FF.toInt(), 0.008f)
+            PdfInkTool.PENCIL -> PdfToolConfig(0xFF444444.toInt(), 0.008f)
+            PdfInkTool.HIGHLIGHTER -> PdfToolConfig(0x8CFF9800.toInt(), 0.035f)
+            PdfInkTool.HIGHLIGHTER_ROUND -> PdfToolConfig(0x8CFFEB3B.toInt(), 0.035f)
+            PdfInkTool.ERASER -> PdfToolConfig(0x00000000, 0.03f)
+            PdfInkTool.TEXT -> PdfToolConfig(0xFF000000.toInt(), 0.02f)
         }
     }
 }

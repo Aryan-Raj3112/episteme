@@ -156,6 +156,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfBookmarkSerializer
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
@@ -163,6 +164,8 @@ import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.mostVisiblePdfPageIndex
 import com.aryan.reader.shared.pdf.reduce
+import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
+import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderSessionState
@@ -1274,13 +1277,39 @@ private inline fun List<DesktopSmartRuleDraft>.updateAt(
 }
 
 private val DesktopPdfAnnotationTools = listOf(
+    PdfInkTool.PEN,
+    PdfInkTool.FOUNTAIN_PEN,
+    PdfInkTool.PENCIL,
     PdfInkTool.HIGHLIGHTER,
     PdfInkTool.HIGHLIGHTER_ROUND,
-    PdfInkTool.PENCIL,
-    PdfInkTool.FOUNTAIN_PEN,
     PdfInkTool.TEXT,
     PdfInkTool.ERASER
 )
+
+private val PdfInkTool.isDesktopHighlighter: Boolean
+    get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
+
+private fun List<PdfPagePoint>.withDesktopPdfDragPoint(
+    point: Offset,
+    canvasSize: IntSize,
+    tool: PdfInkTool,
+    snapHighlighter: Boolean,
+    timestamp: Long
+): List<PdfPagePoint> {
+    val nextPoint = point.toSharedPdfPoint(canvasSize, timestamp)
+    if (snapHighlighter && tool.isDesktopHighlighter && isNotEmpty()) {
+        val pageAspectRatio = canvasSize.width.toFloat() / canvasSize.height.coerceAtLeast(1).toFloat()
+        return listOf(
+            first(),
+            SharedPdfInkRenderer.calculateSnappedPoint(
+                currentPoint = nextPoint,
+                startPoint = first(),
+                pageAspectRatio = pageAspectRatio
+            )
+        )
+    }
+    return this + nextPoint
+}
 
 @Composable
 private fun PdfReaderScreen(
@@ -1292,7 +1321,7 @@ private fun PdfReaderScreen(
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
     var pdfState by remember(document.path) {
-        val defaultTool = PdfInkTool.HIGHLIGHTER
+        val defaultTool = PdfInkTool.PEN
         val defaultToolConfig = SharedPdfAnnotationDefaults.configFor(defaultTool)
         mutableStateOf(
             SharedPdfReaderState.initial(
@@ -1314,6 +1343,7 @@ private fun PdfReaderScreen(
     var textDraft by remember(document.path) { mutableStateOf("") }
     var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
     var activeStroke by remember(document.path, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    var isHighlighterSnapEnabled by remember(document.path) { mutableStateOf(false) }
     var selectionStartIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
     var selectionEndIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
     var selectionStartHit by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
@@ -2011,7 +2041,9 @@ private fun PdfReaderScreen(
                             },
                             onClearPage = {
                                 dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex))
-                            }
+                            },
+                            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                            onHighlighterSnapChange = { isHighlighterSnapEnabled = it }
                         )
                     }
                     selectedAnnotation?.let { annotation ->
@@ -2227,6 +2259,7 @@ private fun PdfReaderScreen(
                                 selectedTool = selectedTool,
                                 selectedColor = selectedColor,
                                 strokeWidth = strokeWidth,
+                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                 textDraft = textDraft,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = { goToPage(it, scrollVertical = false) },
@@ -2379,6 +2412,7 @@ private fun PdfReaderScreen(
                                     selectedTool,
                                     selectedColor,
                                     strokeWidth,
+                                    isHighlighterSnapEnabled,
                                     textDraft,
                                     pageCanvasSize,
                                     pageRender.width,
@@ -2492,27 +2526,55 @@ private fun PdfReaderScreen(
                                             }
                                         )
                                     } else {
+                                        var eraserPreviousPoint: Offset? = null
                                         detectDragGestures(
                                             onDragStart = { start ->
-                                                if (selectedTool != PdfInkTool.ERASER) {
+                                                if (selectedTool == PdfInkTool.ERASER) {
+                                                    val annotationSnapshot = currentPdfAnnotations
+                                                    val updatedAnnotations = annotationSnapshot.filterNot {
+                                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                                            point = start,
+                                                            size = pageCanvasSize,
+                                                            eraserStrokeWidth = strokeWidth
+                                                        )
+                                                    }
+                                                    if (updatedAnnotations.size != annotationSnapshot.size) {
+                                                        dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(updatedAnnotations))
+                                                    }
+                                                    eraserPreviousPoint = start
+                                                } else {
                                                     activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
                                                 }
                                             },
                                             onDrag = { change, _ ->
                                                 if (selectedTool == PdfInkTool.ERASER) {
                                                     val point = change.position
+                                                    val previousPoint = eraserPreviousPoint
                                                     val annotationSnapshot = currentPdfAnnotations
                                                     val updatedAnnotations = annotationSnapshot.filterNot {
-                                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize)
+                                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                                            point = point,
+                                                            size = pageCanvasSize,
+                                                            lastPoint = previousPoint,
+                                                            eraserStrokeWidth = strokeWidth
+                                                        )
                                                     }
                                                     if (updatedAnnotations.size != annotationSnapshot.size) {
                                                         dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(updatedAnnotations))
                                                     }
+                                                    eraserPreviousPoint = point
                                                 } else {
-                                                    activeStroke = activeStroke + change.position.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
+                                                    activeStroke = activeStroke.withDesktopPdfDragPoint(
+                                                        point = change.position,
+                                                        canvasSize = pageCanvasSize,
+                                                        tool = selectedTool,
+                                                        snapHighlighter = isHighlighterSnapEnabled,
+                                                        timestamp = System.currentTimeMillis()
+                                                    )
                                                 }
                                             },
                                             onDragEnd = {
+                                                eraserPreviousPoint = null
                                                 if (activeStroke.size > 1) {
                                                     dispatchPdf(
                                                         SharedPdfReaderAction.AnnotationAdded(
@@ -2531,7 +2593,10 @@ private fun PdfReaderScreen(
                                                 }
                                                 activeStroke = emptyList()
                                             },
-                                            onDragCancel = { activeStroke = emptyList() }
+                                            onDragCancel = {
+                                                eraserPreviousPoint = null
+                                                activeStroke = emptyList()
+                                            }
                                         )
                                     }
                                 }
@@ -2557,6 +2622,7 @@ private fun PdfReaderScreen(
                                 annotations = pageAnnotations,
                                 activeStroke = activeStroke,
                                 canvasSize = pageCanvasSize,
+                                activeTool = selectedTool,
                                 activeStrokeColorArgb = selectedColor,
                                 activeStrokeWidth = strokeWidth,
                                 selectedAnnotationId = selectedAnnotationId
@@ -2736,6 +2802,7 @@ private fun DesktopVerticalPdfPage(
     selectedTool: PdfInkTool,
     selectedColor: Int,
     strokeWidth: Float,
+    isHighlighterSnapEnabled: Boolean,
     textDraft: String,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
@@ -2906,6 +2973,7 @@ private fun DesktopVerticalPdfPage(
                     selectedTool,
                     selectedColor,
                     strokeWidth,
+                    isHighlighterSnapEnabled,
                     textDraft,
                     pageCanvasSize,
                     renderedPageWidth,
@@ -3024,11 +3092,25 @@ private fun DesktopVerticalPdfPage(
                                 }
                             )
                         } else {
+                            var eraserPreviousPoint: Offset? = null
                             detectDragGestures(
                                 onDragStart = { start ->
                                     onSelectPage(pageIndex)
                                     clearInteractionState()
-                                    if (selectedTool != PdfInkTool.ERASER) {
+                                    if (selectedTool == PdfInkTool.ERASER) {
+                                        val annotationSnapshot = currentAnnotations
+                                        val updatedAnnotations = annotationSnapshot.filterNot {
+                                            it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                                point = start,
+                                                size = pageCanvasSize,
+                                                eraserStrokeWidth = strokeWidth
+                                            )
+                                        }
+                                        if (updatedAnnotations.size != annotationSnapshot.size) {
+                                            onAnnotationsChanged(updatedAnnotations)
+                                        }
+                                        eraserPreviousPoint = start
+                                    } else {
                                         activeStroke = listOf(
                                             start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
                                         )
@@ -3037,21 +3119,32 @@ private fun DesktopVerticalPdfPage(
                                 onDrag = { change, _ ->
                                     if (selectedTool == PdfInkTool.ERASER) {
                                         val point = change.position
+                                        val previousPoint = eraserPreviousPoint
                                         val annotationSnapshot = currentAnnotations
                                         val updatedAnnotations = annotationSnapshot.filterNot {
-                                            it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize)
+                                            it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                                point = point,
+                                                size = pageCanvasSize,
+                                                lastPoint = previousPoint,
+                                                eraserStrokeWidth = strokeWidth
+                                            )
                                         }
                                         if (updatedAnnotations.size != annotationSnapshot.size) {
                                             onAnnotationsChanged(updatedAnnotations)
                                         }
+                                        eraserPreviousPoint = point
                                     } else {
-                                        activeStroke = activeStroke + change.position.toSharedPdfPoint(
-                                            pageCanvasSize,
-                                            System.currentTimeMillis()
+                                        activeStroke = activeStroke.withDesktopPdfDragPoint(
+                                            point = change.position,
+                                            canvasSize = pageCanvasSize,
+                                            tool = selectedTool,
+                                            snapHighlighter = isHighlighterSnapEnabled,
+                                            timestamp = System.currentTimeMillis()
                                         )
                                     }
                                 },
                                 onDragEnd = {
+                                    eraserPreviousPoint = null
                                     if (activeStroke.size > 1) {
                                         onAnnotationAdded(
                                             SharedPdfAnnotation(
@@ -3069,6 +3162,7 @@ private fun DesktopVerticalPdfPage(
                                     activeStroke = emptyList()
                                 },
                                 onDragCancel = {
+                                    eraserPreviousPoint = null
                                     activeStroke = emptyList()
                                 }
                             )
@@ -3147,6 +3241,7 @@ private fun DesktopVerticalPdfPage(
                         annotations = pageAnnotations,
                         activeStroke = activeStroke,
                         canvasSize = pageCanvasSize,
+                        activeTool = selectedTool,
                         activeStrokeColorArgb = selectedColor,
                         activeStrokeWidth = strokeWidth,
                         selectedAnnotationId = selectedAnnotationId
@@ -3248,6 +3343,18 @@ private fun DesktopPdfAnnotationEditor(
                         label = { Text("Italic") }
                     )
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = annotation.isUnderline,
+                        onClick = { onUpdate(annotation.copy(isUnderline = !annotation.isUnderline)) },
+                        label = { Text("Underline") }
+                    )
+                    FilterChip(
+                        selected = annotation.isStrikeThrough,
+                        onClick = { onUpdate(annotation.copy(isStrikeThrough = !annotation.isStrikeThrough)) },
+                        label = { Text("Strike") }
+                    )
+                }
                 Text("Font ${annotation.fontSize.toInt()}", style = MaterialTheme.typography.labelLarge)
                 Slider(
                     value = annotation.fontSize.coerceIn(10f, 36f),
@@ -3291,11 +3398,13 @@ private fun DesktopPdfAnnotationEditor(
                 }
             }
             if (annotation.kind == PdfAnnotationKind.INK) {
-                Text("Thickness ${annotation.strokeWidth.toInt()}", style = MaterialTheme.typography.labelLarge)
+                val strokeRange = annotation.tool.sharedPdfStrokeWidthRange()
+                val strokeValue = annotation.strokeWidth.coerceIn(strokeRange.start, strokeRange.endInclusive)
+                Text("Thickness ${strokeValue.sharedPdfStrokePercent(strokeRange)}", style = MaterialTheme.typography.labelLarge)
                 Slider(
-                    value = annotation.strokeWidth,
-                    onValueChange = { onUpdate(annotation.copy(strokeWidth = it.coerceAtLeast(0.1f))) },
-                    valueRange = 1f..28f
+                    value = strokeValue,
+                    onValueChange = { onUpdate(annotation.copy(strokeWidth = it.coerceAtLeast(0.0001f))) },
+                    valueRange = strokeRange
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

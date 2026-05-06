@@ -288,7 +288,7 @@ fun SharedPdfReaderState.reduce(
             )
         }
         is SharedPdfReaderAction.ColorSelected -> copy(selectedColorArgb = action.colorArgb)
-        is SharedPdfReaderAction.StrokeWidthChanged -> copy(strokeWidth = action.strokeWidth.coerceAtLeast(0.1f))
+        is SharedPdfReaderAction.StrokeWidthChanged -> copy(strokeWidth = action.strokeWidth.coerceAtLeast(0.0001f))
         is SharedPdfReaderAction.TextSelectionModeChanged -> copy(isTextSelectionMode = action.enabled)
         is SharedPdfReaderAction.BookmarksLoaded -> copy(bookmarks = action.bookmarks.normalizedBookmarks(lastPageIndex))
         is SharedPdfReaderAction.BookmarkToggled -> {
