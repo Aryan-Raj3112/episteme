@@ -100,6 +100,18 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
                 pinnedLibraryBookIds + action.bookId
             }
         )
+        is AppAction.ReaderToolbarPreferencesChanged -> copy(
+            readerToolbarPreferences = action.preferences.sanitized()
+        )
+        is AppAction.ReaderToolVisibilityChanged -> copy(
+            readerToolbarPreferences = readerToolbarPreferences.withVisibility(action.tool, action.hidden)
+        )
+        is AppAction.ReaderToolPlacementChanged -> copy(
+            readerToolbarPreferences = readerToolbarPreferences.withBottomPlacement(action.tool, action.bottom)
+        )
+        is AppAction.ReaderToolOrderChanged -> copy(
+            readerToolbarPreferences = readerToolbarPreferences.withToolOrder(action.toolOrder)
+        )
     }
 }
 

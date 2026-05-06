@@ -118,5 +118,6 @@ data class SharedReaderScreenState(
     val appSeedColor: Color? = null,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val allTags: List<Tag> = emptyList(),
-    val showTagSelectionDialogFor: Set<String> = emptySet()
+    val showTagSelectionDialogFor: Set<String> = emptySet(),
+    val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences()
 )

@@ -44,8 +44,19 @@ data class ReaderSettings(
     val readingMode: ReaderReadingMode = ReaderReadingMode.PAGINATED,
     val textAlign: SharedReaderTextAlign = SharedReaderTextAlign.START,
     val pageWidth: Int = 760,
-    val fontFamily: String = "Default"
-)
+    val fontFamily: String = "Default",
+    val paragraphSpacing: Float = 1.0f,
+    val imageScale: Float = 1.0f,
+    val horizontalMargin: Int? = null,
+    val verticalMargin: Int? = null,
+    val themeId: String? = null,
+    val textureId: String? = null,
+    val textureAlpha: Float = 0.55f,
+    val customFontPath: String? = null
+) {
+    val resolvedHorizontalMargin: Int get() = horizontalMargin ?: margin
+    val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
+}
 
 data class ReaderPage(
     val pageIndex: Int,

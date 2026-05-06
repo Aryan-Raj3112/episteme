@@ -31,11 +31,12 @@ data class SharedLibrarySnapshot(
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val useStrictFileFilter: Boolean = false,
-    val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM
+    val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 3
+    private const val SCHEMA_VERSION = 4
 
     private val json = Json {
         prettyPrint = true
@@ -66,7 +67,11 @@ object SharedLibrarySnapshotJson {
             useStrictFileFilter = root.boolean("useStrictFileFilter", false),
             appThemeMode = root.string("appThemeMode")
                 ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
-                ?: AppThemeMode.SYSTEM
+                ?: AppThemeMode.SYSTEM,
+            readerToolbarPreferences = root["readerToolbarPreferences"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderToolbarPreferencesOrNull()
+                ?: ReaderToolbarPreferences()
         )
     }
 
@@ -86,7 +91,8 @@ object SharedLibrarySnapshotJson {
                 "pinnedHomeBookIds" to snapshot.pinnedHomeBookIds.toList().asJsonArray(),
                 "pinnedLibraryBookIds" to snapshot.pinnedLibraryBookIds.toList().asJsonArray(),
                 "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
-                "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name)
+                "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name),
+                "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject()
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)
@@ -313,8 +319,31 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             ?.let { runCatching { SharedReaderTextAlign.valueOf(it) }.getOrNull() }
             ?: defaults.textAlign,
         pageWidth = obj.int("pageWidth") ?: defaults.pageWidth,
-        fontFamily = obj.string("fontFamily") ?: defaults.fontFamily
+        fontFamily = obj.string("fontFamily") ?: defaults.fontFamily,
+        paragraphSpacing = obj.float("paragraphSpacing") ?: defaults.paragraphSpacing,
+        imageScale = obj.float("imageScale") ?: defaults.imageScale,
+        horizontalMargin = obj.int("horizontalMargin"),
+        verticalMargin = obj.int("verticalMargin"),
+        themeId = obj.string("themeId"),
+        textureId = obj.string("textureId"),
+        textureAlpha = obj.float("textureAlpha") ?: defaults.textureAlpha,
+        customFontPath = obj.string("customFontPath")
     )
+}
+
+private fun JsonElement.asReaderToolbarPreferencesOrNull(): ReaderToolbarPreferences? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val order = obj.stringArray("toolOrder").mapNotNull(ReaderTool::fromId)
+    val bottomToolIds = if (obj["bottomToolIds"] == null) {
+        ReaderToolbarPreferences.defaultBottomToolIds
+    } else {
+        obj.stringArray("bottomToolIds").toSet()
+    }
+    return ReaderToolbarPreferences(
+        hiddenToolIds = obj.stringArray("hiddenToolIds").toSet(),
+        toolOrder = order.ifEmpty { ReaderTool.entries.toList() },
+        bottomToolIds = bottomToolIds
+    ).sanitized()
 }
 
 private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
@@ -356,7 +385,26 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "readingMode" to JsonPrimitive(settings.readingMode.name),
             "textAlign" to JsonPrimitive(settings.textAlign.name),
             "pageWidth" to JsonPrimitive(settings.pageWidth),
-            "fontFamily" to JsonPrimitive(settings.fontFamily)
+            "fontFamily" to JsonPrimitive(settings.fontFamily),
+            "paragraphSpacing" to JsonPrimitive(settings.paragraphSpacing),
+            "imageScale" to JsonPrimitive(settings.imageScale),
+            "horizontalMargin" to settings.horizontalMargin.asJson(),
+            "verticalMargin" to settings.verticalMargin.asJson(),
+            "themeId" to settings.themeId.asJson(),
+            "textureId" to settings.textureId.asJson(),
+            "textureAlpha" to JsonPrimitive(settings.textureAlpha),
+            "customFontPath" to settings.customFontPath.asJson()
+        )
+    )
+}
+
+private fun ReaderToolbarPreferences.toJsonObject(): JsonObject {
+    val sanitized = sanitized()
+    return JsonObject(
+        mapOf(
+            "hiddenToolIds" to sanitized.hiddenToolIds.toList().sorted().asJsonArray(),
+            "toolOrder" to sanitized.toolOrder.map { it.id }.asJsonArray(),
+            "bottomToolIds" to sanitized.bottomToolIds.toList().sorted().asJsonArray()
         )
     )
 }

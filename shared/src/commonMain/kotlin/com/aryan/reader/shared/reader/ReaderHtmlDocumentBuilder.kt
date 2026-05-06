@@ -116,6 +116,10 @@ object ReaderHtmlDocumentBuilder {
                   --reader-line-height: ${settings.lineSpacing};
                   --reader-page-width: ${settings.pageWidth}px;
                   --reader-margin: ${settings.margin}px;
+                  --reader-margin-x: ${settings.resolvedHorizontalMargin}px;
+                  --reader-margin-y: ${settings.resolvedVerticalMargin}px;
+                  --reader-paragraph-spacing: ${settings.paragraphSpacing};
+                  --reader-image-scale: ${(settings.imageScale * 100f).roundToInt().coerceIn(50, 200)}%;
                   --reader-align: $align;
                   --reader-family: $family;
                 }
@@ -130,7 +134,7 @@ object ReaderHtmlDocumentBuilder {
                 }
                 body {
                   box-sizing: border-box;
-                  padding: var(--reader-margin);
+                  padding: var(--reader-margin-y) var(--reader-margin-x);
                   overflow-wrap: anywhere;
                 }
                 .chapter, .page {
@@ -146,10 +150,10 @@ object ReaderHtmlDocumentBuilder {
                 }
                 p, blockquote, pre, ul, ol, table, figure {
                   margin-top: 0;
-                  margin-bottom: 1em;
+                  margin-bottom: calc(1em * var(--reader-paragraph-spacing));
                 }
                 img, svg, video {
-                  max-width: 100%;
+                  max-width: var(--reader-image-scale);
                   height: auto;
                 }
                 table {

@@ -45,4 +45,8 @@ sealed interface AppAction {
     data object AllTabsClosed : AppAction
     data class HomePinToggled(val bookId: String) : AppAction
     data class LibraryPinToggled(val bookId: String) : AppAction
+    data class ReaderToolbarPreferencesChanged(val preferences: ReaderToolbarPreferences) : AppAction
+    data class ReaderToolVisibilityChanged(val tool: ReaderTool, val hidden: Boolean) : AppAction
+    data class ReaderToolPlacementChanged(val tool: ReaderTool, val bottom: Boolean) : AppAction
+    data class ReaderToolOrderChanged(val toolOrder: List<ReaderTool>) : AppAction
 }

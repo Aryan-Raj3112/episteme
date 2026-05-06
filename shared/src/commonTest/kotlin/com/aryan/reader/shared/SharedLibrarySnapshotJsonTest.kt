@@ -39,7 +39,15 @@ class SharedLibrarySnapshotJsonTest {
                         readingMode = ReaderReadingMode.VERTICAL,
                         textAlign = SharedReaderTextAlign.JUSTIFY,
                         pageWidth = 840,
-                        fontFamily = "Serif"
+                        fontFamily = "Serif",
+                        paragraphSpacing = 1.4f,
+                        imageScale = 1.2f,
+                        horizontalMargin = 40,
+                        verticalMargin = 72,
+                        themeId = "sepia",
+                        textureId = "paper",
+                        textureAlpha = 0.35f,
+                        customFontPath = "C:/Fonts/custom.ttf"
                     ),
                     readerBookmarks = listOf(
                         ReaderBookmark(
@@ -72,7 +80,12 @@ class SharedLibrarySnapshotJsonTest {
             pinnedHomeBookIds = setOf("book"),
             pinnedLibraryBookIds = setOf("book"),
             useStrictFileFilter = true,
-            appThemeMode = AppThemeMode.DARK
+            appThemeMode = AppThemeMode.DARK,
+            readerToolbarPreferences = ReaderToolbarPreferences(
+                hiddenToolIds = setOf(ReaderTool.SEARCH.id),
+                toolOrder = listOf(ReaderTool.BOOKMARK, ReaderTool.THEME, ReaderTool.SEARCH),
+                bottomToolIds = setOf(ReaderTool.BOOKMARK.id)
+            ).sanitized()
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))

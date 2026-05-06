@@ -98,8 +98,8 @@ class SimplePaginator {
         viewportWidth: Int,
         viewportHeight: Int
     ): Int {
-        val usableWidth = (viewportWidth - settings.margin * 2).coerceAtLeast(360)
-        val usableHeight = (viewportHeight - settings.margin * 2).coerceAtLeast(360)
+        val usableWidth = (viewportWidth - settings.resolvedHorizontalMargin * 2).coerceAtLeast(360)
+        val usableHeight = (viewportHeight - settings.resolvedVerticalMargin * 2).coerceAtLeast(360)
         val averageCharWidth = settings.fontSize * 0.55f
         val lineHeight = settings.fontSize * settings.lineSpacing
         val charsPerLine = (usableWidth / averageCharWidth).toInt().coerceAtLeast(35)

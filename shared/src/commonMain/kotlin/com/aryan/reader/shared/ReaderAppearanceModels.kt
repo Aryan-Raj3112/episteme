@@ -34,6 +34,11 @@ enum class PageInfoMode(val id: Int, val title: String) {
     HIDDEN(2, "Always Hide")
 }
 
+enum class PageInfoPosition(val id: Int, val title: String) {
+    BOTTOM(0, "Bottom"),
+    TOP(1, "Top")
+}
+
 data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
@@ -73,21 +78,34 @@ val BuiltInReaderThemes = listOf(
 )
 
 fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
-    val marginMultiplier = max(horizontalMargin, verticalMargin)
+    val horizontalMarginPx = (ReaderAppearanceDefaults.marginPx * horizontalMargin).roundToInt()
+        .coerceIn(ReaderAppearanceDefaults.minMarginPx, ReaderAppearanceDefaults.maxMarginPx)
+    val verticalMarginPx = (ReaderAppearanceDefaults.marginPx * verticalMargin).roundToInt()
+        .coerceIn(ReaderAppearanceDefaults.minMarginPx, ReaderAppearanceDefaults.maxMarginPx)
     return base.copy(
         fontSize = (ReaderAppearanceDefaults.fontSizePx * fontSize).roundToInt()
             .coerceIn(ReaderAppearanceDefaults.minFontSizePx, ReaderAppearanceDefaults.maxFontSizePx),
         lineSpacing = (ReaderAppearanceDefaults.lineSpacing * lineHeight)
             .coerceIn(ReaderAppearanceDefaults.minLineSpacing, ReaderAppearanceDefaults.maxLineSpacing),
-        margin = (ReaderAppearanceDefaults.marginPx * marginMultiplier).roundToInt()
-            .coerceIn(ReaderAppearanceDefaults.minMarginPx, ReaderAppearanceDefaults.maxMarginPx),
+        margin = max(horizontalMarginPx, verticalMarginPx),
+        horizontalMargin = horizontalMarginPx,
+        verticalMargin = verticalMarginPx,
         textAlign = textAlign.toSharedReaderTextAlign(),
-        fontFamily = customPath?.takeIf { it.isNotBlank() } ?: font.toReaderSettingsFontFamily()
+        fontFamily = customPath?.takeIf { it.isNotBlank() } ?: font.toReaderSettingsFontFamily(),
+        customFontPath = customPath?.takeIf { it.isNotBlank() },
+        paragraphSpacing = paragraphGap.coerceIn(
+            ReaderAppearanceDefaults.minParagraphSpacing,
+            ReaderAppearanceDefaults.maxParagraphSpacing
+        ),
+        imageScale = imageSize.coerceIn(
+            ReaderAppearanceDefaults.minImageScale,
+            ReaderAppearanceDefaults.maxImageScale
+        )
     )
 }
 
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
-    return base.copy(darkMode = isDark)
+    return base.copy(darkMode = isDark, themeId = id, textureId = textureId)
 }
 
 fun RenderMode.toReaderReadingMode(): ReaderReadingMode {
@@ -126,4 +144,8 @@ private object ReaderAppearanceDefaults {
     const val marginPx = 48f
     const val minMarginPx = 0
     const val maxMarginPx = 160
+    const val minParagraphSpacing = 0.5f
+    const val maxParagraphSpacing = 2.5f
+    const val minImageScale = 0.5f
+    const val maxImageScale = 2.0f
 }

@@ -113,6 +113,7 @@ import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
@@ -264,7 +265,8 @@ private fun EpistemeDesktopApp() {
             pinnedHomeBookIds = initialLibrarySnapshot.pinnedHomeBookIds,
             pinnedLibraryBookIds = initialLibrarySnapshot.pinnedLibraryBookIds,
             useStrictFileFilter = initialLibrarySnapshot.useStrictFileFilter,
-            appThemeMode = initialLibrarySnapshot.appThemeMode
+            appThemeMode = initialLibrarySnapshot.appThemeMode,
+            readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences
         )
         mutableStateOf(
             libraryProjector.project(
@@ -327,7 +329,8 @@ private fun EpistemeDesktopApp() {
                         pinnedHomeBookIds = projected.pinnedHomeBookIds,
                         pinnedLibraryBookIds = projected.pinnedLibraryBookIds,
                         useStrictFileFilter = projected.useStrictFileFilter,
-                        appThemeMode = projected.appThemeMode
+                        appThemeMode = projected.appThemeMode,
+                        readerToolbarPreferences = projected.readerToolbarPreferences
                     )
                 )
             }
@@ -775,6 +778,10 @@ private fun EpistemeDesktopApp() {
                                     },
                                     onOpenEpub = ::importAndOpenEpub,
                                     onOpenPdf = ::importAndOpenPdf,
+                                    toolbarPreferences = state.readerToolbarPreferences,
+                                    onToolbarPreferencesChange = { preferences ->
+                                        updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
+                                    },
                                     webViewRuntimeState = webViewRuntimeState
                                 )
                             }
@@ -2157,6 +2164,8 @@ private fun ReaderScreen(
     onSessionChange: (ReaderSessionState) -> Unit,
     onOpenEpub: () -> Unit,
     onOpenPdf: () -> Unit,
+    toolbarPreferences: ReaderToolbarPreferences,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     SharedReaderScreen(
@@ -2164,7 +2173,9 @@ private fun ReaderScreen(
         readerEngine = readerEngine,
         onSessionChange = onSessionChange,
         onOpenEpub = onOpenEpub,
-        onOpenPdf = onOpenPdf
+        onOpenPdf = onOpenPdf,
+        toolbarPreferences = toolbarPreferences,
+        onToolbarPreferencesChange = onToolbarPreferencesChange
     ) { html, background ->
         Surface(
             color = background,
