@@ -1,5 +1,8 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderSessionState
+
 fun LibraryState.reduce(action: LibraryAction): LibraryState {
     return when (action) {
         is LibraryAction.SearchChanged -> copy(searchQuery = action.query)
@@ -97,5 +100,27 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
                 pinnedLibraryBookIds + action.bookId
             }
         )
+    }
+}
+
+fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine): ReaderSessionState {
+    return when (action) {
+        ReaderAction.NextPage -> readerEngine.next(this)
+        ReaderAction.PreviousPage -> readerEngine.previous(this)
+        is ReaderAction.GoToPage -> readerEngine.goToPage(this, action.pageIndex)
+        is ReaderAction.GoToProgress -> readerEngine.goToProgress(this, action.progress)
+        is ReaderAction.GoToChapter -> readerEngine.goToChapter(this, action.chapterIndex)
+        is ReaderAction.GoToSearchResult -> readerEngine.goToSearchResult(this, action.resultIndex)
+        is ReaderAction.SearchChanged -> readerEngine.search(this, action.query)
+        ReaderAction.NextSearchResult -> readerEngine.nextSearchResult(this)
+        ReaderAction.PreviousSearchResult -> readerEngine.previousSearchResult(this)
+        ReaderAction.ToggleBookmark -> readerEngine.toggleBookmark(this)
+        is ReaderAction.SettingsChanged -> readerEngine.updateSettings(this, action.settings)
+        is ReaderAction.RenderModeChanged -> readerEngine.updateSettings(
+            this,
+            reader.settings.copy(readingMode = action.renderMode.toReaderReadingMode())
+        )
+        is ReaderAction.ThemeChanged -> readerEngine.updateSettings(this, action.theme.toReaderSettings(reader.settings))
+        is ReaderAction.FormatChanged -> readerEngine.updateSettings(this, action.settings.toReaderSettings(reader.settings))
     }
 }

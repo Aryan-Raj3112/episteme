@@ -1,6 +1,11 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 enum class ReaderFont(val id: String, val displayName: String, val fontFamilyName: String) {
     ORIGINAL("original", "Original", "Original"),
@@ -37,7 +42,8 @@ data class FormatSettings(
     val horizontalMargin: Float,
     val font: ReaderFont,
     val customPath: String?,
-    val textAlign: ReaderTextAlign
+    val textAlign: ReaderTextAlign,
+    val verticalMargin: Float = 1.0f
 )
 
 enum class ReaderTexture(val id: String, val displayName: String) {
@@ -65,3 +71,59 @@ val BuiltInReaderThemes = listOf(
     ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
     ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
 )
+
+fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
+    val marginMultiplier = max(horizontalMargin, verticalMargin)
+    return base.copy(
+        fontSize = (ReaderAppearanceDefaults.fontSizePx * fontSize).roundToInt()
+            .coerceIn(ReaderAppearanceDefaults.minFontSizePx, ReaderAppearanceDefaults.maxFontSizePx),
+        lineSpacing = (ReaderAppearanceDefaults.lineSpacing * lineHeight)
+            .coerceIn(ReaderAppearanceDefaults.minLineSpacing, ReaderAppearanceDefaults.maxLineSpacing),
+        margin = (ReaderAppearanceDefaults.marginPx * marginMultiplier).roundToInt()
+            .coerceIn(ReaderAppearanceDefaults.minMarginPx, ReaderAppearanceDefaults.maxMarginPx),
+        textAlign = textAlign.toSharedReaderTextAlign(),
+        fontFamily = customPath?.takeIf { it.isNotBlank() } ?: font.toReaderSettingsFontFamily()
+    )
+}
+
+fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
+    return base.copy(darkMode = isDark)
+}
+
+fun RenderMode.toReaderReadingMode(): ReaderReadingMode {
+    return when (this) {
+        RenderMode.VERTICAL_SCROLL -> ReaderReadingMode.VERTICAL
+        RenderMode.PAGINATED -> ReaderReadingMode.PAGINATED
+    }
+}
+
+fun ReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
+    return when (this) {
+        ReaderTextAlign.DEFAULT,
+        ReaderTextAlign.LEFT -> SharedReaderTextAlign.START
+        ReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
+    }
+}
+
+fun ReaderFont.toReaderSettingsFontFamily(): String {
+    return when (this) {
+        ReaderFont.ORIGINAL -> "Default"
+        ReaderFont.MERRIWEATHER,
+        ReaderFont.LORA -> "Serif"
+        ReaderFont.LATO,
+        ReaderFont.LEXEND -> "Sans"
+        ReaderFont.ROBOTO_MONO -> "Mono"
+    }
+}
+
+private object ReaderAppearanceDefaults {
+    const val fontSizePx = 18f
+    const val minFontSizePx = 12
+    const val maxFontSizePx = 42
+    const val lineSpacing = 1.45f
+    const val minLineSpacing = 1.0f
+    const val maxLineSpacing = 2.8f
+    const val marginPx = 48f
+    const val minMarginPx = 0
+    const val maxMarginPx = 160
+}

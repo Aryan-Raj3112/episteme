@@ -47,6 +47,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.ReaderAction
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -91,6 +93,9 @@ fun SharedReaderScreen(
     val page = readerState.currentPage
     val settings = readerState.settings
     val background = if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+    fun dispatch(action: ReaderAction) {
+        onSessionChange(session.reduce(action, readerEngine))
+    }
 
     SharedScreenScaffold(
         title = readerState.book.title,
@@ -104,7 +109,7 @@ fun SharedReaderScreen(
                     Text("Open PDF")
                 }
                 Text("${readerState.progress.toInt()}%")
-                IconButton(onClick = { onSessionChange(readerEngine.toggleBookmark(session)) }) {
+                IconButton(onClick = { dispatch(ReaderAction.ToggleBookmark) }) {
                     Icon(
                         if (session.currentBookmark == null) Icons.Default.BookmarkBorder else Icons.Default.Bookmark,
                         contentDescription = "Bookmark"
@@ -112,7 +117,7 @@ fun SharedReaderScreen(
                 }
                 TextButton(
                     onClick = {
-                        onSessionChange(session.copy(reader = readerState.copy(settings = settings.copy(darkMode = !settings.darkMode))))
+                        dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode)))
                     }
                 ) {
                     Text(if (settings.darkMode) "Light" else "Dark")
@@ -128,27 +133,27 @@ fun SharedReaderScreen(
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when {
                         event.key == Key.DirectionRight || event.key == Key.PageDown -> {
-                            onSessionChange(readerEngine.next(session))
+                            dispatch(ReaderAction.NextPage)
                             true
                         }
 
                         event.key == Key.DirectionLeft || event.key == Key.PageUp -> {
-                            onSessionChange(readerEngine.previous(session))
+                            dispatch(ReaderAction.PreviousPage)
                             true
                         }
 
                         event.key == Key.MoveHome -> {
-                            onSessionChange(readerEngine.goToPage(session, 0))
+                            dispatch(ReaderAction.GoToPage(0))
                             true
                         }
 
                         event.key == Key.MoveEnd -> {
-                            onSessionChange(readerEngine.goToPage(session, readerState.pages.lastIndex))
+                            dispatch(ReaderAction.GoToPage(readerState.pages.lastIndex))
                             true
                         }
 
                         event.isCtrlPressed && event.key == Key.G -> {
-                            onSessionChange(readerEngine.nextSearchResult(session))
+                            dispatch(ReaderAction.NextSearchResult)
                             true
                         }
 
@@ -159,19 +164,18 @@ fun SharedReaderScreen(
         ) {
             SharedReaderSidebar(
                 session = session,
-                onSearchChange = { onSessionChange(readerEngine.search(session, it)) },
-                onPreviousSearchResult = { onSessionChange(readerEngine.previousSearchResult(session)) },
-                onNextSearchResult = { onSessionChange(readerEngine.nextSearchResult(session)) },
-                onGoToChapter = { onSessionChange(readerEngine.goToChapter(session, it)) },
-                onGoToPage = { onSessionChange(readerEngine.goToPage(session, it)) },
-                onGoToSearchResult = { onSessionChange(readerEngine.goToSearchResult(session, it)) }
+                onSearchChange = { dispatch(ReaderAction.SearchChanged(it)) },
+                onPreviousSearchResult = { dispatch(ReaderAction.PreviousSearchResult) },
+                onNextSearchResult = { dispatch(ReaderAction.NextSearchResult) },
+                onGoToChapter = { dispatch(ReaderAction.GoToChapter(it)) },
+                onGoToPage = { dispatch(ReaderAction.GoToPage(it)) },
+                onGoToSearchResult = { dispatch(ReaderAction.GoToSearchResult(it)) }
             )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SharedReaderSettingsBar(
                     session = session,
-                    readerEngine = readerEngine,
-                    onSessionChange = onSessionChange
+                    onReaderAction = { action -> dispatch(action) }
                 )
 
                 val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
@@ -195,13 +199,13 @@ fun SharedReaderScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Slider(
                         value = if (readerState.pages.size <= 1) 0f else readerState.currentPageIndex.toFloat() / readerState.pages.lastIndex,
-                        onValueChange = { progress -> onSessionChange(readerEngine.goToProgress(session, progress)) },
+                        onValueChange = { progress -> dispatch(ReaderAction.GoToProgress(progress)) },
                         enabled = readerState.pages.size > 1
                     )
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Button(
                             enabled = readerState.canGoPrevious,
-                            onClick = { onSessionChange(readerEngine.previous(session)) }
+                            onClick = { dispatch(ReaderAction.PreviousPage) }
                         ) {
                             Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
                             Text("Previous")
@@ -217,7 +221,7 @@ fun SharedReaderScreen(
                         Spacer(Modifier.weight(1f))
                         Button(
                             enabled = readerState.canGoNext,
-                            onClick = { onSessionChange(readerEngine.next(session)) }
+                            onClick = { dispatch(ReaderAction.NextPage) }
                         ) {
                             Text("Next")
                             Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
@@ -232,8 +236,7 @@ fun SharedReaderScreen(
 @Composable
 private fun SharedReaderSettingsBar(
     session: ReaderSessionState,
-    readerEngine: ReaderEngine,
-    onSessionChange: (ReaderSessionState) -> Unit
+    onReaderAction: (ReaderAction) -> Unit
 ) {
     val settings = session.reader.settings
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -241,36 +244,36 @@ private fun SharedReaderSettingsBar(
             FilterChip(
                 selected = settings.readingMode == ReaderReadingMode.PAGINATED,
                 onClick = {
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
                 },
                 label = { Text("Pages") }
             )
             FilterChip(
                 selected = settings.readingMode == ReaderReadingMode.VERTICAL,
                 onClick = {
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
                 },
                 label = { Text("Vertical") }
             )
             FilterChip(
                 selected = settings.textAlign == SharedReaderTextAlign.START,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.START))) },
+                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.START))) },
                 label = { Text("Left") }
             )
             FilterChip(
                 selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY))) },
+                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY))) },
                 label = { Text("Justify") }
             )
             FilterChip(
                 selected = settings.textAlign == SharedReaderTextAlign.CENTER,
-                onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(textAlign = SharedReaderTextAlign.CENTER))) },
+                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.CENTER))) },
                 label = { Text("Center") }
             )
             listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
                 FilterChip(
                     selected = settings.fontFamily == family,
-                    onClick = { onSessionChange(readerEngine.updateSettings(session, settings.copy(fontFamily = family))) },
+                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = family))) },
                     label = { Text(family) }
                 )
             }
@@ -281,7 +284,7 @@ private fun SharedReaderSettingsBar(
             Slider(
                 value = settings.fontSize.toFloat(),
                 onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(fontSize = value.toInt())))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.toInt())))
                 },
                 valueRange = 14f..30f,
                 modifier = Modifier.width(140.dp)
@@ -290,7 +293,7 @@ private fun SharedReaderSettingsBar(
             Slider(
                 value = settings.margin.toFloat(),
                 onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(margin = value.toInt())))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(margin = value.toInt())))
                 },
                 valueRange = 16f..112f,
                 modifier = Modifier.width(140.dp)
@@ -299,7 +302,7 @@ private fun SharedReaderSettingsBar(
             Slider(
                 value = settings.lineSpacing,
                 onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(lineSpacing = value)))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(lineSpacing = value)))
                 },
                 valueRange = 1.1f..2.1f,
                 modifier = Modifier.width(140.dp)
@@ -308,7 +311,7 @@ private fun SharedReaderSettingsBar(
             Slider(
                 value = settings.pageWidth.toFloat(),
                 onValueChange = { value ->
-                    onSessionChange(readerEngine.updateSettings(session, settings.copy(pageWidth = value.toInt())))
+                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.toInt())))
                 },
                 valueRange = 520f..1100f,
                 modifier = Modifier.width(140.dp)
