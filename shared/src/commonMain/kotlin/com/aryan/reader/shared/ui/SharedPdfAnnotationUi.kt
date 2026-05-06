@@ -8,24 +8,31 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -34,11 +41,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -47,13 +61,17 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -71,6 +89,12 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
+import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfTextDraft
+import com.aryan.reader.shared.pdf.SharedPdfTextFontPreset
+import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
+import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
+import com.aryan.reader.shared.pdf.resizedBy
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import kotlin.math.roundToInt
@@ -101,6 +125,8 @@ fun SharedPdfAnnotationToolDock(
 ) {
     val strokeRange = selectedTool.sharedPdfStrokeWidthRange()
     val sliderValue = strokeWidth.coerceIn(strokeRange.start, strokeRange.endInclusive)
+    val showColorPalette = selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER
+    val showStrokeSettings = selectedTool != PdfInkTool.TEXT
     val palette = if (selectedTool.isHighlighter) {
         SharedPdfAnnotationDefaults.highlighterPalette
     } else {
@@ -154,40 +180,44 @@ fun SharedPdfAnnotationToolDock(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                palette.forEach { argb ->
-                    val selected = argb == selectedColor
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(Color(argb).copy(alpha = 1f))
-                            .border(
-                                width = if (selected) 2.dp else 1.dp,
-                                color = if (selected) Color.White else Color.White.copy(alpha = 0.22f),
-                                shape = CircleShape
-                            )
-                            .clickable { onColorSelected(argb) }
-                    )
+            if (showColorPalette) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    palette.forEach { argb ->
+                        val selected = argb == selectedColor
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(argb).copy(alpha = 1f))
+                                .border(
+                                    width = if (selected) 2.dp else 1.dp,
+                                    color = if (selected) Color.White else Color.White.copy(alpha = 0.22f),
+                                    shape = CircleShape
+                                )
+                                .clickable { onColorSelected(argb) }
+                        )
+                    }
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Thickness ${sliderValue.sharedPdfStrokePercent(strokeRange)}",
-                    color = Color.White.copy(alpha = 0.86f),
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Slider(
-                    value = sliderValue,
-                    onValueChange = onStrokeWidthChange,
-                    valueRange = strokeRange,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color(selectedColor).copy(alpha = 1f),
-                        inactiveTrackColor = Color.White.copy(alpha = 0.18f)
+            if (showStrokeSettings) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Thickness ${sliderValue.sharedPdfStrokePercent(strokeRange)}",
+                        color = Color.White.copy(alpha = 0.86f),
+                        style = MaterialTheme.typography.labelMedium
                     )
-                )
+                    Slider(
+                        value = sliderValue,
+                        onValueChange = onStrokeWidthChange,
+                        valueRange = strokeRange,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = if (selectedTool == PdfInkTool.ERASER) Color.White else Color(selectedColor).copy(alpha = 1f),
+                            inactiveTrackColor = Color.White.copy(alpha = 0.18f)
+                        )
+                    )
+                }
             }
 
             if (selectedTool.isHighlighter) {
@@ -213,6 +243,307 @@ fun SharedPdfAnnotationToolDock(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun SharedPdfTextAnnotationDock(
+    style: SharedPdfTextStyleConfig,
+    onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xFF1E1E1E),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(18.dp),
+        shadowElevation = 8.dp,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SharedPdfTextStyleControls(
+                style = style,
+                onStyleChange = onStyleChange,
+                dark = true
+            )
+        }
+    }
+}
+
+@Composable
+fun SharedPdfInlineTextEditorOverlay(
+    draft: SharedPdfTextDraft?,
+    canvasSize: IntSize,
+    onTextChange: (String) -> Unit,
+    onBoundsChange: (PdfPageBounds) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (draft == null || canvasSize.width <= 0 || canvasSize.height <= 0) return
+
+    SharedPdfTextBoxEditorOverlay(
+        id = draft.id,
+        text = draft.text,
+        style = draft.style,
+        bounds = draft.bounds,
+        canvasSize = canvasSize,
+        onTextChange = onTextChange,
+        onBoundsChange = onBoundsChange,
+        modifier = modifier
+    )
+}
+
+@Composable
+fun SharedPdfTextBoxEditorOverlay(
+    id: String,
+    text: String,
+    style: SharedPdfTextStyleConfig,
+    bounds: PdfPageBounds,
+    canvasSize: IntSize,
+    onTextChange: (String) -> Unit,
+    onBoundsChange: (PdfPageBounds) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return
+
+    val density = LocalDensity.current
+    val focusRequester = remember(id) { FocusRequester() }
+    var liveBounds by remember(id) { mutableStateOf(bounds) }
+    var isResizing by remember(id) { mutableStateOf(false) }
+
+    LaunchedEffect(bounds) {
+        if (!isResizing) {
+            liveBounds = bounds
+        }
+    }
+
+    val leftPx = liveBounds.left * canvasSize.width
+    val topPx = liveBounds.top * canvasSize.height
+    val widthPx = ((liveBounds.right - liveBounds.left) * canvasSize.width).coerceAtLeast(50f)
+    val heightPx = ((liveBounds.bottom - liveBounds.top) * canvasSize.height).coerceAtLeast(50f)
+    val textColor = Color(style.colorArgb)
+    val backgroundColor = Color(style.backgroundColorArgb)
+    val handleSize = 10.dp
+    val handleTouchSize = 38.dp
+    val handleTouchSizePx = with(density) { handleTouchSize.toPx() }
+
+    LaunchedEffect(id, style) {
+        focusRequester.requestFocus()
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        BasicTextField(
+            value = text,
+            onValueChange = onTextChange,
+            textStyle = TextStyle(
+                color = textColor,
+                fontSize = style.fontSize.sp,
+                lineHeight = (style.fontSize * 1.25f).sp,
+                fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
+                fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
+                fontFamily = sharedPdfFontFamily(style.fontName ?: style.fontPath),
+                textDecoration = style.textDecoration
+            ),
+            cursorBrush = SolidColor(textColor),
+            modifier = Modifier
+                .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
+                .width(with(density) { widthPx.toDp() })
+                .height(with(density) { heightPx.toDp() })
+                .background(
+                    color = if (style.backgroundColorArgb.isTransparentArgb()) {
+                        Color.Transparent
+                    } else {
+                        backgroundColor
+                    },
+                    shape = RoundedCornerShape(4.dp)
+                )
+                .border(
+                    width = 1.dp,
+                    color = Color(0xFF64B5F6),
+                    shape = RoundedCornerShape(4.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .verticalScroll(rememberScrollState())
+                .focusRequester(focusRequester)
+        )
+
+        SharedPdfTextResizeHandle.entries.forEach { handle ->
+            val center = handle.centerOffset(
+                leftPx = leftPx,
+                topPx = topPx,
+                widthPx = widthPx,
+                heightPx = heightPx
+            )
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            (center.x - handleTouchSizePx / 2f).roundToInt(),
+                            (center.y - handleTouchSizePx / 2f).roundToInt()
+                        )
+                    }
+                    .size(handleTouchSize)
+                    .pointerInput(id, handle, canvasSize) {
+                        detectDragGestures(
+                            onDragStart = {
+                                isResizing = true
+                            },
+                            onDragEnd = {
+                                isResizing = false
+                                onBoundsChange(liveBounds)
+                            },
+                            onDragCancel = {
+                                isResizing = false
+                                liveBounds = bounds
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                liveBounds = liveBounds.resizedBy(
+                                    handle = handle,
+                                    deltaXPx = dragAmount.x,
+                                    deltaYPx = dragAmount.y,
+                                    canvasSize = canvasSize
+                                )
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(handleSize)
+                        .background(Color(0xFF64B5F6), CircleShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SharedPdfTextStyleControls(
+    style: SharedPdfTextStyleConfig,
+    onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
+    modifier: Modifier = Modifier,
+    dark: Boolean = false
+) {
+    val labelColor = if (dark) Color.White.copy(alpha = 0.86f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val buttonTextColor = if (dark) Color.White else MaterialTheme.colorScheme.onSurface
+    val selectedBackground = if (dark) Color.White.copy(alpha = 0.18f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+    val unselectedBackground = if (dark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+    var fontMenuExpanded by remember { mutableStateOf(false) }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Font", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            Box {
+                TextButton(onClick = { fontMenuExpanded = true }) {
+                    Text(
+                        text = style.displayFontName(),
+                        color = buttonTextColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                DropdownMenu(
+                    expanded = fontMenuExpanded,
+                    onDismissRequest = { fontMenuExpanded = false }
+                ) {
+                    SharedPdfTextAnnotationDefaults.fontPresets.forEach { preset ->
+                        DropdownMenuItem(
+                            text = { Text(preset.name) },
+                            onClick = {
+                                onStyleChange(style.withFontPreset(preset))
+                                fontMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SharedPdfTextAnnotationDefaults.fontSizes.chunked(4).forEach { rowSizes ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    rowSizes.forEach { size ->
+                        SharedTextStyleChoiceButton(
+                            selected = style.fontSize.toInt() == size.toInt(),
+                            selectedBackground = selectedBackground,
+                            unselectedBackground = unselectedBackground,
+                            onClick = { onStyleChange(style.copy(fontSize = size)) }
+                        ) {
+                            Text(
+                                text = size.toInt().toString(),
+                                color = buttonTextColor,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            SharedTextStyleChoiceButton(
+                selected = style.isBold,
+                selectedBackground = selectedBackground,
+                unselectedBackground = unselectedBackground,
+                onClick = { onStyleChange(style.copy(isBold = !style.isBold)) }
+            ) {
+                Text("B", color = buttonTextColor, fontWeight = FontWeight.Bold)
+            }
+            SharedTextStyleChoiceButton(
+                selected = style.isItalic,
+                selectedBackground = selectedBackground,
+                unselectedBackground = unselectedBackground,
+                onClick = { onStyleChange(style.copy(isItalic = !style.isItalic)) }
+            ) {
+                Text("I", color = buttonTextColor, fontStyle = FontStyle.Italic)
+            }
+            SharedTextStyleChoiceButton(
+                selected = style.isUnderline,
+                selectedBackground = selectedBackground,
+                unselectedBackground = unselectedBackground,
+                onClick = { onStyleChange(style.copy(isUnderline = !style.isUnderline)) }
+            ) {
+                Text("U", color = buttonTextColor, textDecoration = TextDecoration.Underline)
+            }
+            SharedTextStyleChoiceButton(
+                selected = style.isStrikeThrough,
+                selectedBackground = selectedBackground,
+                unselectedBackground = unselectedBackground,
+                onClick = { onStyleChange(style.copy(isStrikeThrough = !style.isStrikeThrough)) }
+            ) {
+                Text("S", color = buttonTextColor, textDecoration = TextDecoration.LineThrough)
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Text", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            SharedTextColorSwatches(
+                palette = SharedPdfTextAnnotationDefaults.textColorPalette,
+                selectedArgb = style.colorArgb,
+                allowTransparent = false,
+                dark = dark,
+                onColorSelected = { onStyleChange(style.copy(colorArgb = it)) }
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Fill", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            SharedTextColorSwatches(
+                palette = SharedPdfTextAnnotationDefaults.backgroundColorPalette,
+                selectedArgb = style.backgroundColorArgb,
+                allowTransparent = true,
+                dark = dark,
+                onColorSelected = { onStyleChange(style.copy(backgroundColorArgb = it)) }
+            )
         }
     }
 }
@@ -255,12 +586,14 @@ fun SharedPdfAnnotationOverlay(
                     }
                     PdfAnnotationKind.TEXT -> {
                         val bounds = annotation.bounds ?: return@forEach
-                        drawRoundRect(
-                            color = Color(annotation.backgroundArgb).copy(alpha = 0.20f),
-                            topLeft = bounds.topLeft(canvasSize),
-                            size = bounds.size(canvasSize),
-                            cornerRadius = CornerRadius(4f, 4f)
-                        )
+                        if (!annotation.backgroundArgb.isTransparentArgb()) {
+                            drawRoundRect(
+                                color = Color(annotation.backgroundArgb),
+                                topLeft = bounds.topLeft(canvasSize),
+                                size = bounds.size(canvasSize),
+                                cornerRadius = CornerRadius(4f, 4f)
+                            )
+                        }
                     }
                 }
 
@@ -301,15 +634,20 @@ fun SharedPdfAnnotationOverlay(
                     text = annotation.text,
                     color = Color(annotation.colorArgb),
                     fontSize = annotation.fontSize.sp,
+                    lineHeight = (annotation.fontSize * 1.25f).sp,
                     fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
+                    fontFamily = annotation.sharedPdfTextFontFamily(),
                     textDecoration = annotation.textDecoration,
                     overflow = TextOverflow.Ellipsis,
+                    maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, annotation.fontSize, widthPx),
                     modifier = Modifier
                         .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
                         .width(with(density) { widthPx.toDp() })
-                        .heightIn(min = with(density) { heightPx.toDp() })
-                        .background(Color(annotation.backgroundArgb).copy(alpha = 0.20f), RoundedCornerShape(4.dp))
+                        .heightIn(
+                            min = with(density) { heightPx.toDp() },
+                            max = with(density) { heightPx.toDp() }
+                        )
                         .padding(horizontal = 6.dp, vertical = 4.dp)
                 )
             }
@@ -411,6 +749,69 @@ private fun SharedPdfToolButton(
                 modifier = Modifier.size(width = 28.dp, height = 34.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun SharedTextStyleChoiceButton(
+    selected: Boolean,
+    selectedBackground: Color,
+    unselectedBackground: Color,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(if (selected) selectedBackground else unselectedBackground)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SharedTextColorSwatches(
+    palette: List<Int>,
+    selectedArgb: Int,
+    allowTransparent: Boolean,
+    dark: Boolean,
+    onColorSelected: (Int) -> Unit
+) {
+    val borderBase = if (dark) Color.White else Color.Black
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        palette
+            .filter { allowTransparent || !it.isTransparentArgb() }
+            .forEach { argb ->
+                val selected = argb == selectedArgb || (argb.isTransparentArgb() && selectedArgb.isTransparentArgb())
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(if (argb.isTransparentArgb()) Color.Transparent else Color(argb).copy(alpha = 1f))
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) borderBase.copy(alpha = 0.88f) else borderBase.copy(alpha = 0.22f),
+                            shape = CircleShape
+                        )
+                        .clickable { onColorSelected(argb) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (argb.isTransparentArgb()) {
+                        Canvas(Modifier.fillMaxSize().padding(5.dp)) {
+                            drawCircle(color = borderBase.copy(alpha = 0.18f))
+                            drawLine(
+                                color = borderBase.copy(alpha = 0.68f),
+                                start = Offset(size.width * 0.22f, size.height * 0.78f),
+                                end = Offset(size.width * 0.78f, size.height * 0.22f),
+                                strokeWidth = 2f
+                            )
+                        }
+                    }
+                }
+            }
     }
 }
 
@@ -846,6 +1247,69 @@ private val SharedPdfAnnotation.textDecoration: TextDecoration
         if (isStrikeThrough) decorations += TextDecoration.LineThrough
         return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
     }
+
+private val SharedPdfTextStyleConfig.textDecoration: TextDecoration
+    get() {
+        val decorations = mutableListOf<TextDecoration>()
+        if (isUnderline) decorations += TextDecoration.Underline
+        if (isStrikeThrough) decorations += TextDecoration.LineThrough
+        return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
+    }
+
+private fun SharedPdfAnnotation.sharedPdfTextFontFamily(): FontFamily? {
+    return sharedPdfFontFamily(fontName ?: fontPath)
+}
+
+private fun SharedPdfTextResizeHandle.centerOffset(
+    leftPx: Float,
+    topPx: Float,
+    widthPx: Float,
+    heightPx: Float
+): Offset {
+    return when (this) {
+        SharedPdfTextResizeHandle.TOP_LEFT -> Offset(leftPx, topPx)
+        SharedPdfTextResizeHandle.TOP_CENTER -> Offset(leftPx + widthPx / 2f, topPx)
+        SharedPdfTextResizeHandle.TOP_RIGHT -> Offset(leftPx + widthPx, topPx)
+        SharedPdfTextResizeHandle.RIGHT_CENTER -> Offset(leftPx + widthPx, topPx + heightPx / 2f)
+        SharedPdfTextResizeHandle.BOTTOM_RIGHT -> Offset(leftPx + widthPx, topPx + heightPx)
+        SharedPdfTextResizeHandle.BOTTOM_CENTER -> Offset(leftPx + widthPx / 2f, topPx + heightPx)
+        SharedPdfTextResizeHandle.BOTTOM_LEFT -> Offset(leftPx, topPx + heightPx)
+        SharedPdfTextResizeHandle.LEFT_CENTER -> Offset(leftPx, topPx + heightPx / 2f)
+    }
+}
+
+private fun SharedPdfTextStyleConfig.withFontPreset(preset: SharedPdfTextFontPreset): SharedPdfTextStyleConfig {
+    return copy(
+        fontName = preset.name.takeUnless { it == "Default" },
+        fontPath = preset.fontPath
+    )
+}
+
+private fun SharedPdfTextStyleConfig.displayFontName(): String {
+    return fontName
+        ?: fontPath?.substringAfterLast('/')?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
+        ?: "Default"
+}
+
+private fun sharedPdfFontFamily(nameOrPath: String?): FontFamily? {
+    return when (nameOrPath) {
+        "Merriweather",
+        "Lora",
+        "asset:fonts/merriweather.ttf",
+        "asset:fonts/lora.ttf" -> FontFamily.Serif
+        "Roboto Mono",
+        "asset:fonts/roboto_mono.ttf" -> FontFamily.Monospace
+        "Lato",
+        "Lexend",
+        "asset:fonts/lato.ttf",
+        "asset:fonts/lexend.ttf" -> FontFamily.SansSerif
+        else -> null
+    }
+}
+
+private fun Int.isTransparentArgb(): Boolean {
+    return (this ushr 24) == 0
+}
 
 private fun PdfPageBounds.topLeft(canvasSize: IntSize): Offset {
     return Offset(left * canvasSize.width, top * canvasSize.height)

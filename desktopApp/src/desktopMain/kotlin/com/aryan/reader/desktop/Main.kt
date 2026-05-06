@@ -162,10 +162,19 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
+import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfTextDraft
+import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.mostVisiblePdfPageIndex
 import com.aryan.reader.shared.pdf.reduce
+import com.aryan.reader.shared.pdf.sharedPdfTextStyle
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
+import com.aryan.reader.shared.pdf.toAnnotation
+import com.aryan.reader.shared.pdf.withBounds
+import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
+import com.aryan.reader.shared.pdf.withStyle
+import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderSessionState
@@ -186,12 +195,15 @@ import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
+import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfPageNumberOverlay
+import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
+import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
+import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedScreenScaffold
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
-import com.aryan.reader.shared.ui.pageBoundsFromSharedPdfPoint
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
@@ -1340,7 +1352,8 @@ private fun PdfReaderScreen(
     var renderError by remember(document.path) { mutableStateOf<String?>(null) }
     var isRendering by remember(document.path) { mutableStateOf(false) }
     var renderJob by remember(document.path) { mutableStateOf<Job?>(null) }
-    var textDraft by remember(document.path) { mutableStateOf("") }
+    var activeTextDraft by remember(document.path) { mutableStateOf<SharedPdfTextDraft?>(null) }
+    var textStyleConfig by remember(document.path) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
     var activeStroke by remember(document.path, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
     var isHighlighterSnapEnabled by remember(document.path) { mutableStateOf(false) }
@@ -1386,6 +1399,82 @@ private fun PdfReaderScreen(
         }
     }
 
+    fun commitActiveTextDraft() {
+        val draft = activeTextDraft ?: return
+        activeTextDraft = null
+        val annotation = draft.toAnnotation()
+        if (annotation.text.isNotEmpty()) {
+            dispatchPdf(SharedPdfReaderAction.AnnotationAdded(annotation))
+        }
+    }
+
+    fun startActiveTextDraft(pageIndex: Int, anchor: Offset, canvasSize: IntSize) {
+        if (canvasSize.width <= 0 || canvasSize.height <= 0) return
+        commitActiveTextDraft()
+        clearPdfInteractionState()
+        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+        val now = System.currentTimeMillis()
+        activeTextDraft = SharedPdfTextAnnotationDefaults.createDraft(
+            id = "text_$now",
+            pageIndex = pageIndex,
+            anchor = anchor.toSharedPdfPoint(canvasSize, now),
+            canvasSize = canvasSize,
+            style = textStyleConfig,
+            createdAt = now
+        )
+    }
+
+    fun updateActiveTextDraft(text: String, canvasSize: IntSize) {
+        activeTextDraft = activeTextDraft?.withText(text, canvasSize)
+    }
+
+    fun updateActiveTextDraftBounds(bounds: PdfPageBounds) {
+        activeTextDraft = activeTextDraft?.withBounds(bounds)
+    }
+
+    fun activeTextDraftContains(pageIndex: Int, offset: Offset, canvasSize: IntSize): Boolean {
+        return activeTextDraft?.containsOffset(pageIndex, offset, canvasSize) == true
+    }
+
+    fun updateTextStyleConfig(style: SharedPdfTextStyleConfig) {
+        textStyleConfig = style
+        val draft = activeTextDraft
+        if (draft != null) {
+            activeTextDraft = if (draft.pageIndex == pdfState.pageIndex && pageCanvasSize.width > 0 && pageCanvasSize.height > 0) {
+                draft.withStyle(style, pageCanvasSize)
+            } else {
+                draft.copy(style = style)
+            }
+            return
+        }
+
+        val selectedTextAnnotation = pdfState.annotations.firstOrNull {
+            it.id == pdfState.selectedAnnotationId && it.kind == PdfAnnotationKind.TEXT
+        }
+        if (selectedTextAnnotation != null) {
+            dispatchPdf(SharedPdfReaderAction.AnnotationUpdated(selectedTextAnnotation.withSharedPdfTextStyle(style)))
+        }
+    }
+
+    fun selectTextAnnotation(annotation: SharedPdfAnnotation) {
+        if (annotation.kind != PdfAnnotationKind.TEXT) return
+        commitActiveTextDraft()
+        clearPdfInteractionState()
+        textStyleConfig = annotation.sharedPdfTextStyle()
+        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(annotation.id))
+    }
+
+    fun selectPdfAnnotationTool(tool: PdfInkTool) {
+        if (tool != PdfInkTool.TEXT) {
+            commitActiveTextDraft()
+        }
+        if (tool == PdfInkTool.TEXT && pdfState.isTextSelectionMode) {
+            dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(false))
+            clearPdfInteractionState()
+        }
+        dispatchPdf(SharedPdfReaderAction.ToolSelected(tool))
+    }
+
     val pageIndex = pdfState.pageIndex
     val scale = pdfState.zoom
     val displayMode = pdfState.displayMode
@@ -1424,6 +1513,11 @@ private fun PdfReaderScreen(
     }
     val selectedEmbeddedAnnotation = remember(document.embeddedAnnotations, selectedEmbeddedAnnotationId) {
         document.embeddedAnnotations.firstOrNull { it.id == selectedEmbeddedAnnotationId }
+    }
+    val effectiveTextStyleConfig = remember(activeTextDraft, selectedAnnotation, textStyleConfig) {
+        activeTextDraft?.style
+            ?: selectedAnnotation?.takeIf { it.kind == PdfAnnotationKind.TEXT }?.sharedPdfTextStyle()
+            ?: textStyleConfig
     }
 
     DesktopExternalLinkDialog(
@@ -1514,6 +1608,9 @@ private fun PdfReaderScreen(
     fun goToPage(target: Int, scrollVertical: Boolean = true, recordJump: Boolean = false) {
         val clampedTarget = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
         val currentPage = pdfState.pageIndex
+        if (clampedTarget != currentPage) {
+            commitActiveTextDraft()
+        }
         if (recordJump) {
             jumpHistory = jumpHistory.record(
                 currentPageIndex = currentPage,
@@ -1685,6 +1782,9 @@ private fun PdfReaderScreen(
             targetPageIndex = targetPage,
             pageCount = document.pageCount
         )
+        if (targetPage != pdfState.pageIndex) {
+            commitActiveTextDraft()
+        }
         dispatchPdf(SharedPdfReaderAction.GoToSearchResult(targetIndex, searchResults))
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
             pdfScope.launch {
@@ -1802,6 +1902,12 @@ private fun PdfReaderScreen(
                 .fillMaxSize()
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val isEditingTextAnnotation =
+                        activeTextDraft != null ||
+                            (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
+                    if (isEditingTextAnnotation && !event.isCtrlPressed) {
+                        return@onPreviewKeyEvent false
+                    }
                     when {
                         event.key == Key.DirectionLeft -> {
                             goToPage(pageIndex - 1)
@@ -1867,12 +1973,18 @@ private fun PdfReaderScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             FilterChip(
                                 selected = displayMode == PdfDisplayMode.PAGINATION,
-                                onClick = { dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.PAGINATION)) },
+                                onClick = {
+                                    commitActiveTextDraft()
+                                    dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.PAGINATION))
+                                },
                                 label = { Text("Page") }
                             )
                             FilterChip(
                                 selected = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
-                                onClick = { dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.VERTICAL_SCROLL)) },
+                                onClick = {
+                                    commitActiveTextDraft()
+                                    dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.VERTICAL_SCROLL))
+                                },
                                 label = { Text("Scroll") }
                             )
                         }
@@ -2021,6 +2133,9 @@ private fun PdfReaderScreen(
                             selected = isTextSelectionMode,
                             onClick = {
                                 val enabled = !isTextSelectionMode
+                                if (enabled) {
+                                    commitActiveTextDraft()
+                                }
                                 dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
                                 if (!enabled) {
                                     clearPdfInteractionState()
@@ -2033,7 +2148,7 @@ private fun PdfReaderScreen(
                             selectedColor = selectedColor,
                             strokeWidth = strokeWidth,
                             tools = DesktopPdfAnnotationTools,
-                            onToolSelected = { dispatchPdf(SharedPdfReaderAction.ToolSelected(it)) },
+                            onToolSelected = ::selectPdfAnnotationTool,
                             onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
                             onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
                             onUndo = {
@@ -2136,17 +2251,9 @@ private fun PdfReaderScreen(
                     }
                     if (selectedTool == PdfInkTool.TEXT) {
                         item {
-                            OutlinedTextField(
-                                value = textDraft,
-                                onValueChange = { textDraft = it },
-                                label = { Text("Text note") },
-                                minLines = 2,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                "Click the page to place the note.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall
+                            SharedPdfTextAnnotationDock(
+                                style = effectiveTextStyleConfig,
+                                onStyleChange = ::updateTextStyleConfig
                             )
                         }
                     }
@@ -2260,7 +2367,7 @@ private fun PdfReaderScreen(
                                 selectedColor = selectedColor,
                                 strokeWidth = strokeWidth,
                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                                textDraft = textDraft,
+                                activeTextDraft = activeTextDraft,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = { goToPage(it, scrollVertical = false) },
                                 onCopySelection = ::copySelection,
@@ -2270,8 +2377,12 @@ private fun PdfReaderScreen(
                                 onEmbeddedAnnotationSelected = ::selectEmbeddedAnnotation,
                                 onLinkActivated = ::activatePdfLink,
                                 onAnnotationAdded = { dispatchPdf(SharedPdfReaderAction.AnnotationAdded(it)) },
+                                onAnnotationUpdated = ::updateAnnotation,
                                 onAnnotationsChanged = { dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(it)) },
-                                onTextDraftConsumed = { textDraft = "" }
+                                onTextAnnotationSelected = ::selectTextAnnotation,
+                                onTextDraftStarted = ::startActiveTextDraft,
+                                onTextDraftChanged = ::updateActiveTextDraft,
+                                onTextDraftBoundsChanged = ::updateActiveTextDraftBounds
                             )
                         }
                     }
@@ -2305,6 +2416,17 @@ private fun PdfReaderScreen(
                                 .flatMap { annotation ->
                                     annotation.toRenderablePdfAnnotations(document, pageIndex, pageCanvasSize)
                                 }
+                        }
+                        val selectedTextAnnotationForPage = selectedAnnotation?.takeIf {
+                            selectedTool == PdfInkTool.TEXT &&
+                                !isTextSelectionMode &&
+                                it.kind == PdfAnnotationKind.TEXT &&
+                                it.pageIndex == pageIndex
+                        }
+                        val visiblePageAnnotations = remember(pageAnnotations, selectedTextAnnotationForPage?.id) {
+                            pageAnnotations.filterNot {
+                                it.kind == PdfAnnotationKind.TEXT && it.id == selectedTextAnnotationForPage?.id
+                            }
                         }
                         val pageEmbeddedAnnotations = remember(document.embeddedAnnotations, pageIndex) {
                             document.embeddedAnnotations.filter { it.pageIndex == pageIndex }
@@ -2413,7 +2535,8 @@ private fun PdfReaderScreen(
                                     selectedColor,
                                     strokeWidth,
                                     isHighlighterSnapEnabled,
-                                    textDraft,
+                                    textStyleConfig,
+                                    activeTextDraft?.id,
                                     pageCanvasSize,
                                     pageRender.width,
                                     pageRender.height
@@ -2503,25 +2626,20 @@ private fun PdfReaderScreen(
                                     } else if (selectedTool == PdfInkTool.TEXT) {
                                         detectTapGestures(
                                             onTap = { start ->
-                                                val text = textDraft.trim()
-                                                if (text.isNotEmpty()) {
-                                                    val bounds = pageBoundsFromSharedPdfPoint(start, pageCanvasSize)
-                                                    dispatchPdf(
-                                                        SharedPdfReaderAction.AnnotationAdded(
-                                                            SharedPdfAnnotation(
-                                                                id = "text_${System.currentTimeMillis()}",
-                                                                pageIndex = pageIndex,
-                                                                kind = PdfAnnotationKind.TEXT,
-                                                                tool = PdfInkTool.TEXT,
-                                                                bounds = bounds,
-                                                                text = text,
-                                                                colorArgb = selectedColor,
-                                                                fontSize = 18f,
-                                                                createdAt = System.currentTimeMillis()
-                                                            )
+                                                when {
+                                                    activeTextDraftContains(pageIndex, start, pageCanvasSize) -> Unit
+                                                    else -> {
+                                                        val textHit = currentPdfAnnotations.textAnnotationHitAt(
+                                                            pageIndex = pageIndex,
+                                                            point = start,
+                                                            canvasSize = pageCanvasSize
                                                         )
-                                                    )
-                                                    textDraft = ""
+                                                        if (textHit != null) {
+                                                            selectTextAnnotation(textHit)
+                                                        } else {
+                                                            startActiveTextDraft(pageIndex, start, pageCanvasSize)
+                                                        }
+                                                    }
                                                 }
                                             }
                                         )
@@ -2619,7 +2737,7 @@ private fun PdfReaderScreen(
                                 canvasSize = pageCanvasSize
                             )
                             SharedPdfAnnotationOverlay(
-                                annotations = pageAnnotations,
+                                annotations = visiblePageAnnotations,
                                 activeStroke = activeStroke,
                                 canvasSize = pageCanvasSize,
                                 activeTool = selectedTool,
@@ -2627,6 +2745,30 @@ private fun PdfReaderScreen(
                                 activeStrokeWidth = strokeWidth,
                                 selectedAnnotationId = selectedAnnotationId
                             )
+                            SharedPdfInlineTextEditorOverlay(
+                                draft = activeTextDraft?.takeIf { it.pageIndex == pageIndex },
+                                canvasSize = pageCanvasSize,
+                                onTextChange = { updateActiveTextDraft(it, pageCanvasSize) },
+                                onBoundsChange = ::updateActiveTextDraftBounds
+                            )
+                            selectedTextAnnotationForPage?.let { annotation ->
+                                val bounds = annotation.bounds
+                                if (bounds != null && activeTextDraft == null) {
+                                    SharedPdfTextBoxEditorOverlay(
+                                        id = annotation.id,
+                                        text = annotation.text,
+                                        style = annotation.sharedPdfTextStyle(),
+                                        bounds = bounds,
+                                        canvasSize = pageCanvasSize,
+                                        onTextChange = { text ->
+                                            updateAnnotation(annotation.copy(text = text))
+                                        },
+                                        onBoundsChange = { nextBounds ->
+                                            updateAnnotation(annotation.copy(bounds = nextBounds))
+                                        }
+                                    )
+                                }
+                            }
                             SharedPdfEmbeddedAnnotationOverlay(
                                 annotations = pageEmbeddedAnnotations,
                                 canvasSize = pageCanvasSize,
@@ -2803,7 +2945,7 @@ private fun DesktopVerticalPdfPage(
     selectedColor: Int,
     strokeWidth: Float,
     isHighlighterSnapEnabled: Boolean,
-    textDraft: String,
+    activeTextDraft: SharedPdfTextDraft?,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
@@ -2813,8 +2955,12 @@ private fun DesktopVerticalPdfPage(
     onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit,
     onLinkActivated: (DesktopPdfLinkTarget) -> Unit,
     onAnnotationAdded: (SharedPdfAnnotation) -> Unit,
+    onAnnotationUpdated: (SharedPdfAnnotation) -> Unit,
     onAnnotationsChanged: (List<SharedPdfAnnotation>) -> Unit,
-    onTextDraftConsumed: () -> Unit
+    onTextAnnotationSelected: (SharedPdfAnnotation) -> Unit,
+    onTextDraftStarted: (Int, Offset, IntSize) -> Unit,
+    onTextDraftChanged: (String, IntSize) -> Unit,
+    onTextDraftBoundsChanged: (PdfPageBounds) -> Unit
 ) {
     val density = LocalDensity.current
     val pageInteractionSource = remember { MutableInteractionSource() }
@@ -2974,7 +3120,7 @@ private fun DesktopVerticalPdfPage(
                     selectedColor,
                     strokeWidth,
                     isHighlighterSnapEnabled,
-                    textDraft,
+                    activeTextDraft?.id,
                     pageCanvasSize,
                     renderedPageWidth,
                     renderedPageHeight
@@ -3071,23 +3217,21 @@ private fun DesktopVerticalPdfPage(
                             detectTapGestures(
                                 onTap = { start ->
                                     onSelectPage(pageIndex)
-                                    clearInteractionState()
-                                    val text = textDraft.trim()
-                                    if (text.isNotEmpty()) {
-                                        onAnnotationAdded(
-                                            SharedPdfAnnotation(
-                                                id = "text_${System.currentTimeMillis()}",
+                                    when {
+                                        activeTextDraft?.containsOffset(pageIndex, start, pageCanvasSize) == true -> Unit
+                                        else -> {
+                                            val textHit = currentAnnotations.textAnnotationHitAt(
                                                 pageIndex = pageIndex,
-                                                kind = PdfAnnotationKind.TEXT,
-                                                tool = PdfInkTool.TEXT,
-                                                bounds = pageBoundsFromSharedPdfPoint(start, pageCanvasSize),
-                                                text = text,
-                                                colorArgb = selectedColor,
-                                                fontSize = 18f,
-                                                createdAt = System.currentTimeMillis()
+                                                point = start,
+                                                canvasSize = pageCanvasSize
                                             )
-                                        )
-                                        onTextDraftConsumed()
+                                            clearInteractionState()
+                                            if (textHit != null) {
+                                                onTextAnnotationSelected(textHit)
+                                            } else {
+                                                onTextDraftStarted(pageIndex, start, pageCanvasSize)
+                                            }
+                                        }
                                     }
                                 }
                             )
@@ -3186,6 +3330,20 @@ private fun DesktopVerticalPdfPage(
                                 annotation.toRenderablePdfAnnotations(document, pageIndex, pageCanvasSize)
                             }
                     }
+                    val selectedTextAnnotationForPage = remember(annotations, selectedAnnotationId, selectedTool, isTextSelectionMode, pageIndex) {
+                        annotations.firstOrNull {
+                            selectedTool == PdfInkTool.TEXT &&
+                                !isTextSelectionMode &&
+                                it.id == selectedAnnotationId &&
+                                it.kind == PdfAnnotationKind.TEXT &&
+                                it.pageIndex == pageIndex
+                        }
+                    }
+                    val visiblePageAnnotations = remember(pageAnnotations, selectedTextAnnotationForPage?.id) {
+                        pageAnnotations.filterNot {
+                            it.kind == PdfAnnotationKind.TEXT && it.id == selectedTextAnnotationForPage?.id
+                        }
+                    }
                     val searchHighlightBounds: List<PdfPageBounds> = remember(
                         document.path,
                         searchResults,
@@ -3238,7 +3396,7 @@ private fun DesktopVerticalPdfPage(
                         canvasSize = pageCanvasSize
                     )
                     SharedPdfAnnotationOverlay(
-                        annotations = pageAnnotations,
+                        annotations = visiblePageAnnotations,
                         activeStroke = activeStroke,
                         canvasSize = pageCanvasSize,
                         activeTool = selectedTool,
@@ -3246,6 +3404,30 @@ private fun DesktopVerticalPdfPage(
                         activeStrokeWidth = strokeWidth,
                         selectedAnnotationId = selectedAnnotationId
                     )
+                    SharedPdfInlineTextEditorOverlay(
+                        draft = activeTextDraft?.takeIf { it.pageIndex == pageIndex },
+                        canvasSize = pageCanvasSize,
+                        onTextChange = { onTextDraftChanged(it, pageCanvasSize) },
+                        onBoundsChange = { onTextDraftBoundsChanged(it) }
+                    )
+                    selectedTextAnnotationForPage?.let { annotation ->
+                        val bounds = annotation.bounds
+                        if (bounds != null && activeTextDraft == null) {
+                            SharedPdfTextBoxEditorOverlay(
+                                id = annotation.id,
+                                text = annotation.text,
+                                style = annotation.sharedPdfTextStyle(),
+                                bounds = bounds,
+                                canvasSize = pageCanvasSize,
+                                onTextChange = { text ->
+                                    onAnnotationUpdated(annotation.copy(text = text))
+                                },
+                                onBoundsChange = { nextBounds ->
+                                    onAnnotationUpdated(annotation.copy(bounds = nextBounds))
+                                }
+                            )
+                        }
+                    }
                     SharedPdfEmbeddedAnnotationOverlay(
                         annotations = pageEmbeddedAnnotations,
                         canvasSize = pageCanvasSize,
@@ -3331,70 +3513,33 @@ private fun DesktopPdfAnnotationEditor(
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(
-                        selected = annotation.isBold,
-                        onClick = { onUpdate(annotation.copy(isBold = !annotation.isBold)) },
-                        label = { Text("Bold") }
-                    )
-                    FilterChip(
-                        selected = annotation.isItalic,
-                        onClick = { onUpdate(annotation.copy(isItalic = !annotation.isItalic)) },
-                        label = { Text("Italic") }
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(
-                        selected = annotation.isUnderline,
-                        onClick = { onUpdate(annotation.copy(isUnderline = !annotation.isUnderline)) },
-                        label = { Text("Underline") }
-                    )
-                    FilterChip(
-                        selected = annotation.isStrikeThrough,
-                        onClick = { onUpdate(annotation.copy(isStrikeThrough = !annotation.isStrikeThrough)) },
-                        label = { Text("Strike") }
-                    )
-                }
-                Text("Font ${annotation.fontSize.toInt()}", style = MaterialTheme.typography.labelLarge)
-                Slider(
-                    value = annotation.fontSize.coerceIn(10f, 36f),
-                    onValueChange = { onUpdate(annotation.copy(fontSize = it)) },
-                    valueRange = 10f..36f
+                SharedPdfTextStyleControls(
+                    style = annotation.sharedPdfTextStyle(),
+                    onStyleChange = { onUpdate(annotation.withSharedPdfTextStyle(it)) }
                 )
-                Text("Fill", style = MaterialTheme.typography.labelLarge)
+            }
+            if (annotation.kind != PdfAnnotationKind.TEXT) {
+                val palette = if (
+                    annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
+                    annotation.tool == PdfInkTool.HIGHLIGHTER ||
+                    annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND
+                ) {
+                    SharedPdfAnnotationDefaults.highlighterPalette
+                } else {
+                    SharedPdfAnnotationDefaults.penPalette
+                }
+                Text("Color", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SharedPdfAnnotationDefaults.highlighterPalette.forEach { argb ->
+                    palette.forEach { argb ->
                         Surface(
                             modifier = Modifier
                                 .size(26.dp)
-                                .clickable { onUpdate(annotation.copy(backgroundArgb = argb)) },
+                                .clickable { onUpdate(annotation.copy(colorArgb = argb)) },
                             color = Color(argb),
                             shape = RoundedCornerShape(13.dp),
                             content = {}
                         )
                     }
-                }
-            }
-            val palette = if (
-                annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
-                annotation.tool == PdfInkTool.HIGHLIGHTER ||
-                annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND
-            ) {
-                SharedPdfAnnotationDefaults.highlighterPalette
-            } else {
-                SharedPdfAnnotationDefaults.penPalette
-            }
-            Text("Color", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                palette.forEach { argb ->
-                    Surface(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clickable { onUpdate(annotation.copy(colorArgb = argb)) },
-                        color = Color(argb),
-                        shape = RoundedCornerShape(13.dp),
-                        content = {}
-                    )
                 }
             }
             if (annotation.kind == PdfAnnotationKind.INK) {
@@ -3758,6 +3903,31 @@ private fun SharedPdfAnnotation.toRenderablePdfAnnotations(
                 bounds = dynamicBounds
             )
         }
+}
+
+private fun SharedPdfTextDraft.containsOffset(
+    pageIndex: Int,
+    offset: Offset,
+    canvasSize: IntSize
+): Boolean {
+    if (this.pageIndex != pageIndex || canvasSize.width <= 0 || canvasSize.height <= 0) return false
+    val left = bounds.left * canvasSize.width
+    val right = bounds.right * canvasSize.width
+    val top = bounds.top * canvasSize.height
+    val bottom = bounds.bottom * canvasSize.height
+    return offset.x in left..right && offset.y in top..bottom
+}
+
+private fun List<SharedPdfAnnotation>.textAnnotationHitAt(
+    pageIndex: Int,
+    point: Offset,
+    canvasSize: IntSize
+): SharedPdfAnnotation? {
+    return asReversed().firstOrNull { annotation ->
+        annotation.kind == PdfAnnotationKind.TEXT &&
+            annotation.pageIndex == pageIndex &&
+            annotation.sharedPdfHitTest(point, canvasSize)
+    }
 }
 
 private fun List<PdfPageBounds>.mergePdfBoundsByLine(): List<PdfPageBounds> {
