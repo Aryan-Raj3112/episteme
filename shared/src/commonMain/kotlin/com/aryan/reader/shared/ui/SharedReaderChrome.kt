@@ -37,9 +37,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -206,7 +211,6 @@ fun SharedReaderScreen(
                 onGoToBookmark = { dispatch(ReaderAction.GoToLocator(it.locator)) },
                 onGoToSearchResult = { dispatch(ReaderAction.GoToSearchResult(it)) },
                 toolbarPreferences = toolbarPreferences,
-                onToolbarPreferencesChange = onToolbarPreferencesChange,
                 highlightPalette = highlightPalette,
                 onHighlightPaletteChange = onHighlightPaletteChange,
                 onGoToHighlight = { dispatch(ReaderAction.GoToLocator(it.locator)) },
@@ -222,13 +226,6 @@ fun SharedReaderScreen(
             )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SharedReaderSettingsBar(
-                    session = session,
-                    toolbarPreferences = toolbarPreferences,
-                    onPickCustomFont = onPickCustomFont,
-                    onReaderAction = { action -> dispatch(action) }
-                )
-
                 if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
                     Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -297,6 +294,14 @@ fun SharedReaderScreen(
                     )
                 }
             }
+
+            SharedReaderControlPanel(
+                session = session,
+                toolbarPreferences = toolbarPreferences,
+                onToolbarPreferencesChange = onToolbarPreferencesChange,
+                onPickCustomFont = onPickCustomFont,
+                onReaderAction = { action -> dispatch(action) }
+            )
         }
     }
 }
@@ -344,183 +349,289 @@ private fun SharedReaderQuickActions(
 }
 
 @Composable
-private fun SharedReaderSettingsBar(
+private fun SharedReaderControlPanel(
     session: ReaderSessionState,
+    toolbarPreferences: ReaderToolbarPreferences,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    onPickCustomFont: (() -> String?)?,
+    onReaderAction: (ReaderAction) -> Unit
+) {
+    val sections = toolbarPreferences.availableReaderControlSections()
+    if (sections.isEmpty()) return
+    var selectedSection by remember { mutableStateOf(sections.first()) }
+    val activeSection = selectedSection.takeIf { it in sections } ?: sections.first()
+
+    Surface(
+        modifier = Modifier
+            .width(340.dp)
+            .fillMaxHeight(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        LazyColumn(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text("Reader controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                ) {
+                    sections.forEach { section ->
+                        FilterChip(
+                            selected = activeSection == section,
+                            onClick = { selectedSection = section },
+                            label = { Text(section.title) }
+                        )
+                    }
+                }
+            }
+            item {
+                HorizontalDivider()
+            }
+            item {
+                when (activeSection) {
+                    ReaderControlSection.FORMAT -> SharedReaderFormatControls(
+                        settings = session.reader.settings,
+                        toolbarPreferences = toolbarPreferences,
+                        onPickCustomFont = onPickCustomFont,
+                        onReaderAction = onReaderAction
+                    )
+
+                    ReaderControlSection.THEME -> SharedReaderThemeControls(
+                        settings = session.reader.settings,
+                        onReaderAction = onReaderAction
+                    )
+
+                    ReaderControlSection.VISUAL -> SharedReaderVisualOptionsControls(
+                        settings = session.reader.settings,
+                        onReaderAction = onReaderAction
+                    )
+
+                    ReaderControlSection.TOOLBAR -> SharedReaderToolbarControls(
+                        toolbarPreferences = toolbarPreferences,
+                        onToolbarPreferencesChange = onToolbarPreferencesChange
+                    )
+                }
+            }
+        }
+    }
+}
+
+private enum class ReaderControlSection(val title: String) {
+    FORMAT("Format"),
+    THEME("Theme"),
+    VISUAL("Visual"),
+    TOOLBAR("Toolbar")
+}
+
+private fun ReaderToolbarPreferences.availableReaderControlSections(): List<ReaderControlSection> {
+    return buildList {
+        if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
+        if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
+        if (isVisible(ReaderTool.VISUAL_OPTIONS)) add(ReaderControlSection.VISUAL)
+        add(ReaderControlSection.TOOLBAR)
+    }
+}
+
+@Composable
+private fun SharedReaderFormatControls(
+    settings: ReaderSettings,
     toolbarPreferences: ReaderToolbarPreferences,
     onPickCustomFont: (() -> String?)?,
     onReaderAction: (ReaderAction) -> Unit
 ) {
-    val settings = session.reader.settings
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (toolbarPreferences.isVisible(ReaderTool.READING_MODE)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(
-                    selected = settings.readingMode == ReaderReadingMode.PAGINATED,
-                    onClick = {
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
-                    },
-                    label = { Text("Pages") }
-                )
-                FilterChip(
-                    selected = settings.readingMode == ReaderReadingMode.VERTICAL,
-                    onClick = {
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
-                    },
-                    label = { Text("Vertical") }
-                )
+            SharedReaderPanelSection("Reading") {
+                SharedReaderChoiceRow {
+                    FilterChip(
+                        selected = settings.readingMode == ReaderReadingMode.PAGINATED,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
+                        },
+                        label = { Text("Pages") }
+                    )
+                    FilterChip(
+                        selected = settings.readingMode == ReaderReadingMode.VERTICAL,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
+                        },
+                        label = { Text("Vertical") }
+                    )
+                }
             }
         }
 
         if (toolbarPreferences.isVisible(ReaderTool.FORMAT)) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.horizontalScroll(rememberScrollState())
-            ) {
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.START,
-                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.START))) },
-                label = { Text("Left") }
-            )
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
-                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY))) },
-                label = { Text("Justify") }
-            )
-            FilterChip(
-                selected = settings.textAlign == SharedReaderTextAlign.CENTER,
-                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.CENTER))) },
-                label = { Text("Center") }
-            )
-            listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
-                FilterChip(
-                    selected = settings.customFontPath == null && settings.fontFamily == family,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = family, customFontPath = null))) },
-                    label = { Text(family) }
-                )
+            SharedReaderPanelSection("Font & Alignment") {
+                val customFontName = settings.customFontPath
+                    ?.substringAfterLast('/')
+                    ?.substringAfterLast('\\')
+                    ?.takeIf { it.isNotBlank() }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(42.dp)
+                            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Aa", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(customFontName ?: settings.fontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Font", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(
+                        enabled = onPickCustomFont != null,
+                        onClick = {
+                            onPickCustomFont?.invoke()?.takeIf { it.isNotBlank() }?.let { path ->
+                                onReaderAction(
+                                    ReaderAction.SettingsChanged(
+                                        settings.copy(
+                                            fontFamily = path.substringAfterLast('/').substringAfterLast('\\'),
+                                            customFontPath = path
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                    ) {
+                        Text("Choose")
+                    }
+                }
+
+                SharedReaderChoiceRow {
+                    listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
+                        FilterChip(
+                            selected = settings.customFontPath == null && settings.fontFamily == family,
+                            onClick = {
+                                onReaderAction(
+                                    ReaderAction.SettingsChanged(settings.copy(fontFamily = family, customFontPath = null))
+                                )
+                            },
+                            label = { Text(family) }
+                        )
+                    }
+                    if (settings.customFontPath != null) {
+                        TextButton(
+                            onClick = {
+                                onReaderAction(
+                                    ReaderAction.SettingsChanged(settings.copy(fontFamily = "Default", customFontPath = null))
+                                )
+                            }
+                        ) {
+                            Text("Clear")
+                        }
+                    }
+                }
+
+                SharedReaderChoiceRow {
+                    FilterChip(
+                        selected = settings.textAlign == SharedReaderTextAlign.START,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.START)))
+                        },
+                        label = { Text("Left") }
+                    )
+                    FilterChip(
+                        selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY)))
+                        },
+                        label = { Text("Justify") }
+                    )
+                    FilterChip(
+                        selected = settings.textAlign == SharedReaderTextAlign.CENTER,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.CENTER)))
+                        },
+                        label = { Text("Center") }
+                    )
+                }
             }
-            TextButton(
-                enabled = onPickCustomFont != null,
-                onClick = {
-                    onPickCustomFont?.invoke()?.takeIf { it.isNotBlank() }?.let { path ->
+
+            SharedReaderPanelSection("Layout & Spacing") {
+                SharedReaderSettingSlider(
+                    label = "Font size",
+                    value = settings.fontSize.toFloat(),
+                    onValueChange = { value ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.toInt())))
+                    },
+                    valueRange = 14f..30f,
+                    valueLabel = settings.fontSize.toString()
+                )
+                SharedReaderSettingSlider(
+                    label = "Line height",
+                    value = settings.lineSpacing,
+                    onValueChange = { value ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(lineSpacing = value)))
+                    },
+                    valueRange = 1.1f..2.1f,
+                    valueLabel = "${settings.lineSpacing.formatTwoDecimals()}x"
+                )
+                SharedReaderSettingSlider(
+                    label = "Paragraph gap",
+                    value = settings.paragraphSpacing,
+                    onValueChange = { value ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(paragraphSpacing = value)))
+                    },
+                    valueRange = 0.5f..2.5f,
+                    valueLabel = "${settings.paragraphSpacing.formatTwoDecimals()}x"
+                )
+                SharedReaderSettingSlider(
+                    label = "Image size",
+                    value = settings.imageScale,
+                    onValueChange = { value ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(imageScale = value)))
+                    },
+                    valueRange = 0.5f..2.0f,
+                    valueLabel = "${settings.imageScale.formatTwoDecimals()}x"
+                )
+                SharedReaderSettingSlider(
+                    label = "Horizontal margin",
+                    value = settings.resolvedHorizontalMargin.toFloat(),
+                    onValueChange = { value ->
+                        val nextHorizontal = value.toInt()
+                        val nextMargin = maxOf(nextHorizontal, settings.resolvedVerticalMargin)
                         onReaderAction(
                             ReaderAction.SettingsChanged(
-                                settings.copy(fontFamily = path.substringAfterLast('/').substringAfterLast('\\'), customFontPath = path)
+                                settings.copy(horizontalMargin = nextHorizontal, margin = nextMargin)
                             )
                         )
-                    }
-                }
-            ) {
-                Text("Custom font")
-            }
-            if (settings.customFontPath != null) {
-                TextButton(
-                    onClick = {
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontFamily = "Default", customFontPath = null)))
-                    }
-                ) {
-                    Text("Clear custom")
-                }
-            }
-        }
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            Text("Font ${settings.fontSize}")
-            Slider(
-                value = settings.fontSize.toFloat(),
-                onValueChange = { value ->
-                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.toInt())))
-                },
-                valueRange = 14f..30f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("X ${settings.resolvedHorizontalMargin}")
-            Slider(
-                value = settings.resolvedHorizontalMargin.toFloat(),
-                onValueChange = { value ->
-                    val nextHorizontal = value.toInt()
-                    val nextMargin = if (nextHorizontal > settings.resolvedVerticalMargin) {
-                        nextHorizontal
-                    } else {
-                        settings.resolvedVerticalMargin
-                    }
-                    onReaderAction(
-                        ReaderAction.SettingsChanged(
-                            settings.copy(horizontalMargin = nextHorizontal, margin = nextMargin)
+                    },
+                    valueRange = 0f..160f,
+                    valueLabel = settings.resolvedHorizontalMargin.toString()
+                )
+                SharedReaderSettingSlider(
+                    label = "Vertical margin",
+                    value = settings.resolvedVerticalMargin.toFloat(),
+                    onValueChange = { value ->
+                        val nextVertical = value.toInt()
+                        val nextMargin = maxOf(settings.resolvedHorizontalMargin, nextVertical)
+                        onReaderAction(
+                            ReaderAction.SettingsChanged(
+                                settings.copy(verticalMargin = nextVertical, margin = nextMargin)
+                            )
                         )
-                    )
-                },
-                valueRange = 0f..160f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Y ${settings.resolvedVerticalMargin}")
-            Slider(
-                value = settings.resolvedVerticalMargin.toFloat(),
-                onValueChange = { value ->
-                    val nextVertical = value.toInt()
-                    val nextMargin = if (nextVertical > settings.resolvedHorizontalMargin) {
-                        nextVertical
-                    } else {
-                        settings.resolvedHorizontalMargin
-                    }
-                    onReaderAction(
-                        ReaderAction.SettingsChanged(
-                            settings.copy(verticalMargin = nextVertical, margin = nextMargin)
-                        )
-                    )
-                },
-                valueRange = 0f..160f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Spacing ${settings.lineSpacing.formatTwoDecimals()}")
-            Slider(
-                value = settings.lineSpacing,
-                onValueChange = { value ->
-                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(lineSpacing = value)))
-                },
-                valueRange = 1.1f..2.1f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Paragraph ${settings.paragraphSpacing.formatTwoDecimals()}")
-            Slider(
-                value = settings.paragraphSpacing,
-                onValueChange = { value ->
-                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(paragraphSpacing = value)))
-                },
-                valueRange = 0.5f..2.5f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Images ${settings.imageScale.formatTwoDecimals()}x")
-            Slider(
-                value = settings.imageScale,
-                onValueChange = { value ->
-                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(imageScale = value)))
-                },
-                valueRange = 0.5f..2.0f,
-                modifier = Modifier.width(140.dp)
-            )
-            Text("Width ${settings.pageWidth}")
-            Slider(
-                value = settings.pageWidth.toFloat(),
-                onValueChange = { value ->
-                    onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.toInt())))
-                },
-                valueRange = 520f..1100f,
-                modifier = Modifier.width(140.dp)
-            )
-        }
-        }
-
-        if (toolbarPreferences.isVisible(ReaderTool.THEME)) {
-            SharedReaderThemeControls(settings = settings, onReaderAction = onReaderAction)
-        }
-
-        if (toolbarPreferences.isVisible(ReaderTool.VISUAL_OPTIONS)) {
-            SharedReaderVisualOptionsControls(settings = settings, onReaderAction = onReaderAction)
+                    },
+                    valueRange = 0f..160f,
+                    valueLabel = settings.resolvedVerticalMargin.toString()
+                )
+                SharedReaderSettingSlider(
+                    label = "Page width",
+                    value = settings.pageWidth.toFloat(),
+                    onValueChange = { value ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.toInt())))
+                    },
+                    valueRange = 520f..1100f,
+                    valueLabel = settings.pageWidth.toString()
+                )
+            }
         }
     }
 }
@@ -530,62 +641,68 @@ private fun SharedReaderThemeControls(
     settings: ReaderSettings,
     onReaderAction: (ReaderAction) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            Text("Theme")
-            BuiltInReaderThemes.forEach { theme ->
-                val swatch = if (theme.backgroundColor == Color.Unspecified) {
-                    MaterialTheme.colorScheme.surface
-                } else {
-                    theme.backgroundColor
-                }
+    var textured by remember(settings.themeId, settings.textureId) { mutableStateOf(settings.textureId != null) }
+    val activeThemes = BuiltInReaderThemes.filter { (it.textureId != null) == textured }
+
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SharedReaderPanelSection("Reading Themes") {
+            SharedReaderChoiceRow {
                 FilterChip(
-                    selected = settings.themeId == theme.id || (settings.themeId == null && theme.id == "system"),
-                    onClick = { onReaderAction(ReaderAction.ThemeChanged(theme)) },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .width(12.dp)
-                                    .height(12.dp)
-                                    .background(swatch, RoundedCornerShape(2.dp))
-                            )
-                            Text(theme.name)
-                        }
-                    }
+                    selected = !textured,
+                    onClick = { textured = false },
+                    label = { Text("Solid") }
                 )
+                FilterChip(
+                    selected = textured,
+                    onClick = { textured = true },
+                    label = { Text("Textured") }
+                )
+            }
+            activeThemes.chunked(3).forEach { rowThemes ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    rowThemes.forEach { theme ->
+                        SharedReaderThemeChoice(
+                            theme = theme,
+                            selected = settings.themeId == theme.id || (settings.themeId == null && theme.id == "system"),
+                            onSelected = { onReaderAction(ReaderAction.ThemeChanged(theme)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    repeat(3 - rowThemes.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
         }
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            Text("Texture")
-            FilterChip(
-                selected = settings.textureId == null,
-                onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = null))) },
-                label = { Text("None") }
-            )
-            ReaderTexture.entries.forEach { texture ->
-                FilterChip(
-                    selected = settings.textureId == texture.id,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = texture.id))) },
-                    label = { Text(texture.displayName) }
-                )
+        if (textured) {
+            SharedReaderPanelSection("Texture") {
+                SharedReaderChoiceRow {
+                    FilterChip(
+                        selected = settings.textureId == null,
+                        onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = null))) },
+                        label = { Text("None") }
+                    )
+                    ReaderTexture.entries.forEach { texture ->
+                        FilterChip(
+                            selected = settings.textureId == texture.id,
+                            onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = texture.id))) },
+                            label = { Text(texture.displayName) }
+                        )
+                    }
+                }
+                if (settings.textureId != null) {
+                    SharedReaderSettingSlider(
+                        label = "Texture strength",
+                        value = settings.textureAlpha.coerceIn(0f, 1f),
+                        onValueChange = { value ->
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureAlpha = value)))
+                        },
+                        valueRange = 0f..1f,
+                        valueLabel = "${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%"
+                    )
+                }
             }
-            Text("${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%")
-            Slider(
-                value = settings.textureAlpha.coerceIn(0f, 1f),
-                onValueChange = { value -> onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureAlpha = value))) },
-                valueRange = 0f..1f,
-                modifier = Modifier.width(130.dp)
-            )
         }
     }
 }
@@ -595,70 +712,261 @@ private fun SharedReaderVisualOptionsControls(
     settings: ReaderSettings,
     onReaderAction: (ReaderAction) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            Text("System UI")
-            SystemUiMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = settings.systemUiMode == mode,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(systemUiMode = mode))) },
-                    label = { Text(mode.title) }
-                )
-            }
-        }
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            Text("Page info")
-            PageInfoMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = settings.pageInfoMode == mode,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoMode = mode))) },
-                    label = { Text(mode.title) }
-                )
-            }
-            PageInfoPosition.entries.forEach { position ->
-                FilterChip(
-                    selected = settings.pageInfoPosition == position,
-                    onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoPosition = position))) },
-                    label = { Text(position.title) }
-                )
-            }
-        }
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.horizontalScroll(rememberScrollState())
-        ) {
-            FilterChip(
-                selected = settings.seamlessChapterNavigation,
-                onClick = {
-                    onReaderAction(
-                        ReaderAction.SettingsChanged(
-                            settings.copy(seamlessChapterNavigation = !settings.seamlessChapterNavigation)
-                        )
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SharedReaderPanelSection("System UI") {
+            SharedReaderChoiceRow {
+                SystemUiMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.systemUiMode == mode,
+                        onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(systemUiMode = mode))) },
+                        label = { Text(mode.title) }
                     )
-                },
-                label = { Text("Seamless chapters") }
-            )
-            Text("Pull ${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x")
-            Slider(
+                }
+            }
+        }
+
+        SharedReaderPanelSection("Page Info") {
+            SharedReaderChoiceRow {
+                PageInfoMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.pageInfoMode == mode,
+                        onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoMode = mode))) },
+                        label = { Text(mode.title) }
+                    )
+                }
+            }
+            SharedReaderChoiceRow {
+                PageInfoPosition.entries.forEach { position ->
+                    FilterChip(
+                        selected = settings.pageInfoPosition == position,
+                        onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoPosition = position))) },
+                        label = { Text(position.title) }
+                    )
+                }
+            }
+        }
+
+        SharedReaderPanelSection("Chapter Turns") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Seamless chapters", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = settings.seamlessChapterNavigation,
+                    onCheckedChange = { enabled ->
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(seamlessChapterNavigation = enabled)))
+                    }
+                )
+            }
+            SharedReaderSettingSlider(
+                label = "Pull distance",
                 value = settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2.0f),
                 onValueChange = { value ->
                     onReaderAction(ReaderAction.SettingsChanged(settings.copy(chapterTurnDragMultiplier = value)))
                 },
                 valueRange = 0.5f..2.0f,
-                modifier = Modifier.width(140.dp)
+                valueLabel = "${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x"
             )
         }
+    }
+}
+
+@Composable
+private fun SharedReaderToolbarControls(
+    toolbarPreferences: ReaderToolbarPreferences,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit
+) {
+    val orderedTools = toolbarPreferences.sanitized().toolOrder
+    val toolbarTools = orderedTools.filter { it.category != "Overflow Menu" }
+    val moreTools = orderedTools.filter { it.category == "Overflow Menu" }
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SharedToolbarSection(
+            title = "Top Bar",
+            tools = toolbarTools.filter {
+                toolbarPreferences.isVisible(it) && !toolbarPreferences.isBottom(it)
+            },
+            toolbarPreferences = toolbarPreferences,
+            onToolbarPreferencesChange = onToolbarPreferencesChange
+        )
+        SharedToolbarSection(
+            title = "Bottom Bar",
+            tools = toolbarTools.filter {
+                toolbarPreferences.isVisible(it) && toolbarPreferences.isBottom(it)
+            },
+            toolbarPreferences = toolbarPreferences,
+            onToolbarPreferencesChange = onToolbarPreferencesChange
+        )
+        SharedToolbarSection(
+            title = "More Menu",
+            tools = moreTools.filter { toolbarPreferences.isVisible(it) },
+            toolbarPreferences = toolbarPreferences,
+            onToolbarPreferencesChange = onToolbarPreferencesChange
+        )
+        SharedToolbarSection(
+            title = "Hidden Tools",
+            tools = orderedTools.filterNot { toolbarPreferences.isVisible(it) },
+            toolbarPreferences = toolbarPreferences,
+            onToolbarPreferencesChange = onToolbarPreferencesChange
+        )
+    }
+}
+
+@Composable
+private fun SharedToolbarSection(
+    title: String,
+    tools: List<ReaderTool>,
+    toolbarPreferences: ReaderToolbarPreferences,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit
+) {
+    SharedReaderPanelSection(title) {
+        if (tools.isEmpty()) {
+            Text("No tools", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            tools.forEach { tool ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(tool.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        FilterChip(
+                            selected = toolbarPreferences.isVisible(tool),
+                            onClick = {
+                                onToolbarPreferencesChange(
+                                    toolbarPreferences.withVisibility(tool, hidden = toolbarPreferences.isVisible(tool))
+                                )
+                            },
+                            label = { Text("Visible") }
+                        )
+                        FilterChip(
+                            selected = toolbarPreferences.isBottom(tool),
+                            enabled = tool.category != "Overflow Menu",
+                            onClick = {
+                                onToolbarPreferencesChange(
+                                    toolbarPreferences.withBottomPlacement(tool, bottom = !toolbarPreferences.isBottom(tool))
+                                )
+                            },
+                            label = { Text("Bottom") }
+                        )
+                        TextButton(
+                            enabled = toolbarPreferences.toolOrder.indexOf(tool) > 0,
+                            onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, -1)) }
+                        ) {
+                            Text("Up")
+                        }
+                        TextButton(
+                            enabled = toolbarPreferences.toolOrder.indexOf(tool) in 0 until toolbarPreferences.toolOrder.lastIndex,
+                            onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, 1)) }
+                        ) {
+                            Text("Down")
+                        }
+                    }
+                }
+                if (tool != tools.last()) {
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderPanelSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        content()
+    }
+}
+
+@Composable
+private fun SharedReaderChoiceRow(
+    content: @Composable () -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.horizontalScroll(rememberScrollState())
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SharedReaderSettingSlider(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    valueLabel: String
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(valueLabel, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        Slider(
+            value = value.coerceIn(valueRange.start, valueRange.endInclusive),
+            onValueChange = onValueChange,
+            valueRange = valueRange
+        )
+    }
+}
+
+@Composable
+private fun SharedReaderThemeChoice(
+    theme: com.aryan.reader.shared.ReaderTheme,
+    selected: Boolean,
+    onSelected: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val swatch = if (theme.backgroundColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        theme.backgroundColor
+    }
+    val textColor = if (theme.textColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        theme.textColor
+    }
+    Column(
+        modifier = modifier.clickable(onClick = onSelected),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primaryContainer else swatch,
+                    RoundedCornerShape(8.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(44.dp)
+                    .height(32.dp)
+                    .background(swatch, RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Aa", color = textColor, fontWeight = FontWeight.Bold)
+            }
+        }
+        Text(
+            theme.name,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -709,7 +1017,6 @@ private fun SharedReaderSidebar(
     onGoToBookmark: (ReaderBookmark) -> Unit,
     onGoToSearchResult: (Int) -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
-    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     onGoToHighlight: (UserHighlight) -> Unit,
@@ -900,57 +1207,6 @@ private fun SharedReaderSidebar(
                                 Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                    }
-                }
-            }
-
-            item {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text("Tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            items(ReaderTool.entries.toList(), key = { it.id }) { tool ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                ) {
-                    Text(tool.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.horizontalScroll(rememberScrollState())
-                    ) {
-                        FilterChip(
-                            selected = toolbarPreferences.isVisible(tool),
-                            onClick = {
-                                onToolbarPreferencesChange(
-                                    toolbarPreferences.withVisibility(tool, hidden = toolbarPreferences.isVisible(tool))
-                                )
-                            },
-                            label = { Text("Visible") }
-                        )
-                        FilterChip(
-                            selected = toolbarPreferences.isBottom(tool),
-                            onClick = {
-                                onToolbarPreferencesChange(
-                                    toolbarPreferences.withBottomPlacement(tool, bottom = !toolbarPreferences.isBottom(tool))
-                                )
-                            },
-                            label = { Text("Bottom") }
-                        )
-                        TextButton(
-                            enabled = toolbarPreferences.toolOrder.indexOf(tool) > 0,
-                            onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, -1)) }
-                        ) {
-                            Text("Up")
-                        }
-                        TextButton(
-                            enabled = toolbarPreferences.toolOrder.indexOf(tool) in 0 until toolbarPreferences.toolOrder.lastIndex,
-                            onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, 1)) }
-                        ) {
-                            Text("Down")
-                        }
-                        Text(tool.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
