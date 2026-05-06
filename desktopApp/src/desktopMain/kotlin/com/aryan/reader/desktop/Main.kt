@@ -52,7 +52,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -123,6 +122,7 @@ import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
@@ -142,9 +142,13 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
 import com.aryan.reader.shared.pdf.PdfTextCharBounds
 import com.aryan.reader.shared.pdf.PdfZoomSpec
+import com.aryan.reader.shared.pdf.SharedPdfReaderAction
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
@@ -1241,49 +1245,87 @@ private fun PdfReaderScreen(
     onOpenEpub: () -> Unit,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit
 ) {
-    var pageIndex by remember(document.path) { mutableStateOf(initialPageIndex.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))) }
     val zoomSpec = remember { PdfZoomSpec() }
-    var scale by remember(document.path) { mutableStateOf(zoomSpec.default) }
-    var searchQuery by remember(document.path) { mutableStateOf("") }
-    var activeSearchIndex by remember(document.path) { mutableStateOf(-1) }
+    var pdfState by remember(document.path) {
+        mutableStateOf(
+            SharedPdfReaderState.initial(
+                pageCount = document.pageCount,
+                initialPageIndex = initialPageIndex,
+                zoomSpec = zoomSpec
+            )
+        )
+    }
     var renderedPage by remember(document.path) { mutableStateOf<DesktopPdfPageRender?>(null) }
     var renderError by remember(document.path) { mutableStateOf<String?>(null) }
     var isRendering by remember(document.path) { mutableStateOf(false) }
     var renderJob by remember(document.path) { mutableStateOf<Job?>(null) }
-    var selectedTool by remember(document.path) { mutableStateOf(PdfInkTool.PEN) }
-    var selectedColor by remember(document.path) { mutableStateOf(SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).colorArgb) }
-    var strokeWidth by remember(document.path) { mutableStateOf(SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth) }
     var textDraft by remember(document.path) { mutableStateOf("") }
     var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
-    var activeStroke by remember(document.path, pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
-    var isTextSelectionMode by remember(document.path) { mutableStateOf(false) }
-    var selectionStartIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
-    var selectionEndIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
-    var selectionStartHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
-    var selectionEndHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
-    var textSelection by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
-    var selectionMenuOffset by remember(document.path, pageIndex) { mutableStateOf<Offset?>(null) }
-    val annotations = remember(document.path) { mutableStateListOf<SharedPdfAnnotation>() }
+    var activeStroke by remember(document.path, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    var selectionStartIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
+    var selectionEndIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
+    var selectionStartHit by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
+    var selectionEndHit by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
+    var textSelection by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
+    var selectionMenuOffset by remember(document.path, pdfState.pageIndex) { mutableStateOf<Offset?>(null) }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
     val pageVerticalScrollState = rememberScrollState()
     val pageHorizontalScrollState = rememberScrollState()
     val currentTextSelection by rememberUpdatedState(textSelection)
+    val currentPdfAnnotations by rememberUpdatedState(pdfState.annotations)
 
-    LaunchedEffect(document.path) {
-        annotations.clear()
-        if (annotationFile.exists()) {
-            annotations.addAll(
-                withContext(Dispatchers.IO) {
-                    SharedPdfAnnotationSerializer.decode(annotationFile.readText())
-                }
-            )
+    fun clearPdfInteractionState() {
+        activeStroke = emptyList()
+        selectionStartIndex = null
+        selectionEndIndex = null
+        selectionStartHit = null
+        selectionEndHit = null
+        textSelection = null
+        selectionMenuOffset = null
+    }
+
+    fun dispatchPdf(action: SharedPdfReaderAction) {
+        val previousPage = pdfState.pageIndex
+        val next = pdfState.reduce(action, zoomSpec)
+        pdfState = next
+        if (next.pageIndex != previousPage) {
+            clearPdfInteractionState()
         }
     }
 
-    LaunchedEffect(document.path, annotations.toList()) {
-        val snapshot = annotations.toList()
+    val pageIndex = pdfState.pageIndex
+    val scale = pdfState.zoom
+    val searchQuery = pdfState.searchQuery
+    val activeSearchIndex = pdfState.activeSearchResultIndex
+    val searchHighlightMode = pdfState.searchHighlightMode
+    val selectedTool = pdfState.selectedTool
+    val selectedColor = pdfState.selectedColorArgb
+    val strokeWidth = pdfState.strokeWidth
+    val isTextSelectionMode = pdfState.isTextSelectionMode
+    val annotations = pdfState.annotations
+    val canGoPrevious = pdfState.canGoPrevious
+    val canGoNext = pdfState.canGoNext
+    val progressPercent = pdfState.progressPercent
+    var arePdfAnnotationsLoaded by remember(document.path) { mutableStateOf(false) }
+
+    LaunchedEffect(document.path) {
+        arePdfAnnotationsLoaded = false
+        val loadedAnnotations = if (annotationFile.exists()) {
+            withContext(Dispatchers.IO) {
+                SharedPdfAnnotationSerializer.decode(annotationFile.readText())
+            }
+        } else {
+            emptyList()
+        }
+        dispatchPdf(SharedPdfReaderAction.AnnotationsLoaded(loadedAnnotations))
+        arePdfAnnotationsLoaded = true
+    }
+
+    LaunchedEffect(document.path, annotations, arePdfAnnotationsLoaded) {
+        if (!arePdfAnnotationsLoaded) return@LaunchedEffect
+        val snapshot = annotations
         withContext(Dispatchers.IO) {
             runCatching {
                 annotationFile.parentFile?.mkdirs()
@@ -1292,45 +1334,12 @@ private fun PdfReaderScreen(
         }
     }
 
-    fun applyTool(tool: PdfInkTool) {
-        selectedTool = tool
-        val config = SharedPdfAnnotationDefaults.configFor(tool)
-        selectedColor = config.colorArgb
-        strokeWidth = config.strokeWidth
-    }
-
-    val searchResults = remember(document.path, searchQuery) {
-        val normalized = searchQuery.trim()
-        if (normalized.isBlank()) {
-            emptyList()
-        } else {
-            document.textPages.flatMapIndexed { index, text ->
-                val matches = mutableListOf<ReaderPdfSearchResult>()
-                var startIndex = 0
-                while (startIndex < text.length) {
-                    val matchIndex = text.indexOf(normalized, startIndex, ignoreCase = true)
-                    if (matchIndex < 0) break
-                    matches += ReaderPdfSearchResult(
-                        pageIndex = index,
-                        preview = text.previewAround(matchIndex, normalized.length),
-                        matchIndex = matchIndex
-                    )
-                    startIndex = matchIndex + normalized.length.coerceAtLeast(1)
-                }
-                matches
-            }
-        }
+    val searchResults = remember(document.path, document.textPages, searchQuery) {
+        SharedPdfSearchEngine.search(document.textPages, searchQuery)
     }
 
     fun goToPage(target: Int) {
-        pageIndex = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
-        activeStroke = emptyList()
-        selectionStartIndex = null
-        selectionEndIndex = null
-        selectionStartHit = null
-        selectionEndHit = null
-        textSelection = null
-        selectionMenuOffset = null
+        dispatchPdf(SharedPdfReaderAction.GoToPage(target))
     }
 
     fun copySelection() {
@@ -1372,18 +1381,20 @@ private fun PdfReaderScreen(
                     "right=${bounds.right.formatLogFloat()} bottom=${bounds.bottom.formatLogFloat()}"
             )
         }
-        annotations.add(
-            SharedPdfAnnotation(
-                id = "highlight_${now}",
-                pageIndex = pageIndex,
-                kind = PdfAnnotationKind.HIGHLIGHT,
-                tool = PdfInkTool.HIGHLIGHTER,
-                bounds = highlightBounds.firstOrNull(),
-                text = selection.text,
-                colorArgb = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
-                rangeStartIndex = selection.startIndex,
-                rangeEndIndex = selection.endIndex,
-                createdAt = now
+        dispatchPdf(
+            SharedPdfReaderAction.AnnotationAdded(
+                SharedPdfAnnotation(
+                    id = "highlight_${now}",
+                    pageIndex = pageIndex,
+                    kind = PdfAnnotationKind.HIGHLIGHT,
+                    tool = PdfInkTool.HIGHLIGHTER,
+                    bounds = highlightBounds.firstOrNull(),
+                    text = selection.text,
+                    colorArgb = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
+                    rangeStartIndex = selection.startIndex,
+                    rangeEndIndex = selection.endIndex,
+                    createdAt = now
+                )
             )
         )
         textSelection = null
@@ -1396,8 +1407,7 @@ private fun PdfReaderScreen(
 
     fun searchSelection() {
         val selection = textSelection ?: return
-        searchQuery = selection.text.take(120)
-        activeSearchIndex = -1
+        dispatchPdf(SharedPdfReaderAction.SearchChanged(selection.text.take(120)))
         selectionMenuOffset = null
     }
 
@@ -1408,18 +1418,11 @@ private fun PdfReaderScreen(
     }
 
     fun goToSearchResult(targetIndex: Int) {
-        if (searchResults.isEmpty()) return
-        val normalizedIndex = when {
-            targetIndex < 0 -> searchResults.lastIndex
-            targetIndex > searchResults.lastIndex -> 0
-            else -> targetIndex
-        }
-        activeSearchIndex = normalizedIndex
-        goToPage(searchResults[normalizedIndex].pageIndex)
+        dispatchPdf(SharedPdfReaderAction.GoToSearchResult(targetIndex, searchResults))
     }
 
-    LaunchedEffect(document.path, pageIndex) {
-        onPageStateChange(pageIndex, ((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f)
+    LaunchedEffect(document.path, pageIndex, progressPercent) {
+        onPageStateChange(pageIndex, progressPercent)
     }
 
     LaunchedEffect(document.path, pageIndex, scale) {
@@ -1470,7 +1473,7 @@ private fun PdfReaderScreen(
                 TextButton(onClick = onOpenEpub) {
                     Text("Open EPUB")
                 }
-                Text("${(((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f).toInt()}%")
+                Text("${progressPercent.toInt()}%")
             }
         }
     ) {
@@ -1505,11 +1508,11 @@ private fun PdfReaderScreen(
                             true
                         }
                         event.isCtrlPressed && event.key == Key.Equals -> {
-                            scale = zoomSpec.clamp(scale + 0.15f)
+                            dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
                             true
                         }
                         event.isCtrlPressed && event.key == Key.Minus -> {
-                            scale = zoomSpec.clamp(scale - 0.15f)
+                            dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
                             true
                         }
                         else -> false
@@ -1534,10 +1537,10 @@ private fun PdfReaderScreen(
                     }
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = pageIndex > 0) {
+                            TextButton(onClick = { dispatchPdf(SharedPdfReaderAction.PreviousPage) }, enabled = canGoPrevious) {
                                 Text("Prev")
                             }
-                            TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = pageIndex < document.pageCount - 1) {
+                            TextButton(onClick = { dispatchPdf(SharedPdfReaderAction.NextPage) }, enabled = canGoNext) {
                                 Text("Next")
                             }
                         }
@@ -1545,17 +1548,17 @@ private fun PdfReaderScreen(
                     item {
                         Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { scale = zoomSpec.clamp(scale - 0.15f) }) {
+                            IconButton(onClick = { dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f)) }) {
                                 Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
                             }
                             Text("${(scale * 100).toInt()}%", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                            IconButton(onClick = { scale = zoomSpec.clamp(scale + 0.15f) }) {
+                            IconButton(onClick = { dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f)) }) {
                                 Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
                             }
                         }
                         Slider(
                             value = scale,
-                            onValueChange = { scale = zoomSpec.clamp(it) },
+                            onValueChange = { dispatchPdf(SharedPdfReaderAction.ZoomChanged(it)) },
                             valueRange = zoomSpec.min..zoomSpec.max
                         )
                     }
@@ -1565,14 +1568,10 @@ private fun PdfReaderScreen(
                         FilterChip(
                             selected = isTextSelectionMode,
                             onClick = {
-                                isTextSelectionMode = !isTextSelectionMode
-                                if (!isTextSelectionMode) {
-                                    textSelection = null
-                                    selectionStartIndex = null
-                                    selectionEndIndex = null
-                                    selectionStartHit = null
-                                    selectionEndHit = null
-                                    selectionMenuOffset = null
+                                val enabled = !isTextSelectionMode
+                                dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
+                                if (!enabled) {
+                                    clearPdfInteractionState()
                                 }
                             },
                             label = { Text("Select text") }
@@ -1581,16 +1580,14 @@ private fun PdfReaderScreen(
                             selectedTool = selectedTool,
                             selectedColor = selectedColor,
                             strokeWidth = strokeWidth,
-                            onToolSelected = ::applyTool,
-                            onColorSelected = { selectedColor = it },
-                            onStrokeWidthChange = { strokeWidth = it },
+                            onToolSelected = { dispatchPdf(SharedPdfReaderAction.ToolSelected(it)) },
+                            onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
+                            onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
                             onUndo = {
-                                annotations.indexOfLast { it.pageIndex == pageIndex }.takeIf { it >= 0 }?.let {
-                                    annotations.removeAt(it)
-                                }
+                                dispatchPdf(SharedPdfReaderAction.UndoLastAnnotationOnPage(pageIndex))
                             },
                             onClearPage = {
-                                annotations.removeAll { it.pageIndex == pageIndex }
+                                dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex))
                             }
                         )
                     }
@@ -1617,8 +1614,7 @@ private fun PdfReaderScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = {
-                                searchQuery = it
-                                activeSearchIndex = -1
+                                dispatchPdf(SharedPdfReaderAction.SearchChanged(it))
                             },
                             label = { Text("Find in PDF") },
                             singleLine = true,
@@ -1644,6 +1640,26 @@ private fun PdfReaderScreen(
                                     Text("Next")
                                 }
                             }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Highlights",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        dispatchPdf(SharedPdfReaderAction.SearchHighlightModeToggled)
+                                    },
+                                    enabled = searchResults.isNotEmpty()
+                                ) {
+                                    Text(
+                                        when (searchHighlightMode) {
+                                            SearchHighlightMode.ALL -> "All"
+                                            SearchHighlightMode.FOCUSED -> "Focused"
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                     items(searchResults, key = { "${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
@@ -1651,8 +1667,7 @@ private fun PdfReaderScreen(
                             color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(6.dp),
                             modifier = Modifier.fillMaxWidth().clickable {
-                                activeSearchIndex = searchResults.indexOf(result)
-                                goToPage(result.pageIndex)
+                                dispatchPdf(SharedPdfReaderAction.GoToSearchResult(searchResults.indexOf(result), searchResults))
                             }
                         ) {
                             Column(modifier = Modifier.padding(8.dp)) {
@@ -1682,12 +1697,44 @@ private fun PdfReaderScreen(
                         val pageWidthDp = with(density) { pageRender.width.toDp() }
                         val pageHeightDp = with(density) { pageRender.height.toDp() }
                         val pageRenderScale = pageRender.width / document.pageSizes[pageIndex].width
-                        val pageAnnotations = remember(annotations.toList(), pageIndex, pageCanvasSize) {
+                        val pageAnnotations = remember(annotations, pageIndex, pageCanvasSize) {
                             annotations
                                 .filter { it.pageIndex == pageIndex }
                                 .flatMap { annotation ->
                                     annotation.toRenderablePdfAnnotations(document, pageIndex, pageCanvasSize)
                                 }
+                        }
+                        val searchHighlightBounds: List<PdfPageBounds> = remember(
+                            document.path,
+                            searchResults,
+                            pageIndex,
+                            activeSearchIndex,
+                            searchHighlightMode,
+                            pageCanvasSize,
+                            searchQuery
+                        ) {
+                            val queryLength = searchQuery.trim().length
+                            if (queryLength <= 0 || pageCanvasSize.width <= 0 || pageCanvasSize.height <= 0) {
+                                emptyList<PdfPageBounds>()
+                            } else {
+                                SharedPdfSearchEngine.highlightsForPage(
+                                    results = searchResults,
+                                    pageIndex = pageIndex,
+                                    activeResultIndex = activeSearchIndex,
+                                    mode = searchHighlightMode
+                                ).flatMap { result ->
+                                    DesktopPdfium.textRectsForRange(
+                                        document = document,
+                                        pageIndex = pageIndex,
+                                        startIndex = result.matchIndex,
+                                        endIndex = result.matchIndex + queryLength - 1,
+                                        viewportWidth = pageCanvasSize.width,
+                                        viewportHeight = pageCanvasSize.height
+                                    ).map { it.toPdfPageBounds() }
+                                        .filter { it.right > it.left && it.bottom > it.top }
+                                        .mergePdfBoundsByLine()
+                                }
+                            }
                         }
                         Box(
                             modifier = Modifier
@@ -1833,17 +1880,19 @@ private fun PdfReaderScreen(
                                                 val text = textDraft.trim()
                                                 if (text.isNotEmpty()) {
                                                     val bounds = pageBoundsFromSharedPdfPoint(start, pageCanvasSize)
-                                                    annotations.add(
-                                                        SharedPdfAnnotation(
-                                                            id = "text_${System.currentTimeMillis()}",
-                                                            pageIndex = pageIndex,
-                                                            kind = PdfAnnotationKind.TEXT,
-                                                            tool = PdfInkTool.TEXT,
-                                                            bounds = bounds,
-                                                            text = text,
-                                                            colorArgb = selectedColor,
-                                                            fontSize = 18f,
-                                                            createdAt = System.currentTimeMillis()
+                                                    dispatchPdf(
+                                                        SharedPdfReaderAction.AnnotationAdded(
+                                                            SharedPdfAnnotation(
+                                                                id = "text_${System.currentTimeMillis()}",
+                                                                pageIndex = pageIndex,
+                                                                kind = PdfAnnotationKind.TEXT,
+                                                                tool = PdfInkTool.TEXT,
+                                                                bounds = bounds,
+                                                                text = text,
+                                                                colorArgb = selectedColor,
+                                                                fontSize = 18f,
+                                                                createdAt = System.currentTimeMillis()
+                                                            )
                                                         )
                                                     )
                                                     textDraft = ""
@@ -1860,23 +1909,31 @@ private fun PdfReaderScreen(
                                             onDrag = { change, _ ->
                                                 if (selectedTool == PdfInkTool.ERASER) {
                                                     val point = change.position
-                                                    annotations.removeAll { it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize) }
+                                                    val annotationSnapshot = currentPdfAnnotations
+                                                    val updatedAnnotations = annotationSnapshot.filterNot {
+                                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize)
+                                                    }
+                                                    if (updatedAnnotations.size != annotationSnapshot.size) {
+                                                        dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(updatedAnnotations))
+                                                    }
                                                 } else {
                                                     activeStroke = activeStroke + change.position.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
                                                 }
                                             },
                                             onDragEnd = {
                                                 if (activeStroke.size > 1) {
-                                                    annotations.add(
-                                                        SharedPdfAnnotation(
-                                                            id = "ink_${System.currentTimeMillis()}",
-                                                            pageIndex = pageIndex,
-                                                            kind = PdfAnnotationKind.INK,
-                                                            tool = selectedTool,
-                                                            points = activeStroke,
-                                                            colorArgb = selectedColor,
-                                                            strokeWidth = strokeWidth,
-                                                            createdAt = System.currentTimeMillis()
+                                                    dispatchPdf(
+                                                        SharedPdfReaderAction.AnnotationAdded(
+                                                            SharedPdfAnnotation(
+                                                                id = "ink_${System.currentTimeMillis()}",
+                                                                pageIndex = pageIndex,
+                                                                kind = PdfAnnotationKind.INK,
+                                                                tool = selectedTool,
+                                                                points = activeStroke,
+                                                                colorArgb = selectedColor,
+                                                                strokeWidth = strokeWidth,
+                                                                createdAt = System.currentTimeMillis()
+                                                            )
                                                         )
                                                     )
                                                 }
@@ -1891,6 +1948,14 @@ private fun PdfReaderScreen(
                                 bitmap = pageRender.image,
                                 contentDescription = "PDF page ${pageIndex + 1}",
                                 modifier = Modifier.fillMaxSize()
+                            )
+                            PdfSearchHighlightOverlay(
+                                bounds = searchHighlightBounds,
+                                canvasSize = pageCanvasSize,
+                                color = when (searchHighlightMode) {
+                                    SearchHighlightMode.ALL -> Color(0x55FDD835)
+                                    SearchHighlightMode.FOCUSED -> Color(0x88FF9800)
+                                }
                             )
                             PdfTextSelectionOverlay(
                                 selection = textSelection,
@@ -1940,12 +2005,6 @@ private fun PdfReaderScreen(
     }
 }
 
-private data class ReaderPdfSearchResult(
-    val pageIndex: Int,
-    val preview: String,
-    val matchIndex: Int
-)
-
 private data class DesktopPdfTextSelection(
     val text: String,
     val lineBounds: List<PdfPageBounds>,
@@ -1959,6 +2018,27 @@ private data class DesktopPdfCharHit(
     val point: Offset,
     val normalized: PdfNormalizedPoint
 )
+
+@Composable
+private fun PdfSearchHighlightOverlay(
+    bounds: List<PdfPageBounds>,
+    canvasSize: IntSize,
+    color: Color
+) {
+    if (bounds.isEmpty() || canvasSize.width <= 0 || canvasSize.height <= 0) return
+    Canvas(Modifier.fillMaxSize()) {
+        bounds.forEach { rect ->
+            drawRect(
+                color = color,
+                topLeft = Offset(rect.left * canvasSize.width, rect.top * canvasSize.height),
+                size = androidx.compose.ui.geometry.Size(
+                    (rect.right - rect.left) * canvasSize.width,
+                    (rect.bottom - rect.top) * canvasSize.height
+                )
+            )
+        }
+    }
+}
 
 @Composable
 private fun PdfTextSelectionOverlay(
@@ -2941,12 +3021,4 @@ private fun DesktopPdfCharHit?.formatLogHit(prefix: String): String {
     return "${prefix}Index=$index ${prefix}Source=$source " +
         "${prefix}X=${point.x.formatLogFloat()} ${prefix}Y=${point.y.formatLogFloat()} " +
         "${prefix}Nx=${normalized.x.formatLogFloat()} ${prefix}Ny=${normalized.y.formatLogFloat()}"
-}
-
-private fun String.previewAround(index: Int, queryLength: Int): String {
-    val start = (index - 70).coerceAtLeast(0)
-    val end = (index + queryLength + 100).coerceAtMost(length)
-    val prefix = if (start > 0) "..." else ""
-    val suffix = if (end < length) "..." else ""
-    return prefix + substring(start, end).replace(Regex("\\s+"), " ").trim() + suffix
 }
