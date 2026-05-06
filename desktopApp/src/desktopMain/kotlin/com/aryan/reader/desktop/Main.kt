@@ -29,6 +29,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -153,6 +156,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfBookmarkSerializer
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
@@ -1317,6 +1321,8 @@ private fun PdfReaderScreen(
     var textSelection by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
     var selectionMenuOffset by remember(document.path, pdfState.pageIndex) { mutableStateOf<Offset?>(null) }
     var pageScrubPreview by remember(document.path) { mutableStateOf<Int?>(null) }
+    var pageScrubStartPage by remember(document.path) { mutableStateOf<Int?>(null) }
+    var jumpHistory by remember(document.path) { mutableStateOf(SharedPdfJumpHistory()) }
     var externalLinkDialogUrl by remember(document.path) { mutableStateOf<String?>(null) }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(document.path) { desktopPdfBookmarkFile(document.path) }
@@ -1475,14 +1481,34 @@ private fun PdfReaderScreen(
         }
     }
 
-    fun goToPage(target: Int, scrollVertical: Boolean = true) {
+    fun goToPage(target: Int, scrollVertical: Boolean = true, recordJump: Boolean = false) {
         val clampedTarget = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
+        val currentPage = pdfState.pageIndex
+        if (recordJump) {
+            jumpHistory = jumpHistory.record(
+                currentPageIndex = currentPage,
+                targetPageIndex = clampedTarget,
+                pageCount = document.pageCount
+            )
+        }
         dispatchPdf(SharedPdfReaderAction.GoToPage(clampedTarget))
         if (scrollVertical && displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
             pdfScope.launch {
-                verticalListState.animateScrollToItem(clampedTarget)
+                verticalListState.scrollToItem(clampedTarget)
             }
         }
+    }
+
+    fun goBackInJumpHistory() {
+        val targetPage = jumpHistory.backPage ?: return
+        jumpHistory = jumpHistory.stepBack()
+        goToPage(targetPage)
+    }
+
+    fun goForwardInJumpHistory() {
+        val targetPage = jumpHistory.forwardPage ?: return
+        jumpHistory = jumpHistory.stepForward()
+        goToPage(targetPage)
     }
 
     fun activatePdfLink(target: DesktopPdfLinkTarget) {
@@ -1491,7 +1517,7 @@ private fun PdfReaderScreen(
             ?.let {
                 logPdfLink("activate_internal fromPage=${pageIndex + 1} targetPage=${it + 1}")
                 clearPdfInteractionState()
-                goToPage(it)
+                goToPage(it, recordJump = true)
                 return
             }
         target.uri
@@ -1608,12 +1634,12 @@ private fun PdfReaderScreen(
 
     fun selectAnnotation(annotation: SharedPdfAnnotation?) {
         dispatchPdf(SharedPdfReaderAction.AnnotationSelected(annotation?.id))
-        annotation?.let { goToPage(it.pageIndex) }
+        annotation?.let { goToPage(it.pageIndex, recordJump = true) }
     }
 
     fun selectEmbeddedAnnotation(annotation: SharedPdfEmbeddedAnnotation?) {
         selectedEmbeddedAnnotationId = annotation?.id
-        annotation?.let { goToPage(it.pageIndex) }
+        annotation?.let { goToPage(it.pageIndex, recordJump = true) }
     }
 
     fun goToSearchResult(targetIndex: Int) {
@@ -1624,12 +1650,21 @@ private fun PdfReaderScreen(
             else -> targetIndex
         }
         val targetPage = searchResults[normalizedIndex].pageIndex
+        jumpHistory = jumpHistory.record(
+            currentPageIndex = pdfState.pageIndex,
+            targetPageIndex = targetPage,
+            pageCount = document.pageCount
+        )
         dispatchPdf(SharedPdfReaderAction.GoToSearchResult(targetIndex, searchResults))
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
             pdfScope.launch {
-                verticalListState.animateScrollToItem(targetPage)
+                verticalListState.scrollToItem(targetPage)
             }
         }
+    }
+
+    LaunchedEffect(document.path, document.pageCount) {
+        jumpHistory = jumpHistory.pruned(document.pageCount)
     }
 
     LaunchedEffect(document.path, pageIndex, progressPercent) {
@@ -1832,17 +1867,41 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
+                    item {
+                        DesktopPdfJumpHistoryControls(
+                            backPage = jumpHistory.backPage,
+                            forwardPage = jumpHistory.forwardPage,
+                            onBack = ::goBackInJumpHistory,
+                            onForward = ::goForwardInJumpHistory,
+                            onClear = { jumpHistory = jumpHistory.clear() }
+                        )
+                    }
                     if (document.pageCount > 1) {
                         item {
                             Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Slider(
                                 value = pageIndex.toFloat(),
                                 onValueChange = { value ->
+                                    if (pageScrubStartPage == null) {
+                                        pageScrubStartPage = pdfState.pageIndex
+                                    }
                                     val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
                                     pageScrubPreview = targetPage
                                     goToPage(targetPage)
                                 },
-                                onValueChangeFinished = { pageScrubPreview = null },
+                                onValueChangeFinished = {
+                                    val startPage = pageScrubStartPage
+                                    val targetPage = currentPdfPageIndex
+                                    if (startPage != null) {
+                                        jumpHistory = jumpHistory.record(
+                                            currentPageIndex = startPage,
+                                            targetPageIndex = targetPage,
+                                            pageCount = document.pageCount
+                                        )
+                                    }
+                                    pageScrubStartPage = null
+                                    pageScrubPreview = null
+                                },
                                 valueRange = 0f..(document.pageCount - 1).toFloat(),
                                 steps = (document.pageCount - 2).coerceAtLeast(0)
                             )
@@ -1863,7 +1922,7 @@ private fun PdfReaderScreen(
                             Surface(
                                 color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                                 shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex) }
+                                modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
                             ) {
                                 Row(
                                     modifier = Modifier.padding(8.dp),
@@ -1889,7 +1948,7 @@ private fun PdfReaderScreen(
                             Surface(
                                 color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                                 shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex) }
+                                modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -2555,6 +2614,83 @@ private fun PdfReaderScreen(
         }
     }
 }
+}
+
+@Composable
+private fun DesktopPdfJumpHistoryControls(
+    backPage: Int?,
+    forwardPage: Int?,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onClear: () -> Unit
+) {
+    val hasJumpTargets = backPage != null || forwardPage != null
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Jump history",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = onClear,
+                    enabled = hasJumpTargets,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear jump history")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onBack,
+                    enabled = backPage != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = "Jump back",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        backPage?.let { "Jump back p. ${it + 1}" } ?: "Jump back",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                TextButton(
+                    onClick = onForward,
+                    enabled = forwardPage != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        forwardPage?.let { "Jump forward p. ${it + 1}" } ?: "Jump forward",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = "Jump forward",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

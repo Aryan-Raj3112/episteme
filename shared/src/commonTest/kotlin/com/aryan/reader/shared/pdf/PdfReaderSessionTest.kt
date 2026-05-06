@@ -151,6 +151,48 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `jump history records explicit jumps and exposes back and forward pages`() {
+        val recorded = SharedPdfJumpHistory()
+            .record(currentPageIndex = 0, targetPageIndex = 4, pageCount = 10)
+            .record(currentPageIndex = 4, targetPageIndex = 8, pageCount = 10)
+
+        val steppedBack = recorded.stepBack()
+        val branched = steppedBack.record(currentPageIndex = 4, targetPageIndex = 2, pageCount = 10)
+
+        assertEquals(listOf(0, 4, 8), recorded.pages)
+        assertEquals(4, recorded.backPage)
+        assertEquals(null, recorded.forwardPage)
+        assertEquals(0, steppedBack.backPage)
+        assertEquals(8, steppedBack.forwardPage)
+        assertEquals(listOf(0, 4, 2), branched.pages)
+        assertEquals(4, branched.backPage)
+    }
+
+    @Test
+    fun `jump history ignores invalid jumps prunes document bounds and caps entries`() {
+        val unchanged = SharedPdfJumpHistory()
+            .record(currentPageIndex = 0, targetPageIndex = 0, pageCount = 10)
+            .record(currentPageIndex = 0, targetPageIndex = 99, pageCount = 10)
+
+        val pruned = SharedPdfJumpHistory(pages = listOf(0, 3, 99, 4), cursor = 3)
+            .pruned(pageCount = 5)
+
+        val capped = (0 until 40).fold(SharedPdfJumpHistory(maxEntries = 5)) { history, page ->
+            history.record(
+                currentPageIndex = page,
+                targetPageIndex = page + 1,
+                pageCount = 50
+            )
+        }
+
+        assertTrue(unchanged.pages.isEmpty())
+        assertEquals(listOf(0, 3, 4), pruned.pages)
+        assertEquals(2, pruned.cursor)
+        assertEquals(listOf(36, 37, 38, 39, 40), capped.pages)
+        assertEquals(4, capped.cursor)
+    }
+
+    @Test
     fun `annotation selection update and delete are shared`() {
         val first = annotation("first", pageIndex = 0)
         val second = annotation("second", pageIndex = 1)

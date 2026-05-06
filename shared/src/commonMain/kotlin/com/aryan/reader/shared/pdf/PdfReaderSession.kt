@@ -48,6 +48,102 @@ object SharedPdfBookmarkSerializer {
     }
 }
 
+data class SharedPdfJumpHistory(
+    val pages: List<Int> = emptyList(),
+    val cursor: Int = -1,
+    val maxEntries: Int = 21
+) {
+    val backPage: Int? get() = pages.getOrNull(cursor - 1)
+    val forwardPage: Int? get() = pages.getOrNull(cursor + 1)
+    val hasJumpTargets: Boolean get() = backPage != null || forwardPage != null
+
+    fun record(
+        currentPageIndex: Int,
+        targetPageIndex: Int,
+        pageCount: Int
+    ): SharedPdfJumpHistory {
+        if (
+            pageCount <= 0 ||
+            currentPageIndex !in 0 until pageCount ||
+            targetPageIndex !in 0 until pageCount ||
+            currentPageIndex == targetPageIndex
+        ) {
+            return this
+        }
+
+        val pruned = pruned(pageCount)
+        val nextPages = pruned.pages.toMutableList()
+        var nextCursor = pruned.cursor
+
+        while (nextPages.lastIndex > nextCursor) {
+            nextPages.removeAt(nextPages.lastIndex)
+        }
+
+        if (nextCursor > 0 && nextPages.getOrNull(nextCursor - 1) == currentPageIndex) {
+            nextPages[nextCursor] = targetPageIndex
+            return copy(
+                pages = nextPages,
+                cursor = nextCursor
+            ).bounded()
+        }
+
+        if (nextCursor == -1 || nextPages.getOrNull(nextCursor) != currentPageIndex) {
+            nextPages += currentPageIndex
+            nextCursor = nextPages.lastIndex
+        }
+
+        if (nextPages.lastOrNull() != targetPageIndex) {
+            nextPages += targetPageIndex
+            nextCursor = nextPages.lastIndex
+        }
+
+        return copy(
+            pages = nextPages,
+            cursor = nextCursor
+        ).bounded()
+    }
+
+    fun pruned(pageCount: Int): SharedPdfJumpHistory {
+        if (pageCount <= 0) return clear()
+        val nextPages = pages.toMutableList()
+        var nextCursor = cursor
+        var index = nextPages.lastIndex
+        while (index >= 0) {
+            if (nextPages[index] !in 0 until pageCount) {
+                nextPages.removeAt(index)
+                if (nextCursor >= index) nextCursor--
+            }
+            index--
+        }
+        return copy(
+            pages = nextPages,
+            cursor = nextCursor.coerceIn(-1, nextPages.lastIndex)
+        ).bounded()
+    }
+
+    fun stepBack(): SharedPdfJumpHistory {
+        return if (backPage == null) this else copy(cursor = (cursor - 1).coerceAtLeast(0))
+    }
+
+    fun stepForward(): SharedPdfJumpHistory {
+        return if (forwardPage == null) this else copy(cursor = (cursor + 1).coerceAtMost(pages.lastIndex))
+    }
+
+    fun clear(): SharedPdfJumpHistory = copy(pages = emptyList(), cursor = -1)
+
+    private fun bounded(): SharedPdfJumpHistory {
+        val safeMaxEntries = maxEntries.coerceAtLeast(2)
+        if (pages.size <= safeMaxEntries) {
+            return copy(cursor = cursor.coerceIn(-1, pages.lastIndex))
+        }
+        val overflow = pages.size - safeMaxEntries
+        return copy(
+            pages = pages.drop(overflow),
+            cursor = (cursor - overflow).coerceIn(-1, pages.size - overflow - 1)
+        )
+    }
+}
+
 data class SharedPdfReaderState(
     val pageIndex: Int = 0,
     val pageCount: Int = 0,
