@@ -111,7 +111,9 @@ fun SharedPdfAnnotationToolDock(
 fun SharedPdfAnnotationOverlay(
     annotations: List<SharedPdfAnnotation>,
     activeStroke: List<PdfPagePoint>,
-    canvasSize: IntSize
+    canvasSize: IntSize,
+    activeStrokeColorArgb: Int = 0xFF1976D2.toInt(),
+    activeStrokeWidth: Float = 2.5f
 ) {
     Canvas(Modifier.fillMaxSize()) {
         annotations.forEach { annotation ->
@@ -155,8 +157,8 @@ fun SharedPdfAnnotationOverlay(
         if (activeStroke.size > 1) {
             drawPath(
                 path = activeStroke.toSharedPdfPath(canvasSize),
-                color = Color(0xFF1976D2),
-                style = Stroke(width = 2.5f, cap = StrokeCap.Round)
+                color = Color(activeStrokeColorArgb),
+                style = Stroke(width = activeStrokeWidth, cap = StrokeCap.Round)
             )
         }
     }

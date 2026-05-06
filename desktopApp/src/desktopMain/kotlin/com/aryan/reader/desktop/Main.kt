@@ -1828,12 +1828,19 @@ private fun PdfReaderScreen(
                             searchHighlightMode = searchHighlightMode,
                             searchQuery = searchQuery,
                             isTextSelectionMode = isTextSelectionMode,
+                            selectedTool = selectedTool,
+                            selectedColor = selectedColor,
+                            strokeWidth = strokeWidth,
+                            textDraft = textDraft,
                             shouldRender = verticalPageIndex in verticalRenderWindow,
                             onSelectPage = { goToPage(it, scrollVertical = false) },
                             onCopySelection = ::copySelection,
                             onHighlightSelection = ::highlightSelection,
                             onSearchSelection = ::searchSelection,
-                            onTranslateSelection = ::translateSelection
+                            onTranslateSelection = ::translateSelection,
+                            onAnnotationAdded = { dispatchPdf(SharedPdfReaderAction.AnnotationAdded(it)) },
+                            onAnnotationsChanged = { dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(it)) },
+                            onTextDraftConsumed = { textDraft = "" }
                         )
                     }
                 }
@@ -2123,7 +2130,9 @@ private fun PdfReaderScreen(
                             SharedPdfAnnotationOverlay(
                                 annotations = pageAnnotations,
                                 activeStroke = activeStroke,
-                                canvasSize = pageCanvasSize
+                                canvasSize = pageCanvasSize,
+                                activeStrokeColorArgb = selectedColor,
+                                activeStrokeWidth = strokeWidth
                             )
                             if (textSelection != null && selectionMenuOffset != null) {
                                 Box(
@@ -2180,12 +2189,19 @@ private fun DesktopVerticalPdfPage(
     searchHighlightMode: SearchHighlightMode,
     searchQuery: String,
     isTextSelectionMode: Boolean,
+    selectedTool: PdfInkTool,
+    selectedColor: Int,
+    strokeWidth: Float,
+    textDraft: String,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
     onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize) -> Unit,
     onSearchSelection: (DesktopPdfTextSelection) -> Unit,
-    onTranslateSelection: (DesktopPdfTextSelection) -> Unit
+    onTranslateSelection: (DesktopPdfTextSelection) -> Unit,
+    onAnnotationAdded: (SharedPdfAnnotation) -> Unit,
+    onAnnotationsChanged: (List<SharedPdfAnnotation>) -> Unit,
+    onTextDraftConsumed: () -> Unit
 ) {
     val density = LocalDensity.current
     val pageInteractionSource = remember { MutableInteractionSource() }
@@ -2199,7 +2215,9 @@ private fun DesktopVerticalPdfPage(
     var selectionEndHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
     var textSelection by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
     var selectionMenuOffset by remember(document.path, pageIndex) { mutableStateOf<Offset?>(null) }
+    var activeStroke by remember(document.path, pageIndex, selectedTool) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
     val currentTextSelection by rememberUpdatedState(textSelection)
+    val currentAnnotations by rememberUpdatedState(annotations)
 
     fun clearSelection() {
         selectionStartIndex = null
@@ -2210,12 +2228,17 @@ private fun DesktopVerticalPdfPage(
         selectionMenuOffset = null
     }
 
+    fun clearInteractionState() {
+        clearSelection()
+        activeStroke = emptyList()
+    }
+
     LaunchedEffect(document.path, pageIndex, scale, shouldRender) {
         if (!shouldRender) {
             renderedPage = null
             renderError = null
             isRendering = false
-            clearSelection()
+            clearInteractionState()
             return@LaunchedEffect
         }
         isRendering = true
@@ -2241,7 +2264,13 @@ private fun DesktopVerticalPdfPage(
     LaunchedEffect(isTextSelectionMode) {
         if (!isTextSelectionMode) {
             clearSelection()
+        } else {
+            activeStroke = emptyList()
         }
+    }
+
+    LaunchedEffect(selectedTool) {
+        activeStroke = emptyList()
     }
 
     Column(
@@ -2308,96 +2337,176 @@ private fun DesktopVerticalPdfPage(
                 .pointerInput(
                     pageIndex,
                     isTextSelectionMode,
+                    selectedTool,
+                    selectedColor,
+                    strokeWidth,
+                    textDraft,
                     pageCanvasSize,
                     renderedPageWidth,
                     renderedPageHeight
                 ) {
-                    if (isTextSelectionMode && renderedPageWidth > 0 && renderedPageHeight > 0) {
-                        detectDragGestures(
-                            onDragStart = { start ->
-                                onSelectPage(pageIndex)
-                                selectionMenuOffset = null
-                                val hit = document.charHitAt(pageIndex, start, pageCanvasSize)
-                                selectionStartHit = hit
-                                selectionStartIndex = hit?.index
-                                selectionEndHit = null
-                                selectionEndIndex = null
-                                logPdfSelection(
-                                    "drag_start page=${pageIndex + 1} " +
-                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
-                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
-                                        hit.formatLogHit("start")
-                                )
-                                textSelection = null
-                            },
-                            onDrag = { change, _ ->
-                                val startIndex = selectionStartIndex
-                                val hit = document.charHitAt(pageIndex, change.position, pageCanvasSize)
-                                selectionEndHit = hit
-                                val endIndex = hit?.index
-                                val previousEndIndex = selectionEndIndex
-                                selectionEndIndex = endIndex
-                                if (endIndex != previousEndIndex || textSelection == null) {
-                                    textSelection = if (startIndex != null && endIndex != null) {
+                    if (renderedPageWidth > 0 && renderedPageHeight > 0) {
+                        if (isTextSelectionMode) {
+                            detectDragGestures(
+                                onDragStart = { start ->
+                                    onSelectPage(pageIndex)
+                                    activeStroke = emptyList()
+                                    selectionMenuOffset = null
+                                    val hit = document.charHitAt(pageIndex, start, pageCanvasSize)
+                                    selectionStartHit = hit
+                                    selectionStartIndex = hit?.index
+                                    selectionEndHit = null
+                                    selectionEndIndex = null
+                                    logPdfSelection(
+                                        "drag_start page=${pageIndex + 1} " +
+                                            "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
+                                            "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                            hit.formatLogHit("start")
+                                    )
+                                    textSelection = null
+                                },
+                                onDrag = { change, _ ->
+                                    val startIndex = selectionStartIndex
+                                    val hit = document.charHitAt(pageIndex, change.position, pageCanvasSize)
+                                    selectionEndHit = hit
+                                    val endIndex = hit?.index
+                                    val previousEndIndex = selectionEndIndex
+                                    selectionEndIndex = endIndex
+                                    if (endIndex != previousEndIndex || textSelection == null) {
+                                        textSelection = if (startIndex != null && endIndex != null) {
+                                            document.selectionBetweenIndexes(
+                                                pageIndex = pageIndex,
+                                                startIndex = startIndex,
+                                                endIndex = endIndex,
+                                                canvasSize = pageCanvasSize,
+                                                useNativeBounds = false
+                                            )
+                                        } else {
+                                            null
+                                        }
+                                    }
+                                },
+                                onDragEnd = {
+                                    val startIndex = selectionStartIndex
+                                    val endIndex = selectionEndIndex
+                                    val selection = if (startIndex != null && endIndex != null) {
                                         document.selectionBetweenIndexes(
                                             pageIndex = pageIndex,
                                             startIndex = startIndex,
                                             endIndex = endIndex,
                                             canvasSize = pageCanvasSize,
-                                            useNativeBounds = false
-                                        )
+                                            useNativeBounds = true
+                                        )?.also {
+                                            textSelection = it
+                                            selectionMenuOffset = selectionEndHit?.point ?: selectionStartHit?.point
+                                        }
                                     } else {
-                                        null
+                                        textSelection
+                                    }
+                                    logPdfSelection(
+                                        "drag_end page=${pageIndex + 1} " +
+                                            "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
+                                            "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                            selectionStartHit.formatLogHit("start") + " " +
+                                            selectionEndHit.formatLogHit("end") + " " +
+                                            "range=${selection?.startIndex}..${selection?.endIndex} " +
+                                            "chars=${selection?.text?.length ?: 0} " +
+                                            "lines=${selection?.lineBounds?.size ?: 0} " +
+                                            "text=\"${selection?.text.orEmpty().logPreview()}\""
+                                    )
+                                    selectionStartIndex = null
+                                    selectionEndIndex = null
+                                    selectionStartHit = null
+                                    selectionEndHit = null
+                                },
+                                onDragCancel = {
+                                    logPdfSelection(
+                                        "drag_cancel page=${pageIndex + 1} " +
+                                            "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
+                                            "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
+                                            selectionStartHit.formatLogHit("start") + " " +
+                                            selectionEndHit.formatLogHit("end")
+                                    )
+                                    selectionStartIndex = null
+                                    selectionEndIndex = null
+                                    selectionStartHit = null
+                                    selectionEndHit = null
+                                }
+                            )
+                        } else if (selectedTool == PdfInkTool.TEXT) {
+                            detectTapGestures(
+                                onTap = { start ->
+                                    onSelectPage(pageIndex)
+                                    clearInteractionState()
+                                    val text = textDraft.trim()
+                                    if (text.isNotEmpty()) {
+                                        onAnnotationAdded(
+                                            SharedPdfAnnotation(
+                                                id = "text_${System.currentTimeMillis()}",
+                                                pageIndex = pageIndex,
+                                                kind = PdfAnnotationKind.TEXT,
+                                                tool = PdfInkTool.TEXT,
+                                                bounds = pageBoundsFromSharedPdfPoint(start, pageCanvasSize),
+                                                text = text,
+                                                colorArgb = selectedColor,
+                                                fontSize = 18f,
+                                                createdAt = System.currentTimeMillis()
+                                            )
+                                        )
+                                        onTextDraftConsumed()
                                     }
                                 }
-                            },
-                            onDragEnd = {
-                                val startIndex = selectionStartIndex
-                                val endIndex = selectionEndIndex
-                                val selection = if (startIndex != null && endIndex != null) {
-                                    document.selectionBetweenIndexes(
-                                        pageIndex = pageIndex,
-                                        startIndex = startIndex,
-                                        endIndex = endIndex,
-                                        canvasSize = pageCanvasSize,
-                                        useNativeBounds = true
-                                    )?.also {
-                                        textSelection = it
-                                        selectionMenuOffset = selectionEndHit?.point ?: selectionStartHit?.point
+                            )
+                        } else {
+                            detectDragGestures(
+                                onDragStart = { start ->
+                                    onSelectPage(pageIndex)
+                                    clearInteractionState()
+                                    if (selectedTool != PdfInkTool.ERASER) {
+                                        activeStroke = listOf(
+                                            start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
+                                        )
                                     }
-                                } else {
-                                    textSelection
+                                },
+                                onDrag = { change, _ ->
+                                    if (selectedTool == PdfInkTool.ERASER) {
+                                        val point = change.position
+                                        val annotationSnapshot = currentAnnotations
+                                        val updatedAnnotations = annotationSnapshot.filterNot {
+                                            it.pageIndex == pageIndex && it.sharedPdfHitTest(point, pageCanvasSize)
+                                        }
+                                        if (updatedAnnotations.size != annotationSnapshot.size) {
+                                            onAnnotationsChanged(updatedAnnotations)
+                                        }
+                                    } else {
+                                        activeStroke = activeStroke + change.position.toSharedPdfPoint(
+                                            pageCanvasSize,
+                                            System.currentTimeMillis()
+                                        )
+                                    }
+                                },
+                                onDragEnd = {
+                                    if (activeStroke.size > 1) {
+                                        onAnnotationAdded(
+                                            SharedPdfAnnotation(
+                                                id = "ink_${System.currentTimeMillis()}",
+                                                pageIndex = pageIndex,
+                                                kind = PdfAnnotationKind.INK,
+                                                tool = selectedTool,
+                                                points = activeStroke,
+                                                colorArgb = selectedColor,
+                                                strokeWidth = strokeWidth,
+                                                createdAt = System.currentTimeMillis()
+                                            )
+                                        )
+                                    }
+                                    activeStroke = emptyList()
+                                },
+                                onDragCancel = {
+                                    activeStroke = emptyList()
                                 }
-                                logPdfSelection(
-                                    "drag_end page=${pageIndex + 1} " +
-                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
-                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
-                                        selectionStartHit.formatLogHit("start") + " " +
-                                        selectionEndHit.formatLogHit("end") + " " +
-                                        "range=${selection?.startIndex}..${selection?.endIndex} " +
-                                        "chars=${selection?.text?.length ?: 0} " +
-                                        "lines=${selection?.lineBounds?.size ?: 0} " +
-                                        "text=\"${selection?.text.orEmpty().logPreview()}\""
-                                )
-                                selectionStartIndex = null
-                                selectionEndIndex = null
-                                selectionStartHit = null
-                                selectionEndHit = null
-                            },
-                            onDragCancel = {
-                                logPdfSelection(
-                                    "drag_cancel page=${pageIndex + 1} " +
-                                        "canvas=${pageCanvasSize.formatLogSize()} bitmap=${renderedPageWidth}x$renderedPageHeight " +
-                                        "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()} " +
-                                        selectionStartHit.formatLogHit("start") + " " +
-                                        selectionEndHit.formatLogHit("end")
-                                )
-                                selectionStartIndex = null
-                                selectionEndIndex = null
-                                selectionStartHit = null
-                                selectionEndHit = null
-                            }
-                        )
+                            )
+                        }
                     }
                 },
             contentAlignment = Alignment.Center
@@ -2469,8 +2578,10 @@ private fun DesktopVerticalPdfPage(
                     )
                     SharedPdfAnnotationOverlay(
                         annotations = pageAnnotations,
-                        activeStroke = emptyList<PdfPagePoint>(),
-                        canvasSize = pageCanvasSize
+                        activeStroke = activeStroke,
+                        canvasSize = pageCanvasSize,
+                        activeStrokeColorArgb = selectedColor,
+                        activeStrokeWidth = strokeWidth
                     )
                     if (textSelection != null && selectionMenuOffset != null) {
                         Box(
