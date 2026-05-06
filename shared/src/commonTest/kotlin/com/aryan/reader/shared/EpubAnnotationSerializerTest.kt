@@ -152,10 +152,14 @@ class EpubAnnotationSerializerTest {
     @Test
     fun `legacy desktop cfi values hydrate shared locators`() {
         val oldDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:123456:abc")
+        val timestampFallbackLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:1780000000000")
         val rangedDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:40:55")
 
         assertEquals(2, oldDesktopLocator.chapterIndex)
         assertEquals(7, oldDesktopLocator.pageIndex)
+        assertEquals(7, timestampFallbackLocator.pageIndex)
+        assertEquals(null, timestampFallbackLocator.startOffset)
+        assertEquals(null, timestampFallbackLocator.endOffset)
         assertEquals(2, rangedDesktopLocator.chapterIndex)
         assertEquals(40, rangedDesktopLocator.startOffset)
         assertEquals(55, rangedDesktopLocator.endOffset)

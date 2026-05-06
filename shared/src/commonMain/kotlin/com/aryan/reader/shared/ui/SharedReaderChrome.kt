@@ -63,6 +63,7 @@ import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
@@ -125,6 +126,7 @@ fun SharedReaderScreen(
     val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
+    val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
     }
@@ -237,7 +239,8 @@ fun SharedReaderScreen(
                         searchQuery = session.searchQuery,
                         searchOptions = session.searchOptions,
                         highlights = session.highlights,
-                        highlightPalette = highlightPalette
+                        highlightPalette = highlightPalette,
+                        navigationLocator = navigationLocator
                     )
                 } else {
                     ReaderHtmlDocumentBuilder.pageDocument(
@@ -247,7 +250,8 @@ fun SharedReaderScreen(
                         searchQuery = session.searchQuery,
                         searchOptions = session.searchOptions,
                         highlights = session.highlights,
-                        highlightPalette = highlightPalette
+                        highlightPalette = highlightPalette,
+                        navigationLocator = navigationLocator
                     )
                 }
                 readerContent(html, background)
@@ -1364,7 +1368,23 @@ private fun Long.toComposeColor(): Color {
 private fun PaginatedReaderState.pageInfoText(): String {
     val current = currentPageIndex + 1
     val total = pages.size.coerceAtLeast(1)
+    val percent = progress.roundToInt().coerceIn(0, 100)
     val mode = if (settings.readingMode == ReaderReadingMode.VERTICAL) "Continuous" else "Page"
     val chapter = currentPage?.chapterTitle?.takeIf { it.isNotBlank() }
-    return listOfNotNull("$mode $current of $total", chapter).joinToString(" - ")
+    return listOfNotNull("$mode $current of $total ($percent%)", chapter).joinToString(" - ")
+}
+
+private fun PaginatedReaderState.currentPageLocator(): ReaderLocator? {
+    val page = currentPage ?: return null
+    val chapter = book.chapters.getOrNull(page.chapterIndex)
+    return ReaderLocator(
+        chapterIndex = page.chapterIndex,
+        chapterId = chapter?.id,
+        href = chapter?.baseHref,
+        pageIndex = page.pageIndex,
+        startOffset = page.startOffset,
+        endOffset = page.endOffset,
+        textQuote = page.text.trim().replace(Regex("\\s+"), " ").take(140),
+        cfi = "desktop:${page.chapterIndex}:${page.startOffset}:${page.endOffset}"
+    )
 }

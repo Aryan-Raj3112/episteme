@@ -39,7 +39,8 @@ data class ReaderSessionState(
     val searchQuery: String = "",
     val searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
     val searchResults: List<ReaderSearchResult> = emptyList(),
-    val activeSearchResultIndex: Int = -1
+    val activeSearchResultIndex: Int = -1,
+    val navigationLocator: ReaderLocator? = null
 ) {
     val currentBookmark: ReaderBookmark?
         get() = bookmarks.firstOrNull { it.pageIndex == reader.currentPageIndex }
@@ -73,13 +74,15 @@ class ReaderEngine(
         highlights: List<UserHighlight> = emptyList()
     ): ReaderSessionState {
         val pages = paginator.paginate(book, settings)
+        val initialIndex = initialPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
+        val reader = PaginatedReaderState(
+            book = book,
+            pages = pages,
+            currentPageIndex = initialIndex,
+            settings = settings
+        )
         return ReaderSessionState(
-            reader = PaginatedReaderState(
-                book = book,
-                pages = pages,
-                currentPageIndex = initialPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)),
-                settings = settings
-            ),
+            reader = reader,
             bookmarks = bookmarks
                 .filter { it.pageIndex in pages.indices }
                 .distinctBy { it.pageIndex }
@@ -87,25 +90,28 @@ class ReaderEngine(
             highlights = highlights
                 .map { it.withNormalizedLocator() }
                 .filter { (it.locator.chapterIndex ?: it.chapterIndex) in book.chapters.indices }
-                .distinctBy { it.id }
+                .distinctBy { it.id },
+            navigationLocator = reader.currentPage?.toLocator(book)
         )
     }
 
     fun next(state: ReaderSessionState): ReaderSessionState {
         if (!state.reader.canGoNext) return state
-        return state.copy(reader = state.reader.copy(currentPageIndex = state.reader.currentPageIndex + 1))
+        return goToPage(state, state.reader.currentPageIndex + 1)
     }
 
     fun previous(state: ReaderSessionState): ReaderSessionState {
         if (!state.reader.canGoPrevious) return state
-        return state.copy(reader = state.reader.copy(currentPageIndex = state.reader.currentPageIndex - 1))
+        return goToPage(state, state.reader.currentPageIndex - 1)
     }
 
     fun goToPage(state: ReaderSessionState, pageIndex: Int): ReaderSessionState {
         val target = pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+        val page = state.reader.pages.getOrNull(target)
         return state.copy(
             reader = state.reader.copy(currentPageIndex = target),
-            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target }
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target },
+            navigationLocator = page?.toLocator(state.reader.book)
         )
     }
 
@@ -130,7 +136,23 @@ class ReaderEngine(
             ?: locator.pageIndex
             ?.takeIf { it in state.reader.pages.indices }
             ?: return state
-        return goToPage(state, pageIndex)
+        val page = state.reader.pages.getOrNull(pageIndex) ?: return state
+        val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
+        val normalizedLocator = locator.withFallbacks(
+            chapterIndex = page.chapterIndex,
+            chapterId = chapter?.id,
+            href = chapter?.baseHref,
+            pageIndex = pageIndex,
+            startOffset = page.startOffset,
+            endOffset = page.endOffset,
+            textQuote = locator.textQuote ?: page.text.preview(),
+            cfi = locator.cfi ?: page.toDesktopCfi()
+        )
+        return state.copy(
+            reader = state.reader.copy(currentPageIndex = pageIndex),
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == pageIndex },
+            navigationLocator = normalizedLocator
+        )
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
@@ -340,9 +362,17 @@ class ReaderEngine(
         val targetPage = state.reader.pages.indexOfFirst { page -> page.contains(result.locator) }
             .takeIf { it >= 0 }
             ?: result.pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+        val page = state.reader.pages.getOrNull(targetPage)
+        val chapter = page?.let { state.reader.book.chapters.getOrNull(it.chapterIndex) }
         return state.copy(
             reader = state.reader.copy(currentPageIndex = targetPage),
-            activeSearchResultIndex = targetIndex
+            activeSearchResultIndex = targetIndex,
+            navigationLocator = result.locator.withFallbacks(
+                chapterIndex = page?.chapterIndex,
+                chapterId = chapter?.id,
+                href = chapter?.baseHref,
+                pageIndex = targetPage
+            )
         )
     }
 }
@@ -353,10 +383,32 @@ private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
     if (locator.hasTextRange) {
         val start = locator.startOffset ?: return false
         val end = locator.endOffset ?: start
-        return start <= endOffset && end >= startOffset
+        return if (start == end) {
+            start in startOffset..endOffset
+        } else {
+            start < endOffset && end > startOffset
+        }
     }
     val targetPage = locator.pageIndex
     return targetPage != null && targetPage == pageIndex
+}
+
+private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {
+    val chapter = book.chapters.getOrNull(chapterIndex)
+    return ReaderLocator(
+        chapterIndex = chapterIndex,
+        chapterId = chapter?.id,
+        href = chapter?.baseHref,
+        pageIndex = pageIndex,
+        startOffset = startOffset,
+        endOffset = endOffset,
+        textQuote = text.preview(),
+        cfi = toDesktopCfi()
+    )
+}
+
+private fun ReaderPage.toDesktopCfi(): String {
+    return "desktop:$chapterIndex:$startOffset:$endOffset"
 }
 
 private fun UserHighlight.withNormalizedLocator(): UserHighlight {

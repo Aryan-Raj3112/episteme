@@ -97,11 +97,20 @@ data class ReaderLocator(
                 ?.split(':')
                 .orEmpty()
             val parsedChapterIndex = desktopParts.getOrNull(1)?.toIntOrNull()
-            val parsedStartOffset = if (desktopParts.size == 4) desktopParts.getOrNull(2)?.toIntOrNull() else null
-            val parsedEndOffset = if (desktopParts.size == 4) desktopParts.getOrNull(3)?.toIntOrNull() else null
+            val possibleStartOffset = desktopParts.getOrNull(2)?.toIntOrNull()
+            val possibleEndOffset = desktopParts.getOrNull(3)?.toIntOrNull()
+            val hasOffsetRange = desktopParts.size == 4 &&
+                possibleStartOffset != null &&
+                possibleEndOffset != null &&
+                possibleStartOffset >= 0 &&
+                possibleEndOffset >= possibleStartOffset &&
+                possibleEndOffset - possibleStartOffset <= 100_000
+            val parsedStartOffset = if (hasOffsetRange) possibleStartOffset else null
+            val parsedEndOffset = if (hasOffsetRange) possibleEndOffset else null
             val parsedPageIndex = when {
                 pageIndex != null -> pageIndex
-                desktopParts.size == 3 || desktopParts.size >= 5 -> desktopParts.getOrNull(2)?.toIntOrNull()
+                desktopParts.size == 3 || desktopParts.size >= 5 || (desktopParts.size == 4 && !hasOffsetRange) ->
+                    desktopParts.getOrNull(2)?.toIntOrNull()
                 else -> null
             }
             return ReaderLocator(

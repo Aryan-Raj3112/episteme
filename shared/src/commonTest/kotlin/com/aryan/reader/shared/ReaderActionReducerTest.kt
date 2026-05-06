@@ -202,7 +202,25 @@ class ReaderActionReducerTest {
         assertEquals("Keep this", recolored.highlights.single().note)
         assertEquals(HighlightColor.GREEN, recolored.highlights.single().color)
         assertEquals(page.pageIndex, jumped.reader.currentPageIndex)
+        assertEquals(locator.startOffset, jumped.navigationLocator?.startOffset)
+        assertEquals(locator.endOffset, jumped.navigationLocator?.endOffset)
         assertTrue(deleted.highlights.isEmpty())
+    }
+
+    @Test
+    fun `reader navigation stores locator for vertical scroll targets`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook(), settings = compactSettings())
+        val secondPage = session.reduce(ReaderAction.GoToPage(1), engine)
+        val secondChapter = secondPage.reduce(ReaderAction.GoToChapter(1), engine)
+        val search = secondChapter.reduce(ReaderAction.SearchChanged("needle"), engine)
+        val searchTarget = search.searchResults.first()
+        val jumpedToSearch = search.reduce(ReaderAction.GoToSearchResult(0), engine)
+
+        assertEquals(secondPage.reader.currentPage?.startOffset, secondPage.navigationLocator?.startOffset)
+        assertEquals(1, secondChapter.navigationLocator?.chapterIndex)
+        assertEquals(searchTarget.locator.startOffset, jumpedToSearch.navigationLocator?.startOffset)
+        assertEquals(searchTarget.locator.endOffset, jumpedToSearch.navigationLocator?.endOffset)
     }
 
     @Test

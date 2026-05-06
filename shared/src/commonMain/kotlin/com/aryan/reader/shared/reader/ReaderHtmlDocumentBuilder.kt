@@ -25,14 +25,21 @@ object ReaderHtmlDocumentBuilder {
         searchQuery: String = "",
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
-        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
+        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+        navigationLocator: ReaderLocator? = null
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
-            val chapterHtml = chapter.toHtml(searchQuery, searchOptions).applyUserHighlights(highlights.filter { it.chapterIndex == index })
+            val chapterText = chapter.normalizedReaderText()
+            val chapterHtml = chapter.toHtml(searchQuery, searchOptions)
+                .applyUserHighlights(
+                    highlights = highlights.filter { it.locatedChapterIndex == index },
+                    contentStartOffset = 0,
+                    contentEndOffset = chapterText.length
+                )
             """
-            <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}">
+            <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}">
               <h1 class="chapter-title">${chapter.title.escapeHtml()}</h1>
-              <div class="reader-content" data-reader-content-start="0">
+              <div class="reader-content" data-reader-content-start="0" data-reader-content-end="${chapterText.length}">
                 $chapterHtml
               </div>
             </section>
@@ -45,7 +52,8 @@ object ReaderHtmlDocumentBuilder {
             body = body,
             searchQuery = searchQuery,
             searchOptions = searchOptions,
-            highlightPalette = highlightPalette
+            highlightPalette = highlightPalette,
+            navigationLocator = navigationLocator
         )
     }
 
@@ -56,7 +64,8 @@ object ReaderHtmlDocumentBuilder {
         searchQuery: String = "",
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
-        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
+        highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+        navigationLocator: ReaderLocator? = null
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
@@ -68,13 +77,17 @@ object ReaderHtmlDocumentBuilder {
                     start in page.startOffset..page.endOffset
                 }
                 .takeIf { it.isNotEmpty() }
-                ?.joinToString("\n") { it.toHtml(searchQuery, searchOptions) }
-                ?: page.text.textToParagraphHtml(searchQuery, searchOptions)
-            val pageHtml = blocks.applyUserHighlights(highlights.filter { it.belongsToPage(page) })
+                ?.joinToString("") { it.toHtml(searchQuery, searchOptions) }
+                ?: page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
+            val pageHtml = blocks.applyUserHighlights(
+                highlights = highlights.filter { it.belongsToPage(page) },
+                contentStartOffset = page.startOffset,
+                contentEndOffset = page.endOffset
+            )
             """
-            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
+            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
               <h1 class="chapter-title">${page.chapterTitle.escapeHtml()}</h1>
-              <div class="reader-content" data-reader-content-start="${page.startOffset}">
+              <div class="reader-content" data-reader-content-start="${page.startOffset}" data-reader-content-end="${page.endOffset}">
                 $pageHtml
               </div>
             </section>
@@ -87,7 +100,8 @@ object ReaderHtmlDocumentBuilder {
             body = body,
             searchQuery = searchQuery,
             searchOptions = searchOptions,
-            highlightPalette = highlightPalette
+            highlightPalette = highlightPalette,
+            navigationLocator = navigationLocator
         )
     }
 
@@ -98,7 +112,8 @@ object ReaderHtmlDocumentBuilder {
         body: String,
         searchQuery: String,
         searchOptions: ReaderSearchOptions,
-        highlightPalette: ReaderHighlightPalette
+        highlightPalette: ReaderHighlightPalette,
+        navigationLocator: ReaderLocator?
     ): String {
         val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
         val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
@@ -129,6 +144,7 @@ object ReaderHtmlDocumentBuilder {
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
         }
+        val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         return """
             <!doctype html>
             <html>
@@ -241,7 +257,7 @@ object ReaderHtmlDocumentBuilder {
                 a { color: inherit; text-decoration-thickness: 0.08em; }
               </style>
             </head>
-            <body data-search="${searchQuery.escapeHtml()}">
+            <body data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
               $body
               <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
                 <button type="button" data-action="copy">Copy</button>
@@ -254,6 +270,40 @@ object ReaderHtmlDocumentBuilder {
                 (function () {
                   var menu = document.getElementById('reader-selection-menu');
                   var savedRange = null;
+                  function numberAttribute(element, name, fallback) {
+                    if (!element) return fallback;
+                    var value = parseInt(element.getAttribute(name) || '', 10);
+                    return Number.isFinite(value) ? value : fallback;
+                  }
+                  function selectorValue(value) {
+                    if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value));
+                    return String(value).replace(/"/g, '\\"');
+                  }
+                  function scrollToActiveLocator() {
+                    var chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                    if (chapterIndex === null || chapterIndex === '') return;
+                    var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
+                    if (!chapter) return;
+                    var activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                    var exact = activeStart === null
+                      ? null
+                      : document.querySelector('[data-reader-start-offset="' + selectorValue(activeStart) + '"]');
+                    var target = exact || chapter;
+                    var content = chapter.querySelector('.reader-content') || chapter;
+                    if (!exact && activeStart !== null && content) {
+                      var contentStart = numberAttribute(content, 'data-reader-content-start', numberAttribute(chapter, 'data-reader-page-start', 0));
+                      var contentEnd = numberAttribute(content, 'data-reader-content-end', numberAttribute(chapter, 'data-reader-page-end', contentStart));
+                      if (contentEnd > contentStart && activeStart > contentStart) {
+                        var ratio = Math.max(0, Math.min(1, (activeStart - contentStart) / (contentEnd - contentStart)));
+                        var contentRect = content.getBoundingClientRect();
+                        var approximateY = contentRect.top + window.scrollY + (content.scrollHeight * ratio);
+                        window.scrollTo({ top: Math.max(0, approximateY - 24), left: 0, behavior: 'auto' });
+                        return;
+                      }
+                    }
+                    var rect = target.getBoundingClientRect();
+                    window.scrollTo({ top: Math.max(0, rect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                  }
                   function selectionText() {
                     var selection = window.getSelection();
                     return selection ? selection.toString().trim() : '';
@@ -322,15 +372,17 @@ object ReaderHtmlDocumentBuilder {
                     var container = range.commonAncestorContainer;
                     if (container && container.nodeType !== 1) container = container.parentElement;
                     var contentHost = container && container.closest ? container.closest('.reader-content') : null;
+                    var textHost = container && container.closest ? container.closest('[data-reader-text-start]') : null;
                     var readerHost = contentHost && contentHost.closest
                       ? contentHost.closest('[data-reader-chapter-index]')
                       : (container && container.closest ? container.closest('[data-reader-chapter-index]') : null);
                     var chapterIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10) : 0;
                     var chapterId = readerHost ? readerHost.getAttribute('data-reader-chapter-id') : null;
+                    var chapterHref = readerHost ? readerHost.getAttribute('data-reader-chapter-href') : null;
                     var pageIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-page-index') || '-1', 10) : -1;
-                    var offsetHost = contentHost || readerHost;
+                    var offsetHost = textHost || contentHost || readerHost;
                     var fallbackStart = readerHost ? readerHost.getAttribute('data-reader-page-start') : '0';
-                    var pageStart = offsetHost ? parseInt(offsetHost.getAttribute('data-reader-content-start') || fallbackStart || '0', 10) : 0;
+                    var pageStart = offsetHost ? parseInt(offsetHost.getAttribute('data-reader-text-start') || offsetHost.getAttribute('data-reader-content-start') || fallbackStart || '0', 10) : 0;
                     var offsets = offsetHost ? selectionOffsetsWithin(offsetHost, range) : { start: null, end: null };
                     var startOffset = offsets.start === null ? null : pageStart + offsets.start;
                     var endOffset = offsets.end === null ? null : pageStart + offsets.end;
@@ -338,6 +390,8 @@ object ReaderHtmlDocumentBuilder {
                     var cfi = startOffset === null || endOffset === null
                       ? 'desktop:' + chapterIndex + ':' + pageIndex + ':' + Date.now()
                       : 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
+                    if (startOffset !== null) marker.setAttribute('data-reader-start-offset', String(startOffset));
+                    if (endOffset !== null) marker.setAttribute('data-reader-end-offset', String(endOffset));
                     if (window.kmpJsBridge && text.length > 0) {
                       window.kmpJsBridge.callNative('readerHighlightCreated', JSON.stringify({
                         cfi: cfi,
@@ -347,6 +401,7 @@ object ReaderHtmlDocumentBuilder {
                         locator: {
                           chapterIndex: chapterIndex,
                           chapterId: chapterId,
+                          href: chapterHref || null,
                           pageIndex: pageIndex >= 0 ? pageIndex : null,
                           startOffset: startOffset,
                           endOffset: endOffset,
@@ -395,6 +450,8 @@ object ReaderHtmlDocumentBuilder {
                   document.addEventListener('mousedown', function (event) {
                     if (event.button === 0 && !menu.contains(event.target)) hideMenu();
                   });
+                  scrollToActiveLocator();
+                  window.addEventListener('load', scrollToActiveLocator, { once: true });
                 })();
               </script>
             </body>
@@ -405,16 +462,16 @@ object ReaderHtmlDocumentBuilder {
     private fun SharedEpubChapter.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         htmlContent.takeIf { it.isNotBlank() }?.let { return it }
         semanticBlocks.takeIf { it.isNotEmpty() }?.let { blocks ->
-            return blocks.joinToString("\n") { it.toHtml(searchQuery, searchOptions) }
+            return blocks.joinToString("") { it.toHtml(searchQuery, searchOptions) }
         }
-        return plainText.textToParagraphHtml(searchQuery, searchOptions)
+        return normalizedReaderText().textToParagraphHtml(searchQuery, searchOptions)
     }
 
     private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         return when (this) {
-            is SemanticHeader -> "<h${level.coerceIn(1, 6)}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
-            is SemanticParagraph -> "<p>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
-            is SemanticListItem -> "<li>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
+            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
+            is SemanticParagraph -> "<p${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticListItem -> "<li${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
             is SemanticList -> {
                 val tag = if (isOrdered) "ol" else "ul"
                 "<$tag>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
@@ -430,15 +487,78 @@ object ReaderHtmlDocumentBuilder {
             }
             is SemanticFlexContainer -> children.joinToString("", "<div>", "</div>") { it.toHtml(searchQuery, searchOptions) }
             is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery, searchOptions) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-            is SemanticTextBlock -> "<p>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticTextBlock -> "<p${textOffsetAttributes()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
         }
     }
 
-    private fun String.textToParagraphHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
-        return split(Regex("\\n\\s*\\n"))
-            .filter { it.isNotBlank() }
-            .joinToString("\n") { "<p>${it.trim().highlightAndEscape(searchQuery, searchOptions)}</p>" }
+    private fun String.textToParagraphHtml(
+        searchQuery: String,
+        searchOptions: ReaderSearchOptions,
+        baseOffset: Int = 0
+    ): String {
+        return paragraphSegments()
+            .joinToString("") { paragraph ->
+                val start = baseOffset + paragraph.startOffset
+                val end = start + paragraph.text.length
+                """<p data-reader-text-start="$start" data-reader-text-end="$end">${paragraph.text.highlightAndEscape(searchQuery, searchOptions)}</p>"""
+            }
             .ifBlank { "<p></p>" }
+    }
+
+    private fun String.paragraphSegments(): List<TextSegment> {
+        val segments = mutableListOf<TextSegment>()
+        var index = 0
+        while (index < length) {
+            while (index < length && this[index].isWhitespace()) index++
+            val start = index
+            if (start >= length) break
+
+            var end = start
+            while (end < length) {
+                if (this[end] == '\n') {
+                    var probe = end
+                    var newlineCount = 0
+                    while (probe < length && this[probe].isWhitespace()) {
+                        if (this[probe] == '\n') newlineCount++
+                        probe++
+                    }
+                    if (newlineCount >= 2) break
+                }
+                end++
+            }
+
+            val raw = substring(start, end)
+            val trimmedEnd = raw.indexOfLast { !it.isWhitespace() }
+            if (trimmedEnd >= 0) {
+                segments += TextSegment(
+                    text = raw.substring(0, trimmedEnd + 1),
+                    startOffset = start
+                )
+            }
+            index = end + 1
+        }
+        return segments
+    }
+
+    private fun SharedEpubChapter.normalizedReaderText(): String {
+        return plainText
+            .replace("\r\n", "\n")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    private fun SemanticTextBlock.textOffsetAttributes(): String {
+        val start = startCharOffsetInSource.coerceAtLeast(0)
+        val end = (start + text.length).coerceAtLeast(start)
+        return buildString {
+            append(" data-reader-text-start=\"$start\" data-reader-text-end=\"$end\"")
+            elementId?.takeIf { it.isNotBlank() }?.let {
+                append(" data-reader-element-id=\"${it.escapeHtml()}\"")
+            }
+            cfi?.takeIf { it.isNotBlank() }?.let {
+                append(" data-reader-cfi=\"${it.escapeHtml()}\"")
+            }
+        }
     }
 
     private fun String.highlightAndEscape(searchQuery: String, searchOptions: ReaderSearchOptions): String {
@@ -522,13 +642,134 @@ object ReaderHtmlDocumentBuilder {
         """.trimIndent()
     }
 
-    private fun String.applyUserHighlights(highlights: List<UserHighlight>): String {
-        return highlights.fold(this) { html, highlight ->
-            val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
-            val escapedText = text.escapeHtml()
-            val markedText = """<mark class="reader-user-highlight ${highlight.color.cssClass}">$escapedText</mark>"""
-            html.replace(escapedText, markedText)
+    private fun String.applyUserHighlights(
+        highlights: List<UserHighlight>,
+        contentStartOffset: Int,
+        contentEndOffset: Int
+    ): String {
+        val rangedHighlights = highlights
+            .mapNotNull { it.toRenderHighlight(contentStartOffset, contentEndOffset) }
+            .distinctBy { "${it.absoluteStart}:${it.absoluteEnd}:${it.id}" }
+            .sortedWith(compareByDescending<RenderedHighlight> { it.relativeStart }.thenByDescending { it.relativeEnd })
+
+        val rangedHtml = rangedHighlights.fold(this) { html, highlight ->
+            val htmlRange = html.htmlRangeForHighlight(highlight) ?: return@fold html
+            val startIndex = htmlRange.first
+            val endIndex = htmlRange.last
+            if (startIndex >= endIndex || endIndex > html.length) return@fold html
+            val markedText = html.substring(startIndex, endIndex)
+            if (markedText.isBlank()) return@fold html
+            val marker = """<mark class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">$markedText</mark>"""
+            html.replaceRange(startIndex, endIndex, marker)
         }
+
+        return highlights
+            .filterNot { it.locator.withFallbacks(chapterIndex = it.chapterIndex, cfi = it.cfi, textQuote = it.text).hasTextRange }
+            .fold(rangedHtml) { html, highlight ->
+                val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
+                val escapedText = text.escapeHtml()
+                val markedText = """<mark class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}">$escapedText</mark>"""
+                html.replaceFirst(escapedText, markedText)
+            }
+    }
+
+    private fun String.htmlRangeForHighlight(highlight: RenderedHighlight): IntRange? {
+        val block = findTextBlockRange(highlight.absoluteStart, highlight.absoluteEnd)
+        if (block != null) {
+            val startIndex = htmlIndexForTextOffset(
+                targetOffset = highlight.absoluteStart - block.startOffset,
+                startIndex = block.contentStartIndex,
+                endIndex = block.contentEndIndex
+            ) ?: return null
+            val endIndex = htmlIndexForTextOffset(
+                targetOffset = highlight.absoluteEnd - block.startOffset,
+                startIndex = block.contentStartIndex,
+                endIndex = block.contentEndIndex
+            ) ?: return null
+            return startIndex..endIndex
+        }
+        val startIndex = htmlIndexForTextOffset(highlight.relativeStart) ?: return null
+        val endIndex = htmlIndexForTextOffset(highlight.relativeEnd) ?: return null
+        return startIndex..endIndex
+    }
+
+    private fun String.findTextBlockRange(absoluteStart: Int, absoluteEnd: Int): HtmlTextBlockRange? {
+        return textBlockStartPattern.findAll(this).mapNotNull { match ->
+            val tagName = match.groupValues[1]
+            val blockStart = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+            val blockEnd = match.groupValues[3].toIntOrNull() ?: return@mapNotNull null
+            if (absoluteStart < blockStart || absoluteEnd > blockEnd) return@mapNotNull null
+            val contentStart = match.range.last + 1
+            val closingTag = "</$tagName>"
+            val contentEnd = indexOf(closingTag, startIndex = contentStart, ignoreCase = true)
+            if (contentEnd < contentStart) return@mapNotNull null
+            HtmlTextBlockRange(
+                startOffset = blockStart,
+                endOffset = blockEnd,
+                contentStartIndex = contentStart,
+                contentEndIndex = contentEnd
+            )
+        }.firstOrNull()
+    }
+
+    private fun String.htmlIndexForTextOffset(
+        targetOffset: Int,
+        startIndex: Int = 0,
+        endIndex: Int = length
+    ): Int? {
+        if (targetOffset < 0) return null
+        var index = startIndex.coerceIn(0, length)
+        val limit = endIndex.coerceIn(index, length)
+        var textOffset = 0
+        var boundaryAfterText: Int? = null
+        while (index < limit) {
+            when (this[index]) {
+                '<' -> {
+                    val tagEnd = indexOf('>', startIndex = index + 1)
+                    if (tagEnd < 0 || tagEnd >= limit) return null
+                    index = tagEnd + 1
+                }
+
+                '&' -> {
+                    if (textOffset == targetOffset) return index
+                    val entityEnd = indexOf(';', startIndex = index + 1)
+                    if (entityEnd > index) {
+                        textOffset++
+                        index = entityEnd + 1
+                    } else {
+                        textOffset++
+                        index++
+                    }
+                    boundaryAfterText = index
+                }
+
+                else -> {
+                    if (textOffset == targetOffset) return index
+                    textOffset++
+                    index++
+                    boundaryAfterText = index
+                }
+            }
+        }
+        return if (textOffset == targetOffset) boundaryAfterText ?: startIndex else null
+    }
+
+    private fun UserHighlight.toRenderHighlight(contentStartOffset: Int, contentEndOffset: Int): RenderedHighlight? {
+        val normalizedLocator = locator.withFallbacks(chapterIndex = chapterIndex, cfi = cfi, textQuote = text)
+        val start = normalizedLocator.startOffset ?: return null
+        val end = normalizedLocator.endOffset ?: start
+        if (end < start) return null
+        val boundedStart = start.coerceAtLeast(contentStartOffset)
+        val boundedEnd = end.coerceAtMost(contentEndOffset)
+        if (boundedEnd <= boundedStart) return null
+        return RenderedHighlight(
+            id = id,
+            color = color,
+            absoluteStart = boundedStart,
+            absoluteEnd = boundedEnd,
+            relativeStart = boundedStart - contentStartOffset,
+            relativeEnd = boundedEnd - contentStartOffset
+        )
     }
 
     private fun UserHighlight.belongsToPage(page: ReaderPage): Boolean {
@@ -538,7 +779,11 @@ object ReaderHtmlDocumentBuilder {
         if (normalizedLocator.hasTextRange) {
             val start = normalizedLocator.startOffset ?: return false
             val end = normalizedLocator.endOffset ?: start
-            return start <= page.endOffset && end >= page.startOffset
+            return if (start == end) {
+                start in page.startOffset..page.endOffset
+            } else {
+                start < page.endOffset && end > page.startOffset
+            }
         }
         normalizedLocator.pageIndex?.let { return it == page.pageIndex }
         val prefix = "desktop:${page.chapterIndex}:"
@@ -549,6 +794,45 @@ object ReaderHtmlDocumentBuilder {
             ?.toIntOrNull()
         return desktopPageIndex == null || desktopPageIndex < 0 || desktopPageIndex == page.pageIndex
     }
+
+    private val UserHighlight.locatedChapterIndex: Int
+        get() = locator.chapterIndex ?: chapterIndex
+
+    private fun ReaderLocator.toNavigationAttributes(): String {
+        val attributes = buildList {
+            chapterIndex?.let { add("data-reader-active-chapter-index=\"$it\"") }
+            pageIndex?.let { add("data-reader-active-page-index=\"$it\"") }
+            startOffset?.let { add("data-reader-active-start-offset=\"$it\"") }
+            endOffset?.let { add("data-reader-active-end-offset=\"$it\"") }
+            cfi?.takeIf { it.isNotBlank() }?.let { add("data-reader-active-cfi=\"${it.escapeHtml()}\"") }
+        }
+        return if (attributes.isEmpty()) "" else " " + attributes.joinToString(" ")
+    }
+
+    private data class TextSegment(
+        val text: String,
+        val startOffset: Int
+    )
+
+    private data class RenderedHighlight(
+        val id: String,
+        val color: HighlightColor,
+        val absoluteStart: Int,
+        val absoluteEnd: Int,
+        val relativeStart: Int,
+        val relativeEnd: Int
+    )
+
+    private data class HtmlTextBlockRange(
+        val startOffset: Int,
+        val endOffset: Int,
+        val contentStartIndex: Int,
+        val contentEndIndex: Int
+    )
+
+    private val textBlockStartPattern = Regex(
+        """<([A-Za-z][A-Za-z0-9]*)\b[^>]*\bdata-reader-text-start="(\d+)"[^>]*\bdata-reader-text-end="(\d+)"[^>]*>"""
+    )
 
     private fun String.escapeHtml(): String {
         return replace("&", "&amp;")
