@@ -106,6 +106,11 @@ data class DesktopPdfTextRect(
     val bottom: Float
 )
 
+data class DesktopPdfLinkTarget(
+    val uri: String? = null,
+    val destPageIndex: Int? = null
+)
+
 data class DesktopPdfTextPageData(
     val text: String = "",
     val chars: List<DesktopPdfTextChar> = emptyList()
@@ -117,6 +122,7 @@ object DesktopPdfium {
     private const val FPDF_RENDER_NO_SMOOTHTEXT = 0x1000
     private const val FPDF_BITMAP_BGRA = 4
 
+    private val textUrlRegex = Regex("""\b(?:https?://|www\.)[^\s<>"']+""", RegexOption.IGNORE_CASE)
     private val pdfiumDll: File by lazy(::resolvePdfiumDll)
     private val zoomSpec = PdfZoomSpec()
     private val api: PdfiumLibrary by lazy {
@@ -290,6 +296,49 @@ object DesktopPdfium {
     }
 
     @Synchronized
+    fun linkAt(
+        document: DesktopPdfDocument,
+        pageIndex: Int,
+        normalizedX: Float,
+        normalizedY: Float,
+        viewportWidth: Int? = null,
+        viewportHeight: Int? = null
+    ): DesktopPdfLinkTarget? {
+        val nativeDocument = openDocuments[document.path]?.pointer ?: run {
+            logPdfiumLink("hit_test_skipped reason=document_not_open page=${pageIndex + 1}")
+            return null
+        }
+        val pageSize = document.pageSizes.getOrNull(pageIndex) ?: run {
+            logPdfiumLink("hit_test_skipped reason=invalid_page page=${pageIndex + 1}")
+            return null
+        }
+        val viewport = pageSize.normalizedViewport(viewportWidth, viewportHeight)
+        logPdfiumLink(
+            "hit_test_start page=${pageIndex + 1} nx=${normalizedX.formatLogFloat()} ny=${normalizedY.formatLogFloat()} " +
+                "viewport=${viewport.width}x${viewport.height}"
+        )
+        return runCatching {
+            loadPage(nativeDocument, pageIndex).usePointer { page ->
+                val pagePoint = deviceToPagePoint(
+                    page = page,
+                    viewport = viewport,
+                    normalizedX = normalizedX,
+                    normalizedY = normalizedY
+                )
+                logPdfiumLink(
+                    "hit_test_page_point page=${pageIndex + 1} " +
+                        "x=${pagePoint.first.formatLogDouble()} y=${pagePoint.second.formatLogDouble()}"
+                )
+                linkAnnotationAt(nativeDocument, page, pageIndex, pagePoint.first, pagePoint.second)
+                    ?: webLinkAt(page, pageIndex, pagePoint.first, pagePoint.second, pageSize)
+                    ?: textUrlAt(page, pageIndex, pagePoint.first, pagePoint.second, pageSize)
+            }
+        }.onFailure { throwable ->
+            logPdfiumLink("hit_test_failed page=${pageIndex + 1} error=\"${throwable.message.orEmpty().logPreview()}\"")
+        }.getOrNull()
+    }
+
+    @Synchronized
     fun renderPage(
         document: DesktopPdfDocument,
         pageIndex: Int,
@@ -412,6 +461,192 @@ object DesktopPdfium {
                 }
             }
         }.getOrDefault(emptyList())
+    }
+
+    private fun linkAnnotationAt(
+        document: Pointer,
+        page: Pointer,
+        pageIndex: Int,
+        pageX: Double,
+        pageY: Double
+    ): DesktopPdfLinkTarget? {
+        val link = runCatching { api.FPDFLink_GetLinkAtPoint(page, pageX, pageY) }.getOrNull()
+            ?: return null
+
+        val action = runCatching { api.FPDFLink_GetAction(link) }.getOrNull()
+        if (action != null) {
+            when (val actionType = runCatching { api.FPDFAction_GetType(action) }.getOrDefault(0)) {
+                1 -> actionDestinationPage(document, action)?.let {
+                    logPdfiumLink("annotation_hit page=${pageIndex + 1} action=goto targetPage=${it + 1}")
+                    return DesktopPdfLinkTarget(destPageIndex = it)
+                }
+                2, 4 -> actionFilePath(action)?.let {
+                    logPdfiumLink("annotation_hit page=${pageIndex + 1} action=file uri=\"${it.logPreview()}\"")
+                    return DesktopPdfLinkTarget(uri = it)
+                }
+                3 -> actionUri(document, action)?.let {
+                    logPdfiumLink("annotation_hit page=${pageIndex + 1} action=uri uri=\"${it.logPreview()}\"")
+                    return DesktopPdfLinkTarget(uri = it)
+                }
+                else -> logPdfiumLink("annotation_hit_unsupported page=${pageIndex + 1} actionType=$actionType")
+            }
+        }
+
+        val dest = runCatching { api.FPDFLink_GetDest(document, link) }.getOrNull()
+        val targetPageIndex = dest?.let { runCatching { api.FPDFDest_GetDestPageIndex(document, it) }.getOrNull() }
+        return targetPageIndex
+            ?.takeIf { it >= 0 }
+            ?.let {
+                logPdfiumLink("annotation_hit page=${pageIndex + 1} action=dest targetPage=${it + 1}")
+                DesktopPdfLinkTarget(destPageIndex = it)
+            }
+    }
+
+    private fun webLinkAt(
+        page: Pointer,
+        pageIndex: Int,
+        pageX: Double,
+        pageY: Double,
+        pageSize: DesktopPdfPageSize
+    ): DesktopPdfLinkTarget? {
+        val textPage = api.FPDFText_LoadPage(page) ?: run {
+            logPdfiumLink("web_link_skipped page=${pageIndex + 1} reason=text_page_unavailable")
+            return null
+        }
+        try {
+            val linkPage = runCatching { api.FPDFText_LoadWebLinks(textPage) }.getOrNull()
+                ?: run {
+                    logPdfiumLink("web_link_skipped page=${pageIndex + 1} reason=web_links_unavailable")
+                    return null
+                }
+            try {
+                val count = runCatching { api.FPDFLink_CountWebLinks(linkPage) }.getOrDefault(0)
+                logPdfiumLink("web_link_scan page=${pageIndex + 1} count=$count")
+                val toleranceX = pageSize.width.toDouble() * 0.006
+                val toleranceY = pageSize.height.toDouble() * 0.006
+                for (linkIndex in 0 until count) {
+                    val rectCount = runCatching { api.FPDFLink_CountRects(linkPage, linkIndex) }.getOrDefault(0)
+                    for (rectIndex in 0 until rectCount) {
+                        val left = DoubleArray(1)
+                        val top = DoubleArray(1)
+                        val right = DoubleArray(1)
+                        val bottom = DoubleArray(1)
+                        val hasRect = runCatching {
+                            api.FPDFLink_GetRect(linkPage, linkIndex, rectIndex, left, top, right, bottom)
+                        }.getOrDefault(0) != 0
+                        if (!hasRect) continue
+                        val minX = minOf(left[0], right[0]) - toleranceX
+                        val maxX = maxOf(left[0], right[0]) + toleranceX
+                        val minY = minOf(top[0], bottom[0]) - toleranceY
+                        val maxY = maxOf(top[0], bottom[0]) + toleranceY
+                        if (pageX in minX..maxX && pageY in minY..maxY) {
+                            webLinkUrl(linkPage, linkIndex)?.let {
+                                val url = it.normalizedDetectedTextUrl()
+                                logPdfiumLink(
+                                    "web_link_hit page=${pageIndex + 1} link=$linkIndex rect=$rectIndex " +
+                                        "uri=\"${url.logPreview()}\""
+                                )
+                                return DesktopPdfLinkTarget(uri = url)
+                            }
+                        }
+                    }
+                }
+                logPdfiumLink("web_link_miss page=${pageIndex + 1} count=$count")
+            } finally {
+                runCatching { api.FPDFLink_CloseWebLinks(linkPage) }
+            }
+        } finally {
+            api.FPDFText_ClosePage(textPage)
+        }
+        return null
+    }
+
+    private fun textUrlAt(
+        page: Pointer,
+        pageIndex: Int,
+        pageX: Double,
+        pageY: Double,
+        pageSize: DesktopPdfPageSize
+    ): DesktopPdfLinkTarget? {
+        val textPage = api.FPDFText_LoadPage(page) ?: run {
+            logPdfiumLink("text_url_skipped page=${pageIndex + 1} reason=text_page_unavailable")
+            return null
+        }
+        try {
+            val charIndex = runCatching {
+                api.FPDFText_GetCharIndexAtPos(
+                    textPage,
+                    pageX,
+                    pageY,
+                    pageSize.width.toDouble() * 0.012,
+                    pageSize.height.toDouble() * 0.012
+                )
+            }.getOrDefault(-1)
+            if (charIndex < 0) {
+                logPdfiumLink("text_url_miss page=${pageIndex + 1} reason=no_char")
+                return null
+            }
+            val charCount = api.FPDFText_CountChars(textPage)
+            if (charCount <= 0) {
+                logPdfiumLink("text_url_miss page=${pageIndex + 1} reason=no_text charIndex=$charIndex")
+                return null
+            }
+            val text = extractText(textPage, charCount)
+            val match = textUrlRegex.findAll(text).firstOrNull { result ->
+                val start = (result.range.first - 2).coerceAtLeast(0)
+                val end = (result.range.last + 2).coerceAtMost(text.lastIndex)
+                charIndex in start..end
+            }
+            if (match == null) {
+                logPdfiumLink("text_url_miss page=${pageIndex + 1} reason=no_url_at_char charIndex=$charIndex")
+                return null
+            }
+            val url = match.value.normalizedDetectedTextUrl()
+            logPdfiumLink(
+                "text_url_hit page=${pageIndex + 1} charIndex=$charIndex " +
+                    "range=${match.range.first}..${match.range.last} uri=\"${url.logPreview()}\""
+            )
+            return DesktopPdfLinkTarget(uri = url)
+        } finally {
+            api.FPDFText_ClosePage(textPage)
+        }
+    }
+
+    private fun actionDestinationPage(document: Pointer, action: Pointer): Int? {
+        val dest = runCatching { api.FPDFAction_GetDest(document, action) }.getOrNull() ?: return null
+        return runCatching { api.FPDFDest_GetDestPageIndex(document, dest) }
+            .getOrNull()
+            ?.takeIf { it >= 0 }
+    }
+
+    private fun actionUri(document: Pointer, action: Pointer): String? {
+        val length = runCatching { api.FPDFAction_GetURIPath(document, action, null, 0) }.getOrDefault(0)
+        if (length <= 0) return null
+        val buffer = Memory(length.toLong())
+        val written = runCatching { api.FPDFAction_GetURIPath(document, action, buffer, length) }.getOrDefault(0)
+        return if (written <= 0) null else buffer.getString(0).trimEnd('\u0000').takeIf { it.isNotBlank() }
+    }
+
+    private fun actionFilePath(action: Pointer): String? {
+        val length = runCatching { api.FPDFAction_GetFilePath(action, null, 0) }.getOrDefault(0)
+        if (length <= 0) return null
+        val buffer = Memory(length.toLong())
+        val written = runCatching { api.FPDFAction_GetFilePath(action, buffer, length) }.getOrDefault(0)
+        return if (written <= 0) null else buffer.getString(0).trimEnd('\u0000').takeIf { it.isNotBlank() }
+    }
+
+    private fun webLinkUrl(linkPage: Pointer, linkIndex: Int): String? {
+        val maxChars = 2048
+        val buffer = Memory(maxChars * 2L)
+        val written = runCatching { api.FPDFLink_GetURL(linkPage, linkIndex, buffer, maxChars) }.getOrDefault(0)
+        return if (written <= 0) {
+            null
+        } else {
+            buffer.getCharArray(0, written.coerceAtMost(maxChars))
+                .concatToString()
+                .trimEnd('\u0000')
+                .takeIf { it.isNotBlank() }
+        }
     }
 
     private fun extractPageText(document: Pointer, pageIndex: Int): String {
@@ -689,6 +924,35 @@ object DesktopPdfium {
         println("DesktopPdfiumOpen $message")
     }
 
+    private fun logPdfiumLink(message: String) {
+        println("DesktopPdfiumLink $message")
+    }
+
+    private fun Float.formatLogFloat(): String {
+        return String.format("%.3f", this)
+    }
+
+    private fun Double.formatLogDouble(): String {
+        return String.format("%.3f", this)
+    }
+
+    private fun String.logPreview(maxLength: Int = 96): String {
+        return replace(Regex("\\s+"), " ")
+            .trim()
+            .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+            .replace("\"", "\\\"")
+    }
+
+    private fun String.normalizedDetectedTextUrl(): String {
+        val cleaned = trim()
+            .trimEnd('.', ',', ';', ':', ')', ']', '}')
+        return if (cleaned.startsWith("www.", ignoreCase = true)) {
+            "https://$cleaned"
+        } else {
+            cleaned
+        }
+    }
+
     private data class DesktopOpenPdfDocument(
         val pointer: Pointer,
         val backingMemory: Memory? = null
@@ -808,6 +1072,13 @@ object DesktopPdfium {
         fun FPDFBookmark_GetTitle(bookmark: Pointer, buffer: Pointer?, buflen: Int): Int
         fun FPDFBookmark_GetDest(document: Pointer, bookmark: Pointer): Pointer?
         fun FPDFDest_GetDestPageIndex(document: Pointer, dest: Pointer): Int
+        fun FPDFLink_GetLinkAtPoint(page: Pointer, x: Double, y: Double): Pointer?
+        fun FPDFLink_GetAction(link: Pointer): Pointer?
+        fun FPDFAction_GetType(action: Pointer): Int
+        fun FPDFAction_GetURIPath(document: Pointer, action: Pointer, buffer: Pointer?, buflen: Int): Int
+        fun FPDFLink_GetDest(document: Pointer, link: Pointer): Pointer?
+        fun FPDFAction_GetDest(document: Pointer, action: Pointer): Pointer?
+        fun FPDFAction_GetFilePath(action: Pointer, buffer: Pointer?, buflen: Int): Int
         fun FPDF_LoadPage(document: Pointer, pageIndex: Int): Pointer?
         fun FPDF_ClosePage(page: Pointer)
         fun FPDF_GetPageWidthF(page: Pointer): Float
@@ -861,6 +1132,20 @@ object DesktopPdfium {
             right: DoubleArray,
             bottom: DoubleArray
         ): Int
+        fun FPDFText_LoadWebLinks(textPage: Pointer): Pointer?
+        fun FPDFLink_CountWebLinks(linkPage: Pointer): Int
+        fun FPDFLink_GetURL(linkPage: Pointer, linkIndex: Int, buffer: Pointer, buflen: Int): Int
+        fun FPDFLink_CountRects(linkPage: Pointer, linkIndex: Int): Int
+        fun FPDFLink_GetRect(
+            linkPage: Pointer,
+            linkIndex: Int,
+            rectIndex: Int,
+            left: DoubleArray,
+            top: DoubleArray,
+            right: DoubleArray,
+            bottom: DoubleArray
+        ): Int
+        fun FPDFLink_CloseWebLinks(linkPage: Pointer)
         fun FPDF_PageToDevice(
             page: Pointer,
             startX: Int,

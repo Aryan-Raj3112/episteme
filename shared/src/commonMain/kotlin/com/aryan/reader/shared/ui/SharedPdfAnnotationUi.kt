@@ -50,11 +50,22 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import kotlin.math.abs
 
+val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
+    PdfInkTool.PEN,
+    PdfInkTool.HIGHLIGHTER,
+    PdfInkTool.PENCIL,
+    PdfInkTool.FOUNTAIN_PEN,
+    PdfInkTool.HIGHLIGHTER_ROUND,
+    PdfInkTool.TEXT,
+    PdfInkTool.ERASER
+)
+
 @Composable
 fun SharedPdfAnnotationToolDock(
     selectedTool: PdfInkTool,
     selectedColor: Int,
     strokeWidth: Float,
+    tools: List<PdfInkTool> = SharedPdfAnnotationDefaultTools,
     onToolSelected: (PdfInkTool) -> Unit,
     onColorSelected: (Int) -> Unit,
     onStrokeWidthChange: (Float) -> Unit,
@@ -62,16 +73,14 @@ fun SharedPdfAnnotationToolDock(
     onClearPage: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SharedPdfToolButton(PdfInkTool.PEN, selectedTool, onToolSelected)
-            SharedPdfToolButton(PdfInkTool.HIGHLIGHTER, selectedTool, onToolSelected)
-            SharedPdfToolButton(PdfInkTool.PENCIL, selectedTool, onToolSelected)
-            SharedPdfToolButton(PdfInkTool.FOUNTAIN_PEN, selectedTool, onToolSelected)
+        tools.distinct().chunked(4).forEach { rowTools ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowTools.forEach { tool ->
+                    SharedPdfToolButton(tool, selectedTool, onToolSelected)
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SharedPdfToolButton(PdfInkTool.HIGHLIGHTER_ROUND, selectedTool, onToolSelected)
-            SharedPdfToolButton(PdfInkTool.TEXT, selectedTool, onToolSelected)
-            SharedPdfToolButton(PdfInkTool.ERASER, selectedTool, onToolSelected)
             IconButton(onClick = onUndo) {
                 Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Undo annotation")
             }

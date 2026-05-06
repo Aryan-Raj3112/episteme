@@ -12,12 +12,14 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import kotlin.math.roundToInt
 
@@ -74,17 +76,27 @@ object ReaderHtmlDocumentBuilder {
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
+            logReaderHtml("page_document_empty reason=missing_page_or_chapter")
             "<section class=\"page\"></section>"
         } else {
-            val blocks = chapter.semanticBlocks
-                .blocksForPage(page)
-                .takeIf { it.isNotEmpty() }
-                ?.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-                ?: page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
+            val semanticPageBlocks = chapter.semanticBlocks.blocksForPage(page)
+            val usedSemanticBlocks = semanticPageBlocks.isNotEmpty()
+            val blocks = if (usedSemanticBlocks) {
+                semanticPageBlocks.joinToString("") { it.toHtml(searchQuery, searchOptions) }
+            } else {
+                page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
+            }
             val pageHtml = blocks.applyUserHighlights(
                 highlights = highlights.filter { it.belongsToPage(page) },
                 contentStartOffset = page.startOffset,
                 contentEndOffset = page.endOffset
+            )
+            logReaderHtml(
+                "page_document page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
+                    "range=${page.startOffset}..${page.endOffset} pageText=${page.text.length} " +
+                    "semantic=$usedSemanticBlocks blocks=${semanticPageBlocks.size}/${chapter.semanticBlocks.size} " +
+                    "htmlChars=${pageHtml.length} settingsFont=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
+                    "summary=\"${semanticPageBlocks.blockSummary()}\" styles=\"${semanticPageBlocks.styleSummary()}\""
             )
             """
             <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
@@ -214,13 +226,10 @@ object ReaderHtmlDocumentBuilder {
                   height: auto;
                 }
                 table {
-                  border-collapse: collapse;
                   max-width: 100%;
                   overflow-wrap: anywhere;
                 }
                 td, th {
-                  border: 1px solid color-mix(in srgb, var(--reader-fg) 24%, transparent);
-                  padding: 0.35em 0.5em;
                   vertical-align: top;
                 }
                 .reader-highlight {
@@ -456,6 +465,61 @@ object ReaderHtmlDocumentBuilder {
                       window.kmpJsBridge.callNative('readerPositionChanged', JSON.stringify(position));
                     }
                   }
+                  function nearestReaderHost(element) {
+                    return element && element.closest ? element.closest('[data-reader-chapter-index]') : null;
+                  }
+                  function fallbackReaderLinkNavigation(payload, reason) {
+                    try {
+                      var encoded = encodeURIComponent(JSON.stringify(payload));
+                      console.log('READER_LINK fallback_navigation href=' + payload.href + ' reason=' + reason);
+                      window.location.href = 'readerlink://click?payload=' + encoded;
+                    } catch (error) {
+                      console.log('READER_LINK fallback_navigation_error href=' + payload.href + ' error=' + error);
+                    }
+                  }
+                  function sendReaderLinkClick(payload, attempt) {
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerLinkClicked', JSON.stringify(payload));
+                        console.log('READER_LINK bridge_sent href=' + payload.href + ' attempt=' + attempt);
+                        window.setTimeout(function () {
+                          fallbackReaderLinkNavigation(payload, 'post_bridge');
+                        }, 260);
+                        return true;
+                      } catch (error) {
+                        console.log('READER_LINK bridge_error href=' + payload.href + ' attempt=' + attempt + ' error=' + error);
+                      }
+                    } else {
+                      console.log('READER_LINK bridge_missing href=' + payload.href + ' attempt=' + attempt);
+                    }
+                    if (attempt < 3) {
+                      window.setTimeout(function () {
+                        sendReaderLinkClick(payload, attempt + 1);
+                      }, attempt === 0 ? 60 : 220);
+                      return true;
+                    }
+                    console.log('READER_LINK bridge_gave_up href=' + payload.href);
+                    fallbackReaderLinkNavigation(payload, 'bridge_gave_up');
+                    return false;
+                  }
+                  document.addEventListener('click', function (event) {
+                    var target = event.target;
+                    if (!target || !target.closest) return;
+                    var anchor = target.closest('a[href]');
+                    if (!anchor || menu.contains(anchor)) return;
+                    var href = anchor.getAttribute('href') || '';
+                    if (!href) return;
+                    var readerHost = nearestReaderHost(anchor);
+                    event.preventDefault();
+                    event.stopPropagation();
+                    sendReaderLinkClick({
+                      href: href,
+                      text: (anchor.textContent || '').trim().substring(0, 120),
+                      chapterIndex: readerHost ? numberAttribute(readerHost, 'data-reader-chapter-index', null) : null,
+                      chapterId: readerHost ? readerHost.getAttribute('data-reader-chapter-id') : null,
+                      chapterHref: readerHost ? readerHost.getAttribute('data-reader-chapter-href') : null
+                    }, 0);
+                  }, true);
                   function scheduleVisiblePageReport() {
                     if (reportTimer !== null) window.clearTimeout(reportTimer);
                     reportTimer = window.setTimeout(function () {
@@ -761,24 +825,22 @@ object ReaderHtmlDocumentBuilder {
     }
 
     private fun List<SemanticBlock>.blocksForPage(page: ReaderPage): List<SemanticBlock> {
-        return filterIndexed { index, block ->
-            when (block) {
-                is SemanticTextBlock -> block.intersects(page.startOffset, page.endOffset)
-                else -> {
+        return mapIndexedNotNull { index, block ->
+            block.clipToPage(page)
+                ?: block.takeIf {
                     val previousText = asSequence()
                         .take(index)
-                        .filterIsInstance<SemanticTextBlock>()
+                        .mapNotNull { it.lastTextBlock() }
                         .lastOrNull()
                     val nextText = asSequence()
                         .drop(index + 1)
-                        .filterIsInstance<SemanticTextBlock>()
+                        .mapNotNull { it.firstTextBlock() }
                         .firstOrNull()
                     val anchor = previousText?.let { it.startCharOffsetInSource + it.text.length }
                         ?: nextText?.startCharOffsetInSource
                         ?: 0
                     anchor in page.startOffset..page.endOffset
                 }
-            }
         }
     }
 
@@ -788,11 +850,142 @@ object ReaderHtmlDocumentBuilder {
         return start < endOffset && end > startOffset
     }
 
+    private fun SemanticBlock.clipToPage(page: ReaderPage): SemanticBlock? {
+        return when (this) {
+            is SemanticTextBlock -> takeIf { intersects(page.startOffset, page.endOffset) }
+            is SemanticList -> {
+                val visibleItems = items.filter { it.intersects(page.startOffset, page.endOffset) }
+                takeIf { visibleItems.isNotEmpty() }?.copy(items = visibleItems)
+            }
+            is SemanticTable -> {
+                val visibleRows = rows.mapNotNull { row ->
+                    val visibleCells = row.mapNotNull { cell ->
+                        val visibleContent = cell.content.mapNotNull { it.clipToPage(page) }
+                        cell.takeIf { visibleContent.isNotEmpty() }?.copy(content = visibleContent)
+                    }
+                    visibleCells.takeIf { it.isNotEmpty() }
+                }
+                takeIf { visibleRows.isNotEmpty() }?.copy(rows = visibleRows)
+            }
+            is SemanticFlexContainer -> {
+                val visibleChildren = children.mapNotNull { it.clipToPage(page) }
+                takeIf { visibleChildren.isNotEmpty() }?.copy(children = visibleChildren)
+            }
+            is SemanticWrappingBlock -> {
+                val visibleParagraphs = paragraphsToWrap.filter { it.intersects(page.startOffset, page.endOffset) }
+                takeIf { visibleParagraphs.isNotEmpty() }?.copy(paragraphsToWrap = visibleParagraphs)
+            }
+            else -> null
+        }
+    }
+
+    private fun SemanticBlock.firstTextBlock(): SemanticTextBlock? {
+        return when (this) {
+            is SemanticTextBlock -> this
+            is SemanticList -> items.firstOrNull()
+            is SemanticTable -> rows.asSequence()
+                .flatMap { it.asSequence() }
+                .flatMap { it.content.asSequence() }
+                .mapNotNull { it.firstTextBlock() }
+                .firstOrNull()
+            is SemanticFlexContainer -> children.asSequence().mapNotNull { it.firstTextBlock() }.firstOrNull()
+            is SemanticWrappingBlock -> paragraphsToWrap.firstOrNull()
+            else -> null
+        }
+    }
+
+    private fun SemanticBlock.lastTextBlock(): SemanticTextBlock? {
+        return when (this) {
+            is SemanticTextBlock -> this
+            is SemanticList -> items.lastOrNull()
+            is SemanticTable -> rows.asReversed().asSequence()
+                .flatMap { it.asReversed().asSequence() }
+                .flatMap { it.content.asReversed().asSequence() }
+                .mapNotNull { it.lastTextBlock() }
+                .firstOrNull()
+            is SemanticFlexContainer -> children.asReversed().asSequence().mapNotNull { it.lastTextBlock() }.firstOrNull()
+            is SemanticWrappingBlock -> paragraphsToWrap.lastOrNull()
+            else -> null
+        }
+    }
+
+    private fun List<SemanticBlock>.blockSummary(): String {
+        var textBlocks = 0
+        var lists = 0
+        var listItems = 0
+        var tables = 0
+        var tableCells = 0
+        var flex = 0
+        var images = 0
+        var math = 0
+        fun visit(block: SemanticBlock) {
+            when (block) {
+                is SemanticTextBlock -> textBlocks++
+                is SemanticList -> {
+                    lists++
+                    listItems += block.items.size
+                    block.items.forEach(::visit)
+                }
+                is SemanticTable -> {
+                    tables++
+                    tableCells += block.rows.sumOf { it.size }
+                    block.rows.flatten().forEach { cell -> cell.content.forEach(::visit) }
+                }
+                is SemanticFlexContainer -> {
+                    flex++
+                    block.children.forEach(::visit)
+                }
+                is SemanticWrappingBlock -> {
+                    images++
+                    block.paragraphsToWrap.forEach(::visit)
+                }
+                is SemanticImage -> images++
+                is SemanticMath -> math++
+                else -> Unit
+            }
+        }
+        forEach(::visit)
+        return "text=$textBlocks lists=$lists items=$listItems tables=$tables cells=$tableCells flex=$flex images=$images math=$math"
+    }
+
+    private fun List<SemanticBlock>.styleSummary(): String {
+        val fontSizes = mutableListOf<String>()
+        val listStyles = mutableListOf<String>()
+        val displayValues = mutableListOf<String>()
+        fun collectStyle(style: CssStyle) {
+            style.fontSize.toDiagnosticTextUnit()?.let { fontSizes += it }
+            style.spanStyle.fontSize.toDiagnosticTextUnit()?.let { fontSizes += it }
+            style.blockStyle.listStyleType?.takeIf { it.isNotBlank() }?.let { listStyles += "type=$it" }
+            style.blockStyle.listStyleImage?.takeIf { it.isNotBlank() }?.let { listStyles += "image=$it" }
+            style.display?.takeIf { it.isNotBlank() }?.let { displayValues += it }
+            style.blockStyle.display?.takeIf { it.isNotBlank() }?.let { displayValues += it }
+        }
+        fun visit(block: SemanticBlock) {
+            collectStyle(block.style)
+            when (block) {
+                is SemanticTextBlock -> block.spans.forEach { collectStyle(it.style) }
+                is SemanticList -> block.items.forEach(::visit)
+                is SemanticTable -> block.rows.flatten().forEach { cell ->
+                    collectStyle(cell.style)
+                    cell.content.forEach(::visit)
+                }
+                is SemanticFlexContainer -> block.children.forEach(::visit)
+                is SemanticWrappingBlock -> {
+                    visit(block.floatedImage)
+                    block.paragraphsToWrap.forEach(::visit)
+                }
+                else -> Unit
+            }
+        }
+        forEach(::visit)
+        return "fontSizes=${fontSizes.distinct().take(12)} listStyles=${listStyles.distinct().take(12)} display=${displayValues.distinct().take(12)}"
+    }
+
     private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         return when (this) {
-            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
-            is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
-            is SemanticListItem -> "<li${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</li>"
+            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
+            is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</p>"
+            is SemanticListItem -> "<li${textOffsetAttributes()}${listItemStyleAttribute()}>${textHtml(searchQuery, searchOptions)}</li>"
             is SemanticList -> {
                 val tag = if (isOrdered) "ol" else "ul"
                 "<$tag${styleAttribute()}>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
@@ -808,7 +1001,7 @@ object ReaderHtmlDocumentBuilder {
             }
             is SemanticFlexContainer -> children.joinToString("", "<div${styleAttribute()}>", "</div>") { it.toHtml(searchQuery, searchOptions) }
             is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery, searchOptions) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-            is SemanticTextBlock -> "<p${textOffsetAttributes()}${styleAttribute()}>${text.highlightAndEscape(searchQuery, searchOptions)}</p>"
+            is SemanticTextBlock -> "<p${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</p>"
         }
     }
 
@@ -874,7 +1067,7 @@ object ReaderHtmlDocumentBuilder {
         return buildString {
             append(" data-reader-text-start=\"$start\" data-reader-text-end=\"$end\"")
             elementId?.takeIf { it.isNotBlank() }?.let {
-                append(" data-reader-element-id=\"${it.escapeHtml()}\"")
+                append(" id=\"${it.escapeHtml()}\" data-reader-element-id=\"${it.escapeHtml()}\"")
             }
             cfi?.takeIf { it.isNotBlank() }?.let {
                 append(" data-reader-cfi=\"${it.escapeHtml()}\"")
@@ -882,15 +1075,94 @@ object ReaderHtmlDocumentBuilder {
         }
     }
 
+    private fun SemanticTextBlock.textHtml(
+        searchQuery: String,
+        searchOptions: ReaderSearchOptions
+    ): String {
+        if (text.isEmpty()) return ""
+        val inlineSpans = spans
+            .filter { it.end > it.start }
+            .map {
+                it.copy(
+                    start = it.start.coerceIn(0, text.length),
+                    end = it.end.coerceIn(0, text.length)
+                )
+            }
+            .filter { it.end > it.start }
+            .sortedWith(compareBy({ it.start }, { it.end }))
+        val linkSpans = inlineSpans.filter { !it.linkHref.isNullOrBlank() }
+        val markersByOffset = spans
+            .mapNotNull { span ->
+                span.elementId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { id -> span.start.coerceIn(0, text.length) to id }
+            }
+            .groupBy({ it.first }, { it.second })
+
+        if (inlineSpans.isEmpty() && markersByOffset.isEmpty()) {
+            return text.highlightAndEscape(searchQuery, searchOptions)
+        }
+
+        val boundaries = mutableSetOf(0, text.length)
+        inlineSpans.forEach { span ->
+            boundaries += span.start
+            boundaries += span.end
+        }
+        boundaries += markersByOffset.keys
+
+        val ordered = boundaries.sorted()
+        val builder = StringBuilder()
+        fun appendMarkers(offset: Int) {
+            markersByOffset[offset].orEmpty().distinct().forEach { id ->
+                builder.append("""<span id="${id.escapeHtml()}" data-reader-element-id="${id.escapeHtml()}"></span>""")
+            }
+        }
+
+        for (index in 0 until ordered.lastIndex) {
+            val start = ordered[index]
+            val end = ordered[index + 1]
+            appendMarkers(start)
+            if (end <= start) continue
+            val html = text.substring(start, end).highlightAndEscape(searchQuery, searchOptions)
+            val link = linkSpans.firstOrNull { it.start <= start && it.end >= end }
+            val segmentStyle = inlineSpans
+                .filter { it.start <= start && it.end >= end }
+                .fold(CssStyle()) { merged, span -> merged.merge(span.style) }
+                .toStyleAttribute()
+            if (link?.linkHref != null) {
+                builder.append("""<a href="${link.linkHref.escapeHtml()}" data-reader-link="true"$segmentStyle>$html</a>""")
+            } else if (segmentStyle.isNotEmpty()) {
+                builder.append("""<span$segmentStyle>$html</span>""")
+            } else {
+                builder.append(html)
+            }
+        }
+        appendMarkers(text.length)
+        return builder.toString()
+    }
+
     private fun SemanticBlock.styleAttribute(extra: String? = null): String {
         return style.toStyleAttribute(extra)
+    }
+
+    private fun SemanticListItem.listItemStyleAttribute(): String {
+        val markerStyle = itemMarkerImage
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { style.blockStyle.listStyleImage.isNullOrBlank() }
+            ?.let { "list-style-image:url('${it.escapeHtml()}')" }
+        return style.toStyleAttribute(markerStyle)
     }
 
     private fun CssStyle.toStyleAttribute(extra: String? = null): String {
         val declarations = mutableListOf<String>()
         extra?.takeIf { it.isNotBlank() }?.let { declarations += it }
-        if (fontSize.isSpecified) declarations += "font-size:${fontSize.value}px"
-        if (wordSpacing.isSpecified) declarations += "word-spacing:${wordSpacing.value}px"
+        (spanStyle.fontSize.takeIf { it.isSpecified } ?: fontSize.takeIf { it.isSpecified })
+            ?.toCssLength()
+            ?.let { declarations += "font-size:$it" }
+        wordSpacing.toCssLength()?.let { declarations += "word-spacing:$it" }
+        textTransform?.takeIf { it.isNotBlank() }?.let { declarations += "text-transform:$it" }
+        hyphens?.takeIf { it.isNotBlank() }?.let { declarations += "hyphens:$it" }
+        fontVariantNumeric?.takeIf { it.isNotBlank() }?.let { declarations += "font-variant-numeric:$it" }
         if (spanStyle.color.isSpecified) declarations += "color:${spanStyle.color.toCssHex()}"
         if (spanStyle.background.isSpecified) declarations += "background-color:${spanStyle.background.toCssHex()}"
         spanStyle.fontWeight?.let { declarations += "font-weight:${it.weight}" }
@@ -898,19 +1170,30 @@ object ReaderHtmlDocumentBuilder {
         spanStyle.textDecoration
             ?.takeIf { it.toString() != "None" }
             ?.let { declarations += "text-decoration:${it.toString().lowercase()}" }
+        textDecorationStyle?.takeIf { it.isNotBlank() }?.let { declarations += "text-decoration-style:$it" }
+        if (textDecorationColor.isSpecified) declarations += "text-decoration-color:${textDecorationColor.toCssHex()}"
+        if (textUnderlineOffset.isSpecified) declarations += "text-underline-offset:${textUnderlineOffset.value}px"
         fontFamilies.firstOrNull()?.takeIf { it.isNotBlank() }?.let {
             declarations += "font-family:'${it.escapeHtml()}'"
         }
+        paragraphStyle.lineHeight.toCssLength()?.let { declarations += "line-height:$it" }
+        paragraphStyle.textIndent?.firstLine
+            ?.takeIf { it.isSpecified && it.value != 0f }
+            ?.toCssLength()
+            ?.let { declarations += "text-indent:$it" }
         paragraphStyle.textAlign
             ?.takeIf { it.toString() != "Unspecified" }
             ?.let { align ->
             declarations += "text-align:${align.toString().lowercase()}"
         }
         val block = blockStyle
+        display?.takeIf { it.isNotBlank() }?.let { declarations += "display:$it" }
+        boxSizing?.takeIf { it.isNotBlank() }?.let { declarations += "box-sizing:$it" }
         if (block.backgroundColor.isSpecified) declarations += "background-color:${block.backgroundColor.toCssHex()}"
         if (block.width.isSpecified) declarations += "width:${block.width.value}px"
         if (block.maxWidth.isSpecified) declarations += "max-width:${block.maxWidth.value}px"
         if (block.height.isSpecified) declarations += "height:${block.height.value}px"
+        block.boxSizing?.takeIf { it.isNotBlank() }?.let { declarations += "box-sizing:$it" }
         if (block.margin.top.isSpecified && block.margin.top.value != 0f) declarations += "margin-top:${block.margin.top.value}px"
         if (block.margin.right.isSpecified && block.margin.right.value != 0f) declarations += "margin-right:${block.margin.right.value}px"
         if (block.margin.bottom.isSpecified && block.margin.bottom.value != 0f) declarations += "margin-bottom:${block.margin.bottom.value}px"
@@ -919,14 +1202,57 @@ object ReaderHtmlDocumentBuilder {
         if (block.padding.right.isSpecified && block.padding.right.value != 0f) declarations += "padding-right:${block.padding.right.value}px"
         if (block.padding.bottom.isSpecified && block.padding.bottom.value != 0f) declarations += "padding-bottom:${block.padding.bottom.value}px"
         if (block.padding.left.isSpecified && block.padding.left.value != 0f) declarations += "padding-left:${block.padding.left.value}px"
+        block.borderTop?.toCssBorder()?.let { declarations += "border-top:$it" }
+        block.borderRight?.toCssBorder()?.let { declarations += "border-right:$it" }
+        block.borderBottom?.toCssBorder()?.let { declarations += "border-bottom:$it" }
+        block.borderLeft?.toCssBorder()?.let { declarations += "border-left:$it" }
+        if (block.borderTopLeftRadius.isSpecified && block.borderTopLeftRadius.value != 0f) declarations += "border-top-left-radius:${block.borderTopLeftRadius.value}px"
+        if (block.borderTopRightRadius.isSpecified && block.borderTopRightRadius.value != 0f) declarations += "border-top-right-radius:${block.borderTopRightRadius.value}px"
+        if (block.borderBottomRightRadius.isSpecified && block.borderBottomRightRadius.value != 0f) declarations += "border-bottom-right-radius:${block.borderBottomRightRadius.value}px"
+        if (block.borderBottomLeftRadius.isSpecified && block.borderBottomLeftRadius.value != 0f) declarations += "border-bottom-left-radius:${block.borderBottomLeftRadius.value}px"
         block.float?.takeIf { it.isNotBlank() }?.let { declarations += "float:$it" }
         block.clear?.takeIf { it.isNotBlank() }?.let { declarations += "clear:$it" }
+        block.position?.takeIf { it.isNotBlank() }?.let { declarations += "position:$it" }
+        if (block.top.isSpecified) declarations += "top:${block.top.value}px"
+        if (block.right.isSpecified) declarations += "right:${block.right.value}px"
+        if (block.bottom.isSpecified) declarations += "bottom:${block.bottom.value}px"
+        if (block.left.isSpecified) declarations += "left:${block.left.value}px"
         block.display?.takeIf { it.isNotBlank() }?.let { declarations += "display:$it" }
         block.flexDirection?.takeIf { it.isNotBlank() }?.let { declarations += "flex-direction:$it" }
         block.justifyContent?.takeIf { it.isNotBlank() }?.let { declarations += "justify-content:$it" }
         block.alignItems?.takeIf { it.isNotBlank() }?.let { declarations += "align-items:$it" }
+        block.horizontalAlign?.takeIf { it.isNotBlank() }?.let { declarations += "text-align:$it" }
+        block.filter?.takeIf { it.isNotBlank() }?.let { declarations += "filter:$it" }
         block.borderCollapse?.takeIf { it.isNotBlank() }?.let { declarations += "border-collapse:$it" }
+        if (block.borderSpacing.isSpecified && block.borderSpacing.value != 0f) declarations += "border-spacing:${block.borderSpacing.value}px"
+        block.listStyleType?.takeIf { it.isNotBlank() }?.let { declarations += "list-style-type:$it" }
+        block.listStyleImage?.takeIf { it.isNotBlank() }?.let { declarations += "list-style-image:url('${it.escapeHtml()}')" }
         return if (declarations.isEmpty()) "" else " style=\"${declarations.joinToString(";").escapeHtml()}\""
+    }
+
+    private fun BorderStyle.toCssBorder(): String? {
+        if (!width.isSpecified || width.value <= 0f) return null
+        val styleValue = style.takeIf { it.isNotBlank() } ?: "solid"
+        val colorValue = if (color.isSpecified) color.toCssHex() else "currentColor"
+        return "${width.value}px $styleValue $colorValue"
+    }
+
+    private fun TextUnit.toCssLength(): String? {
+        if (!isSpecified || value <= 0f) return null
+        return when {
+            isEm -> "${value}em"
+            isSp -> "${value}px"
+            else -> value.toString()
+        }
+    }
+
+    private fun TextUnit.toDiagnosticTextUnit(): String? {
+        if (!isSpecified || value <= 0f) return null
+        return when {
+            isEm -> "${value}em"
+            isSp -> "${value}sp"
+            else -> value.toString()
+        }
     }
 
     private fun SemanticImage.imageSizeAttribute(): String {
@@ -1228,5 +1554,9 @@ object ReaderHtmlDocumentBuilder {
     private fun androidx.compose.ui.graphics.Color.toCssHex(): String {
         fun channel(value: Float): String = (value * 255f).roundToInt().coerceIn(0, 255).toString(16).padStart(2, '0')
         return "#${channel(red)}${channel(green)}${channel(blue)}"
+    }
+
+    private fun logReaderHtml(message: String) {
+        println("ReaderHtmlRender $message")
     }
 }

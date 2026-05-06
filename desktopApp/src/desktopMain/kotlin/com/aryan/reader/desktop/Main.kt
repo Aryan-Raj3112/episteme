@@ -160,6 +160,7 @@ import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.mostVisiblePdfPageIndex
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -191,6 +192,9 @@ import com.aryan.reader.shared.withImportedFiles
 import com.multiplatform.webview.jsbridge.IJsMessageHandler
 import com.multiplatform.webview.jsbridge.JsMessage
 import com.multiplatform.webview.jsbridge.rememberWebViewJsBridge
+import com.multiplatform.webview.request.RequestInterceptor
+import com.multiplatform.webview.request.WebRequest
+import com.multiplatform.webview.request.WebRequestInterceptResult
 import com.multiplatform.webview.web.LoadingState
 import com.multiplatform.webview.web.WebView
 import com.multiplatform.webview.web.WebViewNavigator
@@ -215,8 +219,12 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
 import java.net.URI
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicReference
+import javax.swing.JOptionPane
+import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 import kotlin.math.abs
 import kotlin.math.max
@@ -1261,6 +1269,15 @@ private inline fun List<DesktopSmartRuleDraft>.updateAt(
     return mapIndexed { i, draft -> if (i == index) draft.transform() else draft }
 }
 
+private val DesktopPdfAnnotationTools = listOf(
+    PdfInkTool.HIGHLIGHTER,
+    PdfInkTool.HIGHLIGHTER_ROUND,
+    PdfInkTool.PENCIL,
+    PdfInkTool.FOUNTAIN_PEN,
+    PdfInkTool.TEXT,
+    PdfInkTool.ERASER
+)
+
 @Composable
 private fun PdfReaderScreen(
     document: DesktopPdfDocument,
@@ -1271,11 +1288,18 @@ private fun PdfReaderScreen(
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
     var pdfState by remember(document.path) {
+        val defaultTool = PdfInkTool.HIGHLIGHTER
+        val defaultToolConfig = SharedPdfAnnotationDefaults.configFor(defaultTool)
         mutableStateOf(
             SharedPdfReaderState.initial(
                 pageCount = document.pageCount,
                 initialPageIndex = initialPageIndex,
                 zoomSpec = zoomSpec
+            ).copy(
+                isTextSelectionMode = true,
+                selectedTool = defaultTool,
+                selectedColorArgb = defaultToolConfig.colorArgb,
+                strokeWidth = defaultToolConfig.strokeWidth
             )
         )
     }
@@ -1293,6 +1317,7 @@ private fun PdfReaderScreen(
     var textSelection by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfTextSelection?>(null) }
     var selectionMenuOffset by remember(document.path, pdfState.pageIndex) { mutableStateOf<Offset?>(null) }
     var pageScrubPreview by remember(document.path) { mutableStateOf<Int?>(null) }
+    var externalLinkDialogUrl by remember(document.path) { mutableStateOf<String?>(null) }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(document.path) { desktopPdfBookmarkFile(document.path) }
     val searchIndexFile = remember(document.path) { desktopPdfSearchIndexFile(document.path) }
@@ -1364,6 +1389,11 @@ private fun PdfReaderScreen(
     val selectedEmbeddedAnnotation = remember(document.embeddedAnnotations, selectedEmbeddedAnnotationId) {
         document.embeddedAnnotations.firstOrNull { it.id == selectedEmbeddedAnnotationId }
     }
+
+    DesktopExternalLinkDialog(
+        url = externalLinkDialogUrl,
+        onDismiss = { externalLinkDialogUrl = null }
+    )
 
     LaunchedEffect(document.path) {
         arePdfAnnotationsLoaded = false
@@ -1453,6 +1483,30 @@ private fun PdfReaderScreen(
                 verticalListState.animateScrollToItem(clampedTarget)
             }
         }
+    }
+
+    fun activatePdfLink(target: DesktopPdfLinkTarget) {
+        target.destPageIndex
+            ?.takeIf { it in 0 until document.pageCount }
+            ?.let {
+                logPdfLink("activate_internal fromPage=${pageIndex + 1} targetPage=${it + 1}")
+                clearPdfInteractionState()
+                goToPage(it)
+                return
+            }
+        target.uri
+            ?.takeIf { it.isNotBlank() }
+            ?.let {
+                val url = it.normalizedExternalUrl()
+                logPdfLink("activate_external fromPage=${pageIndex + 1} url=\"${url.logPreview()}\"")
+                clearPdfInteractionState()
+                externalLinkDialogUrl = url
+                return
+            }
+        logPdfLink(
+            "activate_ignored fromPage=${pageIndex + 1} " +
+                "dest=${target.destPageIndex} uri=\"${target.uri.orEmpty().logPreview()}\""
+        )
     }
 
     fun toggleBookmark(targetPage: Int) {
@@ -1889,6 +1943,7 @@ private fun PdfReaderScreen(
                             selectedTool = selectedTool,
                             selectedColor = selectedColor,
                             strokeWidth = strokeWidth,
+                            tools = DesktopPdfAnnotationTools,
                             onToolSelected = { dispatchPdf(SharedPdfReaderAction.ToolSelected(it)) },
                             onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
                             onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
@@ -2121,6 +2176,7 @@ private fun PdfReaderScreen(
                                 onSearchSelection = ::searchSelection,
                                 onTranslateSelection = ::translateSelection,
                                 onEmbeddedAnnotationSelected = ::selectEmbeddedAnnotation,
+                                onLinkActivated = ::activatePdfLink,
                                 onAnnotationAdded = { dispatchPdf(SharedPdfReaderAction.AnnotationAdded(it)) },
                                 onAnnotationsChanged = { dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(it)) },
                                 onTextDraftConsumed = { textDraft = "" }
@@ -2207,12 +2263,25 @@ private fun PdfReaderScreen(
                                     }
                                     pageCanvasSize = size
                                 }
-                                .pointerInput(pageIndex, pageCanvasSize) {
+                                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool) {
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent()
                                             val point = event.changes.firstOrNull()?.position ?: continue
                                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                                if (selectedTool != PdfInkTool.TEXT) {
+                                                    val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
+                                                    if (linkTarget != null) {
+                                                        logPdfLink(
+                                                            "tap_hit mode=page page=${pageIndex + 1} " +
+                                                                "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                                                "textSelection=$isTextSelectionMode target=${linkTarget.formatLogTarget()}"
+                                                        )
+                                                        activatePdfLink(linkTarget)
+                                                        event.changes.forEach { it.consume() }
+                                                        continue
+                                                    }
+                                                }
                                                 val embeddedHit = pageEmbeddedAnnotations.findLast {
                                                     it.sharedPdfEmbeddedHitTest(point, pageCanvasSize)
                                                 }
@@ -2539,6 +2608,7 @@ private fun DesktopVerticalPdfPage(
     onSearchSelection: (DesktopPdfTextSelection) -> Unit,
     onTranslateSelection: (DesktopPdfTextSelection) -> Unit,
     onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit,
+    onLinkActivated: (DesktopPdfLinkTarget) -> Unit,
     onAnnotationAdded: (SharedPdfAnnotation) -> Unit,
     onAnnotationsChanged: (List<SharedPdfAnnotation>) -> Unit,
     onTextDraftConsumed: () -> Unit
@@ -2642,12 +2712,27 @@ private fun DesktopVerticalPdfPage(
                 .size(placeholderWidthDp, placeholderHeightDp)
                 .background(Color.White, RoundedCornerShape(2.dp))
                 .onSizeChanged { pageCanvasSize = it }
-                .pointerInput(pageIndex, pageCanvasSize) {
+                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
                             val point = event.changes.firstOrNull()?.position ?: continue
                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                if (selectedTool != PdfInkTool.TEXT) {
+                                    val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
+                                    if (linkTarget != null) {
+                                        logPdfLink(
+                                            "tap_hit mode=vertical page=${pageIndex + 1} " +
+                                                "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                                "textSelection=$isTextSelectionMode target=${linkTarget.formatLogTarget()}"
+                                        )
+                                        onSelectPage(pageIndex)
+                                        onLinkActivated(linkTarget)
+                                        clearInteractionState()
+                                        event.changes.forEach { it.consume() }
+                                        continue
+                                    }
+                                }
                                 val embeddedHit = pageEmbeddedAnnotations.findLast {
                                     it.sharedPdfEmbeddedHitTest(point, pageCanvasSize)
                                 }
@@ -3208,6 +3293,22 @@ private fun SharedPdfEmbeddedAnnotation.threadText(): String {
     }.trimEnd()
 }
 
+private fun DesktopPdfDocument.linkAt(
+    pageIndex: Int,
+    point: Offset,
+    canvasSize: IntSize
+): DesktopPdfLinkTarget? {
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return null
+    return DesktopPdfium.linkAt(
+        document = this,
+        pageIndex = pageIndex,
+        normalizedX = point.x / canvasSize.width,
+        normalizedY = point.y / canvasSize.height,
+        viewportWidth = canvasSize.width,
+        viewportHeight = canvasSize.height
+    )
+}
+
 @Composable
 private fun PdfSearchHighlightOverlay(
     bounds: List<PdfPageBounds>,
@@ -3533,6 +3634,14 @@ private fun ReaderScreen(
     onPickCustomFont: () -> String?,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
+    var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
+    var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
+
+    DesktopExternalLinkDialog(
+        url = externalLinkDialogUrl,
+        onDismiss = { externalLinkDialogUrl = null }
+    )
+
     SharedReaderScreen(
         session = session,
         readerEngine = readerEngine,
@@ -3560,6 +3669,39 @@ private fun ReaderScreen(
                     onHighlightCreated = { highlight ->
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
+                    onLinkClicked = { link ->
+                        val now = System.currentTimeMillis()
+                        val last = lastHandledLink
+                        if (last != null && last.href == link.href && now - last.handledAtMs < 900L) {
+                            logEpubLink(
+                                "click_duplicate_ignored source=${link.source} href=\"${link.href.logPreview()}\" " +
+                                    "ageMs=${now - last.handledAtMs}"
+                            )
+                        } else {
+                            lastHandledLink = DesktopEpubHandledLink(link.href, now)
+                            logEpubLink(
+                                "click source=${link.source} href=\"${link.href.logPreview()}\" " +
+                                    "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\" " +
+                                    "text=\"${link.text.orEmpty().logPreview()}\""
+                            )
+                            when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
+                                is ReaderLinkTarget.External -> {
+                                    logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
+                                    externalLinkDialogUrl = target.url
+                                }
+                                is ReaderLinkTarget.Internal -> {
+                                    logEpubLink(
+                                        "resolved_internal chapter=${target.locator.chapterIndex} " +
+                                            "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
+                                    )
+                                    onSessionChange(readerEngine.goToLocator(session, target.locator))
+                                }
+                                ReaderLinkTarget.Ignored -> {
+                                    logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")
+                                }
+                            }
+                        }
+                    },
                     onVisiblePageChanged = onVisiblePageChanged,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -3579,13 +3721,34 @@ private fun DesktopEpubWebView(
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
+    onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
     val scope = rememberCoroutineScope()
-    val navigator = rememberWebViewNavigator()
+    val linkRequestInterceptor = remember(scope) {
+        object : RequestInterceptor {
+            override fun onInterceptUrlRequest(
+                request: WebRequest,
+                navigator: WebViewNavigator
+            ): WebRequestInterceptResult {
+                if (!request.isForMainFrame) return WebRequestInterceptResult.Allow
+                val link = request.url.readerLinkClickFromIntercept() ?: return WebRequestInterceptResult.Allow
+                logEpubLink(
+                    "request_intercept method=${request.method} redirect=${request.isRedirect} " +
+                        "url=\"${request.url.logPreview()}\" href=\"${link.href.logPreview()}\""
+                )
+                scope.launch {
+                    latestOnLinkClicked(link.copy(source = "request"))
+                }
+                return WebRequestInterceptResult.Reject
+            }
+        }
+    }
+    val navigator = rememberWebViewNavigator(requestInterceptor = linkRequestInterceptor)
     val bridge = rememberWebViewJsBridge()
 
     DisposableEffect(bridge) {
@@ -3615,11 +3778,34 @@ private fun DesktopEpubWebView(
                 }
             }
         }
+        val linkHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerLinkClicked"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                logEpubLink("bridge_message params=\"${message.params.logPreview()}\"")
+                val link = message.params.readerLinkClickOrNull()
+                if (link == null) {
+                    logEpubLink("bridge_message_ignored reason=parse_failed")
+                } else {
+                    logEpubLink(
+                        "bridge_message_parsed href=\"${link.href.logPreview()}\" " +
+                            "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\""
+                    )
+                    scope.launch { latestOnLinkClicked(link) }
+                }
+            }
+        }
         bridge.register(highlightHandler)
         bridge.register(positionHandler)
+        bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
             bridge.unregister(positionHandler)
+            bridge.unregister(linkHandler)
         }
     }
 
@@ -3674,6 +3860,20 @@ private data class DesktopReaderPosition(
     val locator: ReaderLocator?
 )
 
+private data class DesktopEpubLinkClick(
+    val href: String,
+    val chapterIndex: Int?,
+    val text: String? = null,
+    val chapterId: String? = null,
+    val chapterHref: String? = null,
+    val source: String = "bridge"
+)
+
+private data class DesktopEpubHandledLink(
+    val href: String,
+    val handledAtMs: Long
+)
+
 private fun String.readerPositionOrNull(): DesktopReaderPosition? {
     fun parse(rawJson: String): DesktopReaderPosition? = runCatching {
         val obj = Json.parseToJsonElement(rawJson).jsonObject
@@ -3697,6 +3897,77 @@ private fun String.readerPositionOrNull(): DesktopReaderPosition? {
     return runCatching {
         Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
     }.getOrNull()?.let { parse(it) }
+}
+
+private fun String.readerLinkClickOrNull(): DesktopEpubLinkClick? {
+    fun parse(rawJson: String): DesktopEpubLinkClick? = runCatching {
+        val obj = Json.parseToJsonElement(rawJson).jsonObject
+        val href = obj["href"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: return@runCatching null
+        DesktopEpubLinkClick(
+            href = href,
+            chapterIndex = obj["chapterIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            text = obj["text"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+            chapterId = obj["chapterId"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+            chapterHref = obj["chapterHref"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull
+        )
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
+
+private fun String.readerLinkClickFromIntercept(): DesktopEpubLinkClick? {
+    val trimmed = trim()
+    if (trimmed.startsWith("readerlink:", ignoreCase = true)) {
+        logEpubLink("request_intercept_readerlink raw=\"${trimmed.logPreview()}\"")
+        val payload = trimmed.substringAfter("?", missingDelimiterValue = "")
+            .split('&')
+            .firstOrNull { it.substringBefore("=").equals("payload", ignoreCase = true) }
+            ?.substringAfter("=", missingDelimiterValue = "")
+            ?.takeIf { it.isNotBlank() }
+        if (payload == null) {
+            logEpubLink("request_intercept_readerlink_ignored reason=missing_payload")
+            return null
+        }
+        val decoded = runCatching {
+            URLDecoder.decode(payload, Charsets.UTF_8.name())
+        }.getOrElse {
+            logEpubLink("request_intercept_payload_decode_failed error=\"${it.message.orEmpty().logPreview()}\"")
+            return null
+        }
+        val link = decoded.readerLinkClickOrNull()?.copy(source = "request")
+        if (link == null) {
+            logEpubLink("request_intercept_readerlink_ignored reason=parse_failed payload=\"${decoded.logPreview()}\"")
+        }
+        return link
+    }
+    return readerHrefFromIntercept()?.let { href ->
+        DesktopEpubLinkClick(
+            href = href,
+            chapterIndex = null,
+            source = "request"
+        )
+    }
+}
+
+private fun String.readerHrefFromIntercept(): String? {
+    val trimmed = trim()
+    if (trimmed.isBlank()) return null
+    if (trimmed.equals("about:blank", ignoreCase = true)) return null
+    if (trimmed.startsWith("file:///kcefbrowser/", ignoreCase = true)) return null
+    if (trimmed.startsWith("file:/kcefbrowser/", ignoreCase = true)) return null
+    if (trimmed.startsWith("file://", ignoreCase = true)) return null
+    if (trimmed.startsWith("about:blank#", ignoreCase = true)) return "#${trimmed.substringAfter('#')}"
+    if (trimmed.startsWith("data:", ignoreCase = true)) return null
+    if (trimmed.startsWith("blob:", ignoreCase = true)) return null
+    return trimmed
 }
 
 private fun ReaderLocator.toReaderLocatorJson(): String {
@@ -4243,11 +4514,91 @@ private fun File.toImportedBookFile(sourceFolder: String? = null): ImportedBookF
     )
 }
 
+@Composable
+private fun DesktopExternalLinkDialog(
+    url: String?,
+    onDismiss: () -> Unit
+) {
+    if (url == null) return
+    val clipboardManager = LocalClipboardManager.current
+    LaunchedEffect(url) {
+        logExternalLink("dialog_show url=\"${url.logPreview()}\"")
+        when (withContext(Dispatchers.IO) { showNativeExternalLinkDialog(url) }) {
+            DesktopExternalLinkAction.COPY -> {
+                logExternalLink("dialog_copy url=\"${url.logPreview()}\"")
+                clipboardManager.setText(AnnotatedString(url))
+            }
+            DesktopExternalLinkAction.OPEN -> {
+                logExternalLink("dialog_open url=\"${url.logPreview()}\"")
+                openExternalUrl(url)
+            }
+            DesktopExternalLinkAction.DISMISS -> {
+                logExternalLink("dialog_dismiss url=\"${url.logPreview()}\"")
+            }
+        }
+        onDismiss()
+    }
+}
+
+private enum class DesktopExternalLinkAction {
+    COPY,
+    OPEN,
+    DISMISS
+}
+
+private fun showNativeExternalLinkDialog(url: String): DesktopExternalLinkAction {
+    val result = AtomicReference(DesktopExternalLinkAction.DISMISS)
+    val options = arrayOf("Copy", "Open", "Cancel")
+    val showDialog = {
+        val pane = JOptionPane(
+            "You clicked on an external link:\n\n$url\n\nWhat would you like to do?",
+            JOptionPane.QUESTION_MESSAGE,
+            JOptionPane.DEFAULT_OPTION,
+            null,
+            options,
+            options[1]
+        )
+        val dialog = pane.createDialog(null as java.awt.Component?, "External Link")
+        dialog.isModal = true
+        dialog.isAlwaysOnTop = true
+        dialog.isVisible = true
+        result.set(
+            when (pane.value) {
+                options[0] -> DesktopExternalLinkAction.COPY
+                options[1] -> DesktopExternalLinkAction.OPEN
+                else -> DesktopExternalLinkAction.DISMISS
+            }
+        )
+        dialog.dispose()
+    }
+    if (SwingUtilities.isEventDispatchThread()) {
+        showDialog()
+    } else {
+        SwingUtilities.invokeAndWait { showDialog() }
+    }
+    return result.get()
+}
+
 private fun openExternalUrl(url: String) {
+    val normalizedUrl = url.normalizedExternalUrl()
     runCatching {
         if (Desktop.isDesktopSupported()) {
-            Desktop.getDesktop().browse(URI(url))
+            Desktop.getDesktop().browse(URI(normalizedUrl))
+            logExternalLink("open_system_browser_success url=\"${normalizedUrl.logPreview()}\"")
+        } else {
+            logExternalLink("open_system_browser_unavailable url=\"${normalizedUrl.logPreview()}\"")
         }
+    }.onFailure { throwable ->
+        logExternalLink("open_system_browser_failed url=\"${normalizedUrl.logPreview()}\" error=\"${throwable.message.orEmpty().logPreview()}\"")
+    }
+}
+
+private fun String.normalizedExternalUrl(): String {
+    val trimmed = trim()
+    return if (trimmed.startsWith("www.", ignoreCase = true)) {
+        "https://$trimmed"
+    } else {
+        trimmed
     }
 }
 
@@ -4256,9 +4607,28 @@ private fun String.urlEncode(): String {
 }
 
 private const val PdfSelectionLogTag = "EpistemePdfSelection"
+private const val PdfLinkLogTag = "EpistemePdfLink"
+private const val EpubLinkLogTag = "EpistemeEpubLink"
+private const val ExternalLinkLogTag = "EpistemeExternalLink"
 
 private fun logPdfSelection(message: String) {
     println("$PdfSelectionLogTag $message")
+}
+
+private fun logPdfLink(message: String) {
+    println("$PdfLinkLogTag $message")
+}
+
+private fun logEpubLink(message: String) {
+    println("$EpubLinkLogTag $message")
+}
+
+private fun logExternalLink(message: String) {
+    println("$ExternalLinkLogTag $message")
+}
+
+private fun DesktopPdfLinkTarget.formatLogTarget(): String {
+    return "dest=${destPageIndex?.let { it + 1 } ?: "null"} uri=\"${uri.orEmpty().logPreview()}\""
 }
 
 private fun String.logPreview(maxLength: Int = 96): String {

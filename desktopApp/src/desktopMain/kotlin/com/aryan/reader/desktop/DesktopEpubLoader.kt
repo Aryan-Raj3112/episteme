@@ -70,7 +70,7 @@ object DesktopEpubLoader {
                         plainText = text,
                         semanticBlocks = semanticBlocks,
                         htmlContent = resourceReadyHtml.extractBodyOrSelf(),
-                        baseHref = path.substringBeforeLast('/', missingDelimiterValue = "")
+                        baseHref = path
                     )
                 }
             }

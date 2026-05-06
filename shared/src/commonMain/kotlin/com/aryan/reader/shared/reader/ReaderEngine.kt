@@ -1,7 +1,19 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.UserHighlight
+
+sealed interface ReaderLinkTarget {
+    data class External(val url: String) : ReaderLinkTarget
+    data class Internal(val locator: ReaderLocator) : ReaderLinkTarget
+    data object Ignored : ReaderLinkTarget
+}
 
 data class ReaderBookmark(
     val id: String,
@@ -158,6 +170,96 @@ class ReaderEngine(
             navigationLocator = normalizedLocator,
             navigationRequestId = state.navigationRequestId + 1
         )
+    }
+
+    fun resolveLink(
+        state: ReaderSessionState,
+        href: String,
+        sourceChapterIndex: Int? = state.reader.currentPage?.chapterIndex
+    ): ReaderLinkTarget {
+        val trimmed = href.trim()
+        if (trimmed.isBlank()) {
+            logReaderLink("resolve_ignored reason=blank")
+            return ReaderLinkTarget.Ignored
+        }
+        val normalizedHref = when {
+            trimmed.startsWith("about:blank#", ignoreCase = true) -> "#${trimmed.substringAfter('#')}"
+            trimmed.startsWith("www.", ignoreCase = true) -> "https://$trimmed"
+            else -> trimmed
+        }
+        logReaderLink("resolve_start href=\"$trimmed\" normalized=\"$normalizedHref\" sourceChapter=$sourceChapterIndex")
+
+        val scheme = normalizedHref.schemeOrNull()
+        if (scheme != null) {
+            return when (scheme.lowercase()) {
+                "http", "https", "mailto", "tel" -> {
+                    logReaderLink("resolve_external scheme=$scheme")
+                    ReaderLinkTarget.External(normalizedHref)
+                }
+                else -> {
+                    logReaderLink("resolve_ignored reason=unsupported_scheme scheme=$scheme")
+                    ReaderLinkTarget.Ignored
+                }
+            }
+        }
+
+        val sourceIndex = sourceChapterIndex
+            ?.takeIf { it in state.reader.book.chapters.indices }
+            ?: state.reader.currentPage?.chapterIndex
+            ?: 0
+        val sourceChapter = state.reader.book.chapters.getOrNull(sourceIndex)
+            ?: run {
+                logReaderLink("resolve_ignored reason=missing_source sourceChapter=$sourceIndex")
+                return ReaderLinkTarget.Ignored
+            }
+
+        val pathPart = normalizedHref.substringBefore('#').substringBefore('?')
+        val fragment = normalizedHref.substringAfter('#', missingDelimiterValue = "").substringBefore('?')
+            .takeIf { it.isNotBlank() }
+            ?.percentDecodedOrSelf()
+
+        val targetChapterIndex = if (pathPart.isBlank()) {
+            sourceIndex
+        } else {
+            val targetPath = resolveEpubPath(sourceChapter.baseHref, pathPart.percentDecodedOrSelf())
+            state.reader.book.chapters.indexOfFirst { chapter ->
+                val chapterPath = normalizeEpubPath(chapter.baseHref.orEmpty())
+                chapterPath == targetPath ||
+                    chapter.id == pathPart ||
+                    chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/')
+            }
+        }
+
+        if (targetChapterIndex !in state.reader.book.chapters.indices) {
+            logReaderLink(
+                "resolve_ignored reason=missing_target path=\"$pathPart\" sourceChapter=$sourceIndex " +
+                    "base=\"${sourceChapter.baseHref.orEmpty()}\""
+            )
+            return ReaderLinkTarget.Ignored
+        }
+
+        val targetChapter = state.reader.book.chapters[targetChapterIndex]
+        val targetOffset = fragment
+            ?.let { targetChapter.semanticBlocks.findElementOffset(it) }
+            ?: 0
+        val targetPageIndex = state.reader.pages.indexOfFirst { page ->
+            page.chapterIndex == targetChapterIndex && targetOffset in page.startOffset..page.endOffset
+        }.takeIf { it >= 0 }
+
+        val locator = ReaderLocator(
+            chapterIndex = targetChapterIndex,
+            chapterId = targetChapter.id,
+            href = targetChapter.baseHref,
+            pageIndex = targetPageIndex,
+            startOffset = targetOffset,
+            endOffset = targetOffset,
+            cfi = "desktop:$targetChapterIndex:$targetOffset:$targetOffset"
+        )
+        logReaderLink(
+            "resolve_internal targetChapter=$targetChapterIndex targetPage=$targetPageIndex " +
+                "fragment=\"${fragment.orEmpty()}\" offset=$targetOffset"
+        )
+        return ReaderLinkTarget.Internal(locator)
     }
 
     fun syncVisiblePage(state: ReaderSessionState, pageIndex: Int, locator: ReaderLocator? = null): ReaderSessionState {
@@ -515,6 +617,99 @@ private fun ReaderPage.toDesktopCfi(): String {
     return "desktop:$chapterIndex:$startOffset:$endOffset"
 }
 
+private fun String.schemeOrNull(): String? {
+    val colonIndex = indexOf(':')
+    if (colonIndex <= 0) return null
+    val firstPathIndex = listOf(indexOf('/'), indexOf('?'), indexOf('#'))
+        .filter { it >= 0 }
+        .minOrNull()
+    if (firstPathIndex != null && firstPathIndex < colonIndex) return null
+    val candidate = substring(0, colonIndex)
+    return candidate.takeIf { it.all { char -> char.isLetterOrDigit() || char == '+' || char == '-' || char == '.' } }
+}
+
+private fun resolveEpubPath(baseHref: String?, hrefPath: String): String {
+    val path = hrefPath.trimStart('/')
+    if (path.isBlank()) return normalizeEpubPath(baseHref.orEmpty())
+    val base = baseHref.orEmpty()
+    val baseDirectory = if (base.substringAfterLast('/', base).contains('.')) {
+        base.substringBeforeLast('/', missingDelimiterValue = "")
+    } else {
+        base
+    }
+    return normalizeEpubPath(if (baseDirectory.isBlank()) path else "$baseDirectory/$path")
+}
+
+private fun normalizeEpubPath(path: String): String {
+    val parts = mutableListOf<String>()
+    path.replace('\\', '/')
+        .split('/')
+        .forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+                else -> parts += part
+            }
+        }
+    return parts.joinToString("/")
+}
+
+private fun String.percentDecodedOrSelf(): String {
+    return runCatching {
+        val output = StringBuilder()
+        val bytes = mutableListOf<Byte>()
+        fun flushBytes() {
+            if (bytes.isNotEmpty()) {
+                output.append(bytes.toByteArray().decodeToString())
+                bytes.clear()
+            }
+        }
+        var index = 0
+        while (index < length) {
+            val char = this[index]
+            if (char == '%' && index + 2 < length) {
+                val value = substring(index + 1, index + 3).toIntOrNull(16)
+                if (value != null) {
+                    bytes += value.toByte()
+                    index += 3
+                    continue
+                }
+            }
+            flushBytes()
+            output.append(char)
+            index++
+        }
+        flushBytes()
+        output.toString()
+    }.getOrDefault(this)
+}
+
+private fun Iterable<SemanticBlock>.findElementOffset(elementId: String): Int? {
+    for (block in this) {
+        block.findElementOffset(elementId)?.let { return it }
+    }
+    return null
+}
+
+private fun SemanticBlock.findElementOffset(elementId: String): Int? {
+    if (this is SemanticTextBlock) {
+        if (this.elementId == elementId) return startCharOffsetInSource
+        spans.firstOrNull { it.elementId == elementId }?.let { span ->
+            return startCharOffsetInSource + span.start.coerceAtLeast(0)
+        }
+    }
+    return when (this) {
+        is SemanticList -> items.findElementOffset(elementId)
+        is SemanticTable -> rows.asSequence()
+            .flatMap { it.asSequence() }
+            .mapNotNull { it.content.findElementOffset(elementId) }
+            .firstOrNull()
+        is SemanticFlexContainer -> children.findElementOffset(elementId)
+        is SemanticWrappingBlock -> paragraphsToWrap.findElementOffset(elementId)
+        else -> null
+    }
+}
+
 private fun UserHighlight.withNormalizedLocator(): UserHighlight {
     val normalizedLocator = locator.copy(textQuote = text).withFallbacks(
         chapterIndex = chapterIndex,
@@ -556,4 +751,8 @@ private fun String.indexOfSearch(query: String, startIndex: Int, options: Reader
 
 private fun Char?.isWordChar(): Boolean {
     return this != null && (isLetterOrDigit() || this == '_')
+}
+
+private fun logReaderLink(message: String) {
+    println("ReaderLinkResolve $message")
 }
