@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.SearchHighlightMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,19 @@ class PdfReaderSessionTest {
             .reduce(SharedPdfReaderAction.GoToPage(-20))
 
         assertEquals(0, state.pageIndex)
+    }
+
+    @Test
+    fun `first last and display mode actions are shared`() {
+        val vertical = SharedPdfReaderState.initial(pageCount = 4, initialPageIndex = 1)
+            .reduce(SharedPdfReaderAction.LastPage)
+            .reduce(SharedPdfReaderAction.FirstPage)
+            .reduce(SharedPdfReaderAction.DisplayModeToggled)
+        val state = vertical.reduce(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.PAGINATION))
+
+        assertEquals(0, state.pageIndex)
+        assertEquals(PdfDisplayMode.VERTICAL_SCROLL, vertical.displayMode)
+        assertEquals(PdfDisplayMode.PAGINATION, state.displayMode)
     }
 
     @Test
@@ -141,6 +155,36 @@ class PdfReaderSessionTest {
                 mode = SearchHighlightMode.FOCUSED
             )
         )
+    }
+
+    @Test
+    fun `most visible page follows largest viewport overlap`() {
+        val visiblePages = listOf(
+            PdfVisiblePageLayout(pageIndex = 2, top = -120f, bottom = 320f),
+            PdfVisiblePageLayout(pageIndex = 3, top = 320f, bottom = 920f),
+            PdfVisiblePageLayout(pageIndex = 4, top = 920f, bottom = 1300f)
+        )
+
+        val pageIndex = mostVisiblePdfPageIndex(
+            visiblePages = visiblePages,
+            viewportTop = 0f,
+            viewportBottom = 800f,
+            fallbackPageIndex = 2
+        )
+
+        assertEquals(3, pageIndex)
+    }
+
+    @Test
+    fun `most visible page falls back when no measured page overlaps`() {
+        val pageIndex = mostVisiblePdfPageIndex(
+            visiblePages = listOf(PdfVisiblePageLayout(pageIndex = 8, top = 900f, bottom = 1200f)),
+            viewportTop = 0f,
+            viewportBottom = 800f,
+            fallbackPageIndex = 5
+        )
+
+        assertEquals(5, pageIndex)
     }
 
     private fun annotation(id: String, pageIndex: Int): SharedPdfAnnotation {

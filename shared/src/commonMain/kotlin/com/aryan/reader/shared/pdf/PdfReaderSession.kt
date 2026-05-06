@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.SearchHighlightMode
 
 data class SharedPdfSearchResult(
@@ -11,6 +12,7 @@ data class SharedPdfSearchResult(
 data class SharedPdfReaderState(
     val pageIndex: Int = 0,
     val pageCount: Int = 0,
+    val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val zoom: Float = PdfZoomSpec().default,
     val searchQuery: String = "",
     val activeSearchResultIndex: Int = -1,
@@ -60,6 +62,8 @@ sealed interface SharedPdfReaderAction {
     data object NextPage : SharedPdfReaderAction
     data object FirstPage : SharedPdfReaderAction
     data object LastPage : SharedPdfReaderAction
+    data class DisplayModeChanged(val mode: PdfDisplayMode) : SharedPdfReaderAction
+    data object DisplayModeToggled : SharedPdfReaderAction
     data class ZoomChanged(val zoom: Float) : SharedPdfReaderAction
     data class ZoomBy(val delta: Float) : SharedPdfReaderAction
     data class SearchChanged(val query: String) : SharedPdfReaderAction
@@ -94,6 +98,13 @@ fun SharedPdfReaderState.reduce(
         SharedPdfReaderAction.NextPage -> goToPage(pageIndex + 1)
         SharedPdfReaderAction.FirstPage -> goToPage(0)
         SharedPdfReaderAction.LastPage -> goToPage(lastPageIndex)
+        is SharedPdfReaderAction.DisplayModeChanged -> copy(displayMode = action.mode)
+        SharedPdfReaderAction.DisplayModeToggled -> copy(
+            displayMode = when (displayMode) {
+                PdfDisplayMode.PAGINATION -> PdfDisplayMode.VERTICAL_SCROLL
+                PdfDisplayMode.VERTICAL_SCROLL -> PdfDisplayMode.PAGINATION
+            }
+        )
         is SharedPdfReaderAction.ZoomChanged -> copy(zoom = zoomSpec.clamp(action.zoom))
         is SharedPdfReaderAction.ZoomBy -> copy(zoom = zoomSpec.clamp(zoom + action.delta))
         is SharedPdfReaderAction.SearchChanged -> copy(

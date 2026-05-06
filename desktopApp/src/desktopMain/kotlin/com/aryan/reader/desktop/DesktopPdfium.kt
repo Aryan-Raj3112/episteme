@@ -75,6 +75,7 @@ object DesktopPdfium {
 
     fun isAvailable(): Boolean = pdfiumDll.exists()
 
+    @Synchronized
     fun load(file: File, password: String? = null): DesktopPdfDocument {
         initLibrary()
         val document = api.FPDF_LoadDocument(file.absolutePath, password)
@@ -105,10 +106,12 @@ object DesktopPdfium {
         )
     }
 
+    @Synchronized
     fun closeDocument(path: String) {
         openDocuments.remove(path)?.let(api::FPDF_CloseDocument)
     }
 
+    @Synchronized
     fun renderPage(
         document: DesktopPdfDocument,
         pageIndex: Int,
@@ -144,6 +147,7 @@ object DesktopPdfium {
         }
     }
 
+    @Synchronized
     fun charIndexAt(
         document: DesktopPdfDocument,
         pageIndex: Int,
@@ -180,6 +184,7 @@ object DesktopPdfium {
         }.getOrNull()
     }
 
+    @Synchronized
     fun textRectsForRange(
         document: DesktopPdfDocument,
         pageIndex: Int,
