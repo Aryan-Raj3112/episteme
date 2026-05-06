@@ -111,6 +111,9 @@ import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
+import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibrarySnapshot
@@ -144,7 +147,6 @@ import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedTextBookFactory
 import com.aryan.reader.shared.reduce
-import com.aryan.reader.shared.toFileType
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -353,7 +355,13 @@ private fun EpistemeDesktopApp() {
     fun importFiles(files: List<ImportedBookFile>) {
         val importableFiles = files.filter { it.desktopFileType() in DesktopReadableFileTypes }
         if (importableFiles.isEmpty() && files.isNotEmpty()) {
-            updateState(state.withBanner("No supported desktop reader files were selected. EPUB, PDF, TXT, MD, and HTML are supported.", isError = true))
+            updateState(
+                state.withBanner(
+                    "No supported desktop reader files were selected. " +
+                        "${SharedFileCapabilities.supportedFormatsLabel(ReaderPlatform.DESKTOP)} are supported.",
+                    isError = true
+                )
+            )
             return
         }
         val skipped = files.size - importableFiles.size
@@ -482,8 +490,14 @@ private fun EpistemeDesktopApp() {
             return
         }
 
-        if (book.type !in setOf(FileType.EPUB, FileType.TXT, FileType.MD, FileType.HTML)) {
-            updateState(state.withBanner("${book.type.name} reader support comes later. EPUB, PDF, TXT, MD, and HTML are available on desktop."))
+        val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
+        if (desktopReaderSurface != ReaderFeatureSurface.EPUB_READER && desktopReaderSurface != ReaderFeatureSurface.TEXT_READER) {
+            updateState(
+                state.withBanner(
+                    "${SharedFileCapabilities.displayNameFor(book.type)} reader support comes later. " +
+                        "${SharedFileCapabilities.supportedFormatsLabel(ReaderPlatform.DESKTOP)} are available on desktop."
+                )
+            )
             return
         }
 
@@ -2687,14 +2701,10 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
     return reduce(AppAction.BannerShown(BannerMessage(message, isError = isError)))
 }
 
-private val DesktopReadableFileTypes = setOf(FileType.EPUB, FileType.PDF, FileType.TXT, FileType.MD, FileType.HTML)
+private val DesktopReadableFileTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
 
 private fun ImportedBookFile.desktopFileType(): FileType {
-    return when (val extension = name.substringAfterLast('.', "").lowercase()) {
-        "md", "markdown" -> FileType.MD
-        "xhtml" -> FileType.HTML
-        else -> name.toFileType().takeUnless { it == FileType.UNKNOWN && extension.isBlank() } ?: FileType.UNKNOWN
-    }
+    return SharedFileCapabilities.fileTypeForName(name)
 }
 
 private fun mergeSyncedFolders(

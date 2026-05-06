@@ -156,20 +156,5 @@ data class ImportedFile(
 expect fun currentTimestamp(): Long
 
 fun String.toFileType(): FileType {
-    return when (substringAfterLast('.', "").lowercase()) {
-        "pdf" -> FileType.PDF
-        "epub" -> FileType.EPUB
-        "mobi" -> FileType.MOBI
-        "md" -> FileType.MD
-        "txt" -> FileType.TXT
-        "html", "htm" -> FileType.HTML
-        "fb2" -> FileType.FB2
-        "cbz" -> FileType.CBZ
-        "cbr" -> FileType.CBR
-        "cb7" -> FileType.CB7
-        "docx" -> FileType.DOCX
-        "odt" -> FileType.ODT
-        "fodt" -> FileType.FODT
-        else -> FileType.UNKNOWN
-    }
+    return SharedFileCapabilities.fileTypeForName(this)
 }
