@@ -13,6 +13,8 @@ import com.aryan.reader.shared.SharedFolderBookMetadata
 import com.aryan.reader.shared.SharedFolderScannedFile
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SyncedFolder
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.toSharedFolderBookMetadata
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -140,7 +142,11 @@ object DesktopLocalFolderSync {
         val data = buildMap {
             if (annotationFile.isFile) {
                 val annotationJson = annotationFile.readText().trim()
-                desktopFolderSyncJson.parseElementOrNull(annotationJson)?.let { put("ink", it) }
+                val annotations = SharedPdfAnnotationSerializer.decode(annotationJson)
+                put(
+                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS,
+                    SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(annotations)
+                )
             }
             if (bookmarkFile.isFile) {
                 val bookmarksJson = bookmarkFile.readText().trim()
@@ -305,9 +311,10 @@ object DesktopLocalFolderSync {
             val bookmarkFile = desktopPdfBookmarkFile(path)
             val localTimestamp = maxOf(annotationFile.lastModifiedIfFile(), bookmarkFile.lastModifiedIfFile())
             if (sidecar.timestamp <= localTimestamp + 1000L) return@forEach
-            sidecar.data["ink"]?.let { ink ->
+            if (sidecar.data.hasPdfAnnotationPayload()) {
+                val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(sidecar.data)
                 annotationFile.parentFile?.mkdirs()
-                annotationFile.writeText(desktopFolderSyncJson.encodeToString(JsonElement.serializer(), ink))
+                annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
                 annotationFile.setLastModified(sidecar.timestamp)
             }
             sidecar.data["bookmarks"]?.let { bookmarks ->
@@ -443,6 +450,13 @@ private fun Json.parseElementOrNull(raw: String): JsonElement? {
 private fun JsonElement.jsonObjectOrNull(): JsonObject? {
     if (this is JsonNull) return null
     return runCatching { jsonObject }.getOrNull()
+}
+
+private fun JsonObject.hasPdfAnnotationPayload(): Boolean {
+    return containsKey(SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS) ||
+        containsKey(SharedPdfAnnotationSidecarCodec.KEY_LEGACY_INK) ||
+        containsKey(SharedPdfAnnotationSidecarCodec.KEY_LEGACY_TEXT_BOXES) ||
+        containsKey(SharedPdfAnnotationSidecarCodec.KEY_LEGACY_HIGHLIGHTS)
 }
 
 private fun File.canonicalOrAbsolute(): File {

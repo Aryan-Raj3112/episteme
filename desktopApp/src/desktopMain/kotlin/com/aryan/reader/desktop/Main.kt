@@ -2094,6 +2094,7 @@ private fun PdfReaderScreen(
                     kind = PdfAnnotationKind.HIGHLIGHT,
                     tool = PdfInkTool.HIGHLIGHTER,
                     bounds = highlightBounds.firstOrNull(),
+                    boundsList = highlightBounds,
                     text = selection.text,
                     colorArgb = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
                     rangeStartIndex = selection.startIndex,
@@ -4269,7 +4270,7 @@ private fun SharedPdfAnnotation.toRenderablePdfAnnotations(
         .filter { it.right > it.left && it.bottom > it.top }
         .mergePdfBoundsByLine()
 
-    return dynamicBounds.ifEmpty { listOfNotNull(bounds).ifEmpty { emptyList() } }
+    return dynamicBounds.ifEmpty { boundsList.ifEmpty { listOfNotNull(bounds) } }
         .mapIndexed { index, dynamicBounds ->
             copy(
                 id = "${id}_line_$index",

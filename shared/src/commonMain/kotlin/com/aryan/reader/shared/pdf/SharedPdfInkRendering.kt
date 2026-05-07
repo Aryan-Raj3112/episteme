@@ -178,7 +178,7 @@ object SharedPdfInkRenderer {
     ): Boolean {
         return when (annotation.kind) {
             PdfAnnotationKind.HIGHLIGHT,
-            PdfAnnotationKind.TEXT -> annotation.bounds?.contains(hitPoint.x, hitPoint.y) == true
+            PdfAnnotationKind.TEXT -> annotation.allBounds().any { it.contains(hitPoint.x, hitPoint.y) }
             PdfAnnotationKind.INK -> isInkAnnotationHit(
                 annotation = annotation,
                 hitPoint = hitPoint,
@@ -366,6 +366,10 @@ private val PdfInkTool.blendMode: BlendMode
 
 private fun PdfPageBounds.contains(x: Float, y: Float): Boolean {
     return x in left..right && y in top..bottom
+}
+
+private fun SharedPdfAnnotation.allBounds(): List<PdfPageBounds> {
+    return boundsList.ifEmpty { listOfNotNull(bounds) }
 }
 
 private fun List<PdfPagePoint>.toSmoothPath(widthPx: Float, heightPx: Float): Path {

@@ -95,6 +95,7 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.SharedLibraryEditor
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
@@ -2005,7 +2006,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                             val bundleFile =
                                 File(appContext.cacheDir, "sync_bundle_${book.bookId}.json")
-                            bundleFile.writeText(bundleJson.toString())
+                            bundleFile.writeText(
+                                SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+                            )
 
                             val uploaded = googleDriveRepository.uploadAnnotationFile(
                                 accessToken, book.bookId, bundleFile
@@ -3106,7 +3109,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // Determine format
                 val isBundle = try {
                     val obj = JSONObject(jsonString)
-                    obj.has("version") || obj.has("ink") || obj.has("text") || obj.has("layout")
+                    obj.has("version") ||
+                        obj.has(SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS) ||
+                        obj.has("ink") ||
+                        obj.has("text") ||
+                        obj.has("layout") ||
+                        obj.has("textBoxes") ||
+                        obj.has("highlights")
                 } catch (_: Exception) {
                     false
                 }
@@ -3126,7 +3135,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 highlightFile.parentFile?.mkdirs()
 
                 if (isBundle) {
-                    val bundle = JSONObject(jsonString)
+                    val bundle = JSONObject(
+                        SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
+                    )
 
                     fun writeSafe(key: String, file: File) {
                         if (bundle.has(key)) {

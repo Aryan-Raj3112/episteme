@@ -1342,6 +1342,30 @@ fun PdfViewerScreen(
 
     Timber.d("Derived currentPage recomposed. New value: $currentPage (Mode: $displayMode)")
 
+    suspend fun rebuildMissingHighlightBounds(
+        document: ReaderDocument,
+        highlights: List<PdfUserHighlight>
+    ): List<PdfUserHighlight> = withContext(Dispatchers.IO) {
+        highlights.map { highlight ->
+            if (highlight.bounds.isNotEmpty()) return@map highlight
+            val start = highlight.range.first
+            val end = highlight.range.second
+            if (highlight.pageIndex < 0 || end <= start) return@map highlight
+
+            runCatching {
+                document.openPage(highlight.pageIndex)?.use { page ->
+                    page.openTextPage().use { textPage ->
+                        val rects = textPage.textPageGetRectsForRanges(intArrayOf(start, end - start))
+                            ?.map { it.rect }
+                            .orEmpty()
+                        val merged = mergePdfRectsIntoLines(rects)
+                        if (merged.isEmpty()) highlight else highlight.copy(bounds = merged)
+                    }
+                } ?: highlight
+            }.getOrDefault(highlight)
+        }
+    }
+
     val onHighlightAdd = remember(pdfDocument, currentBookId) {
         { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor ->
             Timber.tag("PdfExportDebug").i("onHighlightAdd: Adding persistent highlight. Page: $pageIndex, Text: ${text.take(20)}...")
@@ -2039,6 +2063,25 @@ fun PdfViewerScreen(
             val loadedHighlights = highlightRepository.loadHighlights(currentBookId!!)
             userHighlights.clear()
             userHighlights.addAll(loadedHighlights)
+        }
+    }
+
+    var isRebuildingSyncedHighlightBounds by remember(currentBookId) { mutableStateOf(false) }
+    LaunchedEffect(pdfDocument, currentBookId, userHighlights.toList()) {
+        val document = pdfDocument ?: return@LaunchedEffect
+        if (currentBookId == null || isRebuildingSyncedHighlightBounds) return@LaunchedEffect
+        val snapshot = userHighlights.toList()
+        if (snapshot.none { it.bounds.isEmpty() && it.range.second > it.range.first }) return@LaunchedEffect
+
+        isRebuildingSyncedHighlightBounds = true
+        try {
+            val rebuilt = rebuildMissingHighlightBounds(document, snapshot)
+            if (rebuilt != snapshot) {
+                userHighlights.clear()
+                userHighlights.addAll(rebuilt)
+            }
+        } finally {
+            isRebuildingSyncedHighlightBounds = false
         }
     }
 

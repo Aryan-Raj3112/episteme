@@ -40,6 +40,7 @@ import java.io.FileOutputStream
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
@@ -311,11 +312,13 @@ class RecentFilesRepository(private val context: Context) {
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
 
+        val canonicalBundleJson = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+
         LocalSyncUtils.saveAnnotationSidecar(
             context = context,
             sourceFolderUri = folderUriString.toUri(),
             bookId = bookId,
-            jsonPayload = bundleJson.toString(),
+            jsonPayload = canonicalBundleJson,
             timestamp = finalTs
         )
     }
@@ -323,7 +326,9 @@ class RecentFilesRepository(private val context: Context) {
     suspend fun importAnnotationBundle(bookId: String, jsonString: String) = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("importAnnotationBundle: Processing bundle for $bookId")
         try {
-            val bundle = JSONObject(jsonString)
+            val bundle = JSONObject(
+                SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
+            )
 
             fun writeSafe(key: String, file: File?) {
                 if (file != null && bundle.has(key)) {

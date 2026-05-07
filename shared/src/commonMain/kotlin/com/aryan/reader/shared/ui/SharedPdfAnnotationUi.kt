@@ -637,13 +637,15 @@ fun SharedPdfAnnotationOverlay(
 
                 when (annotation.kind) {
                     PdfAnnotationKind.HIGHLIGHT -> {
-                        val bounds = annotation.bounds ?: return@forEach
-                        drawRect(
-                            color = Color(annotation.colorArgb),
-                            topLeft = bounds.topLeft(canvasSize),
-                            size = bounds.size(canvasSize),
-                            blendMode = BlendMode.Multiply
-                        )
+                        val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
+                        highlightBounds.forEach { bounds ->
+                            drawRect(
+                                color = Color(annotation.colorArgb),
+                                topLeft = bounds.topLeft(canvasSize),
+                                size = bounds.size(canvasSize),
+                                blendMode = BlendMode.Multiply
+                            )
+                        }
                     }
                     PdfAnnotationKind.INK -> {
                         SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let(::drawInkRenderData)
@@ -662,7 +664,7 @@ fun SharedPdfAnnotationOverlay(
                 }
 
                 if (isSelected && annotation.kind != PdfAnnotationKind.INK) {
-                    val bounds = annotation.bounds ?: return@forEach
+                    val bounds = annotation.bounds ?: annotation.boundsList.firstOrNull() ?: return@forEach
                     drawRect(
                         color = Color(0xFF64B5F6),
                         topLeft = bounds.topLeft(canvasSize),
