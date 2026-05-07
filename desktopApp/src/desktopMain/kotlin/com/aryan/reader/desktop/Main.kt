@@ -161,6 +161,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
@@ -1751,11 +1752,24 @@ private fun PdfReaderScreen(
             scope = pdfScope,
             onDocumentChange = { richDocument ->
                 if (isRichTextLoaded) {
+                    SharedPdfRichTextLog.d(
+                        "desktop.documentChange save path=\"${richTextFile.absolutePath.logPreview(160)}\" " +
+                            "textLen=${richDocument.text.length} spans=${richDocument.spans.size}"
+                    )
                     withContext(Dispatchers.IO) {
                         richTextFile.parentFile?.mkdirs()
                         richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
                     }
+                    SharedPdfRichTextLog.d(
+                        "desktop.documentChange saved path=\"${richTextFile.absolutePath.logPreview(160)}\" " +
+                            "lastModified=${richTextFile.lastModified()}"
+                    )
                     onLocalSidecarsChanged()
+                } else {
+                    SharedPdfRichTextLog.d(
+                        "desktop.documentChange ignoredBeforeLoad path=\"${richTextFile.absolutePath.logPreview(160)}\" " +
+                            "textLen=${richDocument.text.length} spans=${richDocument.spans.size}"
+                    )
                 }
             }
         )
@@ -1856,6 +1870,10 @@ private fun PdfReaderScreen(
 
     fun selectTextAnnotation(annotation: SharedPdfAnnotation) {
         if (annotation.kind != PdfAnnotationKind.TEXT) return
+        SharedPdfRichTextLog.d(
+            "desktop.textBox.select id=${annotation.id} page=${annotation.pageIndex} " +
+                "richMode=$isRichTextMode textLen=${annotation.text.length}"
+        )
         if (isRichTextMode) {
             isRichTextMode = false
             pdfScope.launch { richTextController.saveImmediate() }
@@ -1867,6 +1885,10 @@ private fun PdfReaderScreen(
     }
 
     fun activateRichTextMode() {
+        SharedPdfRichTextLog.d(
+            "desktop.mode.activate page=${pdfState.pageIndex} " +
+                "globalLen=${richTextController.globalTextFieldValue.text.length} layouts=${richTextController.pageLayouts.size}"
+        )
         commitActiveTextDraft()
         clearPdfInteractionState()
         dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
@@ -1878,6 +1900,10 @@ private fun PdfReaderScreen(
 
     fun deactivateRichTextMode(save: Boolean = true) {
         if (!isRichTextMode) return
+        SharedPdfRichTextLog.d(
+            "desktop.mode.deactivate page=${pdfState.pageIndex} save=$save " +
+                "activePage=${richTextController.activePageIndex} globalLen=${richTextController.globalTextFieldValue.text.length}"
+        )
         isRichTextMode = false
         if (save) {
             pdfScope.launch { richTextController.saveImmediate() }
@@ -1887,6 +1913,9 @@ private fun PdfReaderScreen(
     }
 
     fun selectPdfAnnotationTool(tool: PdfInkTool) {
+        SharedPdfRichTextLog.d(
+            "desktop.tool.select tool=$tool richMode=$isRichTextMode page=${pdfState.pageIndex}"
+        )
         deactivateRichTextMode()
         if (tool != PdfInkTool.TEXT) {
             commitActiveTextDraft()
@@ -1974,15 +2003,26 @@ private fun PdfReaderScreen(
 
     LaunchedEffect(document.path) {
         isRichTextLoaded = false
+        SharedPdfRichTextLog.d(
+            "desktop.loadRichText start path=\"${richTextFile.absolutePath.logPreview(160)}\" exists=${richTextFile.exists()}"
+        )
         val loadedRichText = withContext(Dispatchers.IO) {
             if (richTextFile.exists()) {
-                SharedPdfRichTextSerializer.decode(richTextFile.readText())
+                val raw = richTextFile.readText()
+                SharedPdfRichTextLog.d(
+                    "desktop.loadRichText read path=\"${richTextFile.absolutePath.logPreview(160)}\" rawLen=${raw.length}"
+                )
+                SharedPdfRichTextSerializer.decode(raw)
             } else {
                 SharedPdfRichDocument()
             }
         }
+        SharedPdfRichTextLog.d(
+            "desktop.loadRichText decoded textLen=${loadedRichText.text.length} spans=${loadedRichText.spans.size}"
+        )
         richTextController.replaceDocument(loadedRichText)
         isRichTextLoaded = true
+        SharedPdfRichTextLog.d("desktop.loadRichText ready")
     }
 
     LaunchedEffect(document.path) {
@@ -2043,12 +2083,23 @@ private fun PdfReaderScreen(
         }
     }
 
-    fun goToPage(target: Int, scrollVertical: Boolean = true, recordJump: Boolean = false) {
+    fun goToPage(
+        target: Int,
+        scrollVertical: Boolean = true,
+        recordJump: Boolean = false,
+        saveRichTextBeforePageChange: Boolean = true
+    ) {
         val clampedTarget = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
         val currentPage = pdfState.pageIndex
+        SharedPdfRichTextLog.d(
+            "desktop.goToPage target=$target clamped=$clampedTarget current=$currentPage " +
+                "richMode=$isRichTextMode scrollVertical=$scrollVertical recordJump=$recordJump " +
+                "saveRich=$saveRichTextBeforePageChange activePage=${richTextController.activePageIndex}"
+        )
         if (clampedTarget != currentPage) {
             commitActiveTextDraft()
-            if (isRichTextMode) {
+            if (isRichTextMode && saveRichTextBeforePageChange) {
+                SharedPdfRichTextLog.d("desktop.goToPage savingRichTextBeforePageChange from=$currentPage to=$clampedTarget")
                 pdfScope.launch { richTextController.saveImmediate() }
             }
         }
@@ -2843,7 +2894,13 @@ private fun PdfReaderScreen(
                                 richTextController = richTextController,
                                 isRichTextMode = isRichTextMode,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
-                                onSelectPage = { goToPage(it, scrollVertical = false) },
+                                onSelectPage = {
+                                    goToPage(
+                                        target = it,
+                                        scrollVertical = false,
+                                        saveRichTextBeforePageChange = !isRichTextMode
+                                    )
+                                },
                                 onCopySelection = ::copySelection,
                                 onHighlightSelection = ::highlightSelection,
                                 onSearchSelection = ::searchSelection,

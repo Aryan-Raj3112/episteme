@@ -148,4 +148,90 @@ class SharedPdfRichTextTest {
             SharedPdfRichTextMapper.fromAnnotatedString(AnnotatedString(""), pageHeightPx = 1_000f)
         )
     }
+
+    @Test
+    fun `trailing page break creates editable blank page layout`() {
+        val globalText = AnnotatedString("$SHARED_PDF_PAGE_BREAK_CHAR")
+        val layouts = listOf(
+            SharedPdfRichPageLayout(
+                pageIndex = 0,
+                visibleText = globalText,
+                globalStartIndex = 0,
+                globalEndIndex = 1,
+                pageHeightPx = 1_000f
+            )
+        )
+
+        val withBlankPage = layouts.withTrailingBlankRichTextPageIfNeeded(
+            globalText = globalText,
+            pageHeightPx = 1_000f
+        )
+
+        assertEquals(2, withBlankPage.size)
+        assertEquals(1, withBlankPage.last().pageIndex)
+        assertEquals("", withBlankPage.last().visibleText.text)
+        assertEquals(1, withBlankPage.last().globalStartIndex)
+        assertEquals(1, withBlankPage.last().globalEndIndex)
+    }
+
+    @Test
+    fun `trailing blank page helper is idempotent`() {
+        val globalText = AnnotatedString("A$SHARED_PDF_PAGE_BREAK_CHAR")
+        val layouts = listOf(
+            SharedPdfRichPageLayout(
+                pageIndex = 0,
+                visibleText = AnnotatedString("A$SHARED_PDF_PAGE_BREAK_CHAR"),
+                globalStartIndex = 0,
+                globalEndIndex = 2,
+                pageHeightPx = 1_000f
+            ),
+            SharedPdfRichPageLayout(
+                pageIndex = 1,
+                visibleText = AnnotatedString(""),
+                globalStartIndex = 2,
+                globalEndIndex = 2,
+                pageHeightPx = 1_000f
+            )
+        )
+
+        val withBlankPage = layouts.withTrailingBlankRichTextPageIfNeeded(
+            globalText = globalText,
+            pageHeightPx = 1_000f
+        )
+
+        assertEquals(layouts, withBlankPage)
+    }
+
+    @Test
+    fun `consecutive explicit page breaks keep editable blank pages`() {
+        val globalText = AnnotatedString("A$SHARED_PDF_PAGE_BREAK_CHAR$SHARED_PDF_PAGE_BREAK_CHAR")
+        val layouts = listOf(
+            SharedPdfRichPageLayout(
+                pageIndex = 0,
+                visibleText = AnnotatedString("A$SHARED_PDF_PAGE_BREAK_CHAR"),
+                globalStartIndex = 0,
+                globalEndIndex = 2,
+                pageHeightPx = 1_000f
+            ),
+            SharedPdfRichPageLayout(
+                pageIndex = 1,
+                visibleText = AnnotatedString("$SHARED_PDF_PAGE_BREAK_CHAR"),
+                globalStartIndex = 2,
+                globalEndIndex = 3,
+                pageHeightPx = 1_000f
+            )
+        )
+
+        val withBlankPage = layouts.withTrailingBlankRichTextPageIfNeeded(
+            globalText = globalText,
+            pageHeightPx = 1_000f
+        )
+
+        assertEquals(3, withBlankPage.size)
+        assertEquals("A$SHARED_PDF_PAGE_BREAK_CHAR", withBlankPage[0].visibleText.text)
+        assertEquals("$SHARED_PDF_PAGE_BREAK_CHAR", withBlankPage[1].visibleText.text)
+        assertEquals("", withBlankPage[2].visibleText.text)
+        assertEquals(3, withBlankPage[2].globalStartIndex)
+        assertEquals(3, withBlankPage[2].globalEndIndex)
+    }
 }

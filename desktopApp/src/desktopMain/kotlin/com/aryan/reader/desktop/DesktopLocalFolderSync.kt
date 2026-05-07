@@ -15,6 +15,7 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.toSharedFolderBookMetadata
 import kotlinx.serialization.encodeToString
@@ -156,13 +157,27 @@ object DesktopLocalFolderSync {
             }
             if (richTextFile.isFile) {
                 val richTextJson = richTextFile.readText().trim()
-                desktopFolderSyncJson.parseElementOrNull(richTextJson)?.let { richTextElement ->
+                val richTextElement = desktopFolderSyncJson.parseElementOrNull(richTextJson)
+                if (richTextElement == null) {
+                    SharedPdfRichTextLog.d(
+                        "desktop.sync.exportRichTextParseFailed book=${book.id} " +
+                            "file=\"${richTextFile.absolutePath.richSyncPreview()}\" rawLen=${richTextJson.length}"
+                    )
+                } else {
                     val richTextDocument = SharedPdfRichTextSerializer.decodeElement(richTextElement)
+                    SharedPdfRichTextLog.d(
+                        "desktop.sync.exportRichText book=${book.id} " +
+                            "file=\"${richTextFile.absolutePath.richSyncPreview()}\" rawLen=${richTextJson.length} " +
+                            "textLen=${richTextDocument.text.length} spans=${richTextDocument.spans.size}"
+                    )
                     put("text", SharedPdfRichTextSerializer.encodeElement(richTextDocument))
                 }
             }
         }
-        if (data.isEmpty()) return
+        if (data.isEmpty()) {
+            SharedPdfRichTextLog.d("desktop.sync.exportSkipNoSidecarData book=${book.id} pdfPath=\"${path.richSyncPreview()}\"")
+            return
+        }
         val timestamp = maxOf(
             annotationFile.lastModifiedIfFile(),
             bookmarkFile.lastModifiedIfFile(),
@@ -173,6 +188,12 @@ object DesktopLocalFolderSync {
             JsonElement.serializer(),
             JsonObject(data)
         )
+        if (data.containsKey("text")) {
+            SharedPdfRichTextLog.d(
+                "desktop.sync.exportSidecar book=${book.id} timestamp=$timestamp " +
+                    "keys=${data.keys.sorted()} root=\"${root.absolutePath.richSyncPreview()}\""
+            )
+        }
         saveAnnotationSidecar(
             root = root,
             bookId = book.id,
@@ -329,7 +350,16 @@ object DesktopLocalFolderSync {
                 bookmarkFile.lastModifiedIfFile(),
                 richTextFile.lastModifiedIfFile()
             )
-            if (sidecar.timestamp <= localTimestamp + 1000L) return@forEach
+            if (sidecar.timestamp <= localTimestamp + 1000L) {
+                if (sidecar.data.containsKey("text") || richTextFile.isFile) {
+                    SharedPdfRichTextLog.d(
+                        "desktop.sync.importSkipOlder book=${book.id} sidecarTs=${sidecar.timestamp} " +
+                            "localTs=$localTimestamp hasSidecarText=${sidecar.data.containsKey("text")} " +
+                            "richFile=\"${richTextFile.absolutePath.richSyncPreview()}\""
+                    )
+                }
+                return@forEach
+            }
             if (sidecar.data.hasPdfAnnotationPayload()) {
                 val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(sidecar.data)
                 annotationFile.parentFile?.mkdirs()
@@ -342,12 +372,14 @@ object DesktopLocalFolderSync {
                 bookmarkFile.setLastModified(sidecar.timestamp)
             }
             sidecar.data["text"]?.let { richText ->
-                richTextFile.parentFile?.mkdirs()
-                richTextFile.writeText(
-                    SharedPdfRichTextSerializer.encode(
-                        SharedPdfRichTextSerializer.decodeElement(richText)
-                    )
+                val richDocument = SharedPdfRichTextSerializer.decodeElement(richText)
+                SharedPdfRichTextLog.d(
+                    "desktop.sync.importRichText book=${book.id} timestamp=${sidecar.timestamp} " +
+                        "textLen=${richDocument.text.length} spans=${richDocument.spans.size} " +
+                        "file=\"${richTextFile.absolutePath.richSyncPreview()}\""
                 )
+                richTextFile.parentFile?.mkdirs()
+                richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
                 richTextFile.setLastModified(sidecar.timestamp)
             }
         }
@@ -360,10 +392,18 @@ object DesktopLocalFolderSync {
         timestamp: Long
     ) {
         val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR).apply { mkdirs() }
-        val existing = resolveAnnotationConflicts(syncDir, bookId, cleanup = true)
-        if (existing != null && existing.timestamp >= timestamp) return
-
         val data = desktopFolderSyncJson.parseElementOrNull(jsonPayload)?.jsonObjectOrNull() ?: return
+        val existing = resolveAnnotationConflicts(syncDir, bookId, cleanup = true)
+        if (existing != null && existing.timestamp >= timestamp) {
+            if (data.containsKey("text")) {
+                SharedPdfRichTextLog.d(
+                    "desktop.sync.saveSidecarSkipExisting book=$bookId existingTs=${existing.timestamp} " +
+                        "candidateTs=$timestamp targetRoot=\"${root.absolutePath.richSyncPreview()}\""
+                )
+            }
+            return
+        }
+
         val wrapper = JsonObject(
             mapOf(
                 "version" to JsonPrimitive(1),
@@ -376,7 +416,19 @@ object DesktopLocalFolderSync {
         runCatching {
             temp.writeText(desktopFolderSyncJson.encodeToString(JsonElement.serializer(), wrapper))
             moveReplacing(temp, target)
+            if (data.containsKey("text")) {
+                SharedPdfRichTextLog.d(
+                    "desktop.sync.saveSidecar book=$bookId timestamp=$timestamp " +
+                        "target=\"${target.absolutePath.richSyncPreview()}\""
+                )
+            }
         }.onFailure {
+            if (data.containsKey("text")) {
+                SharedPdfRichTextLog.d(
+                    "desktop.sync.saveSidecarFailed book=$bookId timestamp=$timestamp " +
+                        "target=\"${target.absolutePath.richSyncPreview()}\" error=${it.message}"
+                )
+            }
             runCatching { temp.delete() }
         }
     }
@@ -493,6 +545,13 @@ private fun File.canonicalOrAbsolute(): File {
 
 private fun File.lastModifiedIfFile(): Long {
     return if (isFile) lastModified() else 0L
+}
+
+private fun String.richSyncPreview(maxLength: Int = 160): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
 }
 
 private fun moveReplacing(source: File, target: File) {

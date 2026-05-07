@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -56,6 +57,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import timber.log.Timber
 import java.io.File
 
@@ -262,124 +264,184 @@ class TextPaginationEngine {
         dirtyGlobalIndex: Int = 0
     ): List<PageTextLayout> {
         val totalLen = globalText.length
-        if (totalLen == 0) return listOf(
-            PageTextLayout(0, AnnotatedString(""), 0, 0, pageHeightPx)
+        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            "android.paginate start textLen=$totalLen page=${pageWidthPx.richAndroidLogFloat()}x${pageHeightPx.richAndroidLogFloat()} " +
+                "margin=${marginX.richAndroidLogFloat()},${marginY.richAndroidLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
         )
-        if (pageWidthPx <= 0 || pageHeightPx <= 0) return emptyList()
-
-        val validPages = if (dirtyGlobalIndex > 0 && previousLayouts.isNotEmpty()) {
-            previousLayouts.takeWhile { it.globalEndIndex < dirtyGlobalIndex }
-        } else {
-            emptyList()
+        if (totalLen == 0) {
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate empty -> p0:0-0")
+            return listOf(
+                PageTextLayout(0, AnnotatedString(""), 0, 0, pageHeightPx)
+            )
         }
-
-        val startPageIndex = validPages.size
-        val measurementStartIndex = validPages.lastOrNull()?.globalEndIndex ?: 0
-
-        if (measurementStartIndex >= totalLen) return validPages
-
-        val textToMeasure = globalText.subSequence(measurementStartIndex, totalLen)
-        val fullString = textToMeasure.text
+        if (pageWidthPx <= 0 || pageHeightPx <= 0) {
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate aborted invalid page size")
+            return emptyList()
+        }
 
         val editorWidth = (pageWidthPx - (marginX * 2)).coerceAtLeast(10f)
         val editorHeight = (pageHeightPx - (marginY * 2)).coerceAtLeast(10f)
 
-        val measureResult = textMeasurer.measure(
-            text = textToMeasure,
-            style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
-            density = density
-        )
-
         val newPages = mutableListOf<PageTextLayout>()
-        var currentPageIndex = startPageIndex
-        var currentPageStartRel = 0
-        var currentPageAccumulatedHeight = 0f
+        var currentPageIndex = 0
+        var segmentStart = 0
+        val rawText = globalText.text
 
-        var currentLineIndex = 0
-        val totalLines = measureResult.lineCount
+        while (segmentStart < totalLen) {
+            val breakIndex = rawText.indexOf(PAGE_BREAK_CHAR, startIndex = segmentStart)
+            val hasExplicitBreak = breakIndex != -1
+            val contentEnd = if (hasExplicitBreak) breakIndex else totalLen
+            val segmentEnd = if (hasExplicitBreak) breakIndex + 1 else totalLen
 
-        Timber.tag("RichTextFlow").d("Pagination: Measuring ${fullString.length} chars from Global $measurementStartIndex. Lines: $totalLines")
-
-        while (currentLineIndex < totalLines) {
-            val lineTop = measureResult.getLineTop(currentLineIndex)
-            val lineBottom = measureResult.getLineBottom(currentLineIndex)
-            val lineHeight = lineBottom - lineTop
-
-            val lineStartRel = measureResult.getLineStart(currentLineIndex)
-            val lineEndRel = measureResult.getLineEnd(currentLineIndex)
-
-            val localStartOffset = (currentPageStartRel - lineStartRel).coerceAtLeast(0)
-
-            if (lineStartRel + localStartOffset >= lineEndRel && currentLineIndex < totalLines - 1) {
-                currentLineIndex++
-                continue
-            }
-
-            val safeEndRel = lineEndRel.coerceAtMost(fullString.length)
-            val lineContent = fullString.substring(lineStartRel, safeEndRel)
-
-            val breakIndexInLine = lineContent.indexOf(PAGE_BREAK_CHAR, localStartOffset)
-            val hasPageBreak = breakIndexInLine != -1
-
-            val isStartOfPage = (currentPageAccumulatedHeight == 0f)
-            val willOverflow = !isStartOfPage && (currentPageAccumulatedHeight + lineHeight > editorHeight)
-
-            if (hasPageBreak) {
-                val splitRelIndex = lineStartRel + breakIndexInLine + 1
-                val globalStart = measurementStartIndex + currentPageStartRel
-                val globalEnd = measurementStartIndex + splitRelIndex
-
-                Timber.tag("RichTextMigration").v("PaginationEngine: Found PAGE_BREAK_CHAR at relative ${breakIndexInLine}. Breaking Page $currentPageIndex at Global Index $globalEnd")
-
-                if (globalEnd > globalStart) {
-                    val visibleText = globalText.subSequence(globalStart, globalEnd)
-                    newPages.add(PageTextLayout(currentPageIndex, visibleText, globalStart, globalEnd, pageHeightPx))
-                    currentPageIndex++
-                }
-
-                currentPageStartRel = splitRelIndex
-                currentPageAccumulatedHeight = 0f
-                continue
-            }
-            else if (willOverflow) {
-                val globalStart = measurementStartIndex + currentPageStartRel
-                val globalEnd = measurementStartIndex + lineStartRel
-
-                if (globalEnd > globalStart) {
-                    val visibleText = globalText.subSequence(globalStart, globalEnd)
-                    newPages.add(PageTextLayout(currentPageIndex, visibleText, globalStart, globalEnd, pageHeightPx))
-                    Timber.tag("RichTextFlow").v("Page $currentPageIndex Created (Overflow): $globalStart -> $globalEnd")
-                    currentPageIndex++
-                }
-
-                currentPageStartRel = lineStartRel
-                currentPageAccumulatedHeight = 0f
-
-                continue
-            }
-
-            currentPageAccumulatedHeight += lineHeight
-            currentLineIndex++
+            currentPageIndex = newPages.appendMeasuredAndroidRichTextSegment(
+                globalText = globalText,
+                segmentStart = segmentStart,
+                contentEnd = contentEnd,
+                explicitBreakEnd = if (hasExplicitBreak) segmentEnd else null,
+                pageIndex = currentPageIndex,
+                pageHeightPx = pageHeightPx,
+                editorWidth = editorWidth,
+                editorHeight = editorHeight,
+                textMeasurer = textMeasurer,
+                density = density
+            )
+            segmentStart = segmentEnd
         }
 
-        if (currentPageStartRel < fullString.length) {
-            val globalStart = measurementStartIndex + currentPageStartRel
-            val globalEnd = measurementStartIndex + fullString.length
-            val visibleText = globalText.subSequence(globalStart, globalEnd)
-
-            newPages.add(PageTextLayout(currentPageIndex, visibleText, globalStart, globalEnd, pageHeightPx))
-        }
-
-        val resultLayouts = validPages + newPages
+        val resultLayouts = newPages.withTrailingAndroidBlankRichTextPageIfNeeded(
+            globalText = globalText,
+            pageHeightPx = pageHeightPx
+        )
 
         val mapLog = resultLayouts.joinToString("\n") {
             "  Page ${it.pageIndex}: Global[${it.globalStartIndex}..${it.globalEndIndex}]"
         }
         Timber.tag("RichTextMigration").i("Pagination Map Generated:\n$mapLog")
+        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate done -> ${resultLayouts.richAndroidLayoutSummary()}")
 
         return resultLayouts
     }
+}
+
+private fun MutableList<PageTextLayout>.appendMeasuredAndroidRichTextSegment(
+    globalText: AnnotatedString,
+    segmentStart: Int,
+    contentEnd: Int,
+    explicitBreakEnd: Int?,
+    pageIndex: Int,
+    pageHeightPx: Float,
+    editorWidth: Float,
+    editorHeight: Float,
+    textMeasurer: TextMeasurer,
+    density: Density
+): Int {
+    var nextPageIndex = pageIndex
+    if (segmentStart >= contentEnd) {
+        val breakEnd = explicitBreakEnd ?: return nextPageIndex
+        add(
+            PageTextLayout(
+                pageIndex = nextPageIndex,
+                visibleText = globalText.subSequence(segmentStart, breakEnd),
+                globalStartIndex = segmentStart,
+                globalEndIndex = breakEnd,
+                pageHeightPx = pageHeightPx
+            )
+        )
+        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            "android.paginate pageBreakOnly page=$nextPageIndex global=$segmentStart..$breakEnd"
+        )
+        return nextPageIndex + 1
+    }
+
+    val contentLength = contentEnd - segmentStart
+    var relativeStart = 0
+    while (relativeStart < contentLength) {
+        val globalStart = segmentStart + relativeStart
+        val remainingText = globalText.subSequence(globalStart, contentEnd)
+        val measureResult = textMeasurer.measure(
+            text = remainingText,
+            style = TextStyle(fontSize = 16.sp, color = Color.Black),
+            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
+            density = density
+        )
+        val fitsOnPage = measureResult.size.height.toFloat() <= editorHeight || measureResult.lineCount <= 1
+        var overflowLineIndex: Int? = null
+        val relativeEnd = if (fitsOnPage) {
+            contentLength
+        } else {
+            val lineIndex = measureResult.richAndroidLastFittingLineIndex(editorHeight)
+            overflowLineIndex = lineIndex
+            val localEnd = measureResult.getLineEnd(lineIndex)
+                .coerceIn(0, remainingText.length)
+                .coerceAtLeast(1)
+            (relativeStart + localEnd)
+                .coerceAtLeast(relativeStart + 1)
+                .coerceAtMost(contentLength)
+        }
+        val isLastContentPage = relativeEnd >= contentLength
+        val globalEnd = if (isLastContentPage && explicitBreakEnd != null) {
+            explicitBreakEnd
+        } else {
+            segmentStart + relativeEnd
+        }
+
+        add(
+            PageTextLayout(
+                pageIndex = nextPageIndex,
+                visibleText = globalText.subSequence(globalStart, globalEnd),
+                globalStartIndex = globalStart,
+                globalEndIndex = globalEnd,
+                pageHeightPx = pageHeightPx
+            )
+        )
+        if (isLastContentPage && explicitBreakEnd != null) {
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                "android.paginate pageBreak page=$nextPageIndex global=$globalStart..$globalEnd"
+            )
+        } else if (!fitsOnPage) {
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                "android.paginate overflow page=$nextPageIndex global=$globalStart..$globalEnd line=$overflowLineIndex"
+            )
+        }
+        nextPageIndex++
+        relativeStart = relativeEnd
+    }
+
+    return nextPageIndex
+}
+
+private fun TextLayoutResult.richAndroidLastFittingLineIndex(editorHeight: Float): Int {
+    var lastFitting = 0
+    for (lineIndex in 0 until lineCount) {
+        if (lineIndex == 0 || getLineBottom(lineIndex) <= editorHeight) {
+            lastFitting = lineIndex
+        } else {
+            break
+        }
+    }
+    return lastFitting.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+}
+
+private fun List<PageTextLayout>.withTrailingAndroidBlankRichTextPageIfNeeded(
+    globalText: AnnotatedString,
+    pageHeightPx: Float
+): List<PageTextLayout> {
+    if (globalText.text.lastOrNull() != PAGE_BREAK_CHAR) return this
+    val lastLayout = lastOrNull()
+    val trailingStart = globalText.length
+    if (lastLayout != null &&
+        lastLayout.globalStartIndex == trailingStart &&
+        lastLayout.globalEndIndex == trailingStart
+    ) {
+        return this
+    }
+    return this + PageTextLayout(
+        pageIndex = (lastLayout?.pageIndex ?: -1) + 1,
+        visibleText = AnnotatedString(""),
+        globalStartIndex = trailingStart,
+        globalEndIndex = trailingStart,
+        pageHeightPx = pageHeightPx
+    )
 }
 
 class PdfRichTextRepository(private val context: Context) {
@@ -396,8 +458,12 @@ class PdfRichTextRepository(private val context: Context) {
     suspend fun load(bookId: String) {
         withContext(Dispatchers.IO) {
             val file = getFile(bookId)
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                "android.repository.load start book=$bookId exists=${file.exists()} path=${file.absolutePath}"
+            )
             if (!file.exists()) {
                 _document.value = GlobalRichDocument("", emptyList())
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.repository.load missing -> empty book=$bookId")
                 return@withContext
             }
             try {
@@ -425,7 +491,11 @@ class PdfRichTextRepository(private val context: Context) {
                     )
                 }
                 _document.value = GlobalRichDocument(text, spans)
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    "android.repository.load decoded book=$bookId rawLen=${jsonString.length} textLen=${text.length} spans=${spans.size}"
+                )
             } catch (e: Exception) {
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).e(e, "android.repository.load failed book=$bookId")
                 Timber.e(e, "Failed to load rich text doc")
                 _document.value = GlobalRichDocument("", emptyList())
             }
@@ -436,6 +506,9 @@ class PdfRichTextRepository(private val context: Context) {
         _document.value = document
         withContext(Dispatchers.IO) {
             try {
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    "android.repository.save start book=$bookId textLen=${document.text.length} spans=${document.spans.size}"
+                )
                 val obj = JSONObject().apply {
                     put("text", document.text)
                     val spansArray = JSONArray()
@@ -456,11 +529,32 @@ class PdfRichTextRepository(private val context: Context) {
                     }
                     put("spans", spansArray)
                 }
-                getFile(bookId).writeText(obj.toString())
+                val file = getFile(bookId)
+                file.writeText(obj.toString())
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    "android.repository.save done book=$bookId bytes=${file.length()} path=${file.absolutePath}"
+                )
             } catch (e: Exception) {
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).e(e, "android.repository.save failed book=$bookId")
                 Timber.e(e, "Failed to save rich text doc")
             }
         }
+    }
+}
+
+private fun Float.richAndroidLogFloat(): String {
+    return if (isFinite()) {
+        val rounded = kotlin.math.round(this * 10f) / 10f
+        rounded.toString()
+    } else {
+        toString()
+    }
+}
+
+private fun List<PageTextLayout>.richAndroidLayoutSummary(): String {
+    if (isEmpty()) return "[]"
+    return joinToString(prefix = "[", postfix = "]", limit = 8, truncated = "...") { layout ->
+        "p${layout.pageIndex}:${layout.globalStartIndex}-${layout.globalEndIndex}/len${layout.visibleText.length}"
     }
 }
 

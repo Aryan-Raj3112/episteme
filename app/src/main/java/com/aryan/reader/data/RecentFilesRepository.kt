@@ -40,6 +40,7 @@ import java.io.FileOutputStream
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
+import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import org.json.JSONObject
 import org.json.JSONArray
@@ -274,6 +275,10 @@ class RecentFilesRepository(private val context: Context) {
         val hasHighlights = highlightFile.exists()
 
         Timber.tag("FolderAnnotationSync").d("File checks -> hasInk: $hasInk, hasRichText: $hasRichText, hasLayout: $hasLayout, hasTextBoxes: $hasTextBoxes, hasHighlights: $hasHighlights")
+        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            "android.folder.export candidates book=$bookId hasRichText=$hasRichText " +
+                "richBytes=${if (hasRichText) richTextFile.length() else 0L} folder=$folderUriString"
+        )
 
         if (!hasInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
             Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
@@ -285,12 +290,21 @@ class RecentFilesRepository(private val context: Context) {
         fun putJsonSafe(key: String, file: File) {
             try {
                 val content = file.readText().trim()
+                if (key == "text") {
+                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                        "android.folder.export.readRichText book=$bookId rawLen=${content.length} file=${file.absolutePath}"
+                    )
+                }
                 if (content.startsWith("[")) {
                     bundleJson.put(key, JSONArray(content))
                 } else if (content.startsWith("{")) {
                     bundleJson.put(key, JSONObject(content))
                 }
             } catch (e: Exception) {
+                if (key == "text") {
+                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                        .e(e, "android.folder.export.richTextParseFailed book=$bookId")
+                }
                 Timber.tag("FolderAnnotationSync").e(e, "Error parsing $key file")
             }
         }
@@ -313,6 +327,11 @@ class RecentFilesRepository(private val context: Context) {
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
 
         val canonicalBundleJson = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+        if (hasRichText) {
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                "android.folder.export.saveSidecar book=$bookId timestamp=$finalTs canonicalLen=${canonicalBundleJson.length}"
+            )
+        }
 
         LocalSyncUtils.saveAnnotationSidecar(
             context = context,
@@ -329,12 +348,21 @@ class RecentFilesRepository(private val context: Context) {
             val bundle = JSONObject(
                 SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
             )
+            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                "android.folder.import.bundle book=$bookId rawLen=${jsonString.length} " +
+                    "hasRichText=${bundle.has("text")} keys=${bundle.keys().asSequence().toList()}"
+            )
 
             fun writeSafe(key: String, file: File?) {
                 if (file != null && bundle.has(key)) {
                     file.parentFile?.mkdirs()
                     val contentStr = bundle.get(key).toString()
                     file.writeText(contentStr)
+                    if (key == "text") {
+                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                            "android.folder.import.writeRichText book=$bookId rawLen=${contentStr.length} file=${file.absolutePath}"
+                        )
+                    }
                     Timber.tag("FolderAnnotationSync").v("   -> Updated $key file (${contentStr.length} chars)")
                 }
             }

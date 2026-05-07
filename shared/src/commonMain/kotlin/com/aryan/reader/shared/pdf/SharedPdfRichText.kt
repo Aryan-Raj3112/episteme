@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -49,6 +50,18 @@ const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
 
 private const val SHARED_PDF_ZWSP = "\u200B"
 private const val SHARED_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
+
+const val SHARED_PDF_RICH_TEXT_LOG_TAG: String = "PdfRichTextTrace"
+
+object SharedPdfRichTextLog {
+    var enabled: Boolean = true
+
+    fun d(message: String) {
+        if (enabled) {
+            println("$SHARED_PDF_RICH_TEXT_LOG_TAG $message")
+        }
+    }
+}
 
 data class SharedPdfRichSpan(
     val start: Int,
@@ -117,9 +130,14 @@ object SharedPdfRichTextSerializer {
     }
 
     fun decode(raw: String): SharedPdfRichDocument {
-        if (raw.isBlank()) return SharedPdfRichDocument()
+        if (raw.isBlank()) {
+            SharedPdfRichTextLog.d("serializer.decode blank -> empty document")
+            return SharedPdfRichDocument()
+        }
         return runCatching {
             decodeElement(json.parseToJsonElement(raw))
+        }.onFailure {
+            SharedPdfRichTextLog.d("serializer.decode failed rawLen=${raw.length} error=${it.message}")
         }.getOrDefault(SharedPdfRichDocument())
     }
 
@@ -148,6 +166,7 @@ object SharedPdfRichTextSerializer {
             }
             ?.sortedBy { it.start }
             .orEmpty()
+        SharedPdfRichTextLog.d("serializer.decodeElement textLen=${text.length} spans=${spans.size}")
         return SharedPdfRichDocument(text = text, spans = spans)
     }
 
@@ -322,8 +341,12 @@ class SharedPdfRichTextPaginationEngine {
         dirtyGlobalIndex: Int = 0
     ): List<SharedPdfRichPageLayout> {
         val totalLen = globalText.length
+        SharedPdfRichTextLog.d(
+            "paginate start textLen=$totalLen page=${pageWidthPx.richLogFloat()}x${pageHeightPx.richLogFloat()} " +
+                "margin=${marginX.richLogFloat()},${marginY.richLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
+        )
         if (totalLen == 0) {
-            return listOf(
+            val emptyLayout = listOf(
                 SharedPdfRichPageLayout(
                     pageIndex = 0,
                     visibleText = AnnotatedString(""),
@@ -332,110 +355,177 @@ class SharedPdfRichTextPaginationEngine {
                     pageHeightPx = pageHeightPx
                 )
             )
+            SharedPdfRichTextLog.d("paginate empty -> ${emptyLayout.richLayoutSummary()}")
+            return emptyLayout
         }
-        if (pageWidthPx <= 0f || pageHeightPx <= 0f) return emptyList()
-
-        val validPages = if (dirtyGlobalIndex > 0 && previousLayouts.isNotEmpty()) {
-            previousLayouts.takeWhile { it.globalEndIndex < dirtyGlobalIndex }
-        } else {
-            emptyList()
+        if (pageWidthPx <= 0f || pageHeightPx <= 0f) {
+            SharedPdfRichTextLog.d("paginate aborted invalid page size")
+            return emptyList()
         }
 
-        val startPageIndex = validPages.size
-        val measurementStartIndex = validPages.lastOrNull()?.globalEndIndex ?: 0
-        if (measurementStartIndex >= totalLen) return validPages
-
-        val textToMeasure = globalText.subSequence(measurementStartIndex, totalLen)
-        val fullString = textToMeasure.text
         val editorWidth = (pageWidthPx - (marginX * 2f)).coerceAtLeast(10f)
         val editorHeight = (pageHeightPx - (marginY * 2f)).coerceAtLeast(10f)
+
+        val newPages = mutableListOf<SharedPdfRichPageLayout>()
+        var currentPageIndex = 0
+        var segmentStart = 0
+        val rawText = globalText.text
+
+        while (segmentStart < totalLen) {
+            val breakIndex = rawText.indexOf(SHARED_PDF_PAGE_BREAK_CHAR, startIndex = segmentStart)
+            val hasExplicitBreak = breakIndex != -1
+            val contentEnd = if (hasExplicitBreak) breakIndex else totalLen
+            val segmentEnd = if (hasExplicitBreak) breakIndex + 1 else totalLen
+
+            currentPageIndex = newPages.appendMeasuredRichTextSegment(
+                globalText = globalText,
+                segmentStart = segmentStart,
+                contentEnd = contentEnd,
+                explicitBreakEnd = if (hasExplicitBreak) segmentEnd else null,
+                pageIndex = currentPageIndex,
+                pageHeightPx = pageHeightPx,
+                editorWidth = editorWidth,
+                editorHeight = editorHeight,
+                textMeasurer = textMeasurer,
+                density = density
+            )
+            segmentStart = segmentEnd
+        }
+
+        val result = newPages.withTrailingBlankRichTextPageIfNeeded(
+            globalText = globalText,
+            pageHeightPx = pageHeightPx
+        )
+        SharedPdfRichTextLog.d("paginate done -> ${result.richLayoutSummary()}")
+        return result
+    }
+}
+
+private fun MutableList<SharedPdfRichPageLayout>.appendMeasuredRichTextSegment(
+    globalText: AnnotatedString,
+    segmentStart: Int,
+    contentEnd: Int,
+    explicitBreakEnd: Int?,
+    pageIndex: Int,
+    pageHeightPx: Float,
+    editorWidth: Float,
+    editorHeight: Float,
+    textMeasurer: TextMeasurer,
+    density: Density
+): Int {
+    var nextPageIndex = pageIndex
+    if (segmentStart >= contentEnd) {
+        val breakEnd = explicitBreakEnd ?: return nextPageIndex
+        add(
+            SharedPdfRichPageLayout(
+                pageIndex = nextPageIndex,
+                visibleText = globalText.subSequence(segmentStart, breakEnd),
+                globalStartIndex = segmentStart,
+                globalEndIndex = breakEnd,
+                pageHeightPx = pageHeightPx
+            )
+        )
+        SharedPdfRichTextLog.d(
+            "paginate pageBreakOnly page=$nextPageIndex global=$segmentStart..$breakEnd"
+        )
+        return nextPageIndex + 1
+    }
+
+    val contentLength = contentEnd - segmentStart
+    var relativeStart = 0
+    while (relativeStart < contentLength) {
+        val globalStart = segmentStart + relativeStart
+        val remainingText = globalText.subSequence(globalStart, contentEnd)
         val measureResult = textMeasurer.measure(
-            text = textToMeasure,
+            text = remainingText,
             style = TextStyle(fontSize = 16.sp, color = Color.Black),
             constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
             density = density
         )
-
-        val newPages = mutableListOf<SharedPdfRichPageLayout>()
-        var currentPageIndex = startPageIndex
-        var currentPageStartRel = 0
-        var currentPageAccumulatedHeight = 0f
-        var currentLineIndex = 0
-        val totalLines = measureResult.lineCount
-
-        while (currentLineIndex < totalLines) {
-            val lineTop = measureResult.getLineTop(currentLineIndex)
-            val lineBottom = measureResult.getLineBottom(currentLineIndex)
-            val lineHeight = lineBottom - lineTop
-            val lineStartRel = measureResult.getLineStart(currentLineIndex)
-            val lineEndRel = measureResult.getLineEnd(currentLineIndex)
-            val localStartOffset = (currentPageStartRel - lineStartRel).coerceAtLeast(0)
-
-            if (lineStartRel + localStartOffset >= lineEndRel && currentLineIndex < totalLines - 1) {
-                currentLineIndex++
-                continue
-            }
-
-            val safeEndRel = lineEndRel.coerceAtMost(fullString.length)
-            val lineContent = fullString.substring(lineStartRel, safeEndRel)
-            val breakIndexInLine = lineContent.indexOf(SHARED_PDF_PAGE_BREAK_CHAR, localStartOffset)
-            val hasPageBreak = breakIndexInLine != -1
-            val isStartOfPage = currentPageAccumulatedHeight == 0f
-            val willOverflow = !isStartOfPage && currentPageAccumulatedHeight + lineHeight > editorHeight
-
-            if (hasPageBreak) {
-                val splitRelIndex = lineStartRel + breakIndexInLine + 1
-                val globalStart = measurementStartIndex + currentPageStartRel
-                val globalEnd = measurementStartIndex + splitRelIndex
-                if (globalEnd > globalStart) {
-                    newPages += SharedPdfRichPageLayout(
-                        pageIndex = currentPageIndex,
-                        visibleText = globalText.subSequence(globalStart, globalEnd),
-                        globalStartIndex = globalStart,
-                        globalEndIndex = globalEnd,
-                        pageHeightPx = pageHeightPx
-                    )
-                    currentPageIndex++
-                }
-                currentPageStartRel = splitRelIndex
-                currentPageAccumulatedHeight = 0f
-                continue
-            } else if (willOverflow) {
-                val globalStart = measurementStartIndex + currentPageStartRel
-                val globalEnd = measurementStartIndex + lineStartRel
-                if (globalEnd > globalStart) {
-                    newPages += SharedPdfRichPageLayout(
-                        pageIndex = currentPageIndex,
-                        visibleText = globalText.subSequence(globalStart, globalEnd),
-                        globalStartIndex = globalStart,
-                        globalEndIndex = globalEnd,
-                        pageHeightPx = pageHeightPx
-                    )
-                    currentPageIndex++
-                }
-                currentPageStartRel = lineStartRel
-                currentPageAccumulatedHeight = 0f
-                continue
-            }
-
-            currentPageAccumulatedHeight += lineHeight
-            currentLineIndex++
+        val fitsOnPage = measureResult.size.height.toFloat() <= editorHeight || measureResult.lineCount <= 1
+        var overflowLineIndex: Int? = null
+        val relativeEnd = if (fitsOnPage) {
+            contentLength
+        } else {
+            val lineIndex = measureResult.richLastFittingLineIndex(editorHeight)
+            overflowLineIndex = lineIndex
+            val localEnd = measureResult.getLineEnd(lineIndex)
+                .coerceIn(0, remainingText.length)
+                .coerceAtLeast(1)
+            (relativeStart + localEnd)
+                .coerceAtLeast(relativeStart + 1)
+                .coerceAtMost(contentLength)
+        }
+        val isLastContentPage = relativeEnd >= contentLength
+        val globalEnd = if (isLastContentPage && explicitBreakEnd != null) {
+            explicitBreakEnd
+        } else {
+            segmentStart + relativeEnd
         }
 
-        if (currentPageStartRel < fullString.length) {
-            val globalStart = measurementStartIndex + currentPageStartRel
-            val globalEnd = measurementStartIndex + fullString.length
-            newPages += SharedPdfRichPageLayout(
-                pageIndex = currentPageIndex,
+        add(
+            SharedPdfRichPageLayout(
+                pageIndex = nextPageIndex,
                 visibleText = globalText.subSequence(globalStart, globalEnd),
                 globalStartIndex = globalStart,
                 globalEndIndex = globalEnd,
                 pageHeightPx = pageHeightPx
             )
+        )
+        if (isLastContentPage && explicitBreakEnd != null) {
+            SharedPdfRichTextLog.d(
+                "paginate pageBreak page=$nextPageIndex global=$globalStart..$globalEnd"
+            )
+        } else if (!fitsOnPage) {
+            SharedPdfRichTextLog.d(
+                "paginate overflow page=$nextPageIndex global=$globalStart..$globalEnd line=$overflowLineIndex"
+            )
+        } else {
+            SharedPdfRichTextLog.d("paginate final page=$nextPageIndex global=$globalStart..$globalEnd")
         }
-
-        return validPages + newPages
+        nextPageIndex++
+        relativeStart = relativeEnd
     }
+
+    return nextPageIndex
+}
+
+private fun TextLayoutResult.richLastFittingLineIndex(editorHeight: Float): Int {
+    var lastFitting = 0
+    for (lineIndex in 0 until lineCount) {
+        if (lineIndex == 0 || getLineBottom(lineIndex) <= editorHeight) {
+            lastFitting = lineIndex
+        } else {
+            break
+        }
+    }
+    return lastFitting.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+}
+
+internal fun List<SharedPdfRichPageLayout>.withTrailingBlankRichTextPageIfNeeded(
+    globalText: AnnotatedString,
+    pageHeightPx: Float
+): List<SharedPdfRichPageLayout> {
+    if (globalText.text.lastOrNull() != SHARED_PDF_PAGE_BREAK_CHAR) return this
+    val lastLayout = lastOrNull()
+    val trailingStart = globalText.length
+    if (lastLayout != null &&
+        lastLayout.globalStartIndex == trailingStart &&
+        lastLayout.globalEndIndex == trailingStart
+    ) {
+        SharedPdfRichTextLog.d("trailingBlank already present page=${lastLayout.pageIndex} index=$trailingStart")
+        return this
+    }
+    SharedPdfRichTextLog.d(
+        "trailingBlank added page=${(lastLayout?.pageIndex ?: -1) + 1} global=$trailingStart"
+    )
+    return this + SharedPdfRichPageLayout(
+        pageIndex = (lastLayout?.pageIndex ?: -1) + 1,
+        visibleText = AnnotatedString(""),
+        globalStartIndex = trailingStart,
+        globalEndIndex = trailingStart,
+        pageHeightPx = pageHeightPx
+    )
 }
 
 @Stable
@@ -490,11 +580,17 @@ class SharedPdfRichTextController(
     private val engine = SharedPdfRichTextPaginationEngine()
     private var saveJob: Job? = null
     private var syncJob: Job? = null
+    private var tapJob: Job? = null
     private var isSaving = false
 
     fun replaceDocument(document: SharedPdfRichDocument) {
+        SharedPdfRichTextLog.d(
+            "controller.replaceDocument textLen=${document.text.length} spans=${document.spans.size} " +
+                "oldLayouts=${pageLayouts.size} activePage=$activePageIndex"
+        )
         saveJob?.cancel()
         syncJob?.cancel()
+        tapJob?.cancel()
         activePageIndex = -1
         cursorPageIndex = -1
         cursorRectInPage = null
@@ -508,6 +604,10 @@ class SharedPdfRichTextController(
 
     fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) {
         if (lastPageWidth != width || lastPageHeight != height || lastDensity != density || lastTextMeasurer != measurer) {
+            SharedPdfRichTextLog.d(
+                "controller.layoutConfig width=${width.richLogFloat()} height=${height.richLogFloat()} " +
+                    "density=${density.density.richLogFloat()} old=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()}"
+            )
             lastPageWidth = width
             lastPageHeight = height
             lastDensity = density
@@ -517,6 +617,10 @@ class SharedPdfRichTextController(
     }
 
     fun clearSelection() {
+        SharedPdfRichTextLog.d(
+            "controller.clearSelection activePage=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
+                "localLen=${localTextFieldValue.text.length}"
+        )
         isCursorVisible = false
         val pageToSync = activePageIndex
         if (pageToSync != -1) {
@@ -535,9 +639,15 @@ class SharedPdfRichTextController(
     }
 
     fun onValueChanged(newValue: TextFieldValue) {
-        if (isSaving) return
+        if (isSaving) {
+            SharedPdfRichTextLog.d("controller.onValueChanged ignored because saveImmediate is running")
+            return
+        }
 
         if (activePageIndex != -1 && !newValue.text.startsWith(SHARED_PDF_ZWSP)) {
+            SharedPdfRichTextLog.d(
+                "controller.onValueChanged missing ZWSP activePage=$activePageIndex selection=${newValue.selection}"
+            )
             val handled = handleBackspaceAtStart()
             if (!handled) {
                 localTextFieldValue = localTextFieldValue.copy(selection = TextRange(1))
@@ -550,6 +660,11 @@ class SharedPdfRichTextController(
         val oldText = oldValue.text
 
         if (newText == oldText) {
+            if (oldValue.selection != newValue.selection) {
+                SharedPdfRichTextLog.d(
+                    "controller.selectionOnly activePage=$activePageIndex oldSel=${oldValue.selection} newSel=${newValue.selection}"
+                )
+            }
             if (activePageIndex != -1) {
                 if (
                     localTextFieldValue.selection != newValue.selection ||
@@ -576,6 +691,11 @@ class SharedPdfRichTextController(
         val cursor = newValue.selection.end
         val changeStart = if (diff > 0) cursor - diff else cursor
         val changeEndOld = if (diff > 0) changeStart else changeStart - diff
+        SharedPdfRichTextLog.d(
+            "controller.textChanged activePage=$activePageIndex oldLen=${oldText.length} newLen=${newText.length} " +
+                "diff=$diff cursor=$cursor change=$changeStart..$changeEndOld style=${currentStyle.richStyleSummary()} " +
+                "preview=\"${newText.richPreview()}\""
+        )
         val mutableSpans = oldAnnotated.spanStyles.mapNotNull {
             it.shiftedByTextChange(
                 diff = diff,
@@ -622,6 +742,7 @@ class SharedPdfRichTextController(
             isCursorVisible = true
             updateLocalCursor()
             syncJob?.cancel()
+            SharedPdfRichTextLog.d("controller.textChanged schedule local sync page=$activePageIndex")
             syncJob = scope.launch {
                 delay(300)
                 performSync(activePageIndex, checkCursorMove = true)
@@ -630,10 +751,15 @@ class SharedPdfRichTextController(
             globalTextFieldValue = finalValue
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = 0)
+            SharedPdfRichTextLog.d("controller.textChanged updated global directly")
         }
     }
 
     fun updateCurrentStyle(style: SpanStyle, fontPath: String? = currentFontPath, fontName: String? = currentFontName) {
+        SharedPdfRichTextLog.d(
+            "controller.updateStyle activePage=$activePageIndex localSel=${localTextFieldValue.selection} " +
+                "globalSel=${globalTextFieldValue.selection} fontPath=$fontPath fontName=$fontName style=${style.richStyleSummary()}"
+        )
         currentStyle = style
         currentFontPath = fontPath
         currentFontName = fontName
@@ -668,29 +794,66 @@ class SharedPdfRichTextController(
         requestFocus()
     }
 
+    fun requestEditingFocus() {
+        SharedPdfRichTextLog.d(
+            "controller.requestEditingFocus activePage=$activePageIndex cursorVisible=$isCursorVisible " +
+                "localSel=${localTextFieldValue.selection}"
+        )
+        requestFocus()
+    }
+
     fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
-        if (activePageIndex != -1 && activePageIndex != pageIndex) {
-            scope.launch { performSync(activePageIndex) }
+        tapJob?.cancel()
+        tapJob = scope.launch {
+            handleTapOnPageAfterSync(pageIndex, localTapOffset)
+        }
+    }
+
+    private suspend fun handleTapOnPageAfterSync(pageIndex: Int, localTapOffset: Offset) {
+        SharedPdfRichTextLog.d(
+            "controller.tap start page=$pageIndex offset=${localTapOffset.richOffsetSummary()} activePage=$activePageIndex " +
+                "layouts=${pageLayouts.richLayoutSummary()} globalLen=${globalTextFieldValue.text.length}"
+        )
+        if (activePageIndex != -1) {
+            val previousActivePage = activePageIndex
+            SharedPdfRichTextLog.d("controller.tap syncing active page=$previousActivePage before placing cursor on $pageIndex")
+            performSync(previousActivePage)
         }
 
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
+        val measurer = lastTextMeasurer ?: run {
+            SharedPdfRichTextLog.d("controller.tap abort no TextMeasurer")
+            return
+        }
+        val density = lastDensity ?: run {
+            SharedPdfRichTextLog.d("controller.tap abort no Density")
+            return
+        }
         var layout = pageLayouts.find { it.pageIndex == pageIndex }
-
-        if (layout == null) {
+        var bridgeAttempts = 0
+        while (layout == null && bridgeAttempts < 3) {
             val currentLastPage = pageLayouts.lastOrNull()?.pageIndex ?: 0
-            if (pageIndex > currentLastPage) {
-                val builder = AnnotatedString.Builder(globalTextFieldValue.annotatedString)
-                repeat(pageIndex - currentLastPage) {
-                    builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString())
-                }
-                globalTextFieldValue = TextFieldValue(builder.toAnnotatedString())
-                repaginateSync(0)
-                layout = pageLayouts.find { it.pageIndex == pageIndex }
+            val breaksNeeded = (pageIndex - currentLastPage).coerceAtLeast(1)
+            SharedPdfRichTextLog.d(
+                "controller.tap bridge attempt=$bridgeAttempts target=$pageIndex last=$currentLastPage breaks=$breaksNeeded"
+            )
+            val builder = AnnotatedString.Builder(globalTextFieldValue.annotatedString)
+            repeat(breaksNeeded) {
+                builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString())
             }
+            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString())
+            repaginateSync(0)
+            layout = pageLayouts.find { it.pageIndex == pageIndex }
+            SharedPdfRichTextLog.d(
+                "controller.tap bridge result layoutFound=${layout != null} layouts=${pageLayouts.richLayoutSummary()} " +
+                    "globalLen=${globalTextFieldValue.text.length}"
+            )
+            bridgeAttempts++
         }
 
-        val currentLayout = layout ?: return
+        val currentLayout = layout ?: run {
+            SharedPdfRichTextLog.d("controller.tap abort no layout for page=$pageIndex after bridge attempts")
+            return
+        }
         activePageIndex = pageIndex
         val editorWidth = editorWidth()
         val visibleText = currentLayout.visibleText
@@ -701,6 +864,10 @@ class SharedPdfRichTextController(
             visibleText.length
         }
         localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
+        SharedPdfRichTextLog.d(
+            "controller.tap localPrepared page=$pageIndex global=${currentLayout.globalStartIndex}..${currentLayout.globalEndIndex} " +
+                "visibleLen=${visibleText.length} safeLen=$safeLen initialSel=${localTextFieldValue.selection}"
+        )
 
         val measureResult = measurer.measure(
             text = currentLayout.visibleText,
@@ -715,16 +882,30 @@ class SharedPdfRichTextController(
                 localIndex = visibleText.length - 1
             }
             localTextFieldValue = localTextFieldValue.copy(selection = TextRange(localIndex + 1))
+            SharedPdfRichTextLog.d(
+                "controller.tap placedInText page=$pageIndex textHeight=${textHeight.richLogFloat()} " +
+                    "localIndex=$localIndex selection=${localTextFieldValue.selection}"
+            )
         } else {
-            injectNewlinesLocal(localTapOffset.y - textHeight)
+            val gap = localTapOffset.y - textHeight
+            SharedPdfRichTextLog.d(
+                "controller.tap belowText page=$pageIndex textHeight=${textHeight.richLogFloat()} " +
+                    "gap=${gap.richLogFloat()} offsetY=${localTapOffset.y.richLogFloat()}"
+            )
+            injectNewlinesLocal(gap)
         }
 
         isCursorVisible = true
         updateLocalCursor()
+        SharedPdfRichTextLog.d(
+            "controller.tap done page=$pageIndex cursorVisible=$isCursorVisible cursorPage=$cursorPageIndex " +
+                "cursor=${cursorRectInPage.richRectSummary()} localSel=${localTextFieldValue.selection}"
+        )
         requestFocus()
     }
 
     fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) {
+        SharedPdfRichTextLog.d("controller.insertPageBreak requested page=$insertPageIndex count=$count")
         scope.launch {
             forceSyncAndClear()
             val original = globalTextFieldValue.annotatedString
@@ -741,10 +922,14 @@ class SharedPdfRichTextController(
             globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + count))
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = safeIndex)
+            SharedPdfRichTextLog.d(
+                "controller.insertPageBreak inserted index=$safeIndex newLen=${globalTextFieldValue.text.length}"
+            )
         }
     }
 
     fun deleteTextOnPage(pageIndex: Int) {
+        SharedPdfRichTextLog.d("controller.deleteTextOnPage requested page=$pageIndex")
         scope.launch {
             forceSyncAndClear()
             val layout = pageLayouts.find { it.pageIndex == pageIndex } ?: return@launch
@@ -760,13 +945,25 @@ class SharedPdfRichTextController(
             globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(start))
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = start)
+            SharedPdfRichTextLog.d(
+                "controller.deleteTextOnPage deleted page=$pageIndex range=$start..$end newLen=${globalTextFieldValue.text.length}"
+            )
         }
     }
 
     fun handleBackspaceAtStart(): Boolean {
-        if (localTextFieldValue.selection.start != 0 && localTextFieldValue.selection.start != 1) return false
+        SharedPdfRichTextLog.d(
+            "controller.backspaceAtStart request activePage=$activePageIndex localSel=${localTextFieldValue.selection}"
+        )
+        if (localTextFieldValue.selection.start != 0 && localTextFieldValue.selection.start != 1) {
+            SharedPdfRichTextLog.d("controller.backspaceAtStart not at local start")
+            return false
+        }
         val originalActivePage = activePageIndex
-        if (originalActivePage <= 0) return false
+        if (originalActivePage <= 0) {
+            SharedPdfRichTextLog.d("controller.backspaceAtStart ignored first page")
+            return false
+        }
 
         scope.launch {
             syncJob?.cancel()
@@ -777,6 +974,9 @@ class SharedPdfRichTextController(
             if (currentGlobalStart <= 0) return@launch
 
             val charBefore = globalText.text[currentGlobalStart - 1]
+            SharedPdfRichTextLog.d(
+                "controller.backspaceAtStart charBefore=${charBefore.code} globalStart=$currentGlobalStart"
+            )
             if (charBefore == SHARED_PDF_PAGE_BREAK_CHAR) {
                 handleBackspaceAcrossExplicitBreak(
                     originalActivePage = originalActivePage,
@@ -795,9 +995,17 @@ class SharedPdfRichTextController(
     }
 
     suspend fun saveImmediate() {
-        if (isSaving) return
+        if (isSaving) {
+            SharedPdfRichTextLog.d("controller.saveImmediate ignored already saving")
+            return
+        }
+        SharedPdfRichTextLog.d(
+            "controller.saveImmediate start activePage=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
+                "localLen=${localTextFieldValue.text.length}"
+        )
         isSaving = true
         try {
+            tapJob?.cancel()
             saveJob?.cancel()
             syncJob?.cancel()
             val pageToSync = activePageIndex
@@ -815,16 +1023,26 @@ class SharedPdfRichTextController(
                     pageHeightPx = lastPageHeight
                 )
             }
+            SharedPdfRichTextLog.d(
+                "controller.saveImmediate writing textLen=${document.text.length} spans=${document.spans.size}"
+            )
             onDocumentChange(document)
         } finally {
             delay(100)
             isSaving = false
+            SharedPdfRichTextLog.d("controller.saveImmediate done")
         }
     }
 
     private suspend fun syncLocalToGlobal() {
-        if (activePageIndex == -1) return
-        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: return
+        if (activePageIndex == -1) {
+            SharedPdfRichTextLog.d("controller.syncLocalToGlobal abort no active page")
+            return
+        }
+        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: run {
+            SharedPdfRichTextLog.d("controller.syncLocalToGlobal abort missing layout page=$activePageIndex")
+            return
+        }
         val globalStart = layout.globalStartIndex
         val globalEnd = layout.globalEndIndex
         val currentGlobal = globalTextFieldValue.annotatedString
@@ -842,6 +1060,10 @@ class SharedPdfRichTextController(
         val newGlobalAnnotated = builder.toAnnotatedString()
         val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
         val newGlobalCursorPos = globalStart + localSelectionStart
+        SharedPdfRichTextLog.d(
+            "controller.syncLocalToGlobal page=$activePageIndex global=$globalStart..$globalEnd " +
+                "localLen=${localText.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
+        )
         globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
         debouncedSave(globalTextFieldValue)
 
@@ -861,6 +1083,7 @@ class SharedPdfRichTextController(
             )
         }
         pageLayouts = newLayouts
+        SharedPdfRichTextLog.d("controller.syncLocalToGlobal layouts=${newLayouts.richLayoutSummary()}")
         val newActiveLayout = newLayouts.find {
             newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos <= it.globalEndIndex
         }
@@ -875,12 +1098,24 @@ class SharedPdfRichTextController(
                 .coerceIn(0, textWithZwsp.length)
             localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
             updateLocalCursor()
+            SharedPdfRichTextLog.d(
+                "controller.syncLocalToGlobal activePage=${activePageIndex} localCursor=$newLocalCursor " +
+                    "cursor=${cursorRectInPage.richRectSummary()}"
+            )
+        } else {
+            SharedPdfRichTextLog.d("controller.syncLocalToGlobal no active layout for cursor=$newGlobalCursorPos")
         }
     }
 
     private suspend fun performSync(pageIdx: Int, checkCursorMove: Boolean = false) {
-        if (pageIdx == -1) return
-        val layout = pageLayouts.find { it.pageIndex == pageIdx } ?: return
+        if (pageIdx == -1) {
+            SharedPdfRichTextLog.d("controller.performSync abort page=-1")
+            return
+        }
+        val layout = pageLayouts.find { it.pageIndex == pageIdx } ?: run {
+            SharedPdfRichTextLog.d("controller.performSync abort missing layout page=$pageIdx layouts=${pageLayouts.richLayoutSummary()}")
+            return
+        }
         val globalStart = layout.globalStartIndex
         val globalEnd = layout.globalEndIndex
         val currentGlobal = globalTextFieldValue.annotatedString
@@ -899,6 +1134,10 @@ class SharedPdfRichTextController(
         val newGlobalAnnotated = builder.toAnnotatedString()
         val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
         val newGlobalCursorPos = (globalStart + localSelectionStart).coerceIn(0, newGlobalAnnotated.length)
+        SharedPdfRichTextLog.d(
+            "controller.performSync page=$pageIdx checkCursor=$checkCursorMove global=$globalStart..$globalEnd " +
+                "localLen=${localAnnotated.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
+        )
         globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
         debouncedSave(globalTextFieldValue)
 
@@ -918,6 +1157,7 @@ class SharedPdfRichTextController(
             )
         }
         pageLayouts = newLayouts
+        SharedPdfRichTextLog.d("controller.performSync layouts=${newLayouts.richLayoutSummary()}")
 
         if (checkCursorMove) {
             val newActiveLayout = newLayouts.find {
@@ -937,6 +1177,12 @@ class SharedPdfRichTextController(
                 if (newActiveLayout.pageIndex != pageIdx) {
                     requestFocus()
                 }
+                SharedPdfRichTextLog.d(
+                    "controller.performSync cursorMoved activePage=$activePageIndex localCursor=$newLocalCursor " +
+                        "cursor=${cursorRectInPage.richRectSummary()}"
+                )
+            } else {
+                SharedPdfRichTextLog.d("controller.performSync no layout for cursor=$newGlobalCursorPos")
             }
         }
     }
@@ -949,6 +1195,10 @@ class SharedPdfRichTextController(
         val padding = "\n".repeat(linesNeeded)
         val original = localTextFieldValue.annotatedString
         val endsWithBreak = original.text.isNotEmpty() && original.text.last() == SHARED_PDF_PAGE_BREAK_CHAR
+        SharedPdfRichTextLog.d(
+            "controller.injectNewlines gap=${gapPixels.richLogFloat()} lineHeight=${lineHeightPx.richLogFloat()} " +
+                "lines=$linesNeeded endsWithBreak=$endsWithBreak originalLen=${original.length}"
+        )
         val builder = AnnotatedString.Builder()
         if (endsWithBreak) {
             builder.append(original.subSequence(0, original.length - 1))
@@ -982,14 +1232,26 @@ class SharedPdfRichTextController(
         val next = builder.toAnnotatedString()
         val newCursor = if (endsWithBreak) next.length - 1 else next.length
         localTextFieldValue = TextFieldValue(next, TextRange(newCursor))
+        SharedPdfRichTextLog.d(
+            "controller.injectNewlines done newLen=${next.length} newCursor=$newCursor preview=\"${next.text.richPreview()}\""
+        )
         onValueChanged(localTextFieldValue)
     }
 
     private fun repaginate(dirtyStartIndex: Int) {
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
+        val measurer = lastTextMeasurer ?: run {
+            SharedPdfRichTextLog.d("controller.repaginate abort no TextMeasurer dirty=$dirtyStartIndex")
+            return
+        }
+        val density = lastDensity ?: run {
+            SharedPdfRichTextLog.d("controller.repaginate abort no Density dirty=$dirtyStartIndex")
+            return
+        }
         val currentText = globalTextFieldValue.annotatedString
         val currentLayouts = pageLayouts
+        SharedPdfRichTextLog.d(
+            "controller.repaginate schedule dirty=$dirtyStartIndex textLen=${currentText.length} layouts=${currentLayouts.richLayoutSummary()}"
+        )
         scope.launch {
             val newLayouts = withContext(Dispatchers.Default) {
                 engine.paginate(
@@ -1005,12 +1267,22 @@ class SharedPdfRichTextController(
                 )
             }
             pageLayouts = newLayouts
+            SharedPdfRichTextLog.d("controller.repaginate done layouts=${newLayouts.richLayoutSummary()}")
         }
     }
 
     private fun repaginateSync(dirtyStartIndex: Int) {
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
+        val measurer = lastTextMeasurer ?: run {
+            SharedPdfRichTextLog.d("controller.repaginateSync abort no TextMeasurer dirty=$dirtyStartIndex")
+            return
+        }
+        val density = lastDensity ?: run {
+            SharedPdfRichTextLog.d("controller.repaginateSync abort no Density dirty=$dirtyStartIndex")
+            return
+        }
+        SharedPdfRichTextLog.d(
+            "controller.repaginateSync start dirty=$dirtyStartIndex textLen=${globalTextFieldValue.text.length}"
+        )
         pageLayouts = engine.paginate(
             globalText = globalTextFieldValue.annotatedString,
             pageWidthPx = lastPageWidth,
@@ -1022,11 +1294,18 @@ class SharedPdfRichTextController(
             previousLayouts = pageLayouts,
             dirtyGlobalIndex = dirtyStartIndex
         )
+        SharedPdfRichTextLog.d("controller.repaginateSync done layouts=${pageLayouts.richLayoutSummary()}")
     }
 
     private fun updateLocalCursor() {
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
+        val measurer = lastTextMeasurer ?: run {
+            SharedPdfRichTextLog.d("controller.updateLocalCursor abort no TextMeasurer")
+            return
+        }
+        val density = lastDensity ?: run {
+            SharedPdfRichTextLog.d("controller.updateLocalCursor abort no Density")
+            return
+        }
         val selection = localTextFieldValue.selection
         if (selection.collapsed) {
             val measureResult = measurer.measure(
@@ -1038,6 +1317,12 @@ class SharedPdfRichTextController(
             val safeOffset = selection.start.coerceIn(0, localTextFieldValue.text.length)
             cursorPageIndex = activePageIndex
             cursorRectInPage = measureResult.getCursorRect(safeOffset).translate(marginX(), marginY())
+            SharedPdfRichTextLog.d(
+                "controller.updateLocalCursor page=$cursorPageIndex safeOffset=$safeOffset " +
+                    "rect=${cursorRectInPage.richRectSummary()}"
+            )
+        } else {
+            SharedPdfRichTextLog.d("controller.updateLocalCursor skipped non-collapsed selection=$selection")
         }
     }
 
@@ -1060,10 +1345,19 @@ class SharedPdfRichTextController(
                 val localIndex = (cursorIndex - layout.globalStartIndex).coerceIn(0, layout.visibleText.length)
                 cursorPageIndex = layout.pageIndex
                 cursorRectInPage = measureResult.getCursorRect(localIndex).translate(marginX(), marginY())
+                SharedPdfRichTextLog.d(
+                    "controller.updateGlobalCursor global=$cursorIndex page=$cursorPageIndex local=$localIndex " +
+                        "rect=${cursorRectInPage.richRectSummary()}"
+                )
+            } else {
+                SharedPdfRichTextLog.d(
+                    "controller.updateGlobalCursor missing layout/measurer cursor=$cursorIndex layouts=${pageLayouts.richLayoutSummary()}"
+                )
             }
         } else {
             cursorPageIndex = -1
             cursorRectInPage = null
+            SharedPdfRichTextLog.d("controller.updateGlobalCursor cleared visible=$isCursorVisible override=$showCursorOverride selection=$selection")
         }
     }
 
@@ -1200,6 +1494,8 @@ class SharedPdfRichTextController(
 
     private fun requestFocus() {
         runCatching { focusRequester.requestFocus() }
+            .onSuccess { SharedPdfRichTextLog.d("controller.requestFocus success") }
+            .onFailure { SharedPdfRichTextLog.d("controller.requestFocus failed error=${it.message}") }
     }
 
     private fun editorWidth(): Float = (lastPageWidth - (marginX() * 2f)).coerceAtLeast(10f)
@@ -1391,4 +1687,39 @@ private fun richTextDecoration(
     if (underline) decorations += TextDecoration.Underline
     if (strikeThrough) decorations += TextDecoration.LineThrough
     return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
+}
+
+private fun List<SharedPdfRichPageLayout>.richLayoutSummary(): String {
+    if (isEmpty()) return "[]"
+    return joinToString(prefix = "[", postfix = "]", limit = 8, truncated = "...") { layout ->
+        "p${layout.pageIndex}:${layout.globalStartIndex}-${layout.globalEndIndex}/len${layout.visibleText.length}"
+    }
+}
+
+private fun String.richPreview(maxLength: Int = 80): String {
+    return replace("\n", "\\n")
+        .replace(SHARED_PDF_PAGE_BREAK_CHAR.toString(), "\\f")
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+}
+
+private fun Float.richLogFloat(): String {
+    return if (isFinite()) {
+        val rounded = kotlin.math.round(this * 10f) / 10f
+        rounded.toString()
+    } else {
+        toString()
+    }
+}
+
+private fun Offset.richOffsetSummary(): String {
+    return "(${x.richLogFloat()},${y.richLogFloat()})"
+}
+
+private fun Rect?.richRectSummary(): String {
+    if (this == null) return "null"
+    return "(${left.richLogFloat()},${top.richLogFloat()},${right.richLogFloat()},${bottom.richLogFloat()})"
+}
+
+private fun SpanStyle.richStyleSummary(): String {
+    return "color=$color bg=$background size=$fontSize weight=$fontWeight style=$fontStyle deco=$textDecoration"
 }

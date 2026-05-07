@@ -95,6 +95,7 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.SharedLibraryEditor
+import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import io.legere.pdfiumandroid.PdfiumCore
@@ -1975,6 +1976,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val hasTextBoxes = textBoxFile.exists()
                 val hasHighlights = highlightFile.exists()
                 val hasAnyData = hasInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    "android.cloud.export candidates book=${book.bookId} hasRichText=$hasRichText " +
+                        "richBytes=${if (hasRichText) richTextFile.length() else 0L} hasAnyData=$hasAnyData"
+                )
 
                 if (hasAnyData) {
                     if (googleDriveRepository.hasDrivePermissions(appContext)) {
@@ -1988,12 +1993,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 if (file == null || !file.exists()) return
                                 try {
                                     val content = file.readText().trim()
+                                    if (key == "text") {
+                                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                            "android.cloud.export.readRichText book=${book.bookId} rawLen=${content.length} " +
+                                                "file=${file.absolutePath}"
+                                        )
+                                    }
                                     if (content.startsWith("[")) {
                                         bundleJson.put(key, JSONArray(content))
                                     } else if (content.startsWith("{")) {
                                         bundleJson.put(key, JSONObject(content))
                                     }
                                 } catch (e: Exception) {
+                                    if (key == "text") {
+                                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                                            .e(e, "android.cloud.export.richTextParseFailed book=${book.bookId}")
+                                    }
                                     Timber.e(e, "Failed to parse local $key file")
                                 }
                             }
@@ -2006,9 +2021,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                             val bundleFile =
                                 File(appContext.cacheDir, "sync_bundle_${book.bookId}.json")
-                            bundleFile.writeText(
-                                SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
-                            )
+                            val canonicalBundle = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+                            bundleFile.writeText(canonicalBundle)
+                            if (hasRichText) {
+                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                    "android.cloud.export.bundleReady book=${book.bookId} canonicalLen=${canonicalBundle.length} " +
+                                        "bundleFile=${bundleFile.absolutePath}"
+                                )
+                            }
 
                             val uploaded = googleDriveRepository.uploadAnnotationFile(
                                 accessToken, book.bookId, bundleFile
@@ -2016,9 +2036,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             bundleFile.delete()
 
                             if (uploaded != null) {
+                                if (hasRichText) {
+                                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                                        .d("android.cloud.export.uploadSuccess book=${book.bookId} driveId=${uploaded.id}")
+                                }
                                 Timber.tag("AnnotationSync")
                                     .d("Bundle upload SUCCESS. ID: ${uploaded.id}")
                             } else {
+                                if (hasRichText) {
+                                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                                        .e("android.cloud.export.uploadFailed book=${book.bookId}")
+                                }
                                 Timber.tag("AnnotationSync")
                                     .e("Bundle upload FAILED. Skipping Firestore sync to prevent data loss.")
                                 return@launch
@@ -3105,6 +3133,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             try {
                 val jsonString = tempDownloadFile.readText()
+                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    "android.cloud.import.downloaded book=$bookId rawLen=${jsonString.length}"
+                )
 
                 // Determine format
                 val isBundle = try {
@@ -3138,12 +3169,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val bundle = JSONObject(
                         SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
                     )
+                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                        "android.cloud.import.bundle book=$bookId hasRichText=${bundle.has("text")} keys=${bundle.keys().asSequence().toList()}"
+                    )
 
                     fun writeSafe(key: String, file: File) {
                         if (bundle.has(key)) {
                             file.parentFile?.mkdirs()
-                            file.writeText(bundle.get(key).toString())
+                            val content = bundle.get(key).toString()
+                            file.writeText(content)
+                            if (key == "text") {
+                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                    "android.cloud.import.writeRichText book=$bookId rawLen=${content.length} file=${file.absolutePath}"
+                                )
+                            }
                         } else {
+                            if (key == "text" && file.exists()) {
+                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                    "android.cloud.import.deleteMissingRichText book=$bookId file=${file.absolutePath}"
+                                )
+                            }
                             if (file.exists()) file.delete()
                         }
                     }
