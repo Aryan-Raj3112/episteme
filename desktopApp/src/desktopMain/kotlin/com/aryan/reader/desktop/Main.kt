@@ -63,11 +63,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -182,6 +185,7 @@ import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderLinkTarget
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -236,6 +240,7 @@ import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import dev.datlag.kcef.KCEF
+import dev.datlag.kcef.KCEFBrowser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -255,6 +260,7 @@ import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Component
+import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
@@ -269,7 +275,10 @@ import java.net.URLEncoder
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import javax.swing.JComponent
+import javax.swing.JPanel
 import javax.swing.JOptionPane
+import javax.swing.RootPaneContainer
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 import kotlin.math.abs
@@ -323,6 +332,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     }
                     settings {
                         cachePath = File("cache").absolutePath
+                    }
+                    if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) {
+                        addArgs(
+                            "--disable-gpu",
+                            "--disable-gpu-compositing",
+                            "--disable-direct-composition",
+                            "--disable-features=CalculateNativeWinOcclusion"
+                        )
                     }
                 },
                 onError = { error ->
@@ -379,10 +396,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
     }
     var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
+    var pendingReaderExitTab by remember { mutableStateOf<SharedAppTab?>(null) }
+    var isReaderSurfaceVisible by remember { mutableStateOf(true) }
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
+    var keepEpubReaderMounted by remember { mutableStateOf(false) }
+    var isReaderExitDrainingNativeSurface by remember { mutableStateOf(false) }
+    var activeEpubWebViewBrowser by remember { mutableStateOf<KCEFBrowser?>(null) }
+    var activeEpubWebViewHtmlHash by remember { mutableStateOf<Int?>(null) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
@@ -395,6 +418,83 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val snackbarHostState = remember { SnackbarHostState() }
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
     var opdsState by remember { mutableStateOf(opdsController.state) }
+
+    fun disposeActiveEpubWebView(reason: String) {
+        val browser = activeEpubWebViewBrowser ?: return
+        val htmlHash = activeEpubWebViewHtmlHash ?: 0
+        logReaderSurface(
+            "active_webview_dispose reason=$reason htmlHash=$htmlHash " +
+                "browser=${browser.formatKcefBrowserForLog()} component=${browser.uiComponent.formatWindowState()}"
+        )
+        browser.disposeForReaderSurfaceLog(htmlHash, reason)
+        activeEpubWebViewBrowser = null
+        activeEpubWebViewHtmlHash = null
+    }
+
+    fun setActiveEpubWebViewVisible(visible: Boolean, reason: String) {
+        val browser = activeEpubWebViewBrowser ?: return
+        val htmlHash = activeEpubWebViewHtmlHash ?: 0
+        browser.setReaderSurfaceVisible(htmlHash, visible, reason)
+    }
+
+    fun parkActiveEpubWebView(reason: String) {
+        val browser = activeEpubWebViewBrowser ?: return
+        val htmlHash = activeEpubWebViewHtmlHash ?: 0
+        browser.parkReaderSurfaceOffscreen(htmlHash, reason)
+    }
+
+    fun showReaderTab() {
+        logReaderSurface(
+            "show_reader_tab current=$selectedTab pending=$pendingReaderExitTab " +
+                "visible=$isReaderSurfaceVisible activeBook=${activeReaderBookId.logValue()} " +
+                "pdf=${activePdfDocument != null} window=${window.formatWindowState()}"
+        )
+        pendingReaderExitTab = null
+        isReaderSurfaceVisible = true
+        isReaderExitDrainingNativeSurface = false
+        if (activePdfDocument == null) {
+            keepEpubReaderMounted = true
+        }
+        setActiveEpubWebViewVisible(true, "show_reader_tab")
+        selectedTab = SharedAppTab.READER
+        repaintDesktopWindow(window, "show_reader_tab")
+    }
+
+    fun selectAppTab(tab: SharedAppTab) {
+        logReaderSurface(
+            "select_tab requested=$tab current=$selectedTab pending=$pendingReaderExitTab " +
+                "visible=$isReaderSurfaceVisible activeBook=${activeReaderBookId.logValue()} " +
+                "pdf=${activePdfDocument != null} window=${window.formatWindowState()}"
+        )
+        if (tab == SharedAppTab.READER) {
+            showReaderTab()
+            return
+        }
+        if (tab == selectedTab && pendingReaderExitTab == null) return
+
+        if (selectedTab == SharedAppTab.READER) {
+            val isEpubReader = activePdfDocument == null
+            val shouldDrainNativeSurface = isEpubReader && activeEpubWebViewBrowser != null
+            isReaderExitDrainingNativeSurface = shouldDrainNativeSurface
+            if (isEpubReader) {
+                parkActiveEpubWebView("reader_exit_begin_$tab")
+                keepEpubReaderMounted = true
+            }
+            pendingReaderExitTab = tab
+            isReaderSurfaceVisible = false
+            logReaderSurface(
+                "reader_exit_begin target=$tab activeBook=${activeReaderBookId.logValue()} " +
+                    "surface=${activeReaderSurfaceLabel(activePdfDocument)} lifecycle=native_eraser drainNative=$shouldDrainNativeSurface"
+            )
+            repaintDesktopWindow(window, "reader_exit_begin_$tab")
+        } else {
+            pendingReaderExitTab = null
+            isReaderSurfaceVisible = true
+            isReaderExitDrainingNativeSurface = false
+            selectedTab = tab
+            repaintDesktopWindow(window, "select_non_reader_$tab")
+        }
+    }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -576,9 +676,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             if (activeReaderBookId != null && completedState.rawLibraryBooks.none { it.id == activeReaderBookId }) {
                 activePdfDocument?.close()
                 activePdfDocument = null
+                keepEpubReaderMounted = false
+                disposeActiveEpubWebView("sync_removed_active_book")
                 activeReaderBookId = null
                 readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
-                selectedTab = SharedAppTab.HOME
+                selectAppTab(SharedAppTab.HOME)
             }
         }
     }
@@ -681,6 +783,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     fun openReader(book: BookItem) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
         if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
+            keepEpubReaderMounted = false
+            disposeActiveEpubWebView("open_pdf_or_comic")
             val path = book.path
             if (path.isNullOrBlank()) {
                 updateState(
@@ -696,7 +800,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 if (activePdfDocument?.path == path) {
                     activeReaderBookId = book.id
                     recordBookOpened(book.id)
-                    selectedTab = SharedAppTab.READER
+                    showReaderTab()
                     return
                 }
                 activePdfDocument?.close()
@@ -720,7 +824,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 activePdfDocument = document
                 activeReaderBookId = book.id
                 recordBookOpened(book.id)
-                selectedTab = SharedAppTab.READER
+                showReaderTab()
                 return
             }
             val readerFile = File(path)
@@ -728,7 +832,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             if (activePdfDocument?.path == readerPath) {
                 activeReaderBookId = book.id
                 recordBookOpened(book.id)
-                selectedTab = SharedAppTab.READER
+                showReaderTab()
                 return
             }
             activePdfDocument?.close()
@@ -753,7 +857,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             activePdfDocument = document
             activeReaderBookId = book.id
             recordBookOpened(book.id)
-            selectedTab = SharedAppTab.READER
+            showReaderTab()
             return
         }
 
@@ -786,6 +890,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
         activePdfDocument?.close()
         activePdfDocument = null
+        keepEpubReaderMounted = true
         val restoredSettings = book.readerSettings ?: readerSession.reader.settings
         val restoredSession = readerEngine.createSession(
             book = loadedBook,
@@ -802,7 +907,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
         activeReaderBookId = book.id
         recordBookOpened(book.id)
-        selectedTab = SharedAppTab.READER
+        showReaderTab()
     }
 
     fun removeFolder(shelf: Shelf) {
@@ -817,12 +922,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             if (wasReadingRemovedBook) {
                 activePdfDocument?.close()
                 activePdfDocument = null
+                keepEpubReaderMounted = false
+                disposeActiveEpubWebView("remove_folder_active_book")
                 activeReaderBookId = null
                 if (nextTabBook != null) {
                     openReader(nextTabBook)
                 } else {
                     readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
-                    selectedTab = SharedAppTab.HOME
+                    selectAppTab(SharedAppTab.HOME)
                 }
             }
         }
@@ -836,6 +943,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
         activePdfDocument?.close()
         activePdfDocument = null
+        keepEpubReaderMounted = false
+        disposeActiveEpubWebView("close_reader_tab_no_next")
         activeReaderBookId = null
         val nextBook = remainingIds.lastOrNull()?.let { nextId ->
             state.rawLibraryBooks.firstOrNull { it.id == nextId }
@@ -844,16 +953,18 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             openReader(nextBook)
         } else {
             readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
-            selectedTab = SharedAppTab.HOME
+            selectAppTab(SharedAppTab.HOME)
         }
     }
 
     fun closeAllReaderTabs() {
         activePdfDocument?.close()
         activePdfDocument = null
+        keepEpubReaderMounted = false
+        disposeActiveEpubWebView("close_all_reader_tabs")
         activeReaderBookId = null
         readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
-        selectedTab = SharedAppTab.HOME
+        selectAppTab(SharedAppTab.HOME)
         updateState(state.reduce(AppAction.AllTabsClosed))
     }
 
@@ -944,9 +1055,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             if (activeReaderBookId in streamBookIds) {
                 activePdfDocument?.close()
                 activePdfDocument = null
+                keepEpubReaderMounted = false
+                disposeActiveEpubWebView("remove_opds_active_stream")
                 activeReaderBookId = null
                 readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
-                selectedTab = SharedAppTab.HOME
+                selectAppTab(SharedAppTab.HOME)
             }
             updateState(
                 state.copy(
@@ -1017,8 +1130,40 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         openReader(streamBook)
     }
 
+    fun handleReaderSessionChange(updated: ReaderSessionState) {
+        val previousMode = readerSession.reader.settings.readingMode
+        val nextMode = updated.reader.settings.readingMode
+        if (previousMode == ReaderReadingMode.VERTICAL && nextMode != ReaderReadingMode.VERTICAL) {
+            disposeActiveEpubWebView("reader_mode_${previousMode}_to_$nextMode")
+        }
+        readerSession = updated
+        updateActiveBookReadingState(
+            pageIndex = updated.reader.currentPageIndex,
+            progress = updated.reader.progress,
+            session = updated
+        )
+    }
+
+    fun handleNativeBrowserChanged(htmlHash: Int, browser: KCEFBrowser?) {
+        if (browser == null) {
+            if (activeEpubWebViewHtmlHash == htmlHash) {
+                activeEpubWebViewBrowser = null
+                activeEpubWebViewHtmlHash = null
+            }
+            return
+        }
+        activeEpubWebViewBrowser = browser
+        activeEpubWebViewHtmlHash = htmlHash
+        browser.setReaderSurfaceVisible(
+            htmlHash = htmlHash,
+            visible = selectedTab == SharedAppTab.READER && isReaderSurfaceVisible,
+            reason = "browser_changed"
+        )
+    }
+
     DisposableEffect(Unit) {
         onDispose {
+            disposeActiveEpubWebView("app_dispose")
             activePdfDocument?.close()
         }
     }
@@ -1042,6 +1187,74 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
+    LaunchedEffect(
+        selectedTab,
+        pendingReaderExitTab,
+        isReaderSurfaceVisible,
+        isReaderExitDrainingNativeSurface,
+        activeReaderBookId,
+        activePdfDocument?.path
+    ) {
+        logReaderSurface(
+            "state_snapshot selected=$selectedTab pending=$pendingReaderExitTab " +
+                "visible=$isReaderSurfaceVisible drainNative=$isReaderExitDrainingNativeSurface " +
+                "activeBook=${activeReaderBookId.logValue()} " +
+                "surface=${activeReaderSurfaceLabel(activePdfDocument)} window=${window.formatWindowState()}"
+        )
+    }
+
+    LaunchedEffect(pendingReaderExitTab) {
+        val target = pendingReaderExitTab ?: return@LaunchedEffect
+        val drainNativeSurface = isReaderExitDrainingNativeSurface
+        logReaderSurface(
+            "reader_exit_delay_start target=$target selected=$selectedTab visible=$isReaderSurfaceVisible " +
+                "surface=${activeReaderSurfaceLabel(activePdfDocument)} drainNative=$drainNativeSurface"
+        )
+        withFrameNanos { }
+        logReaderSurface(
+            "reader_exit_after_frame_1 target=$target selected=$selectedTab visible=$isReaderSurfaceVisible " +
+                "window=${window.formatWindowState()}"
+        )
+        repaintDesktopWindow(window, "reader_exit_placeholder_painted_$target")
+        withFrameNanos { }
+        logReaderSurface(
+            "reader_exit_after_frame_2 target=$target selected=$selectedTab visible=$isReaderSurfaceVisible " +
+                "window=${window.formatWindowState()}"
+        )
+        if (drainNativeSurface) {
+            forceRepaintDesktopWindow(window, "reader_exit_native_drain_start_$target")
+            logReaderSurface(
+                "reader_exit_native_drain_wait target=$target delayMs=$ReaderSurfaceNativeDrainDelayMs " +
+                    "activeWebView=${activeEpubWebViewHtmlHash ?: "null"} window=${window.formatWindowState()}"
+            )
+            delay(ReaderSurfaceNativeDrainDelayMs)
+            forceRepaintDesktopWindow(window, "reader_exit_native_drain_done_$target")
+            logReaderSurface(
+                "reader_exit_native_drain_done target=$target activeWebView=${activeEpubWebViewHtmlHash ?: "null"} " +
+                    "window=${window.formatWindowState()}"
+            )
+        }
+        selectedTab = target
+        pendingReaderExitTab = null
+        isReaderSurfaceVisible = true
+        isReaderExitDrainingNativeSurface = false
+        if (activePdfDocument == null) {
+            keepEpubReaderMounted = false
+        }
+        logReaderSurface(
+            "reader_exit_commit target=$target selected=$selectedTab visible=$isReaderSurfaceVisible " +
+                "window=${window.formatWindowState()}"
+        )
+        repaintDesktopWindow(window, "reader_exit_commit_$target")
+        scope.launch {
+            delay(120)
+            logReaderSurface(
+                "reader_exit_post_commit_120ms target=$target selected=$selectedTab visible=$isReaderSurfaceVisible " +
+                    "window=${window.formatWindowState()}"
+            )
+        }
+    }
+
     SharedAppTheme(
         appThemeMode = state.appThemeMode,
         appContrastOption = state.appContrastOption,
@@ -1049,7 +1262,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         appTextDimFactorDark = state.appTextDimFactorDark,
         appSeedColor = state.appSeedColor
     ) {
-        Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
             SharedAppShell(
                 selectedTab = selectedTab,
                 snackbarHostState = snackbarHostState,
@@ -1060,7 +1277,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 appSeedColor = state.appSeedColor,
                 customAppThemes = state.customAppThemes,
                 isTabsEnabled = state.isTabsEnabled,
-                onTabSelected = { selectedTab = it },
+                onTabSelected = ::selectAppTab,
                 onImportFiles = { importFiles(chooseFiles()) },
                 onImportFolder = { chooseFolder()?.let(::importFolder) },
                 onSyncRequested = {
@@ -1075,6 +1292,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 onCustomAppThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
                 onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
             ) { tab ->
+                Box(Modifier.fillMaxSize()) {
                 when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
                             state = state,
@@ -1162,51 +1380,65 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         SharedAppTab.READER -> {
                             val pdfDocument = activePdfDocument
                             if (pdfDocument != null) {
-                                PdfReaderScreen(
-                                    document = pdfDocument,
-                                    initialPageIndex = activeReaderBookId
-                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
-                                        ?: 0,
-                                    onOpenPdf = ::importAndOpenPdf,
-                                    onOpenBook = ::importAndOpenBook,
-                                    onPageStateChange = { page, progress ->
-                                        updateActiveBookReadingState(page, progress)
-                                    },
-                                    onLocalSidecarsChanged = {
-                                        activeReaderBookId
-                                            ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
-                                            ?.let(::syncBookSidecars)
-                                    }
-                                )
-                            } else {
-                                ReaderScreen(
-                                    session = readerSession,
-                                    readerEngine = readerEngine,
-                                    onSessionChange = { updated ->
-                                        readerSession = updated
-                                        updateActiveBookReadingState(
-                                            pageIndex = updated.reader.currentPageIndex,
-                                            progress = updated.reader.progress,
-                                            session = updated
-                                        )
-                                    },
-                                    onOpenBook = ::importAndOpenBook,
-                                    onOpenPdf = ::importAndOpenPdf,
-                                    toolbarPreferences = state.readerToolbarPreferences,
-                                    onToolbarPreferencesChange = { preferences ->
-                                        updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
-                                    },
-                                    highlightPalette = state.readerHighlightPalette,
-                                    onHighlightPaletteChange = { palette ->
-                                        updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
-                                    },
-                                    onPickCustomFont = {
-                                        chooseFontFile()?.toURI()?.toString()
-                                    },
-                                    webViewRuntimeState = webViewRuntimeState
-                                )
+                                if (isReaderSurfaceVisible) {
+                                    PdfReaderScreen(
+                                        document = pdfDocument,
+                                        initialPageIndex = activeReaderBookId
+                                            ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
+                                            ?: 0,
+                                        onOpenPdf = ::importAndOpenPdf,
+                                        onOpenBook = ::importAndOpenBook,
+                                        onPageStateChange = { page, progress ->
+                                            updateActiveBookReadingState(page, progress)
+                                        },
+                                        onLocalSidecarsChanged = {
+                                            activeReaderBookId
+                                                ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
+                                                ?.let(::syncBookSidecars)
+                                        }
+                                    )
+                                } else {
+                                    ReaderSurfaceExitPlaceholder(
+                                        surface = "pdf_or_comic",
+                                        background = MaterialTheme.colorScheme.background,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                             }
                         }
+                }
+                    if (activePdfDocument == null && (keepEpubReaderMounted || tab == SharedAppTab.READER)) {
+                        val readerLayerVisible = tab == SharedAppTab.READER && isReaderSurfaceVisible
+                        val readerLayerHoldingExit = tab == SharedAppTab.READER && pendingReaderExitTab != null
+                        val readerLayerHasLayout = readerLayerVisible || readerLayerHoldingExit
+                        Box(
+                            Modifier
+                                .then(if (readerLayerHasLayout) Modifier.fillMaxSize() else Modifier.size(1.dp))
+                                .zIndex(if (readerLayerHasLayout) 1f else -1f)
+                        ) {
+                            ReaderScreen(
+                                session = readerSession,
+                                readerEngine = readerEngine,
+                                onSessionChange = ::handleReaderSessionChange,
+                                onOpenBook = ::importAndOpenBook,
+                                onOpenPdf = ::importAndOpenPdf,
+                                toolbarPreferences = state.readerToolbarPreferences,
+                                onToolbarPreferencesChange = { preferences ->
+                                    updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
+                                },
+                                highlightPalette = state.readerHighlightPalette,
+                                onHighlightPaletteChange = { palette ->
+                                    updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
+                                },
+                                onPickCustomFont = {
+                                    chooseFontFile()?.toURI()?.toString()
+                                },
+                                isNativeSurfaceVisible = readerLayerVisible,
+                                onNativeBrowserChanged = ::handleNativeBrowserChanged,
+                                webViewRuntimeState = webViewRuntimeState
+                            )
+                        }
+                    }
                 }
             }
             DesktopDropImportOverlay(dropImportState)
@@ -1336,6 +1568,122 @@ private data class DesktopDropImportState(
     val totalFileCount: Int = 0,
     val hasFilePayload: Boolean = false
 )
+
+private fun repaintDesktopWindow(window: Component?, reason: String) {
+    val target = window ?: run {
+        logReaderSurface("awt_repaint_skip reason=$reason window=null")
+        return
+    }
+    logReaderSurface("awt_repaint_schedule reason=$reason window=${target.formatWindowState()}")
+    EventQueue.invokeLater {
+        if (!target.isDisplayable) {
+            logReaderSurface("awt_repaint_skip reason=$reason displayable=false window=${target.formatWindowState()}")
+            return@invokeLater
+        }
+        runCatching {
+            target.flushReaderSurfacePaint()
+        }.onSuccess {
+            logReaderSurface("awt_repaint_done reason=$reason window=${target.formatWindowState()}")
+        }.onFailure { error ->
+            logReaderSurface("awt_repaint_error reason=$reason error=${error.message.logValue()} window=${target.formatWindowState()}")
+        }
+    }
+}
+
+private fun forceRepaintDesktopWindow(window: Component?, reason: String) {
+    val target = window ?: run {
+        logReaderSurface("awt_repaint_force_skip reason=$reason window=null")
+        return
+    }
+    logReaderSurface("awt_repaint_force_start reason=$reason window=${target.formatWindowState()}")
+    val repaint = {
+        if (!target.isDisplayable) {
+            logReaderSurface("awt_repaint_force_skip reason=$reason displayable=false window=${target.formatWindowState()}")
+        } else {
+            target.flushReaderSurfacePaint()
+            logReaderSurface("awt_repaint_force_done reason=$reason window=${target.formatWindowState()}")
+        }
+    }
+    runCatching {
+        if (EventQueue.isDispatchThread()) {
+            repaint()
+        } else {
+            SwingUtilities.invokeAndWait { repaint() }
+        }
+    }.onFailure { error ->
+        logReaderSurface("awt_repaint_force_error reason=$reason error=${error.message.logValue()} window=${target.formatWindowState()}")
+    }
+}
+
+private fun Component.flushReaderSurfacePaint() {
+    invalidate()
+    if (this is Container) {
+        validate()
+        doLayout()
+    }
+    repaint()
+    (this as? JComponent)?.paintImmediately(0, 0, width, height)
+    val root = SwingUtilities.getRoot(this)
+    when (root) {
+        is JComponent -> root.paintImmediately(0, 0, root.width, root.height)
+        is RootPaneContainer -> {
+            val rootPane = root.rootPane
+            rootPane.paintImmediately(0, 0, rootPane.width, rootPane.height)
+        }
+    }
+    runCatching { Toolkit.getDefaultToolkit().sync() }
+}
+
+private fun Color.toOpaqueAwtColor(): java.awt.Color {
+    val argb = toArgb()
+    return java.awt.Color(
+        (argb shr 16) and 0xFF,
+        (argb shr 8) and 0xFF,
+        argb and 0xFF,
+        255
+    )
+}
+
+@Composable
+private fun ReaderSurfaceExitPlaceholder(
+    surface: String,
+    background: Color,
+    modifier: Modifier = Modifier
+) {
+    var lastSize by remember(surface) { mutableStateOf(IntSize.Zero) }
+    DisposableEffect(surface) {
+        logReaderSurface("placeholder_mount surface=$surface")
+        onDispose {
+            logReaderSurface("placeholder_dispose surface=$surface lastSize=${lastSize.formatLogSize()}")
+        }
+    }
+    Box(
+        modifier
+            .background(background)
+            .onSizeChanged { size ->
+                if (size != lastSize) {
+                    lastSize = size
+                    logReaderSurface("placeholder_size surface=$surface size=${size.formatLogSize()}")
+                }
+            }
+    ) {
+        val awtBackground = remember(background) { background.toOpaqueAwtColor() }
+        SwingPanel(
+            factory = {
+                JPanel().apply {
+                    isOpaque = true
+                    this.background = awtBackground
+                }
+            },
+            update = { panel ->
+                panel.isOpaque = true
+                panel.background = awtBackground
+                panel.repaint()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
 
 @Composable
 private fun DesktopFileDropTarget(
@@ -4805,15 +5153,34 @@ private fun ReaderScreen(
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     onPickCustomFont: () -> String?,
+    isNativeSurfaceVisible: Boolean,
+    onNativeBrowserChanged: (Int, KCEFBrowser?) -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
+    val bookId = session.reader.book.id
+    val bookTitle = session.reader.book.title
 
     DesktopExternalLinkDialog(
         url = externalLinkDialogUrl,
         onDismiss = { externalLinkDialogUrl = null }
     )
+
+    DisposableEffect(bookId) {
+        logReaderSurface("epub_reader_mount book=${bookId.logValue()} title=\"${bookTitle.logPreview()}\"")
+        onDispose {
+            logReaderSurface("epub_reader_dispose book=${bookId.logValue()} title=\"${bookTitle.logPreview()}\"")
+        }
+    }
+
+    LaunchedEffect(bookId, isNativeSurfaceVisible, webViewRuntimeState.initialized, webViewRuntimeState.restartRequired, webViewRuntimeState.errorMessage) {
+        logReaderSurface(
+            "epub_reader_state book=${bookId.logValue()} nativeVisible=$isNativeSurfaceVisible " +
+                "webInitialized=${webViewRuntimeState.initialized} restart=${webViewRuntimeState.restartRequired} " +
+                "error=${webViewRuntimeState.errorMessage?.logPreview()?.let { "\"$it\"" } ?: "null"}"
+        )
+    }
 
     SharedReaderScreen(
         session = session,
@@ -4834,56 +5201,137 @@ private fun ReaderScreen(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
-            if (webViewRuntimeState.initialized) {
-                DesktopEpubWebView(
-                    html = html,
-                    navigationTarget = navigationTarget,
-                    highlights = highlights,
-                    onHighlightCreated = { highlight ->
-                        onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
-                    },
-                    onLinkClicked = { link ->
-                        val now = System.currentTimeMillis()
-                        val last = lastHandledLink
-                        if (last != null && last.href == link.href && now - last.handledAtMs < 900L) {
-                            logEpubLink(
-                                "click_duplicate_ignored source=${link.source} href=\"${link.href.logPreview()}\" " +
-                                    "ageMs=${now - last.handledAtMs}"
-                            )
-                        } else {
-                            lastHandledLink = DesktopEpubHandledLink(link.href, now)
-                            logEpubLink(
-                                "click source=${link.source} href=\"${link.href.logPreview()}\" " +
-                                    "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\" " +
-                                    "text=\"${link.text.orEmpty().logPreview()}\""
-                            )
-                            when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
-                                is ReaderLinkTarget.External -> {
-                                    logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
-                                    externalLinkDialogUrl = target.url
-                                }
-                                is ReaderLinkTarget.Internal -> {
-                                    logEpubLink(
-                                        "resolved_internal chapter=${target.locator.chapterIndex} " +
-                                            "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
-                                    )
-                                    onSessionChange(readerEngine.goToLocator(session, target.locator))
-                                }
-                                ReaderLinkTarget.Ignored -> {
-                                    logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")
+            when {
+                navigationTarget.readingMode == ReaderReadingMode.PAGINATED -> {
+                    DesktopPaginatedEpubContent(
+                        session = session,
+                        background = background,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                !isNativeSurfaceVisible -> {
+                    ReaderSurfaceExitPlaceholder(
+                        surface = "epub_webview",
+                        background = background,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                webViewRuntimeState.initialized -> {
+                    DesktopEpubWebView(
+                        html = html,
+                        navigationTarget = navigationTarget,
+                        highlights = highlights,
+                        isNativeSurfaceVisible = isNativeSurfaceVisible,
+                        onHighlightCreated = { highlight ->
+                            onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
+                        },
+                        onLinkClicked = { link ->
+                            val now = System.currentTimeMillis()
+                            val last = lastHandledLink
+                            if (last != null && last.href == link.href && now - last.handledAtMs < 900L) {
+                                logEpubLink(
+                                    "click_duplicate_ignored source=${link.source} href=\"${link.href.logPreview()}\" " +
+                                        "ageMs=${now - last.handledAtMs}"
+                                )
+                            } else {
+                                lastHandledLink = DesktopEpubHandledLink(link.href, now)
+                                logEpubLink(
+                                    "click source=${link.source} href=\"${link.href.logPreview()}\" " +
+                                        "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\" " +
+                                        "text=\"${link.text.orEmpty().logPreview()}\""
+                                )
+                                when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
+                                    is ReaderLinkTarget.External -> {
+                                        logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
+                                        externalLinkDialogUrl = target.url
+                                    }
+                                    is ReaderLinkTarget.Internal -> {
+                                        logEpubLink(
+                                            "resolved_internal chapter=${target.locator.chapterIndex} " +
+                                                "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
+                                        )
+                                        onSessionChange(readerEngine.goToLocator(session, target.locator))
+                                    }
+                                    ReaderLinkTarget.Ignored -> {
+                                        logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")
+                                    }
                                 }
                             }
-                        }
-                    },
-                    onVisiblePageChanged = onVisiblePageChanged,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                DesktopWebViewRuntimeIndicator(
-                    state = webViewRuntimeState,
-                    modifier = Modifier.fillMaxSize()
-                )
+                        },
+                        onVisiblePageChanged = onVisiblePageChanged,
+                        onNativeBrowserChanged = onNativeBrowserChanged,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                else -> {
+                    DesktopWebViewRuntimeIndicator(
+                        state = webViewRuntimeState,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPaginatedEpubContent(
+    session: ReaderSessionState,
+    background: Color,
+    modifier: Modifier = Modifier
+) {
+    val readerState = session.reader
+    val settings = readerState.settings
+    val page = readerState.currentPage
+    val foreground = settings.textColorArgb?.let { Color(it) }
+        ?: if (settings.darkMode) Color(0xFFE7E7DF) else Color(0xFF1B1C18)
+    val textAlign = settings.textAlign.toComposeTextAlign()
+    val fontFamily = settings.fontFamily.toComposeFontFamily()
+    val scrollState = rememberScrollState()
+    val pageKey = "${readerState.book.id}:${page?.pageIndex ?: -1}"
+
+    DisposableEffect(readerState.book.id) {
+        logReaderSurface("paginated_compose_mount book=${readerState.book.id.logValue()} title=\"${readerState.book.title.logPreview()}\"")
+        onDispose {
+            logReaderSurface("paginated_compose_dispose book=${readerState.book.id.logValue()} title=\"${readerState.book.title.logPreview()}\"")
+        }
+    }
+
+    LaunchedEffect(pageKey, session.searchQuery, settings.fontSize, settings.lineSpacing, settings.textAlign, settings.fontFamily, settings.darkMode) {
+        logReaderSurface(
+            "paginated_compose_page book=${readerState.book.id.logValue()} page=${page?.pageIndex} " +
+                "chapter=${page?.chapterIndex} textLen=${page?.text?.length ?: 0} queryLen=${session.searchQuery.length}"
+        )
+        scrollState.scrollTo(0)
+    }
+
+    Box(
+        modifier
+            .background(background)
+            .verticalScroll(scrollState)
+            .padding(
+                horizontal = settings.resolvedHorizontalMargin.dp,
+                vertical = settings.resolvedVerticalMargin.dp
+            )
+    ) {
+        if (page == null) {
+            Text(
+                text = "No readable page.",
+                color = foreground.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.bodyLarge
+            )
+        } else {
+            Text(
+                text = page.text.highlightQuery(session.searchQuery, Color(0xFFFFD54F)),
+                color = foreground,
+                textAlign = textAlign,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = settings.fontSize.sp,
+                    lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                    fontFamily = fontFamily
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
@@ -4893,15 +5341,19 @@ private fun DesktopEpubWebView(
     html: String,
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
+    isNativeSurfaceVisible: Boolean,
     onHighlightCreated: (UserHighlight) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+    onNativeBrowserChanged: (Int, KCEFBrowser?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
     val scope = rememberCoroutineScope()
+    val htmlHash = remember(html) { html.hashCode() }
+    var nativeBrowser by remember(htmlHash) { mutableStateOf<KCEFBrowser?>(null) }
     val linkRequestInterceptor = remember(scope) {
         object : RequestInterceptor {
             override fun onInterceptUrlRequest(
@@ -4924,7 +5376,36 @@ private fun DesktopEpubWebView(
     val navigator = rememberWebViewNavigator(requestInterceptor = linkRequestInterceptor)
     val bridge = rememberWebViewJsBridge()
 
+    DisposableEffect(htmlHash) {
+        logReaderSurface(
+            "webview_mount htmlHash=$htmlHash mode=${navigationTarget.readingMode} " +
+                "request=${navigationTarget.requestId} locator=${navigationTarget.locator.formatReaderLocatorForLog()}"
+        )
+        onDispose {
+            logReaderSurface(
+                "webview_dispose htmlHash=$htmlHash mode=${navigationTarget.readingMode} " +
+                    "request=${navigationTarget.requestId}"
+            )
+        }
+    }
+
+    LaunchedEffect(htmlHash, navigationTarget.requestId, navigationTarget.readingMode) {
+        logReaderSurface(
+            "webview_navigation htmlHash=$htmlHash mode=${navigationTarget.readingMode} " +
+                "request=${navigationTarget.requestId} locator=${navigationTarget.locator.formatReaderLocatorForLog()}"
+        )
+    }
+
+    LaunchedEffect(nativeBrowser, isNativeSurfaceVisible) {
+        nativeBrowser?.setReaderSurfaceVisible(
+            htmlHash = htmlHash,
+            visible = isNativeSurfaceVisible,
+            reason = "webview_visibility_state"
+        )
+    }
+
     DisposableEffect(bridge) {
+        logReaderSurface("webview_bridge_register htmlHash=$htmlHash")
         val highlightHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerHighlightCreated"
 
@@ -4976,6 +5457,7 @@ private fun DesktopEpubWebView(
         bridge.register(positionHandler)
         bridge.register(linkHandler)
         onDispose {
+            logReaderSurface("webview_bridge_unregister htmlHash=$htmlHash")
             bridge.unregister(highlightHandler)
             bridge.unregister(positionHandler)
             bridge.unregister(linkHandler)
@@ -4989,15 +5471,48 @@ private fun DesktopEpubWebView(
             encoding = "utf-8",
             mimeType = "text/html",
             historyUrl = null
-        )
+        ).apply {
+            webSettings.desktopWebSettings.transparent = false
+            webSettings.desktopWebSettings.disablePopupWindows = true
+        }
 
         Box(modifier = modifier) {
+            LaunchedEffect(state.loadingState) {
+                logReaderSurface("webview_loading htmlHash=$htmlHash state=${state.loadingState.formatWebViewLoadingForLog()}")
+            }
+
             WebView(
                 state = state,
                 modifier = Modifier.fillMaxSize(),
                 captureBackPresses = false,
                 navigator = navigator,
-                webViewJsBridge = bridge
+                webViewJsBridge = bridge,
+                onCreated = { browser ->
+                    nativeBrowser = browser
+                    onNativeBrowserChanged(htmlHash, browser)
+                    browser.setReaderSurfaceVisible(
+                        htmlHash = htmlHash,
+                        visible = isNativeSurfaceVisible,
+                        reason = "webview_created"
+                    )
+                    logReaderSurface(
+                        "webview_native_created htmlHash=$htmlHash " +
+                            "browser=${browser.formatKcefBrowserForLog()} component=${browser.uiComponent.formatWindowState()}"
+                    )
+                },
+                onDispose = { browser ->
+                    browser.parkReaderSurfaceOffscreen(htmlHash, "dispose")
+                    logReaderSurface(
+                        "webview_native_dispose_start htmlHash=$htmlHash " +
+                            "browser=${browser.formatKcefBrowserForLog()} component=${browser.uiComponent.formatWindowState()}"
+                    )
+                    logReaderSurface(
+                        "webview_native_dispose_done htmlHash=$htmlHash " +
+                            "browser=${browser.formatKcefBrowserForLog()} component=${browser.uiComponent.formatWindowState()}"
+                    )
+                    nativeBrowser = null
+                    onNativeBrowserChanged(htmlHash, null)
+                }
             )
 
             LaunchedEffect(
@@ -5792,6 +6307,9 @@ private const val PdfSelectionLogTag = "EpistemePdfSelection"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
 private const val ExternalLinkLogTag = "EpistemeExternalLink"
+private const val ReaderSurfaceLogTag = "EpistemeReaderSurface"
+private const val ReaderSurfaceNativeDrainDelayMs = 650L
+private const val ReaderSurfaceParkedCoordinate = -32000
 
 private fun logPdfSelection(message: String) {
     println("$PdfSelectionLogTag $message")
@@ -5807,6 +6325,150 @@ private fun logEpubLink(message: String) {
 
 private fun logExternalLink(message: String) {
     println("$ExternalLinkLogTag $message")
+}
+
+private fun logReaderSurface(message: String) {
+    println("$ReaderSurfaceLogTag t=${System.currentTimeMillis()} $message")
+}
+
+private fun activeReaderSurfaceLabel(document: DesktopPdfDocument?): String {
+    return document?.let { "${it.formatLabel}:pages=${it.pageCount}:pathHash=${it.path.hashCode()}" } ?: "epub_webview"
+}
+
+private fun String?.logValue(maxLength: Int = 64): String {
+    return this?.let { "\"${it.logPreview(maxLength)}\"" } ?: "null"
+}
+
+private fun Component?.formatWindowState(): String {
+    if (this == null) return "null"
+    return "${javaClass.simpleName}(displayable=$isDisplayable showing=$isShowing visible=$isVisible size=${width}x$height location=${x},${y})"
+}
+
+private fun ReaderLocator?.formatReaderLocatorForLog(): String {
+    if (this == null) return "null"
+    return "chapter=$chapterIndex page=$pageIndex start=$startOffset end=$endOffset href=${href.logValue()}"
+}
+
+private fun LoadingState.formatWebViewLoadingForLog(): String {
+    return when (this) {
+        is LoadingState.Loading -> "loading progress=${progress.formatLogFloat()}"
+        is LoadingState.Finished -> "finished"
+        else -> javaClass.simpleName.ifBlank { toString() }
+    }
+}
+
+private fun KCEFBrowser.formatKcefBrowserForLog(): String {
+    return runCatching {
+        "id=$identifier closing=$isClosing closed=$isClosed loading=$isLoading url=${url.logValue()}"
+    }.getOrElse { error ->
+        "unavailable error=${error.message.logValue()}"
+    }
+}
+
+private fun KCEFBrowser.setReaderSurfaceVisible(htmlHash: Int, visible: Boolean, reason: String) {
+    fun step(name: String, action: () -> Unit) {
+        runCatching(action)
+            .onSuccess { logReaderSurface("webview_native_visibility_step reason=$reason htmlHash=$htmlHash visible=$visible step=$name result=ok") }
+            .onFailure { logReaderSurface("webview_native_visibility_step reason=$reason htmlHash=$htmlHash visible=$visible step=$name error=${it.message.logValue()}") }
+    }
+
+    step("browser_window_visibility") { setWindowVisibility(visible) }
+    step("component_visibility") {
+        uiComponent.setReaderSurfaceComponentVisible(htmlHash, visible, reason)
+    }
+}
+
+private fun KCEFBrowser.parkReaderSurfaceOffscreen(htmlHash: Int, reason: String) {
+    fun step(name: String, action: () -> Unit) {
+        runCatching(action)
+            .onSuccess { logReaderSurface("webview_native_park_step reason=$reason htmlHash=$htmlHash step=$name result=ok") }
+            .onFailure { logReaderSurface("webview_native_park_step reason=$reason htmlHash=$htmlHash step=$name error=${it.message.logValue()}") }
+    }
+
+    step("component_park") {
+        uiComponent.parkForReaderSurfaceLog(htmlHash, reason)
+    }
+}
+
+private fun KCEFBrowser.disposeForReaderSurfaceLog(htmlHash: Int, reason: String = "dispose") {
+    fun step(name: String, action: () -> Unit) {
+        runCatching(action)
+            .onSuccess { logReaderSurface("webview_native_dispose_step reason=$reason htmlHash=$htmlHash step=$name result=ok") }
+            .onFailure { logReaderSurface("webview_native_dispose_step reason=$reason htmlHash=$htmlHash step=$name error=${it.message.logValue()}") }
+    }
+
+    step("component_hide_detach") { uiComponent.detachForReaderSurfaceLog(htmlHash, reason) }
+    step("hide") { setWindowVisibility(false) }
+    step("stop_load") { stopLoad() }
+    step("load_blank") { loadURL(KCEFBrowser.BLANK_URI) }
+    step("close_force") { close(true) }
+    step("dispose") { dispose() }
+}
+
+private fun Component.parkForReaderSurfaceLog(htmlHash: Int, reason: String) {
+    val park = {
+        logReaderSurface(
+            "webview_component_park_start reason=$reason htmlHash=$htmlHash " +
+                "component=${formatWindowState()} parent=${parent?.formatWindowState() ?: "null"}"
+        )
+        isVisible = true
+        setBounds(ReaderSurfaceParkedCoordinate, ReaderSurfaceParkedCoordinate, 1, 1)
+        parent?.flushReaderSurfacePaint()
+        flushReaderSurfacePaint()
+        logReaderSurface(
+            "webview_component_park_done reason=$reason htmlHash=$htmlHash " +
+                "component=${formatWindowState()} parent=${parent?.formatWindowState() ?: "null"}"
+        )
+    }
+    if (EventQueue.isDispatchThread()) {
+        park()
+    } else {
+        SwingUtilities.invokeAndWait { park() }
+    }
+}
+
+private fun Component.setReaderSurfaceComponentVisible(htmlHash: Int, visible: Boolean, reason: String) {
+    val update = {
+        logReaderSurface(
+            "webview_component_visibility_start reason=$reason htmlHash=$htmlHash visible=$visible " +
+                "component=${formatWindowState()} parent=${parent?.formatWindowState() ?: "null"}"
+        )
+        isVisible = visible
+        flushReaderSurfacePaint()
+        parent?.flushReaderSurfacePaint()
+        logReaderSurface(
+            "webview_component_visibility_done reason=$reason htmlHash=$htmlHash visible=$visible " +
+                "component=${formatWindowState()} parent=${parent?.formatWindowState() ?: "null"}"
+        )
+    }
+    if (EventQueue.isDispatchThread()) {
+        update()
+    } else {
+        SwingUtilities.invokeAndWait { update() }
+    }
+}
+
+private fun Component.detachForReaderSurfaceLog(htmlHash: Int, reason: String) {
+    val detach = {
+        val oldParent = parent
+        logReaderSurface(
+            "webview_component_detach_start reason=$reason htmlHash=$htmlHash " +
+                "component=${formatWindowState()} parent=${oldParent?.formatWindowState() ?: "null"}"
+        )
+        isVisible = false
+        oldParent?.remove(this)
+        flushReaderSurfacePaint()
+        oldParent?.flushReaderSurfacePaint()
+        logReaderSurface(
+            "webview_component_detach_done reason=$reason htmlHash=$htmlHash " +
+                "component=${formatWindowState()} parent=${oldParent?.formatWindowState() ?: "null"}"
+        )
+    }
+    if (EventQueue.isDispatchThread()) {
+        detach()
+    } else {
+        SwingUtilities.invokeAndWait { detach() }
+    }
 }
 
 private fun DesktopPdfLinkTarget.formatLogTarget(): String {
