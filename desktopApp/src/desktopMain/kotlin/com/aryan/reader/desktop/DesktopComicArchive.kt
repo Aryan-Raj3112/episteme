@@ -1,17 +1,22 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.opds.OpdsCatalog
+import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import java.awt.Font
 import java.awt.Color
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
+import java.net.URL
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
@@ -33,6 +38,37 @@ internal object DesktopComicArchive {
             FileType.CB7 -> loadSevenZ(file)
             else -> error("${type.name} is not a comic archive type.")
         }
+    }
+
+    fun loadOpdsStream(
+        path: String,
+        title: String,
+        reference: OpdsStreamReference,
+        catalog: OpdsCatalog?
+    ): DesktopComicDocument {
+        val cacheDir = File(
+            DesktopLibraryDatabase.defaultDatabaseFile().parentFile,
+            "opds_stream_cache/${reference.id.hashCode()}"
+        ).apply { mkdirs() }
+        val pages = (0 until reference.count).map { pageIndex ->
+            DesktopComicPage(
+                name = "opds_${pageIndex + 1}.jpg",
+                width = 800,
+                height = 1200,
+                source = OpdsStreamComicPageSource(
+                    pageIndex = pageIndex,
+                    urlTemplate = reference.urlTemplate,
+                    catalog = catalog,
+                    cacheDir = cacheDir
+                )
+            )
+        }
+        return DesktopComicDocument(
+            path = path,
+            title = title,
+            pages = pages,
+            closeAction = {}
+        )
     }
 
     private fun loadZip(file: File): DesktopComicDocument {
@@ -229,8 +265,10 @@ internal class DesktopComicDocument(
             ImageIO.read(input)
         } ?: error("Could not decode comic page ${pageIndex + 1}.")
         val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
-        val width = (page.width * safeScale).roundToInt().coerceAtLeast(1)
-        val height = (page.height * safeScale).roundToInt().coerceAtLeast(1)
+        val sourceWidth = sourceImage.width.coerceAtLeast(1)
+        val sourceHeight = sourceImage.height.coerceAtLeast(1)
+        val width = (sourceWidth * safeScale).roundToInt().coerceAtLeast(1)
+        val height = (sourceHeight * safeScale).roundToInt().coerceAtLeast(1)
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
         val graphics = image.createGraphics()
         try {
@@ -276,6 +314,72 @@ private class FileComicPageSource(
     private val file: File
 ) : ComicPageSource {
     override fun readBytes(): ByteArray = file.readBytes()
+}
+
+private class OpdsStreamComicPageSource(
+    private val pageIndex: Int,
+    private val urlTemplate: String,
+    private val catalog: OpdsCatalog?,
+    private val cacheDir: File
+) : ComicPageSource {
+    override fun readBytes(): ByteArray {
+        val cachedFile = File(cacheDir, "page_$pageIndex.jpg")
+        if (cachedFile.isFile && cachedFile.length() > 0L) {
+            return cachedFile.readBytes()
+        }
+
+        return runCatching {
+            val bytes = DesktopOpdsHttp.fetchBytes(streamPageUrl(), catalog)
+            if (bytes.isNotEmpty()) {
+                cachedFile.writeBytes(bytes)
+                bytes
+            } else {
+                error("Empty OPDS stream page response.")
+            }
+        }.getOrElse {
+            errorPageBytes()
+        }
+    }
+
+    private fun streamPageUrl(): String {
+        return effectiveTemplate()
+            .replace("{pageNumber}", pageIndex.toString())
+            .replace("{page}", pageIndex.toString())
+            .replace("{maxWidth}", "1600")
+            .replace("{maxHeight}", "2400")
+    }
+
+    private fun effectiveTemplate(): String {
+        val catalogUrl = catalog?.url ?: return urlTemplate
+        if (!urlTemplate.startsWith("http", ignoreCase = true)) return urlTemplate
+        return runCatching {
+            val oldUrl = URL(urlTemplate)
+            val newUrl = URL(catalogUrl)
+            val oldBase = "${oldUrl.protocol}://${oldUrl.authority}"
+            val newBase = "${newUrl.protocol}://${newUrl.authority}"
+            urlTemplate.replace(oldBase, newBase)
+        }.getOrDefault(urlTemplate)
+    }
+
+    private fun errorPageBytes(): ByteArray {
+        val image = BufferedImage(800, 1200, BufferedImage.TYPE_INT_RGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.color = Color.DARK_GRAY
+            graphics.fillRect(0, 0, image.width, image.height)
+            graphics.color = Color.WHITE
+            graphics.font = Font(Font.SANS_SERIF, Font.BOLD, 36)
+            val text = "Page unavailable"
+            val metrics = graphics.fontMetrics
+            graphics.drawString(text, (image.width - metrics.stringWidth(text)) / 2, image.height / 2)
+        } finally {
+            graphics.dispose()
+        }
+        return ByteArrayOutputStream().use { output ->
+            ImageIO.write(image, "jpg", output)
+            output.toByteArray()
+        }
+    }
 }
 
 private object DesktopArchiveCommand {

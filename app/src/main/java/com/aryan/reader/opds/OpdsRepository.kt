@@ -3,12 +3,11 @@ package com.aryan.reader.opds
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.aryan.reader.shared.opds.SharedOpdsCatalogs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
 import timber.log.Timber
 import java.security.MessageDigest
 import java.util.UUID
@@ -37,76 +36,26 @@ class OpdsRepository(context: Context) {
 
     fun getCatalogs(): List<OpdsCatalog> {
         val jsonString = prefs.getString(KEY_CATALOGS_JSON, null)
-        val catalogs = mutableListOf<OpdsCatalog>()
-
-        if (jsonString != null) {
-            try {
-                val jsonArray = JSONArray(jsonString)
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    catalogs.add(
-                        OpdsCatalog(
-                            id = obj.getString("id"),
-                            title = obj.getString("title"),
-                            url = obj.getString("url"),
-                            isDefault = obj.optBoolean("isDefault", false),
-                            username = obj.optString("username", "").takeIf { it.isNotBlank() },
-                            password = obj.optString("password", "").takeIf { it.isNotBlank() }
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+        val decodedCatalogs = SharedOpdsCatalogs.decode(jsonString)
+        val catalogs = decodedCatalogs.ifEmpty {
+            SharedOpdsCatalogs.defaultCatalogs { UUID.randomUUID().toString() }
         }
-
-        if (catalogs.isEmpty()) {
-            catalogs.add(OpdsCatalog(UUID.randomUUID().toString(), "Project Gutenberg", "https://m.gutenberg.org/ebooks.opds/", isDefault = true))
-            catalogs.add(OpdsCatalog(UUID.randomUUID().toString(), "Standard Ebooks", "https://standardebooks.org/feeds/opds", isDefault = true))
-
+        if (decodedCatalogs.isEmpty()) {
             saveCatalogs(catalogs)
         }
-
         return catalogs
     }
 
-    private fun resolveUrl(baseUrl: String, href: String): String {
-        return try {
-            val resolved = java.net.URL(java.net.URL(baseUrl), href).toString()
-
-            resolved.replace("http://m.gutenberg.org", "https://m.gutenberg.org")
-                .replace("http://www.gutenberg.org", "https://www.gutenberg.org")
-        } catch (_: Exception) {
-            href
-        }
-    }
-
-    suspend fun getSearchTemplate(openSearchUrl: String): String? = withContext(Dispatchers.IO) {
+    suspend fun getSearchTemplate(
+        openSearchUrl: String,
+        username: String? = null,
+        password: String? = null
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url(openSearchUrl).build()
-            val response = httpClient.newCall(request).execute()
+            val response = getAuthenticatedClient(username, password).newCall(request).execute()
             val body = response.body?.string() ?: return@withContext null
-
-            val parser = android.util.Xml.newPullParser()
-            parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-            parser.setInput(body.byteInputStream(), null)
-            var eventType = parser.eventType
-
-            while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-                if (eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name.equals("Url", ignoreCase = true)) {
-                    val type = parser.getAttributeValue(null, "type")
-                    if (type != null && (type.contains("atom+xml") || type.contains("opds+xml"))) {
-                        val template = parser.getAttributeValue(null, "template")
-                        if (template != null) {
-                            val resolvedTemplate = resolveUrl(openSearchUrl, template)
-                            Timber.tag("OpdsDebug").d("Resolved search template: $resolvedTemplate")
-                            return@withContext resolvedTemplate
-                        }
-                    }
-                }
-                eventType = parser.next()
-            }
-            null
+            parser.extractOpenSearchTemplate(body, openSearchUrl)
         } catch (e: Exception) {
             Timber.e(e, "Failed to fetch OpenSearch template")
             null
@@ -114,48 +63,28 @@ class OpdsRepository(context: Context) {
     }
 
     fun addCatalog(title: String, url: String, username: String? = null, password: String? = null) {
-        val current = getCatalogs().toMutableList()
-        current.add(OpdsCatalog(UUID.randomUUID().toString(), title, url, username = username, password = password))
-        saveCatalogs(current)
+        saveCatalogs(
+            SharedOpdsCatalogs.addCatalog(
+                catalogs = getCatalogs(),
+                title = title,
+                url = url,
+                username = username,
+                password = password,
+                idFactory = { UUID.randomUUID().toString() }
+            )
+        )
     }
 
     fun updateCatalog(id: String, title: String, url: String, username: String?, password: String?) {
-        val current = getCatalogs().toMutableList()
-        val index = current.indexOfFirst { it.id == id }
-        if (index != -1 && !current[index].isDefault) {
-            current[index] = current[index].copy(
-                title = title.trim(),
-                url = url.trim(),
-                username = username?.trim().takeIf { !it.isNullOrBlank() },
-                password = password?.trim().takeIf { !it.isNullOrBlank() }
-            )
-            saveCatalogs(current)
-        }
+        saveCatalogs(SharedOpdsCatalogs.updateCatalog(getCatalogs(), id, title, url, username, password))
     }
 
     fun removeCatalog(id: String) {
-        val current = getCatalogs().toMutableList()
-        val toRemove = current.find { it.id == id }
-        if (toRemove?.isDefault == true) {
-            return
-        }
-        current.removeAll { it.id == id }
-        saveCatalogs(current)
+        saveCatalogs(SharedOpdsCatalogs.removeCatalog(getCatalogs(), id))
     }
 
     private fun saveCatalogs(catalogs: List<OpdsCatalog>) {
-        val jsonArray = JSONArray()
-        catalogs.forEach { catalog ->
-            val obj = JSONObject()
-            obj.put("id", catalog.id)
-            obj.put("title", catalog.title)
-            obj.put("url", catalog.url)
-            obj.put("isDefault", catalog.isDefault)
-            if (catalog.username != null) obj.put("username", catalog.username)
-            if (catalog.password != null) obj.put("password", catalog.password)
-            jsonArray.put(obj)
-        }
-        prefs.edit { putString(KEY_CATALOGS_JSON, jsonArray.toString()) }
+        prefs.edit { putString(KEY_CATALOGS_JSON, SharedOpdsCatalogs.encode(catalogs)) }
     }
 
     fun getAuthenticatedClient(username: String?, password: String?): OkHttpClient {

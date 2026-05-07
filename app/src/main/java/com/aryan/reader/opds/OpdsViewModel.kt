@@ -5,7 +5,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.aryan.reader.resolveFileExtensionSuffixFromName
+import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
+import com.aryan.reader.shared.opds.SharedOpdsSearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,16 +18,6 @@ import okhttp3.Response
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
-
-data class OpdsScreenState(
-    val catalogs: List<OpdsCatalog> = emptyList(),
-    val currentCatalog: OpdsCatalog? = null,
-    val currentFeed: OpdsFeed? = null,
-    val isLoading: Boolean = false,
-    val errorMessage: String? = null,
-    val isViewingCatalog: Boolean = false,
-    val searchUrlTemplate: String? = null
-)
 
 class OpdsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = OpdsRepository(application)
@@ -142,42 +133,11 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resolveOpdsDownloadExtension(acquisition: OpdsAcquisition, response: Response): String {
-        val candidates = listOfNotNull(
-            response.header("Content-Disposition")?.let(::extractContentDispositionFilename),
-            Uri.parse(acquisition.url).lastPathSegment
+        return SharedOpdsDownloadNamer.resolveExtension(
+            acquisition = acquisition,
+            contentDisposition = response.header("Content-Disposition"),
+            urlPathSegment = Uri.parse(acquisition.url).lastPathSegment
         )
-
-        candidates.forEach { candidate ->
-            resolveFileExtensionSuffixFromName(Uri.decode(candidate))?.let { return it }
-        }
-
-        return when (acquisition.formatName) {
-            "EPUB" -> ".epub"
-            "PDF" -> ".pdf"
-            "MOBI" -> ".mobi"
-            "FB2" -> ".fb2"
-            "CBZ" -> ".cbz"
-            "CBR" -> ".cbr"
-            "MD" -> ".md"
-            "HTML" -> ".html"
-            "TXT" -> ".txt"
-            else -> ".epub"
-        }
-    }
-
-    private fun extractContentDispositionFilename(contentDisposition: String): String? {
-        val encodedFilename = Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE)
-            .find(contentDisposition)
-            ?.groupValues
-            ?.getOrNull(1)
-        if (!encodedFilename.isNullOrBlank()) return encodedFilename.trim('"')
-
-        return Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE)
-            .find(contentDisposition)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
-            ?.trim('"')
     }
 
     init {
@@ -233,17 +193,9 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 
-            val template = if (!searchLink.contains("{searchTerms}")) {
-                repository.getSearchTemplate(searchLink) ?: searchLink
-            } else {
-                searchLink
-            }
-
-            val finalUrl = if (template.contains("{searchTerms}")) {
-                template.replace("{searchTerms}", Uri.encode(query))
-            } else {
-                val separator = if (template.contains("?")) "&" else "?"
-                "$template${separator}query=${Uri.encode(query)}"
+            val finalUrl = SharedOpdsSearch.buildSearchUrl(searchLink, query) { openSearchUrl ->
+                val catalog = _uiState.value.currentCatalog
+                repository.getSearchTemplate(openSearchUrl, catalog?.username, catalog?.password)
             }
 
             openFeedUrl(finalUrl)

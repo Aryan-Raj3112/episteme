@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Sync
@@ -41,6 +42,7 @@ enum class SharedAppTab {
     HOME,
     LIBRARY,
     SHELVES,
+    CATALOGS,
     READER
 }
 
@@ -96,6 +98,12 @@ fun SharedAppShell(
                     onClick = { onTabSelected(SharedAppTab.SHELVES) },
                     icon = { Icon(Icons.Default.Folder, contentDescription = null) },
                     label = { Text("Shelves") }
+                )
+                NavigationRailItem(
+                    selected = selectedTab == SharedAppTab.CATALOGS,
+                    onClick = { onTabSelected(SharedAppTab.CATALOGS) },
+                    icon = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                    label = { Text("OPDS") }
                 )
                 NavigationRailItem(
                     selected = selectedTab == SharedAppTab.READER,

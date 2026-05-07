@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfTocEntry
+import com.aryan.reader.shared.opds.OpdsCatalog
+import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
@@ -267,6 +269,30 @@ object DesktopPdfium {
             pageCount = comic.pageCount,
             pageSizes = comic.pageSizes,
             formatLabel = type.name
+        )
+    }
+
+    @Synchronized
+    fun loadOpdsStream(
+        path: String,
+        title: String,
+        reference: OpdsStreamReference,
+        catalog: OpdsCatalog?
+    ): DesktopPdfDocument {
+        val startedAt = System.currentTimeMillis()
+        val comic = DesktopComicArchive.loadOpdsStream(path, title, reference, catalog)
+        closeDocument(path)
+        openComicDocuments[path] = comic
+        logPdfiumOpen(
+            "opds_stream_open_complete pages=${comic.pageCount} " +
+                "elapsedMs=${System.currentTimeMillis() - startedAt}"
+        )
+        return DesktopPdfDocument(
+            path = path,
+            title = title,
+            pageCount = comic.pageCount,
+            pageSizes = comic.pageSizes,
+            formatLabel = "OPDS"
         )
     }
 

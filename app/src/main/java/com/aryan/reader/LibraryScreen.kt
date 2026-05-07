@@ -3147,11 +3147,12 @@ fun OpdsBookDetailsSheet(
                 }
             }
 
-            if (!entry.summary.isNullOrBlank()) {
+            val summary = entry.summary
+            if (!summary.isNullOrBlank()) {
                 Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-                val cleanSummary = remember(entry.summary) {
-                    val preProcessed = entry.summary
+                val cleanSummary = remember(summary) {
+                    val preProcessed = summary
                         .replace("<br>", "\n")
                         .replace("</p>", "\n\n")
                     Jsoup.parse(preProcessed).text().trim()

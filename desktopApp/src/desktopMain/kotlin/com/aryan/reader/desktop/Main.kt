@@ -186,6 +186,13 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.opds.OpdsAcquisition
+import com.aryan.reader.shared.opds.OpdsCatalog
+import com.aryan.reader.shared.opds.OpdsEntry
+import com.aryan.reader.shared.opds.OpdsStreamReference
+import com.aryan.reader.shared.opds.SharedOpdsController
+import com.aryan.reader.shared.opds.SharedOpdsDownloadState
+import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
@@ -198,6 +205,7 @@ import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
+import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
@@ -259,6 +267,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
@@ -288,6 +297,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
+    val opdsRepository = remember { DesktopOpdsRepository() }
+    val opdsController = remember {
+        SharedOpdsController(
+            repository = opdsRepository,
+            idFactory = { UUID.randomUUID().toString() }
+        )
+    }
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
@@ -378,6 +394,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
+    var opdsState by remember { mutableStateOf(opdsController.state) }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -674,6 +691,38 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 )
                 return
             }
+            val streamReference = SharedOpdsStreamUri.parse(path)
+            if (streamReference != null) {
+                if (activePdfDocument?.path == path) {
+                    activeReaderBookId = book.id
+                    recordBookOpened(book.id)
+                    selectedTab = SharedAppTab.READER
+                    return
+                }
+                activePdfDocument?.close()
+                activePdfDocument = null
+                val document = runCatching {
+                    DesktopPdfium.loadOpdsStream(
+                        path = path,
+                        title = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
+                        reference = streamReference,
+                        catalog = opdsRepository.catalogById(streamReference.catalogId)
+                    )
+                }.getOrElse { error ->
+                    updateState(
+                        state.withBanner(
+                            "Could not open OPDS stream: ${error.message ?: "unknown error"}",
+                            isError = true
+                        )
+                    )
+                    return
+                }
+                activePdfDocument = document
+                activeReaderBookId = book.id
+                recordBookOpened(book.id)
+                selectedTab = SharedAppTab.READER
+                return
+            }
             val readerFile = File(path)
             val readerPath = readerFile.absolutePath
             if (activePdfDocument?.path == readerPath) {
@@ -852,6 +901,122 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
     }
 
+    fun emitOpds(next: com.aryan.reader.shared.opds.SharedOpdsScreenState) {
+        opdsState = next
+    }
+
+    fun openOpdsCatalog(catalog: OpdsCatalog) {
+        scope.launch {
+            opdsController.openCatalog(catalog, ::emitOpds)
+        }
+    }
+
+    fun openOpdsFeedUrl(url: String) {
+        scope.launch {
+            opdsController.openFeedUrl(url, ::emitOpds)
+        }
+    }
+
+    fun navigateOpdsBack() {
+        scope.launch {
+            opdsController.navigateBack(::emitOpds)
+        }
+    }
+
+    fun searchOpds(query: String) {
+        scope.launch {
+            opdsController.search(query, ::emitOpds)
+        }
+    }
+
+    fun loadNextOpdsPage() {
+        scope.launch {
+            opdsController.loadNextPage(::emitOpds)
+        }
+    }
+
+    fun removeOpdsCatalog(catalog: OpdsCatalog) {
+        emitOpds(opdsController.removeCatalog(catalog.id))
+        val streamBookIds = state.rawLibraryBooks
+            .filter { book -> SharedOpdsStreamUri.parse(book.path)?.catalogId == catalog.id }
+            .mapTo(mutableSetOf()) { it.id }
+        if (streamBookIds.isNotEmpty()) {
+            if (activeReaderBookId in streamBookIds) {
+                activePdfDocument?.close()
+                activePdfDocument = null
+                activeReaderBookId = null
+                readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                selectedTab = SharedAppTab.HOME
+            }
+            updateState(
+                state.copy(
+                    rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in streamBookIds },
+                    openTabIds = state.openTabIds.filterNot { it in streamBookIds },
+                    activeTabBookId = state.activeTabBookId?.takeUnless { it in streamBookIds }
+                ).withBanner("Removed ${streamBookIds.size} streamed OPDS book(s) from that catalog.")
+            )
+        }
+    }
+
+    fun downloadOpdsBook(entry: OpdsEntry, acquisition: OpdsAcquisition) {
+        val catalog = opdsState.currentCatalog
+        scope.launch {
+            emitOpds(opdsController.updateDownloadState(entry.id, SharedOpdsDownloadState(true, 0f)))
+            val result = runCatching {
+                opdsRepository.downloadBook(entry, acquisition, catalog) { progress ->
+                    scope.launch {
+                        if (opdsController.state.downloadingState[entry.id]?.isDownloading == true) {
+                            emitOpds(opdsController.updateDownloadState(entry.id, SharedOpdsDownloadState(true, progress)))
+                        }
+                    }
+                }
+            }
+            emitOpds(opdsController.updateDownloadState(entry.id, null))
+            result.onSuccess { file ->
+                importFiles(listOf(file.toImportedBookFile()))
+                updateState(state.withBanner("Downloaded ${file.name} from OPDS."))
+            }.onFailure { error ->
+                updateState(
+                    state.withBanner(
+                        "Could not download ${entry.title}: ${error.message ?: "unknown error"}",
+                        isError = true
+                    )
+                )
+            }
+        }
+    }
+
+    fun streamOpdsBook(entry: OpdsEntry, catalog: OpdsCatalog?) {
+        val pageCount = entry.pseCount
+        val urlTemplate = entry.pseUrlTemplate
+        if (pageCount == null || pageCount <= 0 || urlTemplate.isNullOrBlank()) {
+            updateState(state.withBanner("This OPDS entry does not expose a readable stream.", isError = true))
+            return
+        }
+        val reference = OpdsStreamReference(
+            id = entry.id.ifBlank { "${entry.title}:$urlTemplate" },
+            count = pageCount,
+            urlTemplate = urlTemplate,
+            catalogId = catalog?.id
+        )
+        val uriString = SharedOpdsStreamUri.build(reference)
+        val now = System.currentTimeMillis()
+        val streamBook = BookItem(
+            id = uriString,
+            path = uriString,
+            type = FileType.CBZ,
+            displayName = entry.title,
+            timestamp = now,
+            title = entry.title,
+            author = entry.author,
+            fileSize = 0L
+        )
+        if (state.rawLibraryBooks.none { it.id == streamBook.id }) {
+            updateState(state.copy(rawLibraryBooks = state.rawLibraryBooks + streamBook))
+        }
+        openReader(streamBook)
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             activePdfDocument?.close()
@@ -971,6 +1136,27 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
                             onRemoveFolder = { folderToRemove = it }
+                        )
+
+                        SharedAppTab.CATALOGS -> SharedOpdsScreen(
+                            state = opdsState,
+                            localLibraryBooks = state.rawLibraryBooks,
+                            onOpenCatalog = ::openOpdsCatalog,
+                            onOpenFeedUrl = ::openOpdsFeedUrl,
+                            onNavigateBack = ::navigateOpdsBack,
+                            onSearch = ::searchOpds,
+                            onLoadNextPage = ::loadNextOpdsPage,
+                            onAddCatalog = { title, url, username, password ->
+                                emitOpds(opdsController.addCatalog(title, url, username, password))
+                            },
+                            onUpdateCatalog = { id, title, url, username, password ->
+                                emitOpds(opdsController.updateCatalog(id, title, url, username, password))
+                            },
+                            onRemoveCatalog = ::removeOpdsCatalog,
+                            onDownloadBook = ::downloadOpdsBook,
+                            onReadBook = ::openReader,
+                            onStreamBook = ::streamOpdsBook,
+                            onClearError = { emitOpds(opdsController.clearError()) }
                         )
 
                         SharedAppTab.READER -> {
@@ -1166,6 +1352,14 @@ private fun DesktopFileDropTarget(
         } else {
             val installedTargets = mutableListOf<InstalledDropTarget>()
             var disposed = false
+            var lastDragState = DesktopDropImportState()
+
+            fun publishDragState(state: DesktopDropImportState) {
+                if (state == lastDragState) return
+                lastDragState = state
+                onDragStateChangeState.value(state)
+            }
+
             val listener = object : DropTargetAdapter() {
                 override fun dragEnter(event: DropTargetDragEvent) {
                     handleDrag(event)
@@ -1176,33 +1370,36 @@ private fun DesktopFileDropTarget(
                 }
 
                 override fun dragExit(event: DropTargetEvent) {
-                    onDragStateChangeState.value(DesktopDropImportState())
+                    publishDragState(DesktopDropImportState())
                 }
 
                 override fun drop(event: DropTargetDropEvent) {
                     if (!event.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                         event.rejectDrop()
-                        onDragStateChangeState.value(DesktopDropImportState())
+                        publishDragState(DesktopDropImportState())
                         return
                     }
                     event.acceptDrop(DnDConstants.ACTION_COPY)
                     val files = event.transferable.localDraggedFiles().filter { it.isFile }
                     if (files.isEmpty()) {
                         event.dropComplete(false)
-                        onDragStateChangeState.value(DesktopDropImportState())
+                        publishDragState(DesktopDropImportState())
                         return
                     }
 
                     onFilesDroppedState.value(files.map { it.toImportedBookFile() })
                     event.dropComplete(true)
-                    onDragStateChangeState.value(DesktopDropImportState())
+                    publishDragState(DesktopDropImportState())
                 }
 
                 private fun handleDrag(event: DropTargetDragEvent) {
                     val hasFilePayload = event.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
-                    val files = event.transferable.localDraggedFiles().filter { it.isFile }
-                    val state = files.toDropImportState(active = true, hasFilePayload = hasFilePayload)
-                    onDragStateChangeState.value(state)
+                    publishDragState(
+                        DesktopDropImportState(
+                            active = true,
+                            hasFilePayload = hasFilePayload
+                        )
+                    )
                     if (hasFilePayload) {
                         event.acceptDrag(DnDConstants.ACTION_COPY)
                     } else {
@@ -1223,7 +1420,7 @@ private fun DesktopFileDropTarget(
                     runCatching { installed.dropTarget.removeDropTargetListener(listener) }
                     installed.component.dropTarget = installed.previous
                 }
-                onDragStateChangeState.value(DesktopDropImportState())
+                publishDragState(DesktopDropImportState())
             }
         }
     }
@@ -1323,20 +1520,6 @@ private fun java.awt.datatransfer.Transferable.localDraggedFiles(): List<File> {
             .orEmpty()
             .filterIsInstance<File>()
     }.getOrDefault(emptyList())
-}
-
-private fun List<File>.toDropImportState(
-    active: Boolean,
-    hasFilePayload: Boolean
-): DesktopDropImportState {
-    val localFiles = filter { it.isFile }
-    val supportedCount = localFiles.count { SharedFileCapabilities.fileTypeForName(it.name) in DesktopReadableFileTypes }
-    return DesktopDropImportState(
-        active = active,
-        supportedCount = supportedCount,
-        totalFileCount = localFiles.size,
-        hasFilePayload = hasFilePayload
-    )
 }
 
 private fun BookItem.withDesktopImportMetadata(

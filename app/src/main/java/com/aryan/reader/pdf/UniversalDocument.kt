@@ -545,8 +545,11 @@ class OpdsStreamDocumentWrapper(
 
     private val client = com.aryan.reader.opds.OpdsRepository.sharedHttpClient.newBuilder()
         .apply {
-            if (!catalog?.username.isNullOrBlank() && !catalog.password.isNullOrBlank()) {
-                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(catalog.username, catalog.password))
+            val streamCatalog = catalog
+            val username = streamCatalog?.username
+            val password = streamCatalog?.password
+            if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
+                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(username, password))
             }
         }
         .build()
@@ -580,10 +583,11 @@ class OpdsStreamDocumentWrapper(
             }
         }
 
-        val finalUrlTemplate = if (catalog != null && urlTemplate.startsWith("http")) {
+        val streamCatalog = catalog
+        val finalUrlTemplate = if (streamCatalog != null && urlTemplate.startsWith("http")) {
             try {
                 val oldUrl = java.net.URL(urlTemplate)
-                val newUrl = java.net.URL(catalog.url)
+                val newUrl = java.net.URL(streamCatalog.url)
                 val oldBase = "${oldUrl.protocol}://${oldUrl.authority}"
                 val newBase = "${newUrl.protocol}://${newUrl.authority}"
                 urlTemplate.replace(oldBase, newBase)
