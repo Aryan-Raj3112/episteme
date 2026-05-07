@@ -75,10 +75,14 @@ fun SharedAppShell(
     var optionsExpanded by remember { mutableStateOf(false) }
     var showAppThemeSettings by remember { mutableStateOf(false) }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(padding)
         ) {
             NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {

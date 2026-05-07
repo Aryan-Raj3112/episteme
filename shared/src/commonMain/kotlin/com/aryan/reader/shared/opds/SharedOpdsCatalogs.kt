@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -129,7 +130,8 @@ object SharedOpdsCatalogs {
     }
 
     private fun JsonObject.string(name: String): String? {
-        return runCatching { this[name]?.jsonPrimitive?.content }.getOrNull()
+        val value = this[name]?.takeUnless { it is JsonNull } ?: return null
+        return runCatching { value.jsonPrimitive.contentOrNull }.getOrNull()
     }
 
     private fun JsonObject.boolean(name: String): Boolean? {

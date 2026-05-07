@@ -37,6 +37,27 @@ class SharedOpdsCatalogsTest {
     }
 
     @Test
+    fun `catalog json decodes null credentials as absent credentials`() {
+        val catalogs = SharedOpdsCatalogs.decode(
+            """
+            [
+              {
+                "id": "catalog",
+                "title": "Catalog",
+                "url": "https://example.org/opds",
+                "username": null,
+                "password": null
+              }
+            ]
+            """.trimIndent()
+        )
+
+        val catalog = catalogs.single()
+        assertNull(catalog.username)
+        assertNull(catalog.password)
+    }
+
+    @Test
     fun `search templates expand opds uri template variants`() {
         assertEquals(
             "https://example.org/search?query=ada%20lovelace",
