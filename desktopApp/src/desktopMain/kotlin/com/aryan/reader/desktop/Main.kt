@@ -1,6 +1,7 @@
 package com.aryan.reader.desktop
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -94,6 +95,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.aryan.reader.paginatedreader.SemanticBlock
@@ -234,8 +236,18 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.Desktop
+import java.awt.Container
+import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Component
+import java.awt.datatransfer.DataFlavor
+import java.awt.dnd.DnDConstants
+import java.awt.dnd.DropTarget
+import java.awt.dnd.DropTargetAdapter
+import java.awt.dnd.DropTargetDragEvent
+import java.awt.dnd.DropTargetEvent
+import java.awt.dnd.DropTargetDropEvent
 import java.io.File
 import java.net.URI
 import java.net.URLDecoder
@@ -253,7 +265,7 @@ fun main() = application {
         onCloseRequest = ::exitApplication,
         title = "Episteme",
     ) {
-        EpistemeDesktopApp()
+        EpistemeDesktopApp(window)
     }
 }
 
@@ -266,7 +278,7 @@ private data class DesktopWebViewRuntimeState(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EpistemeDesktopApp() {
+private fun EpistemeDesktopApp(window: Component? = null) {
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
@@ -354,6 +366,7 @@ private fun EpistemeDesktopApp() {
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
     var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -428,6 +441,10 @@ private fun EpistemeDesktopApp() {
             return
         }
         val skipped = files.size - importableFiles.size
+        val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+        val importablePaths = importableFiles
+            .mapNotNull { it.localPath ?: it.uriString }
+            .toSet()
         val syncedFolders = mergeSyncedFolders(
             existing = state.syncedFolders,
             folderRoots = importableFiles.mapNotNull { it.sourceFolder }.distinct(),
@@ -442,6 +459,44 @@ private fun EpistemeDesktopApp() {
                 }
             }
         updateState(next)
+        val targetBookIds = next.rawLibraryBooks
+            .asSequence()
+            .filter { book ->
+                book.id !in existingIds ||
+                    book.path in importablePaths ||
+                    book.id in importablePaths
+            }
+            .map { it.id }
+            .toSet()
+        if (targetBookIds.isEmpty()) return
+        val originalTargetBooksById = next.rawLibraryBooks
+            .filter { it.id in targetBookIds }
+            .associateBy { it.id }
+
+        scope.launch {
+            val metadataResult = withContext(Dispatchers.IO) {
+                DesktopFolderMetadataExtractor.enrichImportedBooks(
+                    books = next.rawLibraryBooks,
+                    importedBookIds = targetBookIds
+                )
+            }
+            if (metadataResult.stats.updatedBooks > 0) {
+                val enrichedBooksById = metadataResult.books
+                    .filter { it.id in targetBookIds }
+                    .associateBy { it.id }
+                updateState(
+                    state.copy(
+                        rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                            val enriched = enrichedBooksById[book.id] ?: return@map book
+                            book.withDesktopImportMetadata(
+                                enriched = enriched,
+                                original = originalTargetBooksById[book.id]
+                            )
+                        }
+                    )
+                )
+            }
+        }
     }
 
     fun syncLocalFolders(targetFolder: File? = null, showBanner: Boolean = true) {
@@ -466,13 +521,14 @@ private fun EpistemeDesktopApp() {
             }
             val failedCount = result.failedFolders.size
             val stats = result.stats
+            val metadataStats = result.metadataStats
             val message = when {
                 failedCount > 0 && stats.supportedFiles == 0 ->
                     "Folder sync failed for $failedCount folder(s)."
                 failedCount > 0 ->
                     "Folder sync finished with $failedCount folder(s) skipped."
                 else ->
-                    "Folder sync complete: ${stats.newBooks} new, ${stats.updatedBooks + stats.remoteMetadataUpdates} updated, ${stats.removedBooks} removed."
+                    "Folder sync complete: ${stats.newBooks} new, ${stats.updatedBooks + stats.remoteMetadataUpdates + metadataStats.updatedBooks} updated, ${stats.removedBooks} removed."
             }
             val completedState = if (showBanner || failedCount > 0) {
                 result.state.withBanner(message, isError = failedCount > 0)
@@ -774,6 +830,12 @@ private fun EpistemeDesktopApp() {
         }
     }
 
+    DesktopFileDropTarget(
+        window = window,
+        onFilesDropped = ::importFiles,
+        onDragStateChange = { dropImportState = it }
+    )
+
     LaunchedEffect(Unit) {
         if (state.syncedFolders.isNotEmpty()) {
             syncLocalFolders(showBanner = false)
@@ -806,21 +868,22 @@ private fun EpistemeDesktopApp() {
     }
 
     MaterialTheme(colorScheme = colorScheme) {
-        SharedAppShell(
-            selectedTab = selectedTab,
-            snackbarHostState = snackbarHostState,
-            appThemeMode = state.appThemeMode,
-            isTabsEnabled = state.isTabsEnabled,
-            onTabSelected = { selectedTab = it },
-            onImportFiles = { importFiles(chooseFiles()) },
-            onImportFolder = { chooseFolder()?.let(::importFolder) },
-            onSyncRequested = {
-                syncLocalFolders()
-            },
-            onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
-            onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
-        ) { tab ->
-            when (tab) {
+        Box(Modifier.fillMaxSize()) {
+            SharedAppShell(
+                selectedTab = selectedTab,
+                snackbarHostState = snackbarHostState,
+                appThemeMode = state.appThemeMode,
+                isTabsEnabled = state.isTabsEnabled,
+                onTabSelected = { selectedTab = it },
+                onImportFiles = { importFiles(chooseFiles()) },
+                onImportFolder = { chooseFolder()?.let(::importFolder) },
+                onSyncRequested = {
+                    syncLocalFolders()
+                },
+                onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
+                onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
+            ) { tab ->
+                when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
                             state = state,
                             onImportBooks = {
@@ -931,7 +994,9 @@ private fun EpistemeDesktopApp() {
                                 )
                             }
                         }
+                }
             }
+            DesktopDropImportOverlay(dropImportState)
         }
 
         if (showCreateShelfDialog) {
@@ -1050,6 +1115,226 @@ private fun EpistemeDesktopApp() {
             )
         }
     }
+}
+
+private data class DesktopDropImportState(
+    val active: Boolean = false,
+    val supportedCount: Int = 0,
+    val totalFileCount: Int = 0,
+    val hasFilePayload: Boolean = false
+)
+
+@Composable
+private fun DesktopFileDropTarget(
+    window: Component?,
+    onFilesDropped: (List<ImportedBookFile>) -> Unit,
+    onDragStateChange: (DesktopDropImportState) -> Unit
+) {
+    val onFilesDroppedState = rememberUpdatedState(onFilesDropped)
+    val onDragStateChangeState = rememberUpdatedState(onDragStateChange)
+
+    DisposableEffect(window) {
+        if (window == null) {
+            onDispose { }
+        } else {
+            val installedTargets = mutableListOf<InstalledDropTarget>()
+            var disposed = false
+            val listener = object : DropTargetAdapter() {
+                override fun dragEnter(event: DropTargetDragEvent) {
+                    handleDrag(event)
+                }
+
+                override fun dragOver(event: DropTargetDragEvent) {
+                    handleDrag(event)
+                }
+
+                override fun dragExit(event: DropTargetEvent) {
+                    onDragStateChangeState.value(DesktopDropImportState())
+                }
+
+                override fun drop(event: DropTargetDropEvent) {
+                    if (!event.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                        event.rejectDrop()
+                        onDragStateChangeState.value(DesktopDropImportState())
+                        return
+                    }
+                    event.acceptDrop(DnDConstants.ACTION_COPY)
+                    val files = event.transferable.localDraggedFiles().filter { it.isFile }
+                    if (files.isEmpty()) {
+                        event.dropComplete(false)
+                        onDragStateChangeState.value(DesktopDropImportState())
+                        return
+                    }
+
+                    onFilesDroppedState.value(files.map { it.toImportedBookFile() })
+                    event.dropComplete(true)
+                    onDragStateChangeState.value(DesktopDropImportState())
+                }
+
+                private fun handleDrag(event: DropTargetDragEvent) {
+                    val hasFilePayload = event.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+                    val files = event.transferable.localDraggedFiles().filter { it.isFile }
+                    val state = files.toDropImportState(active = true, hasFilePayload = hasFilePayload)
+                    onDragStateChangeState.value(state)
+                    if (hasFilePayload) {
+                        event.acceptDrag(DnDConstants.ACTION_COPY)
+                    } else {
+                        event.rejectDrag()
+                    }
+                }
+            }
+            window.installDropTargets(listener, installedTargets)
+            EventQueue.invokeLater {
+                if (!disposed) {
+                    window.installDropTargets(listener, installedTargets)
+                }
+            }
+
+            onDispose {
+                disposed = true
+                installedTargets.forEach { installed ->
+                    runCatching { installed.dropTarget.removeDropTargetListener(listener) }
+                    installed.component.dropTarget = installed.previous
+                }
+                onDragStateChangeState.value(DesktopDropImportState())
+            }
+        }
+    }
+}
+
+private data class InstalledDropTarget(
+    val component: Component,
+    val previous: DropTarget?,
+    val dropTarget: DropTarget
+)
+
+private fun Component.installDropTargets(
+    listener: DropTargetAdapter,
+    installedTargets: MutableList<InstalledDropTarget>
+) {
+    collectDropTargetComponents()
+        .distinct()
+        .filterNot { component -> installedTargets.any { it.component == component } }
+        .forEach { component ->
+            val previous = component.dropTarget
+            val target = DropTarget(component, DnDConstants.ACTION_COPY, listener, true)
+            installedTargets += InstalledDropTarget(component, previous, target)
+        }
+}
+
+private fun Component.collectDropTargetComponents(): List<Component> {
+    val collected = mutableListOf<Component>()
+
+    fun visit(component: Component) {
+        collected += component
+        if (component is Container) {
+            component.components.forEach(::visit)
+        }
+    }
+
+    visit(this)
+    return collected
+}
+
+@Composable
+private fun DesktopDropImportOverlay(state: DesktopDropImportState) {
+    if (!state.active) return
+
+    val hasSupportedFiles = state.supportedCount > 0
+    val title = when {
+        hasSupportedFiles -> "Drop to import ${state.supportedCount} file${if (state.supportedCount == 1) "" else "s"}"
+        state.hasFilePayload -> "Drop supported files to import"
+        else -> "Drop files to import"
+    }
+    val body = if (hasSupportedFiles) {
+        val skipped = state.totalFileCount - state.supportedCount
+        if (skipped > 0) {
+            "$skipped unsupported file${if (skipped == 1) "" else "s"} will be skipped."
+        } else {
+            "Release to add to your library."
+        }
+    } else {
+        SharedFileCapabilities.supportedFormatsLabel(ReaderPlatform.DESKTOP)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(20f)
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.36f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 8.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 30.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+private fun java.awt.datatransfer.Transferable.localDraggedFiles(): List<File> {
+    if (!isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return emptyList()
+    return runCatching {
+        @Suppress("UNCHECKED_CAST")
+        (getTransferData(DataFlavor.javaFileListFlavor) as? List<*>)
+            .orEmpty()
+            .filterIsInstance<File>()
+    }.getOrDefault(emptyList())
+}
+
+private fun List<File>.toDropImportState(
+    active: Boolean,
+    hasFilePayload: Boolean
+): DesktopDropImportState {
+    val localFiles = filter { it.isFile }
+    val supportedCount = localFiles.count { SharedFileCapabilities.fileTypeForName(it.name) in DesktopReadableFileTypes }
+    return DesktopDropImportState(
+        active = active,
+        supportedCount = supportedCount,
+        totalFileCount = localFiles.size,
+        hasFilePayload = hasFilePayload
+    )
+}
+
+private fun BookItem.withDesktopImportMetadata(
+    enriched: BookItem,
+    original: BookItem?
+): BookItem {
+    fun shouldApplyText(current: String?, originalValue: String?): Boolean {
+        return current.isNullOrBlank() || current == originalValue
+    }
+
+    return copy(
+        title = if (shouldApplyText(title, original?.title)) {
+            enriched.title ?: title
+        } else {
+            title
+        },
+        author = if (shouldApplyText(author, original?.author)) {
+            enriched.author ?: author
+        } else {
+            author
+        },
+        fileSize = enriched.fileSize.takeIf { it > 0L } ?: fileSize,
+        coverImagePath = coverImagePath?.takeIf { File(it).isFile } ?: enriched.coverImagePath,
+        folderTextMetadataParsed = folderTextMetadataParsed || enriched.folderTextMetadataParsed
+    )
 }
 
 @Composable

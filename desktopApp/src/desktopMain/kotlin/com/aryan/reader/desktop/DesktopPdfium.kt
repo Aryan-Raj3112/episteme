@@ -87,6 +87,11 @@ data class DesktopPdfPageRender(
     val height: Int
 )
 
+data class DesktopPdfMetadata(
+    val title: String? = null,
+    val author: String? = null
+)
+
 data class DesktopPdfTextChar(
     val index: Int,
     val char: Char,
@@ -215,6 +220,7 @@ object DesktopPdfium {
             }
             logPdfiumOpen("page_sizes_loaded pages=$pageCount elapsedMs=${System.currentTimeMillis() - startedAt}")
 
+            val metadata = extractDocumentMetadata(document)
             logPdfiumOpen("text_index_deferred pages=$pageCount elapsedMs=${System.currentTimeMillis() - startedAt}")
             val toc = extractTableOfContents(document, pageCount)
             logPdfiumOpen("toc_extracted entries=${toc.size} elapsedMs=${System.currentTimeMillis() - startedAt}")
@@ -226,7 +232,7 @@ object DesktopPdfium {
 
             val result = DesktopPdfDocument(
                 path = file.absolutePath,
-                title = file.nameWithoutExtension,
+                title = metadata.title ?: file.nameWithoutExtension,
                 pageCount = pageCount,
                 pageSizes = pageSizes,
                 toc = toc,
@@ -238,6 +244,17 @@ object DesktopPdfium {
             openDocuments.remove(file.absolutePath)
             api.FPDF_CloseDocument(document)
             throw throwable
+        }
+    }
+
+    @Synchronized
+    fun extractMetadata(file: File, password: String? = null): DesktopPdfMetadata {
+        initLibrary()
+        val loadedDocument = loadDocument(file, password)
+        return try {
+            extractDocumentMetadata(loadedDocument.pointer)
+        } finally {
+            api.FPDF_CloseDocument(loadedDocument.pointer)
         }
     }
 
@@ -369,6 +386,38 @@ object DesktopPdfium {
                 width = width,
                 height = height
             )
+        } finally {
+            api.FPDFBitmap_Destroy(bitmap)
+        }
+    }
+
+    @Synchronized
+    fun renderPageBufferedImage(
+        document: DesktopPdfDocument,
+        pageIndex: Int,
+        scale: Float,
+        renderAnnotations: Boolean = true
+    ): BufferedImage {
+        val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
+        val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
+        val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
+        val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
+        val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
+        val stride = width * 4
+        val memory = Memory((stride * height).toLong())
+        memory.clear(memory.size())
+
+        val bitmap = api.FPDFBitmap_CreateEx(width, height, FPDF_BITMAP_BGRA, memory, stride)
+            ?: error("Pdfium could not allocate render bitmap.")
+
+        try {
+            api.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, -1)
+            loadPage(nativeDocument, pageIndex).usePointer { page ->
+                val flags = FPDF_LCD_TEXT or
+                    (if (renderAnnotations) FPDF_ANNOT else FPDF_RENDER_NO_SMOOTHTEXT)
+                api.FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, flags)
+            }
+            return memory.toBufferedImage(width, height, stride)
         } finally {
             api.FPDFBitmap_Destroy(bitmap)
         }
@@ -720,6 +769,28 @@ object DesktopPdfium {
         }
     }
 
+    private fun extractDocumentMetadata(document: Pointer): DesktopPdfMetadata {
+        return DesktopPdfMetadata(
+            title = documentMetaText(document, "Title").cleanPdfMetadata(),
+            author = documentMetaText(document, "Author").cleanPdfMetadata()
+        )
+    }
+
+    private fun documentMetaText(document: Pointer, tag: String): String {
+        val lengthBytes = runCatching { api.FPDF_GetMetaText(document, tag, null, 0) }.getOrDefault(0)
+        if (lengthBytes <= 2) return ""
+        val buffer = Memory(lengthBytes.toLong())
+        val writtenBytes = runCatching { api.FPDF_GetMetaText(document, tag, buffer, lengthBytes) }.getOrDefault(0)
+        if (writtenBytes <= 2) return ""
+        return String(buffer.getByteArray(0, writtenBytes), Charsets.UTF_16LE)
+            .trimEnd('\u0000')
+    }
+
+    private fun String.cleanPdfMetadata(): String? {
+        return trim()
+            .takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+    }
+
     private fun extractTableOfContents(document: Pointer, pageCount: Int): List<PdfTocEntry> {
         val entries = mutableListOf<PdfTocEntry>()
 
@@ -1066,6 +1137,7 @@ object DesktopPdfium {
         fun FPDF_LoadMemDocument(dataBuf: Pointer, size: Int, password: String?): Pointer?
         fun FPDF_CloseDocument(document: Pointer)
         fun FPDF_GetLastError(): Int
+        fun FPDF_GetMetaText(document: Pointer, tag: String, buffer: Pointer?, buflen: Int): Int
         fun FPDF_GetPageCount(document: Pointer): Int
         fun FPDFBookmark_GetFirstChild(document: Pointer, bookmark: Pointer?): Pointer?
         fun FPDFBookmark_GetNextSibling(document: Pointer, bookmark: Pointer): Pointer?

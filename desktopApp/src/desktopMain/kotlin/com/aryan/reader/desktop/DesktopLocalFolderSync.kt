@@ -32,6 +32,7 @@ data class DesktopLocalFolderSyncResult(
     val state: SharedReaderScreenState,
     val shelfRefs: List<BookShelfRef>,
     val stats: LocalFolderSyncStats,
+    val metadataStats: DesktopFolderMetadataExtractionStats = DesktopFolderMetadataExtractionStats(),
     val idMigrations: Map<String, String> = emptyMap(),
     val removedBookIds: Set<String> = emptySet(),
     val failedFolders: List<String> = emptyList()
@@ -61,6 +62,7 @@ object DesktopLocalFolderSync {
         var nextState = state
         var nextShelfRefs = shelfRefs
         var totalStats = LocalFolderSyncStats()
+        var totalMetadataStats = DesktopFolderMetadataExtractionStats()
         val allMigrations = linkedMapOf<String, String>()
         val allRemovedBookIds = linkedSetOf<String>()
         val failedFolders = mutableListOf<String>()
@@ -90,8 +92,17 @@ object DesktopLocalFolderSync {
             allRemovedBookIds += syncResult.removedBookIds
             totalStats += syncResult.stats
 
-            val syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
+            var syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
             importAnnotationSidecars(root, syncedBooks)
+            val metadataResult = DesktopFolderMetadataExtractor.enrichFolderBooks(
+                books = nextState.rawLibraryBooks,
+                sourceFolder = folder.uriString
+            )
+            if (metadataResult.stats.updatedBooks > 0) {
+                nextState = nextState.copy(rawLibraryBooks = metadataResult.books)
+                syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
+            }
+            totalMetadataStats += metadataResult.stats
             syncedBooks.forEach { book ->
                 saveBookMetadata(book)
                 savePdfAnnotationSidecar(book)
@@ -102,6 +113,7 @@ object DesktopLocalFolderSync {
             state = nextState,
             shelfRefs = nextShelfRefs,
             stats = totalStats,
+            metadataStats = totalMetadataStats,
             idMigrations = allMigrations,
             removedBookIds = allRemovedBookIds,
             failedFolders = failedFolders

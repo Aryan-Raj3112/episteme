@@ -37,7 +37,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 6
+    private const val SCHEMA_VERSION = 7
 
     private val json = Json {
         prettyPrint = true
@@ -179,12 +179,14 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         type = type,
         displayName = displayName,
         timestamp = obj.long("timestamp"),
+        coverImagePath = obj.string("coverImagePath"),
         title = obj.string("title"),
         author = obj.string("author"),
         progressPercentage = obj.float("progressPercentage"),
         isRecent = obj.boolean("isRecent", true),
         fileSize = obj.long("fileSize"),
         sourceFolder = obj.string("sourceFolder"),
+        folderTextMetadataParsed = obj.boolean("folderTextMetadataParsed", false),
         seriesName = obj.string("seriesName"),
         seriesIndex = obj.double("seriesIndex"),
         tags = obj.array("tags").mapNotNull { it.asTagOrNull() },
@@ -246,12 +248,14 @@ private fun BookItem.toJsonObject(): JsonObject {
             "type" to JsonPrimitive(type.name),
             "displayName" to JsonPrimitive(displayName),
             "timestamp" to JsonPrimitive(timestamp),
+            "coverImagePath" to coverImagePath.asJson(),
             "title" to title.asJson(),
             "author" to author.asJson(),
             "progressPercentage" to progressPercentage.asJson(),
             "isRecent" to JsonPrimitive(isRecent),
             "fileSize" to JsonPrimitive(fileSize),
             "sourceFolder" to sourceFolder.asJson(),
+            "folderTextMetadataParsed" to JsonPrimitive(folderTextMetadataParsed),
             "seriesName" to seriesName.asJson(),
             "seriesIndex" to seriesIndex.asJson(),
             "tags" to JsonArray(tags.map { it.toJsonObject() }),

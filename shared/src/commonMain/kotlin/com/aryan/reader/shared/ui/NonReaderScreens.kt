@@ -798,6 +798,7 @@ private fun BookCard(
 @Composable
 private fun BookCover(book: BookItem, selected: Boolean) {
     val color = fileTypeColor(book.type)
+    val coverPath = book.coverImagePath?.takeIf { it.isNotBlank() }
     Surface(
         modifier = Modifier.size(width = 64.dp, height = 94.dp),
         color = color,
@@ -807,6 +808,19 @@ private fun BookCover(book: BookItem, selected: Boolean) {
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(30.dp))
+            Text(
+                text = book.type.name,
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)
+            )
+            if (coverPath != null) {
+                LocalBookCoverImage(
+                    path = coverPath,
+                    contentDescription = book.cardTitle(),
+                    modifier = Modifier.matchParentSize()
+                )
+            }
             if (selected) {
                 Surface(
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
@@ -817,12 +831,6 @@ private fun BookCover(book: BookItem, selected: Boolean) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(3.dp).size(12.dp))
                 }
             }
-            Text(
-                text = book.type.name,
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)
-            )
         }
     }
 }

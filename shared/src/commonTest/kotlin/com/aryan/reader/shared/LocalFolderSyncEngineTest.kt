@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -178,6 +179,29 @@ class LocalFolderSyncEngineTest {
         assertNotNull(book(id = "local_Book.pdf", isRecent = true).toSharedFolderBookMetadata())
     }
 
+    @Test
+    fun `sync resets extracted metadata and cover when folder file size changes`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            fileSize = 123L,
+            coverImagePath = "C:/Covers/book.png",
+            folderTextMetadataParsed = true
+        )
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(rawLibraryBooks = listOf(existing)),
+            folder = syncedFolder(),
+            files = listOf(scannedFile("Book.pdf", "Book.pdf", size = 456L)),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+
+        val book = result.state.rawLibraryBooks.single()
+        assertEquals(456L, book.fileSize)
+        assertNull(book.coverImagePath)
+        assertFalse(book.folderTextMetadataParsed)
+        assertEquals(1, result.stats.updatedBooks)
+    }
+
     private fun syncedFolder(): SyncedFolder {
         return SyncedFolder(
             uriString = "C:/Library",
@@ -189,7 +213,8 @@ class LocalFolderSyncEngineTest {
 
     private fun scannedFile(
         name: String,
-        relativePath: String
+        relativePath: String,
+        size: Long = 123L
     ): SharedFolderScannedFile {
         return SharedFolderScannedFile(
             name = name,
@@ -197,7 +222,7 @@ class LocalFolderSyncEngineTest {
             sourceFolder = "C:/Library",
             relativePath = relativePath,
             type = FileType.PDF,
-            size = 123L,
+            size = size,
             lastModified = 100L
         )
     }
@@ -210,7 +235,10 @@ class LocalFolderSyncEngineTest {
         timestamp: Long = 100L,
         title: String = "Book",
         progress: Float? = null,
-        isRecent: Boolean = false
+        isRecent: Boolean = false,
+        fileSize: Long = 0L,
+        coverImagePath: String? = null,
+        folderTextMetadataParsed: Boolean = false
     ): BookItem {
         return BookItem(
             id = id,
@@ -218,10 +246,13 @@ class LocalFolderSyncEngineTest {
             type = FileType.PDF,
             displayName = displayName,
             timestamp = timestamp,
+            coverImagePath = coverImagePath,
             title = title,
             progressPercentage = progress,
+            fileSize = fileSize,
             sourceFolder = sourceFolder,
-            isRecent = isRecent
+            isRecent = isRecent,
+            folderTextMetadataParsed = folderTextMetadataParsed
         )
     }
 

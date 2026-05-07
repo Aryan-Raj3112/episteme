@@ -94,12 +94,14 @@ data class SharedFolderBookMetadata(
             type = parsedType,
             displayName = displayName.ifBlank { file.name },
             timestamp = if (isRecent || existing == null) metadataTimestamp else existing.timestamp,
+            coverImagePath = existing?.coverImagePath,
             title = title ?: existing?.title ?: displayName.ifBlank { file.name },
             author = author ?: existing?.author,
             progressPercentage = progressPercentage,
             isRecent = isRecent || (existing?.isRecent ?: false),
             fileSize = file.size.takeIf { it > 0L } ?: existing?.fileSize ?: 0L,
             sourceFolder = file.sourceFolder,
+            folderTextMetadataParsed = existing?.folderTextMetadataParsed ?: false,
             lastPageIndex = lastPage,
             readerBookmarks = parsedBookmarks ?: existing?.readerBookmarks.orEmpty(),
             readerHighlights = parsedHighlights ?: existing?.readerHighlights.orEmpty()
@@ -266,14 +268,7 @@ object LocalFolderSyncEngine {
                             ?: legacyItemsByName[file.name]?.firstOrNull { it.id != stableId }
                         if (migrated != null) {
                             val oldId = migrated.id
-                            val migratedBook = migrated.copy(
-                                id = stableId,
-                                path = file.path,
-                                sourceFolder = folderRoot,
-                                fileSize = file.size.takeIf { it > 0L } ?: migrated.fileSize,
-                                type = file.type,
-                                displayName = file.name
-                            )
+                            val migratedBook = migrated.copy(id = stableId).withScannedFile(file)
                             booksById.remove(oldId)
                             booksById[stableId] = migratedBook
                             idMigrations[oldId] = stableId
@@ -413,12 +408,15 @@ private fun SharedFolderScannedFile.toBookItem(bookId: String, nowMillis: Long):
 }
 
 private fun BookItem.withScannedFile(file: SharedFolderScannedFile): BookItem {
+    val sizeChanged = fileSize > 0L && file.size > 0L && fileSize != file.size
     return copy(
         path = file.path,
         type = file.type,
         displayName = file.name,
+        coverImagePath = if (sizeChanged) null else coverImagePath,
         fileSize = file.size.takeIf { it > 0L } ?: fileSize,
-        sourceFolder = file.sourceFolder
+        sourceFolder = file.sourceFolder,
+        folderTextMetadataParsed = if (sizeChanged) false else folderTextMetadataParsed
     )
 }
 
