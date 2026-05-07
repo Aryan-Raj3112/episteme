@@ -22,6 +22,9 @@ class FileCapabilitiesTest {
                 FileType.HTML,
                 FileType.MOBI,
                 FileType.FB2,
+                FileType.CBZ,
+                FileType.CBR,
+                FileType.CB7,
                 FileType.DOCX,
                 FileType.ODT,
                 FileType.FODT
@@ -45,11 +48,15 @@ class FileCapabilitiesTest {
             SharedFileCapabilities.surfaceFor(FileType.DOCX, ReaderPlatform.DESKTOP)
         )
         assertEquals(
+            ReaderFeatureSurface.PDF_VIEWER,
+            SharedFileCapabilities.surfaceFor(FileType.CBR, ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
             ReaderFeatureSurface.EPUB_READER,
             SharedFileCapabilities.surfaceFor(FileType.MD, ReaderPlatform.ANDROID)
         )
         assertTrue(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.ANDROID))
-        assertFalse(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.DESKTOP))
+        assertTrue(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.DESKTOP))
     }
 
     @Test
@@ -57,18 +64,12 @@ class FileCapabilitiesTest {
         assertEquals(FileType.MD, SharedFileCapabilities.fileTypeForName("notes.markdown"))
         assertEquals(FileType.HTML, SharedFileCapabilities.fileTypeForName("chapter.xhtml"))
         assertEquals(FileType.HTML, "chapter.xhtml".toFileType())
+        assertEquals(FileType.MOBI, SharedFileCapabilities.fileTypeForName("book.azw3"))
         assertEquals(FileType.UNKNOWN, SharedFileCapabilities.fileTypeForName("archive.zip"))
     }
 
     @Test
     fun `desktop parity gaps list Android readable formats not yet available on desktop`() {
-        assertEquals(
-            listOf(
-                FileType.CBZ,
-                FileType.CBR,
-                FileType.CB7
-            ),
-            SharedFileCapabilities.desktopParityGaps()
-        )
+        assertEquals(emptyList(), SharedFileCapabilities.desktopParityGaps())
     }
 }

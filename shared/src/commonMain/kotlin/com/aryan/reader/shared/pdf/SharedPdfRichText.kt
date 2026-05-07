@@ -277,6 +277,12 @@ object SharedPdfRichTextMapper {
             if (start >= end) continue
 
             val activeStyles = text.spanStyles.filter { it.start <= start && it.end >= end }
+            val activeFontPath = fontPathAnnotations
+                .lastOrNull { it.start <= start && it.end >= end }
+                ?.item
+                ?.takeIf { it.isNotBlank() }
+            if (activeStyles.isEmpty() && activeFontPath == null) continue
+
             var effective = SpanStyle(color = Color.Black, fontSize = 16.sp)
             activeStyles.forEach { effective = effective.merge(it.item) }
             val currentDecoration = effective.textDecoration ?: TextDecoration.None
@@ -296,10 +302,7 @@ object SharedPdfRichTextMapper {
                 isItalic = effective.fontStyle == FontStyle.Italic,
                 isUnderline = currentDecoration.contains(TextDecoration.Underline),
                 isStrikethrough = currentDecoration.contains(TextDecoration.LineThrough),
-                fontPath = fontPathAnnotations
-                    .lastOrNull { it.start <= start && it.end >= end }
-                    ?.item
-                    ?.takeIf { it.isNotBlank() }
+                fontPath = activeFontPath
             )
 
             if (spans.isNotEmpty()) {

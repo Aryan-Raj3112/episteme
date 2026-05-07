@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfZoomSpec
@@ -25,6 +26,7 @@ data class DesktopPdfDocument(
     val title: String,
     val pageCount: Int,
     val pageSizes: List<DesktopPdfPageSize>,
+    val formatLabel: String = "PDF",
     val toc: List<PdfTocEntry> = emptyList(),
     val embeddedAnnotations: List<SharedPdfEmbeddedAnnotation> = emptyList()
 ) {
@@ -139,6 +141,7 @@ object DesktopPdfium {
 
     private var initialized = false
     private val openDocuments = LinkedHashMap<String, DesktopOpenPdfDocument>()
+    private val openComicDocuments = LinkedHashMap<String, DesktopComicDocument>()
 
     fun isAvailable(): Boolean = pdfiumDll.exists()
 
@@ -205,6 +208,7 @@ object DesktopPdfium {
         val startedAt = System.currentTimeMillis()
         val loadedDocument = loadDocument(file, password)
         val document = loadedDocument.pointer
+        closeDocument(file.absolutePath)
         openDocuments[file.absolutePath] = loadedDocument
 
         try {
@@ -248,6 +252,25 @@ object DesktopPdfium {
     }
 
     @Synchronized
+    fun loadComic(file: File, type: FileType): DesktopPdfDocument {
+        val startedAt = System.currentTimeMillis()
+        val comic = DesktopComicArchive.load(file, type)
+        closeDocument(file.absolutePath)
+        openComicDocuments[file.absolutePath] = comic
+        logPdfiumOpen(
+            "comic_open_complete type=${type.name} pages=${comic.pageCount} " +
+                "elapsedMs=${System.currentTimeMillis() - startedAt}"
+        )
+        return DesktopPdfDocument(
+            path = file.absolutePath,
+            title = comic.title,
+            pageCount = comic.pageCount,
+            pageSizes = comic.pageSizes,
+            formatLabel = type.name
+        )
+    }
+
+    @Synchronized
     fun extractMetadata(file: File, password: String? = null): DesktopPdfMetadata {
         initLibrary()
         val loadedDocument = loadDocument(file, password)
@@ -261,6 +284,7 @@ object DesktopPdfium {
     @Synchronized
     fun closeDocument(path: String) {
         openDocuments.remove(path)?.let { api.FPDF_CloseDocument(it.pointer) }
+        openComicDocuments.remove(path)?.close()
     }
 
     fun indexSearchPages(
@@ -296,6 +320,7 @@ object DesktopPdfium {
 
     @Synchronized
     fun loadTextOnlyPage(document: DesktopPdfDocument, pageIndex: Int): String {
+        if (openComicDocuments.containsKey(document.path)) return ""
         val nativeDocument = openDocuments[document.path]?.pointer ?: return ""
         if (document.pageSizes.getOrNull(pageIndex) == null) return ""
         return extractPageText(nativeDocument, pageIndex)
@@ -303,6 +328,7 @@ object DesktopPdfium {
 
     @Synchronized
     fun loadTextPageData(document: DesktopPdfDocument, pageIndex: Int): DesktopPdfTextPageData {
+        if (openComicDocuments.containsKey(document.path)) return DesktopPdfTextPageData()
         val nativeDocument = openDocuments[document.path]?.pointer ?: return DesktopPdfTextPageData()
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return DesktopPdfTextPageData()
         return extractPageTextData(nativeDocument, pageIndex, pageSize)
@@ -321,6 +347,7 @@ object DesktopPdfium {
         viewportWidth: Int? = null,
         viewportHeight: Int? = null
     ): DesktopPdfLinkTarget? {
+        if (openComicDocuments.containsKey(document.path)) return null
         val nativeDocument = openDocuments[document.path]?.pointer ?: run {
             logPdfiumLink("hit_test_skipped reason=document_not_open page=${pageIndex + 1}")
             return null
@@ -362,6 +389,14 @@ object DesktopPdfium {
         scale: Float,
         renderAnnotations: Boolean = true
     ): DesktopPdfPageRender {
+        openComicDocuments[document.path]?.let { comic ->
+            val image = comic.renderPageBufferedImage(pageIndex, scale)
+            return DesktopPdfPageRender(
+                image = image.toComposeImageBitmap(),
+                width = image.width,
+                height = image.height
+            )
+        }
         val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
@@ -398,6 +433,9 @@ object DesktopPdfium {
         scale: Float,
         renderAnnotations: Boolean = true
     ): BufferedImage {
+        openComicDocuments[document.path]?.let { comic ->
+            return comic.renderPageBufferedImage(pageIndex, scale)
+        }
         val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)

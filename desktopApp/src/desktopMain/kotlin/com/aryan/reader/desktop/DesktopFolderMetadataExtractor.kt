@@ -147,7 +147,7 @@ object DesktopFolderMetadataExtractor {
 
         val coverPath = book.coverImagePath?.takeIf { File(it).isFile }
             ?: saveEmbeddedCover(book, embeddedCover)
-            ?: renderPdfCover(book, file)
+            ?: renderReaderSurfaceCover(book, file)
             ?: saveGeneratedCover(book)
 
         return book.copy(
@@ -264,10 +264,15 @@ object DesktopFolderMetadataExtractor {
         }.getOrNull()
     }
 
-    private fun renderPdfCover(book: BookItem, file: File): String? {
-        if (book.type != FileType.PDF || !DesktopPdfium.isAvailable()) return null
+    private fun renderReaderSurfaceCover(book: BookItem, file: File): String? {
+        if (book.type == FileType.PDF && !DesktopPdfium.isAvailable()) return null
+        if (book.type != FileType.PDF && !DesktopComicArchive.canLoad(book.type)) return null
         return runCatching {
-            val document = DesktopPdfium.load(file)
+            val document = if (book.type == FileType.PDF) {
+                DesktopPdfium.load(file)
+            } else {
+                DesktopPdfium.loadComic(file, book.type)
+            }
             try {
                 if (document.pageCount <= 0) {
                     null
@@ -380,6 +385,7 @@ object DesktopFolderMetadataExtractor {
         return when (type) {
             FileType.PDF -> Color(156, 65, 70)
             FileType.EPUB -> Color(0, 108, 76)
+            FileType.CBZ, FileType.CBR, FileType.CB7 -> Color(112, 93, 73)
             FileType.MD -> Color(83, 101, 120)
             FileType.HTML -> Color(122, 87, 42)
             FileType.TXT -> Color(74, 92, 112)

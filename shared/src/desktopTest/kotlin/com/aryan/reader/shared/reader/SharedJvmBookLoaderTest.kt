@@ -129,6 +129,16 @@ class SharedJvmBookLoaderTest {
         assertTrue(book.chapters.single().plainText.contains("Hello from MOBI."))
     }
 
+    @Test
+    fun `mobi loader reads bundled huff cdic sample`() {
+        val file = findRepoFile("app/src/main/cpp/libmobi/tests/samples/sample-unicode-huffdic.mobi")
+
+        val book = SharedJvmBookLoader.load(file, FileType.MOBI)
+
+        assertEquals("Libmobi", book.title)
+        assertTrue(book.chapters.joinToString("\n") { it.plainText }.length > 100)
+    }
+
     private fun withTempDir(block: (File) -> Unit) {
         val dir = Files.createTempDirectory("reader-shared-loader").toFile()
         try {
@@ -136,6 +146,14 @@ class SharedJvmBookLoaderTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    private fun findRepoFile(path: String): File {
+        return generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+            .take(8)
+            .map { File(it, path) }
+            .firstOrNull { it.isFile }
+            ?: error("Missing test fixture: $path")
     }
 
     private fun writeZip(file: File, block: ZipBuilder.() -> Unit) {

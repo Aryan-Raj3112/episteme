@@ -662,15 +662,21 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun openReader(book: BookItem) {
-        if (book.type == FileType.PDF) {
+        val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
+        if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
             val path = book.path
             if (path.isNullOrBlank()) {
-                updateState(state.withBanner("This PDF does not have a local path.", isError = true))
+                updateState(
+                    state.withBanner(
+                        "This ${SharedFileCapabilities.displayNameFor(book.type)} does not have a local path.",
+                        isError = true
+                    )
+                )
                 return
             }
-            val pdfFile = File(path)
-            val pdfPath = pdfFile.absolutePath
-            if (activePdfDocument?.path == pdfPath) {
+            val readerFile = File(path)
+            val readerPath = readerFile.absolutePath
+            if (activePdfDocument?.path == readerPath) {
                 activeReaderBookId = book.id
                 recordBookOpened(book.id)
                 selectedTab = SharedAppTab.READER
@@ -678,21 +684,30 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             }
             activePdfDocument?.close()
             activePdfDocument = null
-            val pdf = runCatching {
-                DesktopPdfium.load(pdfFile)
+            val document = runCatching {
+                if (book.type == FileType.PDF) {
+                    DesktopPdfium.load(readerFile)
+                } else {
+                    DesktopPdfium.loadComic(readerFile, book.type)
+                }
             }.getOrElse { error ->
-                updateState(state.withBanner("Could not open PDF: ${error.message ?: "unknown error"}", isError = true))
+                updateState(
+                    state.withBanner(
+                        "Could not open ${SharedFileCapabilities.displayNameFor(book.type)}: " +
+                            (error.message ?: "unknown error"),
+                        isError = true
+                    )
+                )
                 return
             }
 
-            activePdfDocument = pdf
+            activePdfDocument = document
             activeReaderBookId = book.id
             recordBookOpened(book.id)
             selectedTab = SharedAppTab.READER
             return
         }
 
-        val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
         if (desktopReaderSurface != ReaderFeatureSurface.EPUB_READER && desktopReaderSurface != ReaderFeatureSurface.TEXT_READER) {
             updateState(
                 state.withBanner(
@@ -2371,7 +2386,7 @@ private fun PdfReaderScreen(
 
     SharedScreenScaffold(
         title = document.title,
-        subtitle = "PDF - Page ${pageIndex + 1} of ${document.pageCount}",
+        subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onOpenPdf) {
@@ -5418,8 +5433,7 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
 private val DesktopReadableFileTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
 private val DesktopBookFileTypes = SharedFileCapabilities.all
     .filter { capability ->
-        capability.type in DesktopReadableFileTypes &&
-            capability.surfaceFor(ReaderPlatform.DESKTOP) != ReaderFeatureSurface.PDF_VIEWER
+        capability.type in DesktopReadableFileTypes && capability.type != FileType.PDF
     }
     .mapTo(mutableSetOf()) { it.type }
 private val DesktopBookFileDialogPattern = SharedFileCapabilities.all
