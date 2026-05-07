@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
+import com.aryan.reader.shared.pdf.withoutTrailingSharedPdfPageBreak
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -183,7 +184,7 @@ fun SharedPdfRichTextLayer(
         val textToRender = if (controller.activePageIndex == pageIndex) {
             controller.localTextFieldValue.annotatedString
         } else {
-            pageLayout?.visibleText
+            pageLayout?.visibleText?.withoutTrailingSharedPdfPageBreak()
         } ?: return@Box
 
         val measureResult = remember(textToRender, editorWidth, density) {

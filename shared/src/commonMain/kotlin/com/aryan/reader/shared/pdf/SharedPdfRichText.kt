@@ -502,6 +502,20 @@ private fun TextLayoutResult.richLastFittingLineIndex(editorHeight: Float): Int 
     return lastFitting.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
 }
 
+internal fun AnnotatedString.withoutTrailingSharedPdfPageBreak(): AnnotatedString {
+    return if (text.lastOrNull() == SHARED_PDF_PAGE_BREAK_CHAR) {
+        subSequence(0, length - 1)
+    } else {
+        this
+    }
+}
+
+private fun AnnotatedString.withRestoredTrailingSharedPdfPageBreak(shouldRestore: Boolean): AnnotatedString {
+    if (!shouldRestore) return this
+    if (text.lastOrNull() == SHARED_PDF_PAGE_BREAK_CHAR) return this
+    return this + AnnotatedString(SHARED_PDF_PAGE_BREAK_CHAR.toString())
+}
+
 internal fun List<SharedPdfRichPageLayout>.withTrailingBlankRichTextPageIfNeeded(
     globalText: AnnotatedString,
     pageHeightPx: Float
@@ -857,30 +871,25 @@ class SharedPdfRichTextController(
         activePageIndex = pageIndex
         val editorWidth = editorWidth()
         val visibleText = currentLayout.visibleText
-        val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + visibleText
-        val safeLen = if (visibleText.text.isNotEmpty() && visibleText.text.last() == SHARED_PDF_PAGE_BREAK_CHAR) {
-            visibleText.length - 1
-        } else {
-            visibleText.length
-        }
+        val editableText = visibleText.withoutTrailingSharedPdfPageBreak()
+        val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + editableText
+        val safeLen = editableText.length
         localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
         SharedPdfRichTextLog.d(
             "controller.tap localPrepared page=$pageIndex global=${currentLayout.globalStartIndex}..${currentLayout.globalEndIndex} " +
-                "visibleLen=${visibleText.length} safeLen=$safeLen initialSel=${localTextFieldValue.selection}"
+                "visibleLen=${visibleText.length} editableLen=${editableText.length} safeLen=$safeLen initialSel=${localTextFieldValue.selection}"
         )
 
         val measureResult = measurer.measure(
-            text = currentLayout.visibleText,
+            text = editableText,
             style = TextStyle(fontSize = 16.sp, color = Color.Black),
             constraints = Constraints(maxWidth = editorWidth.toInt()),
             density = density
         )
-        val textHeight = measureResult.size.height.toFloat()
-        if (localTapOffset.y <= textHeight) {
+        val textHeight = if (editableText.isEmpty()) 0f else measureResult.size.height.toFloat()
+        if (editableText.isNotEmpty() && localTapOffset.y <= textHeight) {
             var localIndex = measureResult.getOffsetForPosition(localTapOffset)
-            if (visibleText.text.isNotEmpty() && visibleText.text.last() == SHARED_PDF_PAGE_BREAK_CHAR && localIndex >= visibleText.length) {
-                localIndex = visibleText.length - 1
-            }
+            localIndex = localIndex.coerceIn(0, editableText.length)
             localTextFieldValue = localTextFieldValue.copy(selection = TextRange(localIndex + 1))
             SharedPdfRichTextLog.d(
                 "controller.tap placedInText page=$pageIndex textHeight=${textHeight.richLogFloat()} " +
@@ -1046,11 +1055,13 @@ class SharedPdfRichTextController(
         val globalStart = layout.globalStartIndex
         val globalEnd = layout.globalEndIndex
         val currentGlobal = globalTextFieldValue.annotatedString
-        val localText = if (localTextFieldValue.annotatedString.text.isNotEmpty()) {
+        val localEditableText = if (localTextFieldValue.annotatedString.text.isNotEmpty()) {
             localTextFieldValue.annotatedString.subSequence(1, localTextFieldValue.annotatedString.length)
         } else {
             AnnotatedString("")
         }
+        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == SHARED_PDF_PAGE_BREAK_CHAR
+        val localText = localEditableText.withRestoredTrailingSharedPdfPageBreak(shouldPreservePageBreak)
         val builder = AnnotatedString.Builder()
         builder.append(currentGlobal.subSequence(0, globalStart))
         builder.append(localText)
@@ -1062,6 +1073,7 @@ class SharedPdfRichTextController(
         val newGlobalCursorPos = globalStart + localSelectionStart
         SharedPdfRichTextLog.d(
             "controller.syncLocalToGlobal page=$activePageIndex global=$globalStart..$globalEnd " +
+                "localEditableLen=${localEditableText.length} restoredBreak=$shouldPreservePageBreak " +
                 "localLen=${localText.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
         )
         globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
@@ -1092,7 +1104,7 @@ class SharedPdfRichTextController(
             val reExtractedText = newGlobalAnnotated.subSequence(
                 newActiveLayout.globalStartIndex,
                 newActiveLayout.globalEndIndex
-            )
+            ).withoutTrailingSharedPdfPageBreak()
             val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtractedText
             val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
                 .coerceIn(0, textWithZwsp.length)
@@ -1120,11 +1132,13 @@ class SharedPdfRichTextController(
         val globalEnd = layout.globalEndIndex
         val currentGlobal = globalTextFieldValue.annotatedString
         val localAnnotatedRaw = localTextFieldValue.annotatedString
-        val localAnnotated = if (localAnnotatedRaw.text.isNotEmpty()) {
+        val localEditableAnnotated = if (localAnnotatedRaw.text.isNotEmpty()) {
             localAnnotatedRaw.subSequence(1, localAnnotatedRaw.length)
         } else {
             AnnotatedString("")
         }
+        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == SHARED_PDF_PAGE_BREAK_CHAR
+        val localAnnotated = localEditableAnnotated.withRestoredTrailingSharedPdfPageBreak(shouldPreservePageBreak)
         val builder = AnnotatedString.Builder()
         builder.append(currentGlobal.subSequence(0, globalStart))
         builder.append(localAnnotated)
@@ -1136,6 +1150,7 @@ class SharedPdfRichTextController(
         val newGlobalCursorPos = (globalStart + localSelectionStart).coerceIn(0, newGlobalAnnotated.length)
         SharedPdfRichTextLog.d(
             "controller.performSync page=$pageIdx checkCursor=$checkCursorMove global=$globalStart..$globalEnd " +
+                "localEditableLen=${localEditableAnnotated.length} restoredBreak=$shouldPreservePageBreak " +
                 "localLen=${localAnnotated.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
         )
         globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
@@ -1168,7 +1183,7 @@ class SharedPdfRichTextController(
                 val reExtracted = newGlobalAnnotated.subSequence(
                     newActiveLayout.globalStartIndex,
                     newActiveLayout.globalEndIndex
-                )
+                ).withoutTrailingSharedPdfPageBreak()
                 val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
                 val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
                     .coerceIn(0, textWithZwsp.length)
@@ -1434,7 +1449,7 @@ class SharedPdfRichTextController(
             val reExtracted = intermediateGlobal.subSequence(
                 finalActiveLayout.globalStartIndex,
                 finalActiveLayout.globalEndIndex
-            )
+            ).withoutTrailingSharedPdfPageBreak()
             val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
             val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
             localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))
@@ -1470,7 +1485,7 @@ class SharedPdfRichTextController(
             val reExtracted = newGlobalText.subSequence(
                 finalActiveLayout.globalStartIndex,
                 finalActiveLayout.globalEndIndex
-            )
+            ).withoutTrailingSharedPdfPageBreak()
             val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
             val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
             localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))

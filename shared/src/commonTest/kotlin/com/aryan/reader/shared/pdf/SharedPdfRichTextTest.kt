@@ -234,4 +234,13 @@ class SharedPdfRichTextTest {
         assertEquals(3, withBlankPage[2].globalStartIndex)
         assertEquals(3, withBlankPage[2].globalEndIndex)
     }
+
+    @Test
+    fun `editable rich text hides trailing structural page break`() {
+        val text = AnnotatedString("Body$SHARED_PDF_PAGE_BREAK_CHAR")
+
+        val editable = text.withoutTrailingSharedPdfPageBreak()
+
+        assertEquals("Body", editable.text)
+    }
 }

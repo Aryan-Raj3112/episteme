@@ -444,6 +444,20 @@ private fun List<PageTextLayout>.withTrailingAndroidBlankRichTextPageIfNeeded(
     )
 }
 
+private fun AnnotatedString.withoutTrailingAndroidPageBreak(): AnnotatedString {
+    return if (text.lastOrNull() == PAGE_BREAK_CHAR) {
+        subSequence(0, length - 1)
+    } else {
+        this
+    }
+}
+
+private fun AnnotatedString.withRestoredTrailingAndroidPageBreak(shouldRestore: Boolean): AnnotatedString {
+    if (!shouldRestore) return this
+    if (text.lastOrNull() == PAGE_BREAK_CHAR) return this
+    return this + AnnotatedString(PAGE_BREAK_CHAR.toString())
+}
+
 class PdfRichTextRepository(private val context: Context) {
     private val _document = MutableStateFlow<GlobalRichDocument?>(null)
     val document = _document.asStateFlow()
@@ -814,9 +828,11 @@ class RichTextController(
         val currentGlobal = globalTextFieldValue.annotatedString
 
         // FIX: Strip ZWSP (index 0) from local text
-        val localText = if (localTextFieldValue.annotatedString.isNotEmpty()) {
+        val localEditableText = if (localTextFieldValue.annotatedString.isNotEmpty()) {
             localTextFieldValue.annotatedString.subSequence(1, localTextFieldValue.annotatedString.length)
         } else AnnotatedString("")
+        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == PAGE_BREAK_CHAR
+        val localText = localEditableText.withRestoredTrailingAndroidPageBreak(shouldPreservePageBreak)
 
         Timber.tag("RichTextFlow").d("Sync: Page $activePageIndex, GlobalRange [$globalStart..$globalEnd], LocalLen ${localText.length}")
 
@@ -870,7 +886,7 @@ class RichTextController(
             activePageIndex = newActiveLayout.pageIndex
             val reExtractedText = newGlobalAnnotated.subSequence(
                 newActiveLayout.globalStartIndex, newActiveLayout.globalEndIndex
-            )
+            ).withoutTrailingAndroidPageBreak()
             val textWithZwsp = AnnotatedString(ZWSP) + reExtractedText
             val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
                 .coerceIn(0, textWithZwsp.length)
@@ -959,28 +975,26 @@ class RichTextController(
         val editorWidth = (lastPageWidth - (margin * 2)).coerceAtLeast(10f)
 
         val vText = currentLayout.visibleText
+        val editableText = vText.withoutTrailingAndroidPageBreak()
         // FIX: Prepend ZWSP to the visible text
-        val textWithZwsp = AnnotatedString(ZWSP) + vText
-        val safeLen = if (vText.isNotEmpty() && vText.last() == PAGE_BREAK_CHAR) vText.length - 1 else vText.length
+        val textWithZwsp = AnnotatedString(ZWSP) + editableText
+        val safeLen = editableText.length
 
         // FIX: Adjust initial selection by +1 because of ZWSP
         localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
 
         val measureResult = measurer.measure(
-            text = currentLayout.visibleText, // We measure the original for layout tap calc
+            text = editableText, // We measure editable text, not the hidden page-break sentinel
             style = TextStyle(fontSize = 16.sp, color = Color.Black),
             constraints = Constraints(maxWidth = editorWidth.toInt()),
             density = density
         )
 
-        val textHeight = measureResult.size.height.toFloat()
+        val textHeight = if (editableText.isEmpty()) 0f else measureResult.size.height.toFloat()
 
-        if (localTapOffset.y <= textHeight) {
+        if (editableText.isNotEmpty() && localTapOffset.y <= textHeight) {
             var localIndex = measureResult.getOffsetForPosition(localTapOffset)
-
-            if (vText.isNotEmpty() && vText.last() == PAGE_BREAK_CHAR && localIndex >= vText.length) {
-                localIndex = vText.length - 1
-            }
+            localIndex = localIndex.coerceIn(0, editableText.length)
             localTextFieldValue = localTextFieldValue.copy(selection = TextRange(localIndex + 1))
         } else {
             val gap = localTapOffset.y - textHeight
@@ -1226,7 +1240,9 @@ class RichTextController(
         val currentGlobal = globalTextFieldValue.annotatedString
 
         val localAnnotatedRaw = localTextFieldValue.annotatedString
-        val localAnnotated = if (localAnnotatedRaw.isNotEmpty()) localAnnotatedRaw.subSequence(1, localAnnotatedRaw.length) else AnnotatedString("")
+        val localEditableAnnotated = if (localAnnotatedRaw.isNotEmpty()) localAnnotatedRaw.subSequence(1, localAnnotatedRaw.length) else AnnotatedString("")
+        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == PAGE_BREAK_CHAR
+        val localAnnotated = localEditableAnnotated.withRestoredTrailingAndroidPageBreak(shouldPreservePageBreak)
 
         val charBeforeSync = if (globalStart > 0) currentGlobal.text[globalStart - 1] else "START"
         val charAfterSync = if (globalEnd < currentGlobal.length) currentGlobal.text[globalEnd] else "END"
@@ -1291,7 +1307,7 @@ class RichTextController(
 
                 val reExtracted = newGlobalAnnotated.subSequence(
                     newActiveLayout.globalStartIndex, newActiveLayout.globalEndIndex
-                )
+                ).withoutTrailingAndroidPageBreak()
                 val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
                 val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
 
@@ -1395,7 +1411,7 @@ class RichTextController(
                         activePageIndex = finalActiveLayout.pageIndex
                         val reExtracted = intermediateGlobal.subSequence(
                             finalActiveLayout.globalStartIndex, finalActiveLayout.globalEndIndex
-                        )
+                        ).withoutTrailingAndroidPageBreak()
                         val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
                         val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
 
@@ -1445,7 +1461,7 @@ class RichTextController(
 
                         val reExtracted = newGlobalText.subSequence(
                             finalActiveLayout.globalStartIndex, finalActiveLayout.globalEndIndex
-                        )
+                        ).withoutTrailingAndroidPageBreak()
                         val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
                         val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
 

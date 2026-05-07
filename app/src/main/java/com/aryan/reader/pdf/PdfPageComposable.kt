@@ -5798,7 +5798,7 @@ fun PdfRichTextLayer(
         val textToRender = if (controller.activePageIndex == pageIndex) {
             controller.localTextFieldValue.annotatedString
         } else {
-            pageLayout?.visibleText
+            pageLayout?.visibleText?.withoutTrailingPdfPageBreakForRender()
         }
 
         if (textToRender != null) {
@@ -5868,6 +5868,14 @@ fun PdfRichTextLayer(
                 } else if (pageLayout != null) { }
             }
         }
+    }
+}
+
+private fun AnnotatedString.withoutTrailingPdfPageBreakForRender(): AnnotatedString {
+    return if (text.lastOrNull() == PAGE_BREAK_CHAR) {
+        subSequence(0, length - 1)
+    } else {
+        this
     }
 }
 
