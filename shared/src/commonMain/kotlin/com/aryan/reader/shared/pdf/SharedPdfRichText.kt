@@ -1,0 +1,1394 @@
+package com.aryan.reader.shared.pdf
+
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
+
+private const val SHARED_PDF_ZWSP = "\u200B"
+private const val SHARED_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
+
+data class SharedPdfRichSpan(
+    val start: Int,
+    val end: Int,
+    val color: Int,
+    val backgroundColor: Int,
+    val fontSizeNorm: Float,
+    val isBold: Boolean,
+    val isItalic: Boolean,
+    val isUnderline: Boolean,
+    val isStrikethrough: Boolean,
+    val fontPath: String? = null
+)
+
+data class SharedPdfRichDocument(
+    val text: String = "",
+    val spans: List<SharedPdfRichSpan> = emptyList()
+)
+
+data class SharedPdfRichPageLayout(
+    val pageIndex: Int,
+    val visibleText: AnnotatedString,
+    val globalStartIndex: Int,
+    val globalEndIndex: Int,
+    val pageHeightPx: Float
+)
+
+object SharedPdfRichTextSerializer {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        prettyPrint = true
+        encodeDefaults = true
+    }
+
+    fun encode(document: SharedPdfRichDocument): String {
+        return json.encodeToString(
+            JsonElement.serializer(),
+            encodeElement(document)
+        )
+    }
+
+    fun encodeElement(document: SharedPdfRichDocument): JsonElement {
+        return JsonObject(
+            mapOf(
+                "text" to JsonPrimitive(document.text),
+                "spans" to JsonArray(
+                    document.spans.map { span ->
+                        JsonObject(
+                            buildMap {
+                                put("s", JsonPrimitive(span.start))
+                                put("e", JsonPrimitive(span.end))
+                                put("c", JsonPrimitive(span.color))
+                                put("bg", JsonPrimitive(span.backgroundColor))
+                                put("sz", JsonPrimitive(span.fontSizeNorm.toDouble()))
+                                put("b", JsonPrimitive(span.isBold))
+                                put("i", JsonPrimitive(span.isItalic))
+                                put("u", JsonPrimitive(span.isUnderline))
+                                put("st", JsonPrimitive(span.isStrikethrough))
+                                put("fp", span.fontPath?.let(::JsonPrimitive) ?: JsonNull)
+                            }
+                        )
+                    }
+                )
+            )
+        )
+    }
+
+    fun decode(raw: String): SharedPdfRichDocument {
+        if (raw.isBlank()) return SharedPdfRichDocument()
+        return runCatching {
+            decodeElement(json.parseToJsonElement(raw))
+        }.getOrDefault(SharedPdfRichDocument())
+    }
+
+    fun decodeElement(element: JsonElement): SharedPdfRichDocument {
+        val root = runCatching { element.jsonObject }.getOrNull() ?: return SharedPdfRichDocument()
+        val text = root.string("text").orEmpty()
+        val spans = root["spans"]
+            ?.jsonArrayOrNull()
+            ?.mapNotNull { spanElement ->
+                val obj = spanElement.jsonObjectOrNull() ?: return@mapNotNull null
+                val start = obj.int("s") ?: obj.int("start") ?: return@mapNotNull null
+                val end = obj.int("e") ?: obj.int("end") ?: return@mapNotNull null
+                if (start < 0 || end <= start || start >= text.length) return@mapNotNull null
+                SharedPdfRichSpan(
+                    start = start,
+                    end = end.coerceAtMost(text.length),
+                    color = obj.int("c") ?: obj.int("color") ?: Color.Black.toArgb(),
+                    backgroundColor = obj.int("bg") ?: obj.int("backgroundColor") ?: Color.Transparent.toArgb(),
+                    fontSizeNorm = obj.float("sz") ?: obj.float("fontSizeNorm") ?: 0.015f,
+                    isBold = obj.boolean("b") ?: obj.boolean("isBold") ?: false,
+                    isItalic = obj.boolean("i") ?: obj.boolean("isItalic") ?: false,
+                    isUnderline = obj.boolean("u") ?: obj.boolean("isUnderline") ?: false,
+                    isStrikethrough = obj.boolean("st") ?: obj.boolean("isStrikethrough") ?: false,
+                    fontPath = obj.string("fp") ?: obj.string("fontPath")
+                )
+            }
+            ?.sortedBy { it.start }
+            .orEmpty()
+        return SharedPdfRichDocument(text = text, spans = spans)
+    }
+
+    private fun JsonElement.jsonArrayOrNull(): JsonArray? {
+        if (this is JsonNull) return null
+        return runCatching { jsonArray }.getOrNull()
+    }
+
+    private fun JsonElement.jsonObjectOrNull(): JsonObject? {
+        if (this is JsonNull) return null
+        return runCatching { jsonObject }.getOrNull()
+    }
+
+    private fun JsonObject.string(name: String): String? {
+        return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun JsonObject.int(name: String): Int? {
+        return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull }.getOrNull()
+    }
+
+    private fun JsonObject.float(name: String): Float? {
+        return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.doubleOrNull?.toFloat() }.getOrNull()
+    }
+
+    private fun JsonObject.boolean(name: String): Boolean? {
+        return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.booleanOrNull }.getOrNull()
+    }
+}
+
+object SharedPdfRichTextMapper {
+    fun toAnnotatedString(
+        document: SharedPdfRichDocument,
+        pageHeightPx: Float,
+        rangeStart: Int = 0,
+        rangeEnd: Int = document.text.length
+    ): AnnotatedString {
+        val safeGlobalStart = rangeStart.coerceIn(0, document.text.length)
+        val safeGlobalEnd = rangeEnd.coerceIn(safeGlobalStart, document.text.length)
+        if (safeGlobalStart == safeGlobalEnd) return AnnotatedString("")
+
+        val textSubstring = document.text.substring(safeGlobalStart, safeGlobalEnd)
+        return buildAnnotatedString {
+            append(textSubstring)
+            for (span in document.spans) {
+                if (span.start >= safeGlobalEnd) break
+                if (span.end <= safeGlobalStart) continue
+
+                val intersectionStart = maxOf(span.start, safeGlobalStart)
+                val intersectionEnd = minOf(span.end, safeGlobalEnd)
+                if (intersectionStart >= intersectionEnd) continue
+
+                val localStart = intersectionStart - safeGlobalStart
+                val localEnd = intersectionEnd - safeGlobalStart
+                val fontSizePx = if (pageHeightPx > 0) span.fontSizeNorm * pageHeightPx else 16f
+                addStyle(
+                    style = SpanStyle(
+                        color = Color(span.color),
+                        background = Color(span.backgroundColor),
+                        fontSize = fontSizePx.sp,
+                        fontWeight = if (span.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (span.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = richTextDecoration(
+                            underline = span.isUnderline,
+                            strikeThrough = span.isStrikethrough
+                        )
+                    ),
+                    start = localStart,
+                    end = localEnd
+                )
+                span.fontPath?.takeIf { it.isNotBlank() }?.let { fontPath ->
+                    addStringAnnotation(
+                        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+                        annotation = fontPath,
+                        start = localStart,
+                        end = localEnd
+                    )
+                }
+            }
+        }
+    }
+
+    fun fromAnnotatedString(text: AnnotatedString, pageHeightPx: Float): SharedPdfRichDocument {
+        if (text.text.isEmpty()) return SharedPdfRichDocument()
+
+        val spans = mutableListOf<SharedPdfRichSpan>()
+        val fontPathAnnotations = text.getStringAnnotations(
+            tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+            start = 0,
+            end = text.length
+        )
+        val changePoints = sortedSetOf(0, text.length)
+        text.spanStyles.forEach {
+            changePoints.add(it.start)
+            changePoints.add(it.end)
+        }
+        fontPathAnnotations.forEach {
+            changePoints.add(it.start)
+            changePoints.add(it.end)
+        }
+
+        val sortedPoints = changePoints.toList()
+        for (i in 0 until sortedPoints.size - 1) {
+            val start = sortedPoints[i]
+            val end = sortedPoints[i + 1]
+            if (start >= end) continue
+
+            val activeStyles = text.spanStyles.filter { it.start <= start && it.end >= end }
+            var effective = SpanStyle(color = Color.Black, fontSize = 16.sp)
+            activeStyles.forEach { effective = effective.merge(it.item) }
+            val currentDecoration = effective.textDecoration ?: TextDecoration.None
+            val fontSizeNorm = if (effective.fontSize.isSp) {
+                if (pageHeightPx > 0) effective.fontSize.value / pageHeightPx else 0.015f
+            } else {
+                0.015f
+            }
+
+            val newSpan = SharedPdfRichSpan(
+                start = start,
+                end = end,
+                color = effective.color.takeIf { it.isSpecified }?.toArgb() ?: Color.Black.toArgb(),
+                backgroundColor = effective.background.takeIf { it.isSpecified }?.toArgb() ?: Color.Transparent.toArgb(),
+                fontSizeNorm = fontSizeNorm,
+                isBold = effective.fontWeight == FontWeight.Bold,
+                isItalic = effective.fontStyle == FontStyle.Italic,
+                isUnderline = currentDecoration.contains(TextDecoration.Underline),
+                isStrikethrough = currentDecoration.contains(TextDecoration.LineThrough),
+                fontPath = fontPathAnnotations
+                    .lastOrNull { it.start <= start && it.end >= end }
+                    ?.item
+                    ?.takeIf { it.isNotBlank() }
+            )
+
+            if (spans.isNotEmpty()) {
+                val last = spans.last()
+                if (last.end == start && last.sameRichStyleAs(newSpan)) {
+                    spans[spans.lastIndex] = last.copy(end = end)
+                } else {
+                    spans += newSpan
+                }
+            } else {
+                spans += newSpan
+            }
+        }
+        return SharedPdfRichDocument(text = text.text, spans = spans)
+    }
+
+    private fun SharedPdfRichSpan.sameRichStyleAs(other: SharedPdfRichSpan): Boolean {
+        return color == other.color &&
+            backgroundColor == other.backgroundColor &&
+            fontSizeNorm == other.fontSizeNorm &&
+            isBold == other.isBold &&
+            isItalic == other.isItalic &&
+            isUnderline == other.isUnderline &&
+            isStrikethrough == other.isStrikethrough &&
+            fontPath == other.fontPath
+    }
+}
+
+class SharedPdfRichTextPaginationEngine {
+    fun paginate(
+        globalText: AnnotatedString,
+        pageWidthPx: Float,
+        pageHeightPx: Float,
+        textMeasurer: TextMeasurer,
+        density: Density,
+        marginX: Float,
+        marginY: Float,
+        previousLayouts: List<SharedPdfRichPageLayout> = emptyList(),
+        dirtyGlobalIndex: Int = 0
+    ): List<SharedPdfRichPageLayout> {
+        val totalLen = globalText.length
+        if (totalLen == 0) {
+            return listOf(
+                SharedPdfRichPageLayout(
+                    pageIndex = 0,
+                    visibleText = AnnotatedString(""),
+                    globalStartIndex = 0,
+                    globalEndIndex = 0,
+                    pageHeightPx = pageHeightPx
+                )
+            )
+        }
+        if (pageWidthPx <= 0f || pageHeightPx <= 0f) return emptyList()
+
+        val validPages = if (dirtyGlobalIndex > 0 && previousLayouts.isNotEmpty()) {
+            previousLayouts.takeWhile { it.globalEndIndex < dirtyGlobalIndex }
+        } else {
+            emptyList()
+        }
+
+        val startPageIndex = validPages.size
+        val measurementStartIndex = validPages.lastOrNull()?.globalEndIndex ?: 0
+        if (measurementStartIndex >= totalLen) return validPages
+
+        val textToMeasure = globalText.subSequence(measurementStartIndex, totalLen)
+        val fullString = textToMeasure.text
+        val editorWidth = (pageWidthPx - (marginX * 2f)).coerceAtLeast(10f)
+        val editorHeight = (pageHeightPx - (marginY * 2f)).coerceAtLeast(10f)
+        val measureResult = textMeasurer.measure(
+            text = textToMeasure,
+            style = TextStyle(fontSize = 16.sp, color = Color.Black),
+            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
+            density = density
+        )
+
+        val newPages = mutableListOf<SharedPdfRichPageLayout>()
+        var currentPageIndex = startPageIndex
+        var currentPageStartRel = 0
+        var currentPageAccumulatedHeight = 0f
+        var currentLineIndex = 0
+        val totalLines = measureResult.lineCount
+
+        while (currentLineIndex < totalLines) {
+            val lineTop = measureResult.getLineTop(currentLineIndex)
+            val lineBottom = measureResult.getLineBottom(currentLineIndex)
+            val lineHeight = lineBottom - lineTop
+            val lineStartRel = measureResult.getLineStart(currentLineIndex)
+            val lineEndRel = measureResult.getLineEnd(currentLineIndex)
+            val localStartOffset = (currentPageStartRel - lineStartRel).coerceAtLeast(0)
+
+            if (lineStartRel + localStartOffset >= lineEndRel && currentLineIndex < totalLines - 1) {
+                currentLineIndex++
+                continue
+            }
+
+            val safeEndRel = lineEndRel.coerceAtMost(fullString.length)
+            val lineContent = fullString.substring(lineStartRel, safeEndRel)
+            val breakIndexInLine = lineContent.indexOf(SHARED_PDF_PAGE_BREAK_CHAR, localStartOffset)
+            val hasPageBreak = breakIndexInLine != -1
+            val isStartOfPage = currentPageAccumulatedHeight == 0f
+            val willOverflow = !isStartOfPage && currentPageAccumulatedHeight + lineHeight > editorHeight
+
+            if (hasPageBreak) {
+                val splitRelIndex = lineStartRel + breakIndexInLine + 1
+                val globalStart = measurementStartIndex + currentPageStartRel
+                val globalEnd = measurementStartIndex + splitRelIndex
+                if (globalEnd > globalStart) {
+                    newPages += SharedPdfRichPageLayout(
+                        pageIndex = currentPageIndex,
+                        visibleText = globalText.subSequence(globalStart, globalEnd),
+                        globalStartIndex = globalStart,
+                        globalEndIndex = globalEnd,
+                        pageHeightPx = pageHeightPx
+                    )
+                    currentPageIndex++
+                }
+                currentPageStartRel = splitRelIndex
+                currentPageAccumulatedHeight = 0f
+                continue
+            } else if (willOverflow) {
+                val globalStart = measurementStartIndex + currentPageStartRel
+                val globalEnd = measurementStartIndex + lineStartRel
+                if (globalEnd > globalStart) {
+                    newPages += SharedPdfRichPageLayout(
+                        pageIndex = currentPageIndex,
+                        visibleText = globalText.subSequence(globalStart, globalEnd),
+                        globalStartIndex = globalStart,
+                        globalEndIndex = globalEnd,
+                        pageHeightPx = pageHeightPx
+                    )
+                    currentPageIndex++
+                }
+                currentPageStartRel = lineStartRel
+                currentPageAccumulatedHeight = 0f
+                continue
+            }
+
+            currentPageAccumulatedHeight += lineHeight
+            currentLineIndex++
+        }
+
+        if (currentPageStartRel < fullString.length) {
+            val globalStart = measurementStartIndex + currentPageStartRel
+            val globalEnd = measurementStartIndex + fullString.length
+            newPages += SharedPdfRichPageLayout(
+                pageIndex = currentPageIndex,
+                visibleText = globalText.subSequence(globalStart, globalEnd),
+                globalStartIndex = globalStart,
+                globalEndIndex = globalEnd,
+                pageHeightPx = pageHeightPx
+            )
+        }
+
+        return validPages + newPages
+    }
+}
+
+@Stable
+class SharedPdfRichTextController(
+    private val scope: CoroutineScope,
+    initialDocument: SharedPdfRichDocument = SharedPdfRichDocument(),
+    private val onDocumentChange: suspend (SharedPdfRichDocument) -> Unit = {}
+) {
+    var globalTextFieldValue by mutableStateOf(
+        TextFieldValue(SharedPdfRichTextMapper.toAnnotatedString(initialDocument, 1414f))
+    )
+        private set
+
+    var localTextFieldValue by mutableStateOf(TextFieldValue(""))
+        private set
+
+    val editingValue: TextFieldValue
+        get() = if (activePageIndex != -1) localTextFieldValue else globalTextFieldValue
+
+    var activePageIndex by mutableIntStateOf(-1)
+        private set
+
+    var pageLayouts by mutableStateOf(emptyList<SharedPdfRichPageLayout>())
+        private set
+
+    var currentStyle: SpanStyle by mutableStateOf(SpanStyle(color = Color.Black, fontSize = 16.sp))
+        private set
+
+    var currentFontPath: String? by mutableStateOf(null)
+        private set
+
+    var currentFontName: String? by mutableStateOf(null)
+        private set
+
+    var cursorPageIndex by mutableIntStateOf(-1)
+        private set
+
+    var cursorRectInPage by mutableStateOf<Rect?>(null)
+        private set
+
+    var isCursorVisible by mutableStateOf(false)
+        private set
+
+    var showCursorOverride by mutableStateOf(true)
+
+    val focusRequester = FocusRequester()
+
+    private var lastPageWidth = 1000f
+    private var lastPageHeight = 1414f
+    private var lastDensity: Density? = null
+    private var lastTextMeasurer: TextMeasurer? = null
+    private val engine = SharedPdfRichTextPaginationEngine()
+    private var saveJob: Job? = null
+    private var syncJob: Job? = null
+    private var isSaving = false
+
+    fun replaceDocument(document: SharedPdfRichDocument) {
+        saveJob?.cancel()
+        syncJob?.cancel()
+        activePageIndex = -1
+        cursorPageIndex = -1
+        cursorRectInPage = null
+        isCursorVisible = false
+        localTextFieldValue = TextFieldValue("")
+        globalTextFieldValue = TextFieldValue(
+            SharedPdfRichTextMapper.toAnnotatedString(document, lastPageHeight)
+        )
+        repaginate(dirtyStartIndex = 0)
+    }
+
+    fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) {
+        if (lastPageWidth != width || lastPageHeight != height || lastDensity != density || lastTextMeasurer != measurer) {
+            lastPageWidth = width
+            lastPageHeight = height
+            lastDensity = density
+            lastTextMeasurer = measurer
+            repaginate(dirtyStartIndex = 0)
+        }
+    }
+
+    fun clearSelection() {
+        isCursorVisible = false
+        val pageToSync = activePageIndex
+        if (pageToSync != -1) {
+            scope.launch {
+                performSync(pageToSync)
+                if (activePageIndex == pageToSync) activePageIndex = -1
+            }
+        }
+        if (globalTextFieldValue.text.isNotEmpty()) {
+            globalTextFieldValue = globalTextFieldValue.copy(
+                selection = TextRange(globalTextFieldValue.text.length)
+            )
+        }
+        cursorPageIndex = -1
+        cursorRectInPage = null
+    }
+
+    fun onValueChanged(newValue: TextFieldValue) {
+        if (isSaving) return
+
+        if (activePageIndex != -1 && !newValue.text.startsWith(SHARED_PDF_ZWSP)) {
+            val handled = handleBackspaceAtStart()
+            if (!handled) {
+                localTextFieldValue = localTextFieldValue.copy(selection = TextRange(1))
+            }
+            return
+        }
+
+        val oldValue = if (activePageIndex != -1) localTextFieldValue else globalTextFieldValue
+        val newText = newValue.text
+        val oldText = oldValue.text
+
+        if (newText == oldText) {
+            if (activePageIndex != -1) {
+                if (
+                    localTextFieldValue.selection != newValue.selection ||
+                    localTextFieldValue.composition != newValue.composition
+                ) {
+                    localTextFieldValue = newValue.copy(annotatedString = localTextFieldValue.annotatedString)
+                    isCursorVisible = true
+                    updateLocalCursor()
+                }
+            } else {
+                if (
+                    globalTextFieldValue.selection != newValue.selection ||
+                    globalTextFieldValue.composition != newValue.composition
+                ) {
+                    globalTextFieldValue = newValue.copy(annotatedString = globalTextFieldValue.annotatedString)
+                    updateGlobalCursor()
+                }
+            }
+            return
+        }
+
+        val oldAnnotated = oldValue.annotatedString
+        val diff = newText.length - oldText.length
+        val cursor = newValue.selection.end
+        val changeStart = if (diff > 0) cursor - diff else cursor
+        val changeEndOld = if (diff > 0) changeStart else changeStart - diff
+        val mutableSpans = oldAnnotated.spanStyles.mapNotNull {
+            it.shiftedByTextChange(
+                diff = diff,
+                changeStart = changeStart,
+                changeEndOld = changeEndOld
+            )
+        }.toMutableList()
+        val mutableFontAnnotations = oldAnnotated.getStringAnnotations(
+            tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+            start = 0,
+            end = oldAnnotated.length
+        ).mapNotNull {
+            it.shiftedByTextChange(
+                diff = diff,
+                changeStart = changeStart,
+                changeEndOld = changeEndOld
+            )
+        }.toMutableList()
+
+        if (diff > 0) {
+            val start = (cursor - diff).coerceAtLeast(0)
+            mutableSpans += MutableSpan(start, cursor, currentStyle)
+            currentFontPath?.takeIf { it.isNotBlank() }?.let { fontPath ->
+                mutableFontAnnotations += MutableStringAnnotation(
+                    start = start,
+                    end = cursor,
+                    tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+                    item = fontPath
+                )
+            }
+        }
+
+        val builder = AnnotatedString.Builder(newText)
+        mutableSpans.compactSpans().forEach { span ->
+            builder.addStyle(span.item, span.start, span.end)
+        }
+        mutableFontAnnotations.compactStringAnnotations().forEach { annotation ->
+            builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
+        }
+
+        val finalValue = newValue.copy(annotatedString = builder.toAnnotatedString())
+        if (activePageIndex != -1) {
+            localTextFieldValue = finalValue
+            isCursorVisible = true
+            updateLocalCursor()
+            syncJob?.cancel()
+            syncJob = scope.launch {
+                delay(300)
+                performSync(activePageIndex, checkCursorMove = true)
+            }
+        } else {
+            globalTextFieldValue = finalValue
+            debouncedSave(globalTextFieldValue)
+            repaginate(dirtyStartIndex = 0)
+        }
+    }
+
+    fun updateCurrentStyle(style: SpanStyle, fontPath: String? = currentFontPath, fontName: String? = currentFontName) {
+        currentStyle = style
+        currentFontPath = fontPath
+        currentFontName = fontName
+        isCursorVisible = true
+
+        if (activePageIndex != -1) {
+            if (!localTextFieldValue.selection.collapsed) {
+                localTextFieldValue = localTextFieldValue.copy(
+                    annotatedString = localTextFieldValue.annotatedString.withAppliedRichStyle(
+                        style = style,
+                        fontPath = fontPath,
+                        selection = localTextFieldValue.selection
+                    )
+                )
+                syncJob?.cancel()
+                syncJob = scope.launch {
+                    delay(500)
+                    syncLocalToGlobal()
+                }
+            }
+        } else if (!globalTextFieldValue.selection.collapsed) {
+            globalTextFieldValue = globalTextFieldValue.copy(
+                annotatedString = globalTextFieldValue.annotatedString.withAppliedRichStyle(
+                    style = style,
+                    fontPath = fontPath,
+                    selection = globalTextFieldValue.selection
+                )
+            )
+            debouncedSave(globalTextFieldValue)
+            repaginate(dirtyStartIndex = globalTextFieldValue.selection.min)
+        }
+        requestFocus()
+    }
+
+    fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
+        if (activePageIndex != -1 && activePageIndex != pageIndex) {
+            scope.launch { performSync(activePageIndex) }
+        }
+
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        var layout = pageLayouts.find { it.pageIndex == pageIndex }
+
+        if (layout == null) {
+            val currentLastPage = pageLayouts.lastOrNull()?.pageIndex ?: 0
+            if (pageIndex > currentLastPage) {
+                val builder = AnnotatedString.Builder(globalTextFieldValue.annotatedString)
+                repeat(pageIndex - currentLastPage) {
+                    builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString())
+                }
+                globalTextFieldValue = TextFieldValue(builder.toAnnotatedString())
+                repaginateSync(0)
+                layout = pageLayouts.find { it.pageIndex == pageIndex }
+            }
+        }
+
+        val currentLayout = layout ?: return
+        activePageIndex = pageIndex
+        val editorWidth = editorWidth()
+        val visibleText = currentLayout.visibleText
+        val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + visibleText
+        val safeLen = if (visibleText.text.isNotEmpty() && visibleText.text.last() == SHARED_PDF_PAGE_BREAK_CHAR) {
+            visibleText.length - 1
+        } else {
+            visibleText.length
+        }
+        localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
+
+        val measureResult = measurer.measure(
+            text = currentLayout.visibleText,
+            style = TextStyle(fontSize = 16.sp, color = Color.Black),
+            constraints = Constraints(maxWidth = editorWidth.toInt()),
+            density = density
+        )
+        val textHeight = measureResult.size.height.toFloat()
+        if (localTapOffset.y <= textHeight) {
+            var localIndex = measureResult.getOffsetForPosition(localTapOffset)
+            if (visibleText.text.isNotEmpty() && visibleText.text.last() == SHARED_PDF_PAGE_BREAK_CHAR && localIndex >= visibleText.length) {
+                localIndex = visibleText.length - 1
+            }
+            localTextFieldValue = localTextFieldValue.copy(selection = TextRange(localIndex + 1))
+        } else {
+            injectNewlinesLocal(localTapOffset.y - textHeight)
+        }
+
+        isCursorVisible = true
+        updateLocalCursor()
+        requestFocus()
+    }
+
+    fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) {
+        scope.launch {
+            forceSyncAndClear()
+            val original = globalTextFieldValue.annotatedString
+            val insertionCharIndex = if (insertPageIndex == 0) {
+                0
+            } else {
+                pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: original.length
+            }
+            val safeIndex = insertionCharIndex.coerceIn(0, original.length)
+            val builder = AnnotatedString.Builder()
+            builder.append(original.subSequence(0, safeIndex))
+            repeat(count) { builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString()) }
+            builder.append(original.subSequence(safeIndex, original.length))
+            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + count))
+            debouncedSave(globalTextFieldValue)
+            repaginate(dirtyStartIndex = safeIndex)
+        }
+    }
+
+    fun deleteTextOnPage(pageIndex: Int) {
+        scope.launch {
+            forceSyncAndClear()
+            val layout = pageLayouts.find { it.pageIndex == pageIndex } ?: return@launch
+            val start = layout.globalStartIndex
+            val end = layout.globalEndIndex
+            if (start >= end && start >= globalTextFieldValue.text.length) return@launch
+            val original = globalTextFieldValue.annotatedString
+            val builder = AnnotatedString.Builder()
+            builder.append(original.subSequence(0, start))
+            if (end < original.length) {
+                builder.append(original.subSequence(end, original.length))
+            }
+            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(start))
+            debouncedSave(globalTextFieldValue)
+            repaginate(dirtyStartIndex = start)
+        }
+    }
+
+    fun handleBackspaceAtStart(): Boolean {
+        if (localTextFieldValue.selection.start != 0 && localTextFieldValue.selection.start != 1) return false
+        val originalActivePage = activePageIndex
+        if (originalActivePage <= 0) return false
+
+        scope.launch {
+            syncJob?.cancel()
+            performSync(originalActivePage)
+            val currentLayout = pageLayouts.find { it.pageIndex == originalActivePage } ?: return@launch
+            val globalText = globalTextFieldValue.annotatedString
+            val currentGlobalStart = currentLayout.globalStartIndex
+            if (currentGlobalStart <= 0) return@launch
+
+            val charBefore = globalText.text[currentGlobalStart - 1]
+            if (charBefore == SHARED_PDF_PAGE_BREAK_CHAR) {
+                handleBackspaceAcrossExplicitBreak(
+                    originalActivePage = originalActivePage,
+                    currentGlobalStart = currentGlobalStart,
+                    globalText = globalText
+                )
+            } else {
+                handleBackspaceAcrossOverflow(
+                    originalActivePage = originalActivePage,
+                    currentGlobalStart = currentGlobalStart,
+                    globalText = globalText
+                )
+            }
+        }
+        return true
+    }
+
+    suspend fun saveImmediate() {
+        if (isSaving) return
+        isSaving = true
+        try {
+            saveJob?.cancel()
+            syncJob?.cancel()
+            val pageToSync = activePageIndex
+            if (pageToSync != -1) {
+                performSync(pageToSync)
+                delay(50)
+                activePageIndex = -1
+                cursorPageIndex = -1
+                cursorRectInPage = null
+                localTextFieldValue = TextFieldValue("")
+            }
+            val document = withContext(Dispatchers.Default) {
+                SharedPdfRichTextMapper.fromAnnotatedString(
+                    text = globalTextFieldValue.annotatedString,
+                    pageHeightPx = lastPageHeight
+                )
+            }
+            onDocumentChange(document)
+        } finally {
+            delay(100)
+            isSaving = false
+        }
+    }
+
+    private suspend fun syncLocalToGlobal() {
+        if (activePageIndex == -1) return
+        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: return
+        val globalStart = layout.globalStartIndex
+        val globalEnd = layout.globalEndIndex
+        val currentGlobal = globalTextFieldValue.annotatedString
+        val localText = if (localTextFieldValue.annotatedString.text.isNotEmpty()) {
+            localTextFieldValue.annotatedString.subSequence(1, localTextFieldValue.annotatedString.length)
+        } else {
+            AnnotatedString("")
+        }
+        val builder = AnnotatedString.Builder()
+        builder.append(currentGlobal.subSequence(0, globalStart))
+        builder.append(localText)
+        if (globalEnd < currentGlobal.length) {
+            builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
+        }
+        val newGlobalAnnotated = builder.toAnnotatedString()
+        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
+        val newGlobalCursorPos = globalStart + localSelectionStart
+        globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
+        debouncedSave(globalTextFieldValue)
+
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val newLayouts = withContext(Dispatchers.Default) {
+            engine.paginate(
+                globalText = newGlobalAnnotated,
+                pageWidthPx = lastPageWidth,
+                pageHeightPx = lastPageHeight,
+                textMeasurer = measurer,
+                density = density,
+                marginX = marginX(),
+                marginY = marginY(),
+                previousLayouts = pageLayouts,
+                dirtyGlobalIndex = globalStart
+            )
+        }
+        pageLayouts = newLayouts
+        val newActiveLayout = newLayouts.find {
+            newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos <= it.globalEndIndex
+        }
+        if (newActiveLayout != null) {
+            activePageIndex = newActiveLayout.pageIndex
+            val reExtractedText = newGlobalAnnotated.subSequence(
+                newActiveLayout.globalStartIndex,
+                newActiveLayout.globalEndIndex
+            )
+            val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtractedText
+            val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
+                .coerceIn(0, textWithZwsp.length)
+            localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
+            updateLocalCursor()
+        }
+    }
+
+    private suspend fun performSync(pageIdx: Int, checkCursorMove: Boolean = false) {
+        if (pageIdx == -1) return
+        val layout = pageLayouts.find { it.pageIndex == pageIdx } ?: return
+        val globalStart = layout.globalStartIndex
+        val globalEnd = layout.globalEndIndex
+        val currentGlobal = globalTextFieldValue.annotatedString
+        val localAnnotatedRaw = localTextFieldValue.annotatedString
+        val localAnnotated = if (localAnnotatedRaw.text.isNotEmpty()) {
+            localAnnotatedRaw.subSequence(1, localAnnotatedRaw.length)
+        } else {
+            AnnotatedString("")
+        }
+        val builder = AnnotatedString.Builder()
+        builder.append(currentGlobal.subSequence(0, globalStart))
+        builder.append(localAnnotated)
+        if (globalEnd < currentGlobal.length) {
+            builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
+        }
+        val newGlobalAnnotated = builder.toAnnotatedString()
+        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
+        val newGlobalCursorPos = (globalStart + localSelectionStart).coerceIn(0, newGlobalAnnotated.length)
+        globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
+        debouncedSave(globalTextFieldValue)
+
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val newLayouts = withContext(Dispatchers.Default) {
+            engine.paginate(
+                globalText = newGlobalAnnotated,
+                pageWidthPx = lastPageWidth,
+                pageHeightPx = lastPageHeight,
+                textMeasurer = measurer,
+                density = density,
+                marginX = marginX(),
+                marginY = marginY(),
+                previousLayouts = pageLayouts,
+                dirtyGlobalIndex = globalStart
+            )
+        }
+        pageLayouts = newLayouts
+
+        if (checkCursorMove) {
+            val newActiveLayout = newLayouts.find {
+                newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos < it.globalEndIndex
+            } ?: newLayouts.find { newGlobalCursorPos == it.globalEndIndex }
+            if (newActiveLayout != null) {
+                activePageIndex = newActiveLayout.pageIndex
+                val reExtracted = newGlobalAnnotated.subSequence(
+                    newActiveLayout.globalStartIndex,
+                    newActiveLayout.globalEndIndex
+                )
+                val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
+                val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
+                    .coerceIn(0, textWithZwsp.length)
+                localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
+                updateLocalCursor()
+                if (newActiveLayout.pageIndex != pageIdx) {
+                    requestFocus()
+                }
+            }
+        }
+    }
+
+    private fun injectNewlinesLocal(gapPixels: Float) {
+        val fontSizeSp = currentStyle.fontSize.value
+        val densityValue = lastDensity?.density ?: 1f
+        val lineHeightPx = (if (fontSizeSp.isNaN()) 16f else fontSizeSp) * densityValue * 1.3f
+        val linesNeeded = (gapPixels / lineHeightPx).toInt().coerceAtLeast(1)
+        val padding = "\n".repeat(linesNeeded)
+        val original = localTextFieldValue.annotatedString
+        val endsWithBreak = original.text.isNotEmpty() && original.text.last() == SHARED_PDF_PAGE_BREAK_CHAR
+        val builder = AnnotatedString.Builder()
+        if (endsWithBreak) {
+            builder.append(original.subSequence(0, original.length - 1))
+            builder.pushStyle(currentStyle)
+            builder.append(padding)
+            builder.pop()
+            currentFontPath?.takeIf { it.isNotBlank() }?.let {
+                builder.addStringAnnotation(
+                    tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+                    annotation = it,
+                    start = original.length - 1,
+                    end = original.length - 1 + padding.length
+                )
+            }
+            builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString())
+        } else {
+            val start = original.length
+            builder.append(original)
+            builder.pushStyle(currentStyle)
+            builder.append(padding)
+            builder.pop()
+            currentFontPath?.takeIf { it.isNotBlank() }?.let {
+                builder.addStringAnnotation(
+                    tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+                    annotation = it,
+                    start = start,
+                    end = start + padding.length
+                )
+            }
+        }
+        val next = builder.toAnnotatedString()
+        val newCursor = if (endsWithBreak) next.length - 1 else next.length
+        localTextFieldValue = TextFieldValue(next, TextRange(newCursor))
+        onValueChanged(localTextFieldValue)
+    }
+
+    private fun repaginate(dirtyStartIndex: Int) {
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val currentText = globalTextFieldValue.annotatedString
+        val currentLayouts = pageLayouts
+        scope.launch {
+            val newLayouts = withContext(Dispatchers.Default) {
+                engine.paginate(
+                    globalText = currentText,
+                    pageWidthPx = lastPageWidth,
+                    pageHeightPx = lastPageHeight,
+                    textMeasurer = measurer,
+                    density = density,
+                    marginX = marginX(),
+                    marginY = marginY(),
+                    previousLayouts = currentLayouts,
+                    dirtyGlobalIndex = dirtyStartIndex
+                )
+            }
+            pageLayouts = newLayouts
+        }
+    }
+
+    private fun repaginateSync(dirtyStartIndex: Int) {
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        pageLayouts = engine.paginate(
+            globalText = globalTextFieldValue.annotatedString,
+            pageWidthPx = lastPageWidth,
+            pageHeightPx = lastPageHeight,
+            textMeasurer = measurer,
+            density = density,
+            marginX = marginX(),
+            marginY = marginY(),
+            previousLayouts = pageLayouts,
+            dirtyGlobalIndex = dirtyStartIndex
+        )
+    }
+
+    private fun updateLocalCursor() {
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val selection = localTextFieldValue.selection
+        if (selection.collapsed) {
+            val measureResult = measurer.measure(
+                text = localTextFieldValue.annotatedString,
+                style = TextStyle(fontSize = 16.sp),
+                constraints = Constraints(maxWidth = editorWidth().toInt()),
+                density = density
+            )
+            val safeOffset = selection.start.coerceIn(0, localTextFieldValue.text.length)
+            cursorPageIndex = activePageIndex
+            cursorRectInPage = measureResult.getCursorRect(safeOffset).translate(marginX(), marginY())
+        }
+    }
+
+    private fun updateGlobalCursor() {
+        val selection = globalTextFieldValue.selection
+        if (isCursorVisible && showCursorOverride && selection.collapsed) {
+            val cursorIndex = selection.start
+            val layout = pageLayouts.find {
+                cursorIndex >= it.globalStartIndex && cursorIndex <= it.globalEndIndex
+            }
+            val measurer = lastTextMeasurer
+            val density = lastDensity
+            if (layout != null && measurer != null && density != null) {
+                val measureResult = measurer.measure(
+                    text = layout.visibleText,
+                    style = TextStyle(fontSize = 16.sp),
+                    constraints = Constraints(maxWidth = editorWidth().toInt()),
+                    density = density
+                )
+                val localIndex = (cursorIndex - layout.globalStartIndex).coerceIn(0, layout.visibleText.length)
+                cursorPageIndex = layout.pageIndex
+                cursorRectInPage = measureResult.getCursorRect(localIndex).translate(marginX(), marginY())
+            }
+        } else {
+            cursorPageIndex = -1
+            cursorRectInPage = null
+        }
+    }
+
+    private suspend fun forceSyncAndClear() {
+        if (activePageIndex != -1) {
+            performSync(activePageIndex)
+            activePageIndex = -1
+            cursorPageIndex = -1
+            cursorRectInPage = null
+            localTextFieldValue = TextFieldValue("")
+        }
+    }
+
+    private suspend fun handleBackspaceAcrossExplicitBreak(
+        originalActivePage: Int,
+        currentGlobalStart: Int,
+        globalText: AnnotatedString
+    ) {
+        val targetPageIndex = originalActivePage - 1
+        val builder = AnnotatedString.Builder()
+        builder.append(globalText.subSequence(0, currentGlobalStart - 1))
+        builder.append(globalText.subSequence(currentGlobalStart, globalText.length))
+        var intermediateGlobal = builder.toAnnotatedString()
+        var newCursorPos = (currentGlobalStart - 1).coerceAtLeast(0)
+
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val editorHeight = (lastPageHeight - (marginY() * 2f)).coerceAtLeast(10f)
+        val targetLayout = pageLayouts.find { it.pageIndex == targetPageIndex }
+        val safeTargetStart = (targetLayout?.globalStartIndex ?: 0).coerceIn(0, newCursorPos)
+        val pageTextToMeasure = intermediateGlobal.subSequence(safeTargetStart, newCursorPos)
+        val measureResult = measurer.measure(
+            text = pageTextToMeasure,
+            style = TextStyle(fontSize = 16.sp),
+            constraints = Constraints(maxWidth = editorWidth().toInt()),
+            density = density
+        )
+        val gap = editorHeight - measureResult.size.height.toFloat()
+        if (gap > 0f) {
+            val fontSizeSp = currentStyle.fontSize.value
+            val lineHeightPx = (if (fontSizeSp.isNaN() || fontSizeSp <= 0f) 16f else fontSizeSp) * density.density * 1.3f
+            val linesNeeded = (gap / lineHeightPx).toInt().coerceAtLeast(0)
+            if (linesNeeded > 0) {
+                val padding = "\n".repeat(linesNeeded)
+                val paddedBuilder = AnnotatedString.Builder()
+                paddedBuilder.append(intermediateGlobal.subSequence(0, newCursorPos))
+                paddedBuilder.pushStyle(currentStyle)
+                paddedBuilder.append(padding)
+                paddedBuilder.pop()
+                currentFontPath?.takeIf { it.isNotBlank() }?.let {
+                    paddedBuilder.addStringAnnotation(
+                        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+                        annotation = it,
+                        start = newCursorPos,
+                        end = newCursorPos + padding.length
+                    )
+                }
+                paddedBuilder.append(intermediateGlobal.subSequence(newCursorPos, intermediateGlobal.length))
+                intermediateGlobal = paddedBuilder.toAnnotatedString()
+                newCursorPos += padding.length
+            }
+        }
+
+        globalTextFieldValue = TextFieldValue(intermediateGlobal, TextRange(newCursorPos))
+        debouncedSave(globalTextFieldValue)
+        val finalLayouts = withContext(Dispatchers.Default) {
+            engine.paginate(intermediateGlobal, lastPageWidth, lastPageHeight, measurer, density, marginX(), marginY())
+        }
+        pageLayouts = finalLayouts
+        val finalActiveLayout = finalLayouts.find { it.pageIndex == targetPageIndex }
+            ?: finalLayouts.findLast { newCursorPos >= it.globalStartIndex && newCursorPos <= it.globalEndIndex }
+        if (finalActiveLayout != null) {
+            activePageIndex = finalActiveLayout.pageIndex
+            val reExtracted = intermediateGlobal.subSequence(
+                finalActiveLayout.globalStartIndex,
+                finalActiveLayout.globalEndIndex
+            )
+            val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
+            val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
+            localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))
+            updateLocalCursor()
+            requestFocus()
+        }
+    }
+
+    private suspend fun handleBackspaceAcrossOverflow(
+        originalActivePage: Int,
+        currentGlobalStart: Int,
+        globalText: AnnotatedString
+    ) {
+        val builder = AnnotatedString.Builder()
+        builder.append(globalText.subSequence(0, currentGlobalStart - 1))
+        builder.append(globalText.subSequence(currentGlobalStart, globalText.length))
+        val newGlobalText = builder.toAnnotatedString()
+        val newCursorPos = (currentGlobalStart - 1).coerceAtLeast(0)
+        globalTextFieldValue = TextFieldValue(newGlobalText, TextRange(newCursorPos))
+        debouncedSave(globalTextFieldValue)
+
+        val measurer = lastTextMeasurer ?: return
+        val density = lastDensity ?: return
+        val finalLayouts = withContext(Dispatchers.Default) {
+            engine.paginate(newGlobalText, lastPageWidth, lastPageHeight, measurer, density, marginX(), marginY())
+        }
+        pageLayouts = finalLayouts
+        val finalActiveLayout = finalLayouts.find {
+            newCursorPos >= it.globalStartIndex && newCursorPos < it.globalEndIndex
+        } ?: finalLayouts.find { newCursorPos == it.globalEndIndex }
+        if (finalActiveLayout != null) {
+            activePageIndex = finalActiveLayout.pageIndex
+            val reExtracted = newGlobalText.subSequence(
+                finalActiveLayout.globalStartIndex,
+                finalActiveLayout.globalEndIndex
+            )
+            val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
+            val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
+            localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))
+            updateLocalCursor()
+            requestFocus()
+        } else {
+            activePageIndex = originalActivePage
+        }
+    }
+
+    private fun debouncedSave(tfv: TextFieldValue) {
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(1000)
+            val document = withContext(Dispatchers.Default) {
+                SharedPdfRichTextMapper.fromAnnotatedString(tfv.annotatedString, lastPageHeight)
+            }
+            onDocumentChange(document)
+        }
+    }
+
+    private fun requestFocus() {
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    private fun editorWidth(): Float = (lastPageWidth - (marginX() * 2f)).coerceAtLeast(10f)
+
+    private fun marginX(): Float = lastPageWidth * 0.1f
+
+    private fun marginY(): Float = lastPageHeight * 0.08f
+}
+
+fun SharedPdfTextStyleConfig.toSharedPdfRichSpanStyle(): SpanStyle {
+    return SpanStyle(
+        color = Color(colorArgb),
+        background = Color(backgroundColorArgb),
+        fontSize = fontSize.sp,
+        fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal,
+        textDecoration = richTextDecoration(isUnderline, isStrikeThrough)
+    )
+}
+
+fun SharedPdfRichTextController.currentSharedPdfTextStyleConfig(): SharedPdfTextStyleConfig {
+    val decoration = currentStyle.textDecoration ?: TextDecoration.None
+    return SharedPdfTextStyleConfig(
+        colorArgb = currentStyle.color.takeIf { it.isSpecified }?.toArgb() ?: Color.Black.toArgb(),
+        backgroundColorArgb = currentStyle.background.takeIf { it.isSpecified }?.toArgb() ?: Color.Transparent.toArgb(),
+        fontSize = if (currentStyle.fontSize.isSp) currentStyle.fontSize.value else 16f,
+        isBold = currentStyle.fontWeight == FontWeight.Bold,
+        isItalic = currentStyle.fontStyle == FontStyle.Italic,
+        isUnderline = decoration.contains(TextDecoration.Underline),
+        isStrikeThrough = decoration.contains(TextDecoration.LineThrough),
+        fontPath = currentFontPath,
+        fontName = currentFontName
+    )
+}
+
+fun SharedPdfRichTextController.updateCurrentSharedPdfTextStyle(style: SharedPdfTextStyleConfig) {
+    updateCurrentStyle(
+        style = style.toSharedPdfRichSpanStyle(),
+        fontPath = style.fontPath,
+        fontName = style.fontName
+    )
+}
+
+private data class MutableSpan(
+    var start: Int,
+    var end: Int,
+    val item: SpanStyle
+)
+
+private data class MutableStringAnnotation(
+    var start: Int,
+    var end: Int,
+    val tag: String,
+    val item: String
+)
+
+private fun AnnotatedString.Range<SpanStyle>.shiftedByTextChange(
+    diff: Int,
+    changeStart: Int,
+    changeEndOld: Int
+): MutableSpan? {
+    return shiftRange(start, end, diff, changeStart, changeEndOld)
+        ?.let { (nextStart, nextEnd) -> MutableSpan(nextStart, nextEnd, item) }
+}
+
+private fun AnnotatedString.Range<String>.shiftedByTextChange(
+    diff: Int,
+    changeStart: Int,
+    changeEndOld: Int
+): MutableStringAnnotation? {
+    return shiftRange(start, end, diff, changeStart, changeEndOld)
+        ?.let { (nextStart, nextEnd) ->
+            MutableStringAnnotation(
+                start = nextStart,
+                end = nextEnd,
+                tag = tag,
+                item = item
+            )
+        }
+}
+
+private fun shiftRange(
+    start: Int,
+    end: Int,
+    diff: Int,
+    changeStart: Int,
+    changeEndOld: Int
+): Pair<Int, Int>? {
+    val next = if (diff > 0) {
+        when {
+            end <= changeStart -> start to end
+            start >= changeStart -> (start + diff) to (end + diff)
+            else -> start to (end + diff)
+        }
+    } else {
+        when {
+            end <= changeStart -> start to end
+            start >= changeEndOld -> (start + diff) to (end + diff)
+            else -> {
+                val newStart = if (start < changeStart) start else changeStart
+                val newEnd = (end + diff).coerceAtLeast(changeStart)
+                newStart to newEnd
+            }
+        }
+    }
+    return next.takeIf { it.first < it.second }
+}
+
+private fun List<MutableSpan>.compactSpans(): List<MutableSpan> {
+    return groupBy { it.item }
+        .flatMap { (_, spans) ->
+            spans.sortedBy { it.start }.mergeAdjacentRanges { current, next ->
+                current.copy(end = maxOf(current.end, next.end))
+            }
+        }
+}
+
+private fun List<MutableStringAnnotation>.compactStringAnnotations(): List<MutableStringAnnotation> {
+    return groupBy { it.tag to it.item }
+        .flatMap { (_, annotations) ->
+            annotations.sortedBy { it.start }.mergeAdjacentRanges { current, next ->
+                current.copy(end = maxOf(current.end, next.end))
+            }
+        }
+}
+
+private fun <T> List<T>.mergeAdjacentRanges(merge: (T, T) -> T): List<T>
+    where T : Any {
+    if (isEmpty()) return emptyList()
+    val result = mutableListOf<T>()
+    var current = first()
+    for (i in 1 until size) {
+        val next = this[i]
+        val currentEnd = current.richRangeEnd()
+        val nextStart = next.richRangeStart()
+        if (nextStart <= currentEnd) {
+            current = merge(current, next)
+        } else {
+            result += current
+            current = next
+        }
+    }
+    result += current
+    return result
+}
+
+private fun Any.richRangeStart(): Int {
+    return when (this) {
+        is MutableSpan -> start
+        is MutableStringAnnotation -> start
+        else -> 0
+    }
+}
+
+private fun Any.richRangeEnd(): Int {
+    return when (this) {
+        is MutableSpan -> end
+        is MutableStringAnnotation -> end
+        else -> 0
+    }
+}
+
+private fun AnnotatedString.withAppliedRichStyle(
+    style: SpanStyle,
+    fontPath: String?,
+    selection: TextRange
+): AnnotatedString {
+    val start = selection.min.coerceIn(0, length)
+    val end = selection.max.coerceIn(start, length)
+    if (start == end) return this
+    val builder = AnnotatedString.Builder(this)
+    builder.addStyle(style, start, end)
+    fontPath?.takeIf { it.isNotBlank() }?.let {
+        builder.addStringAnnotation(
+            tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+            annotation = it,
+            start = start,
+            end = end
+        )
+    }
+    return builder.toAnnotatedString()
+}
+
+private fun richTextDecoration(
+    underline: Boolean,
+    strikeThrough: Boolean
+): TextDecoration {
+    val decorations = mutableListOf<TextDecoration>()
+    if (underline) decorations += TextDecoration.Underline
+    if (strikeThrough) decorations += TextDecoration.LineThrough
+    return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
+}

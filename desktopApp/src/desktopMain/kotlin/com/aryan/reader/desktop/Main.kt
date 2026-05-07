@@ -159,17 +159,22 @@ import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
+import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
+import com.aryan.reader.shared.pdf.currentSharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.mostVisiblePdfPageIndex
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.sharedPdfTextStyle
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.toAnnotation
+import com.aryan.reader.shared.pdf.updateCurrentSharedPdfTextStyle
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
 import com.aryan.reader.shared.pdf.withStyle
@@ -197,6 +202,8 @@ import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfPageNumberOverlay
+import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
+import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
@@ -1732,10 +1739,27 @@ private fun PdfReaderScreen(
     var externalLinkDialogUrl by remember(document.path) { mutableStateOf<String?>(null) }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(document.path) { desktopPdfBookmarkFile(document.path) }
+    val richTextFile = remember(document.path) { desktopPdfRichTextFile(document.path) }
     val searchIndexFile = remember(document.path) { desktopPdfSearchIndexFile(document.path) }
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
     val pdfScope = rememberCoroutineScope()
+    var isRichTextMode by remember(document.path) { mutableStateOf(false) }
+    var isRichTextLoaded by remember(document.path) { mutableStateOf(false) }
+    val richTextController = remember(document.path) {
+        SharedPdfRichTextController(
+            scope = pdfScope,
+            onDocumentChange = { richDocument ->
+                if (isRichTextLoaded) {
+                    withContext(Dispatchers.IO) {
+                        richTextFile.parentFile?.mkdirs()
+                        richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
+                    }
+                    onLocalSidecarsChanged()
+                }
+            }
+        )
+    }
     val pageVerticalScrollState = rememberScrollState()
     val pageHorizontalScrollState = rememberScrollState()
     val verticalListState = rememberLazyListState(initialFirstVisibleItemIndex = pdfState.pageIndex)
@@ -1832,13 +1856,38 @@ private fun PdfReaderScreen(
 
     fun selectTextAnnotation(annotation: SharedPdfAnnotation) {
         if (annotation.kind != PdfAnnotationKind.TEXT) return
+        if (isRichTextMode) {
+            isRichTextMode = false
+            pdfScope.launch { richTextController.saveImmediate() }
+        }
         commitActiveTextDraft()
         clearPdfInteractionState()
         textStyleConfig = annotation.sharedPdfTextStyle()
         dispatchPdf(SharedPdfReaderAction.AnnotationSelected(annotation.id))
     }
 
+    fun activateRichTextMode() {
+        commitActiveTextDraft()
+        clearPdfInteractionState()
+        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+        if (pdfState.isTextSelectionMode) {
+            dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(false))
+        }
+        isRichTextMode = true
+    }
+
+    fun deactivateRichTextMode(save: Boolean = true) {
+        if (!isRichTextMode) return
+        isRichTextMode = false
+        if (save) {
+            pdfScope.launch { richTextController.saveImmediate() }
+        } else {
+            richTextController.clearSelection()
+        }
+    }
+
     fun selectPdfAnnotationTool(tool: PdfInkTool) {
+        deactivateRichTextMode()
         if (tool != PdfInkTool.TEXT) {
             commitActiveTextDraft()
         }
@@ -1924,6 +1973,19 @@ private fun PdfReaderScreen(
     }
 
     LaunchedEffect(document.path) {
+        isRichTextLoaded = false
+        val loadedRichText = withContext(Dispatchers.IO) {
+            if (richTextFile.exists()) {
+                SharedPdfRichTextSerializer.decode(richTextFile.readText())
+            } else {
+                SharedPdfRichDocument()
+            }
+        }
+        richTextController.replaceDocument(loadedRichText)
+        isRichTextLoaded = true
+    }
+
+    LaunchedEffect(document.path) {
         arePdfBookmarksLoaded = false
         val loadedBookmarks = if (bookmarkFile.exists()) {
             withContext(Dispatchers.IO) {
@@ -1986,6 +2048,9 @@ private fun PdfReaderScreen(
         val currentPage = pdfState.pageIndex
         if (clampedTarget != currentPage) {
             commitActiveTextDraft()
+            if (isRichTextMode) {
+                pdfScope.launch { richTextController.saveImmediate() }
+            }
         }
         if (recordJump) {
             jumpHistory = jumpHistory.record(
@@ -2271,64 +2336,73 @@ private fun PdfReaderScreen(
             }
         }
     ) {
-        Row(
-            Modifier
-                .fillMaxSize()
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    val isEditingTextAnnotation =
-                        activeTextDraft != null ||
-                            (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
-                    if (isEditingTextAnnotation && !event.isCtrlPressed) {
-                        return@onPreviewKeyEvent false
+        Box(Modifier.fillMaxSize()) {
+            SharedPdfRichTextHiddenInput(
+                controller = richTextController,
+                enabled = isRichTextMode,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 24.dp)
+                    .zIndex(10f)
+            )
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        val isEditingTextAnnotation =
+                            activeTextDraft != null ||
+                                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
+                        if ((isEditingTextAnnotation || isRichTextMode) && !event.isCtrlPressed) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when {
+                            event.key == Key.DirectionLeft -> {
+                                goToPage(pageIndex - 1)
+                                true
+                            }
+                            event.key == Key.DirectionRight -> {
+                                goToPage(pageIndex + 1)
+                                true
+                            }
+                            event.key == Key.DirectionUp && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
+                                goToPage(pageIndex - 1)
+                                true
+                            }
+                            event.key == Key.DirectionDown && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
+                                goToPage(pageIndex + 1)
+                                true
+                            }
+                            event.key == Key.PageUp -> {
+                                goToPage(pageIndex - 1)
+                                true
+                            }
+                            event.key == Key.PageDown -> {
+                                goToPage(pageIndex + 1)
+                                true
+                            }
+                            event.key == Key.MoveHome -> {
+                                goToPage(0)
+                                true
+                            }
+                            event.key == Key.MoveEnd -> {
+                                goToPage(document.pageCount - 1)
+                                true
+                            }
+                            event.isCtrlPressed && event.key == Key.Equals -> {
+                                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
+                                true
+                            }
+                            event.isCtrlPressed && event.key == Key.Minus -> {
+                                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
+                                true
+                            }
+                            else -> false
+                        }
                     }
-                    when {
-                        event.key == Key.DirectionLeft -> {
-                            goToPage(pageIndex - 1)
-                            true
-                        }
-                        event.key == Key.DirectionRight -> {
-                            goToPage(pageIndex + 1)
-                            true
-                        }
-                        event.key == Key.DirectionUp && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                            goToPage(pageIndex - 1)
-                            true
-                        }
-                        event.key == Key.DirectionDown && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                            goToPage(pageIndex + 1)
-                            true
-                        }
-                        event.key == Key.PageUp -> {
-                            goToPage(pageIndex - 1)
-                            true
-                        }
-                        event.key == Key.PageDown -> {
-                            goToPage(pageIndex + 1)
-                            true
-                        }
-                        event.key == Key.MoveHome -> {
-                            goToPage(0)
-                            true
-                        }
-                        event.key == Key.MoveEnd -> {
-                            goToPage(document.pageCount - 1)
-                            true
-                        }
-                        event.isCtrlPressed && event.key == Key.Equals -> {
-                            dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
-                            true
-                        }
-                        event.isCtrlPressed && event.key == Key.Minus -> {
-                            dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                .focusable(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+                    .focusable(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             Surface(
                 modifier = Modifier
                     .width(300.dp)
@@ -2508,6 +2582,9 @@ private fun PdfReaderScreen(
                             onClick = {
                                 val enabled = !isTextSelectionMode
                                 if (enabled) {
+                                    deactivateRichTextMode()
+                                }
+                                if (enabled) {
                                     commitActiveTextDraft()
                                 }
                                 dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
@@ -2516,6 +2593,17 @@ private fun PdfReaderScreen(
                                 }
                             },
                             label = { Text("Select text") }
+                        )
+                        FilterChip(
+                            selected = isRichTextMode,
+                            onClick = {
+                                if (isRichTextMode) {
+                                    deactivateRichTextMode()
+                                } else {
+                                    activateRichTextMode()
+                                }
+                            },
+                            label = { Text("Document text") }
                         )
                         SharedPdfAnnotationToolDock(
                             selectedTool = selectedTool,
@@ -2623,11 +2711,21 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
-                    if (selectedTool == PdfInkTool.TEXT) {
+                    if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
                         item {
                             SharedPdfTextAnnotationDock(
-                                style = effectiveTextStyleConfig,
-                                onStyleChange = ::updateTextStyleConfig
+                                style = if (isRichTextMode) {
+                                    richTextController.currentSharedPdfTextStyleConfig()
+                                } else {
+                                    effectiveTextStyleConfig
+                                },
+                                onStyleChange = { style ->
+                                    if (isRichTextMode) {
+                                        richTextController.updateCurrentSharedPdfTextStyle(style)
+                                    } else {
+                                        updateTextStyleConfig(style)
+                                    }
+                                }
                             )
                         }
                     }
@@ -2742,6 +2840,8 @@ private fun PdfReaderScreen(
                                 strokeWidth = strokeWidth,
                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                 activeTextDraft = activeTextDraft,
+                                richTextController = richTextController,
+                                isRichTextMode = isRichTextMode,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = { goToPage(it, scrollVertical = false) },
                                 onCopySelection = ::copySelection,
@@ -2851,7 +2951,8 @@ private fun PdfReaderScreen(
                                     }
                                     pageCanvasSize = size
                                 }
-                                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool) {
+                                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
+                                    if (isRichTextMode) return@pointerInput
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent()
@@ -2911,10 +3012,12 @@ private fun PdfReaderScreen(
                                     isHighlighterSnapEnabled,
                                     textStyleConfig,
                                     activeTextDraft?.id,
+                                    isRichTextMode,
                                     pageCanvasSize,
                                     pageRender.width,
                                     pageRender.height
                                 ) {
+                                    if (isRichTextMode) return@pointerInput
                                     if (isTextSelectionMode) {
                                         detectDragGestures(
                                             onDragStart = { start ->
@@ -3098,6 +3201,14 @@ private fun PdfReaderScreen(
                                 contentDescription = "PDF page ${pageIndex + 1}",
                                 modifier = Modifier.fillMaxSize()
                             )
+                            SharedPdfRichTextLayer(
+                                pageIndex = pageIndex,
+                                controller = richTextController,
+                                pageWidth = pageCanvasSize.width.toFloat(),
+                                pageHeight = pageCanvasSize.height.toFloat(),
+                                isTextEditingEnabled = isRichTextMode,
+                                onPageTapped = {}
+                            )
                             PdfSearchHighlightOverlay(
                                 bounds = searchHighlightBounds,
                                 canvasSize = pageCanvasSize,
@@ -3195,6 +3306,7 @@ private fun PdfReaderScreen(
             }
         }
     }
+}
 }
 }
 
@@ -3320,6 +3432,8 @@ private fun DesktopVerticalPdfPage(
     strokeWidth: Float,
     isHighlighterSnapEnabled: Boolean,
     activeTextDraft: SharedPdfTextDraft?,
+    richTextController: SharedPdfRichTextController,
+    isRichTextMode: Boolean,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
@@ -3435,7 +3549,8 @@ private fun DesktopVerticalPdfPage(
                 .size(placeholderWidthDp, placeholderHeightDp)
                 .background(Color.White, RoundedCornerShape(2.dp))
                 .onSizeChanged { pageCanvasSize = it }
-                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool) {
+                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
+                    if (isRichTextMode) return@pointerInput
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
@@ -3495,11 +3610,13 @@ private fun DesktopVerticalPdfPage(
                     strokeWidth,
                     isHighlighterSnapEnabled,
                     activeTextDraft?.id,
+                    isRichTextMode,
                     pageCanvasSize,
                     renderedPageWidth,
                     renderedPageHeight
                 ) {
                     if (renderedPageWidth > 0 && renderedPageHeight > 0) {
+                        if (isRichTextMode) return@pointerInput
                         if (isTextSelectionMode) {
                             detectDragGestures(
                                 onDragStart = { start ->
@@ -3756,6 +3873,14 @@ private fun DesktopVerticalPdfPage(
                         bitmap = pageRender.image,
                         contentDescription = "PDF page ${pageIndex + 1}",
                         modifier = Modifier.fillMaxSize()
+                    )
+                    SharedPdfRichTextLayer(
+                        pageIndex = pageIndex,
+                        controller = richTextController,
+                        pageWidth = pageCanvasSize.width.toFloat(),
+                        pageHeight = pageCanvasSize.height.toFloat(),
+                        isTextEditingEnabled = isRichTextMode,
+                        onPageTapped = { onSelectPage(pageIndex) }
                     )
                     PdfSearchHighlightOverlay(
                         bounds = searchHighlightBounds,
@@ -4341,6 +4466,13 @@ internal fun desktopPdfBookmarkFile(documentPath: String): File {
         ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
     return File(baseDir, "Episteme/annotations/pdf_${safeName}_bookmarks.json")
+}
+
+internal fun desktopPdfRichTextFile(documentPath: String): File {
+    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
+        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
+    val safeName = documentPath.hashCode().toString().replace("-", "n")
+    return File(baseDir, "Episteme/annotations/pdf_${safeName}_rich_text.json")
 }
 
 private fun desktopPdfSearchIndexFile(documentPath: String): File {

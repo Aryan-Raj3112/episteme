@@ -15,6 +15,7 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.toSharedFolderBookMetadata
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -139,6 +140,7 @@ object DesktopLocalFolderSync {
         val root = book.sourceFolder?.let(::File)?.takeIf { it.isDirectory } ?: return
         val annotationFile = desktopPdfAnnotationFile(path)
         val bookmarkFile = desktopPdfBookmarkFile(path)
+        val richTextFile = desktopPdfRichTextFile(path)
         val data = buildMap {
             if (annotationFile.isFile) {
                 val annotationJson = annotationFile.readText().trim()
@@ -152,9 +154,21 @@ object DesktopLocalFolderSync {
                 val bookmarksJson = bookmarkFile.readText().trim()
                 desktopFolderSyncJson.parseElementOrNull(bookmarksJson)?.let { put("bookmarks", it) }
             }
+            if (richTextFile.isFile) {
+                val richTextJson = richTextFile.readText().trim()
+                desktopFolderSyncJson.parseElementOrNull(richTextJson)?.let { richTextElement ->
+                    val richTextDocument = SharedPdfRichTextSerializer.decodeElement(richTextElement)
+                    put("text", SharedPdfRichTextSerializer.encodeElement(richTextDocument))
+                }
+            }
         }
         if (data.isEmpty()) return
-        val timestamp = maxOf(annotationFile.lastModifiedIfFile(), bookmarkFile.lastModifiedIfFile(), System.currentTimeMillis())
+        val timestamp = maxOf(
+            annotationFile.lastModifiedIfFile(),
+            bookmarkFile.lastModifiedIfFile(),
+            richTextFile.lastModifiedIfFile(),
+            System.currentTimeMillis()
+        )
         val dataJson = desktopFolderSyncJson.encodeToString(
             JsonElement.serializer(),
             JsonObject(data)
@@ -309,7 +323,12 @@ object DesktopLocalFolderSync {
             val sidecar = sidecars[book.id] ?: return@forEach
             val annotationFile = desktopPdfAnnotationFile(path)
             val bookmarkFile = desktopPdfBookmarkFile(path)
-            val localTimestamp = maxOf(annotationFile.lastModifiedIfFile(), bookmarkFile.lastModifiedIfFile())
+            val richTextFile = desktopPdfRichTextFile(path)
+            val localTimestamp = maxOf(
+                annotationFile.lastModifiedIfFile(),
+                bookmarkFile.lastModifiedIfFile(),
+                richTextFile.lastModifiedIfFile()
+            )
             if (sidecar.timestamp <= localTimestamp + 1000L) return@forEach
             if (sidecar.data.hasPdfAnnotationPayload()) {
                 val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(sidecar.data)
@@ -321,6 +340,15 @@ object DesktopLocalFolderSync {
                 bookmarkFile.parentFile?.mkdirs()
                 bookmarkFile.writeText(desktopFolderSyncJson.encodeToString(JsonElement.serializer(), bookmarks))
                 bookmarkFile.setLastModified(sidecar.timestamp)
+            }
+            sidecar.data["text"]?.let { richText ->
+                richTextFile.parentFile?.mkdirs()
+                richTextFile.writeText(
+                    SharedPdfRichTextSerializer.encode(
+                        SharedPdfRichTextSerializer.decodeElement(richText)
+                    )
+                )
+                richTextFile.setLastModified(sidecar.timestamp)
             }
         }
     }

@@ -1,0 +1,193 @@
+package com.aryan.reader.shared.ui
+
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import kotlin.math.roundToInt
+
+@Composable
+fun SharedPdfRichTextHiddenInput(
+    controller: SharedPdfRichTextController,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!enabled) return
+
+    BasicTextField(
+        value = controller.editingValue,
+        onValueChange = controller::onValueChanged,
+        textStyle = TextStyle(
+            color = controller.currentStyle.color,
+            fontSize = controller.currentStyle.fontSize,
+            fontWeight = controller.currentStyle.fontWeight,
+            fontStyle = controller.currentStyle.fontStyle,
+            textDecoration = controller.currentStyle.textDecoration
+        ),
+        modifier = modifier
+            .size(1.dp)
+            .alpha(0f)
+            .clearAndSetSemantics { }
+            .focusRequester(controller.focusRequester)
+            .onKeyEvent { event ->
+                event.type == KeyEventType.KeyDown &&
+                    event.key == Key.Backspace &&
+                    controller.handleBackspaceAtStart()
+            }
+    )
+}
+
+@Composable
+fun SharedPdfRichTextLayer(
+    pageIndex: Int,
+    controller: SharedPdfRichTextController,
+    pageWidth: Float,
+    pageHeight: Float,
+    isTextEditingEnabled: Boolean,
+    centeringOffsetX: Float = 0f,
+    centeringOffsetY: Float = 0f,
+    isDarkMode: Boolean = false,
+    isScrolling: Boolean = false,
+    onPageTapped: (Int) -> Unit = {}
+) {
+    if (pageWidth <= 0f || pageHeight <= 0f) return
+
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+
+    LaunchedEffect(pageWidth, pageHeight, density, textMeasurer) {
+        controller.updateLayoutConfig(pageWidth, pageHeight, density, textMeasurer)
+    }
+
+    val pageLayout = remember(controller.pageLayouts, pageIndex) {
+        controller.pageLayouts.find { it.pageIndex == pageIndex }
+    }
+
+    val marginX = pageWidth * 0.1f
+    val marginY = pageHeight * 0.08f
+    val editorWidth = (pageWidth - (marginX * 2f)).coerceAtLeast(10f)
+    val editorHeight = (pageHeight - (marginY * 2f)).coerceAtLeast(10f)
+    val editorWidthDp = with(density) { editorWidth.toDp() }
+    val editorHeightDp = with(density) { editorHeight.toDp() }
+
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (centeringOffsetX + marginX).roundToInt(),
+                    (centeringOffsetY + marginY).roundToInt()
+                )
+            }
+            .size(editorWidthDp, editorHeightDp)
+            .graphicsLayer()
+            .then(
+                if (isTextEditingEnabled) {
+                    Modifier.pointerInput(pageIndex, editorWidth, editorHeight) {
+                        detectTapGestures { tapOffset ->
+                            onPageTapped(pageIndex)
+                            controller.handleTapOnPage(pageIndex, tapOffset)
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        val textToRender = if (controller.activePageIndex == pageIndex) {
+            controller.localTextFieldValue.annotatedString
+        } else {
+            pageLayout?.visibleText
+        } ?: return@Box
+
+        val measureResult = remember(textToRender, editorWidth, density) {
+            textMeasurer.measure(
+                text = textToRender,
+                style = TextStyle(fontSize = 16.sp),
+                constraints = Constraints(maxWidth = editorWidth.toInt()),
+                density = density
+            )
+        }
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            measureResult.multiParagraph.paint(drawContext.canvas)
+        }
+
+        if (isTextEditingEnabled && controller.activePageIndex == pageIndex) {
+            val selection = controller.editingValue.selection
+            val localStart = selection.start.coerceIn(0, textToRender.length)
+            val localEnd = selection.end.coerceIn(0, textToRender.length)
+
+            if (localStart != localEnd) {
+                val selectionPath = measureResult.getPathForRange(localStart, localEnd)
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawPath(selectionPath, Color(0xFFB3D7FF).copy(alpha = 0.5f))
+                }
+            }
+
+            if (selection.collapsed && controller.isCursorVisible) {
+                val alpha = if (isScrolling) {
+                    1f
+                } else {
+                    val infiniteTransition = rememberInfiniteTransition(label = "pdfRichCursor")
+                    infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
+                        label = "pdfRichCursorAlpha"
+                    ).value
+                }
+                val cursorRect = measureResult.getCursorRect(localStart)
+                val styleFontSize = controller.currentStyle.fontSize
+                val cursorHeight = if (styleFontSize.isSpecified) {
+                    with(density) { styleFontSize.toPx() } * 1.2f
+                } else {
+                    cursorRect.height
+                }
+                val centerY = cursorRect.center.y
+                val cursorColor = if (isDarkMode) Color.White else Color.Black
+
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawLine(
+                        color = cursorColor.copy(alpha = alpha),
+                        start = Offset(cursorRect.left, centerY - cursorHeight / 2f),
+                        end = Offset(cursorRect.left, centerY + cursorHeight / 2f),
+                        strokeWidth = 2.dp.toPx()
+                    )
+                }
+            }
+        }
+    }
+}
