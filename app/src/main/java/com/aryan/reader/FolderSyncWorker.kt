@@ -40,7 +40,6 @@ import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.FolderBookMetadata
 import java.io.File
 import android.provider.DocumentsContract
-import java.security.MessageDigest
 
 class FolderSyncWorker(
     private val appContext: Context,
@@ -607,10 +606,7 @@ class FolderSyncWorker(
 
     private fun buildStableBookId(name: String, rootDocId: String, docId: String): String {
         val relativePath = buildRelativePath(rootDocId, docId, name)
-        if (relativePath.equals(name, ignoreCase = true)) {
-            return "local_$name"
-        }
-        return "local_${name}_${shortHash(relativePath.lowercase())}"
+        return com.aryan.reader.shared.LocalFolderSyncEngine.buildStableBookId(name, relativePath)
     }
 
     private fun buildRelativePath(rootDocId: String, docId: String, fallbackName: String): String {
@@ -623,11 +619,6 @@ class FolderSyncWorker(
             docPath.substringAfterLast('/', fallbackName)
         }
         return relative.ifBlank { fallbackName }
-    }
-
-    private fun shortHash(value: String): String {
-        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }.take(12)
     }
 
     private fun computeStableIdForStoredItem(item: RecentFileItem, rootDocId: String): String? {

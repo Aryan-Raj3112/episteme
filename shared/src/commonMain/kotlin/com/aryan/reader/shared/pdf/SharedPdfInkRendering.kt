@@ -384,7 +384,7 @@ private fun List<PdfPagePoint>.toSmoothPath(widthPx: Float, heightPx: Float): Pa
         if (i == 1) {
             path.lineTo(midX, midY)
         } else {
-            path.quadraticBezierTo(p0x, p0y, midX, midY)
+            path.quadraticTo(p0x, p0y, midX, midY)
         }
     }
     val last = last()

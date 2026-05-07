@@ -444,22 +444,76 @@ private fun EpistemeDesktopApp() {
         updateState(next)
     }
 
-    fun importFolder(folder: File) {
-        val files = folder.walkTopDown()
-            .filter { it.isFile }
-            .map { it.toImportedBookFile(sourceFolder = folder.absolutePath) }
-            .toList()
-        if (files.isEmpty()) {
-            updateState(state.withBanner("That folder does not contain any files.", isError = true))
+    fun syncLocalFolders(targetFolder: File? = null, showBanner: Boolean = true) {
+        if (targetFolder == null && state.syncedFolders.isEmpty()) {
+            updateState(state.withBanner("No local folders are linked yet.", isError = true))
             return
         }
-        importFiles(files)
+
+        val snapshotState = state
+        val snapshotShelfRefs = shelfRefs
+        if (showBanner) {
+            updateState(state.withBanner("Folder sync: scanning local folders..."))
+        }
+
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                DesktopLocalFolderSync.sync(
+                    state = snapshotState,
+                    shelfRefs = snapshotShelfRefs,
+                    targetFolder = targetFolder
+                )
+            }
+            val failedCount = result.failedFolders.size
+            val stats = result.stats
+            val message = when {
+                failedCount > 0 && stats.supportedFiles == 0 ->
+                    "Folder sync failed for $failedCount folder(s)."
+                failedCount > 0 ->
+                    "Folder sync finished with $failedCount folder(s) skipped."
+                else ->
+                    "Folder sync complete: ${stats.newBooks} new, ${stats.updatedBooks + stats.remoteMetadataUpdates} updated, ${stats.removedBooks} removed."
+            }
+            val completedState = if (showBanner || failedCount > 0) {
+                result.state.withBanner(message, isError = failedCount > 0)
+            } else {
+                result.state
+            }
+            activeReaderBookId = activeReaderBookId?.let { result.idMigrations[it] ?: it }
+            replaceLibrary(
+                completedState,
+                refs = result.shelfRefs
+            )
+            if (activeReaderBookId != null && completedState.rawLibraryBooks.none { it.id == activeReaderBookId }) {
+                activePdfDocument?.close()
+                activePdfDocument = null
+                activeReaderBookId = null
+                readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                selectedTab = SharedAppTab.HOME
+            }
+        }
+    }
+
+    fun importFolder(folder: File) {
+        if (!DesktopLocalFolderSync.hasSupportedFiles(folder)) {
+            updateState(state.withBanner("That folder does not contain any supported desktop reader files.", isError = true))
+            return
+        }
+        syncLocalFolders(targetFolder = folder)
+    }
+
+    fun syncBookSidecars(book: BookItem) {
+        if (book.sourceFolder.isNullOrBlank()) return
+        scope.launch(Dispatchers.IO) {
+            DesktopLocalFolderSync.saveBookSidecars(book)
+        }
     }
 
     fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
         activeReaderBookId?.let { bookId ->
-            updateState(
-                state.copy(rawLibraryBooks = state.rawLibraryBooks.map { book ->
+            var updatedBook: BookItem? = null
+            val next = state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.map { book ->
                     if (book.id == bookId) {
                         book.copy(
                             progressPercentage = progress,
@@ -469,12 +523,14 @@ private fun EpistemeDesktopApp() {
                             readerSettings = session?.reader?.settings ?: book.readerSettings,
                             readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
                             readerHighlights = session?.highlights ?: book.readerHighlights
-                        )
+                        ).also { updatedBook = it }
                     } else {
                         book
                     }
-                })
+                }
             )
+            updateState(next)
+            updatedBook?.let(::syncBookSidecars)
         }
     }
 
@@ -522,12 +578,15 @@ private fun EpistemeDesktopApp() {
     fun updateBookMetadata(updated: BookItem) {
         val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+        result.state.rawLibraryBooks.firstOrNull { it.id == updated.id }?.let(::syncBookSidecars)
     }
 
     fun recordBookOpened(bookId: String) {
         val now = System.currentTimeMillis()
         val next = SharedLibraryEditor.markBookOpened(state, bookId, now)
-        updateState(next.reduce(AppAction.BookTabOpened(bookId)))
+        val openedState = next.reduce(AppAction.BookTabOpened(bookId))
+        updateState(openedState)
+        openedState.rawLibraryBooks.firstOrNull { it.id == bookId }?.let(::syncBookSidecars)
     }
 
     fun openReader(book: BookItem) {
@@ -715,6 +774,12 @@ private fun EpistemeDesktopApp() {
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (state.syncedFolders.isNotEmpty()) {
+            syncLocalFolders(showBanner = false)
+        }
+    }
+
     LaunchedEffect(state.bannerMessage) {
         state.bannerMessage?.let { banner ->
             snackbarHostState.showSnackbar(banner.message)
@@ -750,7 +815,7 @@ private fun EpistemeDesktopApp() {
             onImportFiles = { importFiles(chooseFiles()) },
             onImportFolder = { chooseFolder()?.let(::importFolder) },
             onSyncRequested = {
-                updateState(state.reduce(AppAction.BannerShown(BannerMessage("Cloud sync is Android-only for now. Desktop sync will need a separate backend adapter."))))
+                syncLocalFolders()
             },
             onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
             onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
@@ -830,6 +895,11 @@ private fun EpistemeDesktopApp() {
                                     onOpenEpub = ::importAndOpenEpub,
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
+                                    },
+                                    onLocalSidecarsChanged = {
+                                        activeReaderBookId
+                                            ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
+                                            ?.let(::syncBookSidecars)
                                     }
                                 )
                             } else {
@@ -1329,7 +1399,8 @@ private fun PdfReaderScreen(
     initialPageIndex: Int,
     onOpenPdf: () -> Unit,
     onOpenEpub: () -> Unit,
-    onPageStateChange: (pageIndex: Int, progress: Float) -> Unit
+    onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
+    onLocalSidecarsChanged: () -> Unit = {}
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
     var pdfState by remember(document.path) {
@@ -1557,6 +1628,7 @@ private fun PdfReaderScreen(
                 annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
             }
         }
+        onLocalSidecarsChanged()
     }
 
     LaunchedEffect(document.path) {
@@ -1580,6 +1652,7 @@ private fun PdfReaderScreen(
                 bookmarkFile.writeText(SharedPdfBookmarkSerializer.encode(bookmarks))
             }
         }
+        onLocalSidecarsChanged()
     }
 
     LaunchedEffect(document.path) {
@@ -1856,24 +1929,21 @@ private fun PdfReaderScreen(
             renderedPage = null
             return@LaunchedEffect
         }
-        val requestedPageIndex = pageIndex
-        val requestedScale = scale
         renderJob = launch {
             delay(90)
             isRendering = true
             renderError = null
-            val pageSize = document.pageSizes[requestedPageIndex]
+            val pageSize = document.pageSizes[pageIndex]
             val safeScale = zoomSpec.safeRenderScale(
                 pageSize.width,
-                pageSize.height,
-                requestedScale
+                pageSize.height, scale
             )
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    DesktopPdfium.renderPage(document, requestedPageIndex, safeScale)
+                    DesktopPdfium.renderPage(document, pageIndex, safeScale)
                 }
             }
-            if (requestedPageIndex != pageIndex || requestedScale != scale) {
+            if (pageIndex != pageIndex || scale != scale) {
                 return@launch
             }
             renderedPage = result.getOrNull()
@@ -1881,11 +1951,11 @@ private fun PdfReaderScreen(
                 ?: if (renderedPage == null) "Failed to render page." else null
             renderedPage?.let { render ->
                 logPdfSelection(
-                    "render page=${requestedPageIndex + 1} " +
-                        "requestedScale=${requestedScale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
+                    "render page=${pageIndex + 1} " +
+                        "requestedScale=${scale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
                         "pageSize=${pageSize.width.formatLogFloat()}x${pageSize.height.formatLogFloat()} " +
                         "bitmap=${render.width}x${render.height} capped=${safeScale < zoomSpec.clamp(
-                            requestedScale
+                            scale
                         )}"
                 )
             }
@@ -3966,14 +4036,14 @@ private const val PdfSelectionMenuWidthPx = 360f
 private const val PdfSelectionMenuHeightPx = 54f
 private const val PdfSelectionMenuMarginPx = 6f
 
-private fun desktopPdfAnnotationFile(documentPath: String): File {
+internal fun desktopPdfAnnotationFile(documentPath: String): File {
     val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
         ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
     return File(baseDir, "Episteme/annotations/pdf_$safeName.json")
 }
 
-private fun desktopPdfBookmarkFile(documentPath: String): File {
+internal fun desktopPdfBookmarkFile(documentPath: String): File {
     val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
         ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")

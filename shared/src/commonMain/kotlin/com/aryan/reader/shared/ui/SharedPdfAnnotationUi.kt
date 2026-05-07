@@ -1124,7 +1124,7 @@ private fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
     val tipPath = Path().apply {
         moveTo(centerX - rect.width * 0.15f, rect.top + (rect.height - coneHeight))
         lineTo(centerX + rect.width * 0.15f, rect.top + (rect.height - coneHeight))
-        quadraticBezierTo(centerX, rect.top, centerX, rect.top)
+        quadraticTo(centerX, rect.top, centerX, rect.top)
         close()
     }
     drawPath(path = tipPath, color = inkColor)
@@ -1138,7 +1138,7 @@ private fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
         val scallops = 3
         val step = rect.width / scallops
         for (i in 0 until scallops) {
-            quadraticBezierTo(
+            quadraticTo(
                 rect.left + i * step + step / 2f,
                 rect.bottom - rect.width * 0.1f,
                 rect.left + (i + 1) * step,
