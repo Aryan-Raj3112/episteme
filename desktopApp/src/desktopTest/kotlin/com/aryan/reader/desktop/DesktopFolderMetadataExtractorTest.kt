@@ -66,6 +66,31 @@ class DesktopFolderMetadataExtractorTest {
         assertEquals(1, result.stats.coversUpdated)
     }
 
+    @Test
+    fun `direct imported docx gets text metadata and generated cover`() = withCoverCacheDir { tempDir ->
+        val docx = File(tempDir, "direct.docx")
+        writeDocx(
+            target = docx,
+            title = "Direct DOCX",
+            author = "Grace Hopper",
+            bodyText = "Portable desktop document text."
+        )
+        val book = bookFor(docx, FileType.DOCX, title = null)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("Direct DOCX", enriched.title)
+        assertEquals("Grace Hopper", enriched.author)
+        assertTrue(enriched.folderTextMetadataParsed)
+        assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
+        assertEquals(1, result.stats.updatedBooks)
+        assertEquals(1, result.stats.coversUpdated)
+    }
+
     private fun withCoverCacheDir(block: (File) -> Unit) {
         val tempDir = Files.createTempDirectory("reader-desktop-covers").toFile()
         val oldCacheDir = System.getProperty("reader.cover.cache.dir")
@@ -113,6 +138,31 @@ class DesktopFolderMetadataExtractorTest {
             )
             zip.putText("OEBPS/content.opf", opf)
             zip.putBytes("OEBPS/images/cover.png", onePixelPngBytes())
+        }
+    }
+
+    private fun writeDocx(target: File, title: String, author: String, bodyText: String) {
+        ZipOutputStream(target.outputStream()).use { zip ->
+            zip.putText(
+                "docProps/core.xml",
+                """
+                    <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+                        xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <dc:title>$title</dc:title>
+                      <dc:creator>$author</dc:creator>
+                    </cp:coreProperties>
+                """.trimIndent()
+            )
+            zip.putText(
+                "word/document.xml",
+                """
+                    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                      <w:body>
+                        <w:p><w:r><w:t>$bodyText</w:t></w:r></w:p>
+                      </w:body>
+                    </w:document>
+                """.trimIndent()
+            )
         }
     }
 

@@ -117,7 +117,7 @@ fun SharedReaderScreen(
     session: ReaderSessionState,
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
-    onOpenEpub: () -> Unit,
+    onOpenBook: () -> Unit,
     onOpenPdf: () -> Unit,
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
@@ -148,8 +148,8 @@ fun SharedReaderScreen(
         subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpenEpub) {
-                    Text("Open EPUB")
+                TextButton(onClick = onOpenBook) {
+                    Text("Open Book")
                 }
                 TextButton(onClick = onOpenPdf) {
                     Text("Open PDF")

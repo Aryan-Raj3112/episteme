@@ -1,0 +1,183 @@
+package com.aryan.reader.shared.reader
+
+import com.aryan.reader.shared.FileType
+import java.io.File
+import java.nio.file.Files
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class SharedJvmBookLoaderTest {
+    @Test
+    fun `docx loader extracts core metadata and body text`() = withTempDir { dir ->
+        val file = File(dir, "sample.docx")
+        writeZip(file) {
+            text(
+                "docProps/core.xml",
+                """
+                <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+                    xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <dc:title>Portable DOCX</dc:title>
+                  <dc:creator>Casey Writer</dc:creator>
+                </cp:coreProperties>
+                """.trimIndent()
+            )
+            text(
+                "word/document.xml",
+                """
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body>
+                    <w:p><w:r><w:t>Hello from DOCX.</w:t></w:r></w:p>
+                  </w:body>
+                </w:document>
+                """.trimIndent()
+            )
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.DOCX)
+
+        assertEquals("Portable DOCX", book.title)
+        assertEquals("Casey Writer", book.author)
+        assertTrue(book.chapters.single().plainText.contains("Hello from DOCX."))
+    }
+
+    @Test
+    fun `odt loader extracts metadata and document text`() = withTempDir { dir ->
+        val file = File(dir, "sample.odt")
+        writeZip(file) {
+            text(
+                "meta.xml",
+                """
+                <office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                    xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <office:meta>
+                    <dc:title>Portable ODT</dc:title>
+                    <dc:creator>Open Author</dc:creator>
+                  </office:meta>
+                </office:document-meta>
+                """.trimIndent()
+            )
+            text(
+                "content.xml",
+                """
+                <office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+                  <office:body>
+                    <office:text>
+                      <text:h text:outline-level="1">ODT Heading</text:h>
+                      <text:p>Hello from ODT.</text:p>
+                    </office:text>
+                  </office:body>
+                </office:document-content>
+                """.trimIndent()
+            )
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.ODT)
+
+        assertEquals("Portable ODT", book.title)
+        assertEquals("Open Author", book.author)
+        assertTrue(book.chapters.single().plainText.contains("Hello from ODT."))
+    }
+
+    @Test
+    fun `fb2 loader splits readable sections`() = withTempDir { dir ->
+        val file = File(dir, "sample.fb2").apply {
+            writeText(
+                """
+                <FictionBook xmlns:l="http://www.w3.org/1999/xlink">
+                  <description>
+                    <title-info>
+                      <author><first-name>Ada</first-name><last-name>Byron</last-name></author>
+                      <book-title>Portable FB2</book-title>
+                    </title-info>
+                  </description>
+                  <body>
+                    <section>
+                      <title><p>First Section</p></title>
+                      <p>Hello from FB2.</p>
+                    </section>
+                  </body>
+                </FictionBook>
+                """.trimIndent()
+            )
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.FB2)
+
+        assertEquals("Portable FB2", book.title)
+        assertEquals("Ada Byron", book.author)
+        assertEquals("First Section", book.chapters.single().title)
+        assertTrue(book.chapters.single().plainText.contains("Hello from FB2."))
+    }
+
+    @Test
+    fun `mobi loader reads uncompressed palmdoc text records`() = withTempDir { dir ->
+        val file = File(dir, "sample.mobi").apply {
+            writeBytes(
+                minimalMobi(
+                    "<html><body><p>Hello from MOBI.</p></body></html>".toByteArray(Charsets.UTF_8)
+                )
+            )
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.MOBI)
+
+        assertEquals("sample", book.title)
+        assertTrue(book.chapters.single().plainText.contains("Hello from MOBI."))
+    }
+
+    private fun withTempDir(block: (File) -> Unit) {
+        val dir = Files.createTempDirectory("reader-shared-loader").toFile()
+        try {
+            block(dir)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    private fun writeZip(file: File, block: ZipBuilder.() -> Unit) {
+        ZipOutputStream(file.outputStream()).use { zip ->
+            ZipBuilder(zip).block()
+        }
+    }
+
+    private fun minimalMobi(textRecord: ByteArray): ByteArray {
+        val record0 = ByteArray(16)
+        record0.writeU16(0, 1)
+        record0.writeU32(4, textRecord.size)
+        record0.writeU16(8, 1)
+        record0.writeU16(10, 4096)
+        record0.writeU16(12, 0)
+
+        val record0Offset = 78 + 16
+        val record1Offset = record0Offset + record0.size
+        val header = ByteArray(record0Offset)
+        header.writeU16(76, 2)
+        header.writeU32(78, record0Offset)
+        header.writeU32(86, record1Offset)
+        return header + record0 + textRecord
+    }
+
+    private fun ByteArray.writeU16(offset: Int, value: Int) {
+        this[offset] = ((value ushr 8) and 0xFF).toByte()
+        this[offset + 1] = (value and 0xFF).toByte()
+    }
+
+    private fun ByteArray.writeU32(offset: Int, value: Int) {
+        this[offset] = ((value ushr 24) and 0xFF).toByte()
+        this[offset + 1] = ((value ushr 16) and 0xFF).toByte()
+        this[offset + 2] = ((value ushr 8) and 0xFF).toByte()
+        this[offset + 3] = (value and 0xFF).toByte()
+    }
+
+    private class ZipBuilder(private val zip: ZipOutputStream) {
+        fun text(path: String, value: String) {
+            zip.putNextEntry(ZipEntry(path))
+            zip.write(value.toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+    }
+}

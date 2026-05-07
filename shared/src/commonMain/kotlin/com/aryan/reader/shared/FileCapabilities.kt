@@ -71,14 +71,14 @@ object SharedFileCapabilities {
             displayName = "MOBI",
             extensions = setOf("mobi"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(
             type = FileType.FB2,
             displayName = "FB2",
             extensions = setOf("fb2"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(
             type = FileType.CBZ,
@@ -106,21 +106,21 @@ object SharedFileCapabilities {
             displayName = "DOCX",
             extensions = setOf("docx"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(
             type = FileType.ODT,
             displayName = "ODT",
             extensions = setOf("odt"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(
             type = FileType.FODT,
             displayName = "FODT",
             extensions = setOf("fodt"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.TEXT_READER
         )
     )
 

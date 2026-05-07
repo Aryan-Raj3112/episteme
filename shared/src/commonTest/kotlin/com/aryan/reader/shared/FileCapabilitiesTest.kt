@@ -14,7 +14,18 @@ class FileCapabilitiesTest {
             SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
         )
         assertEquals(
-            setOf(FileType.EPUB, FileType.PDF, FileType.TXT, FileType.MD, FileType.HTML),
+            setOf(
+                FileType.EPUB,
+                FileType.PDF,
+                FileType.TXT,
+                FileType.MD,
+                FileType.HTML,
+                FileType.MOBI,
+                FileType.FB2,
+                FileType.DOCX,
+                FileType.ODT,
+                FileType.FODT
+            ),
             SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
         )
     }
@@ -28,6 +39,10 @@ class FileCapabilitiesTest {
         assertEquals(
             ReaderFeatureSurface.TEXT_READER,
             SharedFileCapabilities.surfaceFor(FileType.MD, ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
+            ReaderFeatureSurface.TEXT_READER,
+            SharedFileCapabilities.surfaceFor(FileType.DOCX, ReaderPlatform.DESKTOP)
         )
         assertEquals(
             ReaderFeatureSurface.EPUB_READER,
@@ -49,14 +64,9 @@ class FileCapabilitiesTest {
     fun `desktop parity gaps list Android readable formats not yet available on desktop`() {
         assertEquals(
             listOf(
-                FileType.MOBI,
-                FileType.FB2,
                 FileType.CBZ,
                 FileType.CBR,
-                FileType.CB7,
-                FileType.DOCX,
-                FileType.ODT,
-                FileType.FODT
+                FileType.CB7
             ),
             SharedFileCapabilities.desktopParityGaps()
         )

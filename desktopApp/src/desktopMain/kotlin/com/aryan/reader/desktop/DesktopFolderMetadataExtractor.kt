@@ -2,6 +2,9 @@ package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import java.awt.Color
 import java.awt.Font
 import java.awt.GradientPaint
@@ -36,8 +39,17 @@ data class DesktopFolderMetadataExtractionStats(
 }
 
 object DesktopFolderMetadataExtractor {
-    private val textMetadataTypes = setOf(FileType.PDF, FileType.EPUB)
-    private val generatedCoverTypes = setOf(FileType.PDF, FileType.EPUB, FileType.TXT, FileType.MD, FileType.HTML)
+    private val textMetadataTypes = setOf(
+        FileType.PDF,
+        FileType.EPUB,
+        FileType.HTML,
+        FileType.MOBI,
+        FileType.FB2,
+        FileType.DOCX,
+        FileType.ODT,
+        FileType.FODT
+    )
+    private val generatedCoverTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
     private val rasterCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
     fun enrichFolderBooks(
@@ -116,6 +128,19 @@ object DesktopFolderMetadataExtractor {
             }
             FileType.HTML -> {
                 title = sanitizeTitle(parseHtmlTitle(file)) ?: title
+                textMetadataParsed = true
+            }
+            FileType.MOBI,
+            FileType.FB2,
+            FileType.DOCX,
+            FileType.ODT,
+            FileType.FODT -> {
+                runCatching { SharedJvmBookLoader.load(file, book.type) }
+                    .onSuccess { loaded ->
+                        title = sanitizeTitle(loaded.title) ?: title
+                        author = sanitizeAuthor(loaded.author) ?: author
+                        textMetadataParsed = true
+                    }
             }
             else -> Unit
         }

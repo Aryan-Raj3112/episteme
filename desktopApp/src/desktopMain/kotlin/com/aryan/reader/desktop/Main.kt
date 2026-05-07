@@ -185,7 +185,7 @@ import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
-import com.aryan.reader.shared.reader.SharedTextBookFactory
+import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
@@ -707,28 +707,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             val path = book.path
             if (path.isNullOrBlank()) {
                 SampleReaderBooks.desktopWelcomeBook()
-            } else if (book.type == FileType.EPUB) {
-                DesktopEpubLoader.load(File(path))
             } else {
-                val file = File(path)
-                val raw = file.readText()
-                if (book.type == FileType.HTML) {
-                    SharedTextBookFactory.fromHtml(
-                        id = file.absolutePath,
-                        fileName = file.name,
-                        title = book.title?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
-                        html = raw,
-                        author = book.author
-                    )
-                } else {
-                    SharedTextBookFactory.fromPlainText(
-                        id = file.absolutePath,
-                        fileName = file.name,
-                        title = book.title?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
-                        plainText = raw,
-                        author = book.author
-                    )
-                }
+                SharedJvmBookLoader.load(
+                    file = File(path),
+                    type = book.type,
+                    titleOverride = book.title?.takeIf { it.isNotBlank() },
+                    authorOverride = book.author?.takeIf { it.isNotBlank() }
+                )
             }
         }.getOrElse { error ->
             updateState(state.withBanner("Could not open ${book.type.name}: ${error.message ?: "unknown error"}", isError = true))
@@ -808,14 +793,26 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         updateState(state.reduce(AppAction.AllTabsClosed))
     }
 
-    fun importAndOpenEpub() {
-        val file = chooseEpubFile() ?: return
-        importFiles(listOf(file.toImportedBookFile()))
+    fun importAndOpenBook() {
+        val file = chooseBookFile() ?: return
+        val importedFile = file.toImportedBookFile()
+        val type = importedFile.desktopFileType()
+        if (type !in DesktopBookFileTypes) {
+            updateState(
+                state.withBanner(
+                    "No supported desktop reader file was selected. " +
+                        "${SharedFileCapabilities.supportedFormatsLabel(ReaderPlatform.DESKTOP)} are supported.",
+                    isError = true
+                )
+            )
+            return
+        }
+        importFiles(listOf(importedFile))
         openReader(
             BookItem(
                 id = file.absolutePath,
                 path = file.absolutePath,
-                type = FileType.EPUB,
+                type = type,
                 displayName = file.name,
                 timestamp = System.currentTimeMillis(),
                 title = file.nameWithoutExtension,
@@ -970,7 +967,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
                                         ?: 0,
                                     onOpenPdf = ::importAndOpenPdf,
-                                    onOpenEpub = ::importAndOpenEpub,
+                                    onOpenBook = ::importAndOpenBook,
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
                                     },
@@ -992,7 +989,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                             session = updated
                                         )
                                     },
-                                    onOpenEpub = ::importAndOpenEpub,
+                                    onOpenBook = ::importAndOpenBook,
                                     onOpenPdf = ::importAndOpenPdf,
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
@@ -1698,7 +1695,7 @@ private fun PdfReaderScreen(
     document: DesktopPdfDocument,
     initialPageIndex: Int,
     onOpenPdf: () -> Unit,
-    onOpenEpub: () -> Unit,
+    onOpenBook: () -> Unit,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
     onLocalSidecarsChanged: () -> Unit = {}
 ) {
@@ -2380,8 +2377,8 @@ private fun PdfReaderScreen(
                 TextButton(onClick = onOpenPdf) {
                     Text("Open PDF")
                 }
-                TextButton(onClick = onOpenEpub) {
-                    Text("Open EPUB")
+                TextButton(onClick = onOpenBook) {
+                    Text("Open Book")
                 }
                 Text("${progressPercent.toInt()}%")
             }
@@ -4603,7 +4600,7 @@ private fun ReaderScreen(
     session: ReaderSessionState,
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
-    onOpenEpub: () -> Unit,
+    onOpenBook: () -> Unit,
     onOpenPdf: () -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
@@ -4624,7 +4621,7 @@ private fun ReaderScreen(
         session = session,
         readerEngine = readerEngine,
         onSessionChange = onSessionChange,
-        onOpenEpub = onOpenEpub,
+        onOpenBook = onOpenBook,
         onOpenPdf = onOpenPdf,
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
@@ -5371,9 +5368,9 @@ private fun chooseFiles(): List<ImportedBookFile> {
     return dialog.files.orEmpty().map { it.toImportedBookFile() }
 }
 
-private fun chooseEpubFile(): File? {
-    val dialog = FileDialog(null as Frame?, "Open EPUB", FileDialog.LOAD).apply {
-        file = "*.epub"
+private fun chooseBookFile(): File? {
+    val dialog = FileDialog(null as Frame?, "Open Book", FileDialog.LOAD).apply {
+        file = DesktopBookFileDialogPattern
         isVisible = true
     }
     val directory = dialog.directory ?: return null
@@ -5419,6 +5416,16 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
 }
 
 private val DesktopReadableFileTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
+private val DesktopBookFileTypes = SharedFileCapabilities.all
+    .filter { capability ->
+        capability.type in DesktopReadableFileTypes &&
+            capability.surfaceFor(ReaderPlatform.DESKTOP) != ReaderFeatureSurface.PDF_VIEWER
+    }
+    .mapTo(mutableSetOf()) { it.type }
+private val DesktopBookFileDialogPattern = SharedFileCapabilities.all
+    .filter { it.type in DesktopBookFileTypes }
+    .flatMap { capability -> capability.extensions.map { extension -> "*.$extension" } }
+    .joinToString(";")
 
 private fun ImportedBookFile.desktopFileType(): FileType {
     return SharedFileCapabilities.fileTypeForName(name)
