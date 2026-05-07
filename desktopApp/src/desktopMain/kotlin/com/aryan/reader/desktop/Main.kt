@@ -52,8 +52,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -111,7 +109,6 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.AppAction
-import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
@@ -189,6 +186,7 @@ import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
+import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedBookEditDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
@@ -336,6 +334,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             pinnedLibraryBookIds = initialLibrarySnapshot.pinnedLibraryBookIds,
             useStrictFileFilter = initialLibrarySnapshot.useStrictFileFilter,
             appThemeMode = initialLibrarySnapshot.appThemeMode,
+            appContrastOption = initialLibrarySnapshot.appContrastOption,
+            appTextDimFactorLight = initialLibrarySnapshot.appTextDimFactorLight,
+            appTextDimFactorDark = initialLibrarySnapshot.appTextDimFactorDark,
+            appSeedColor = initialLibrarySnapshot.appSeedColor,
+            customAppThemes = initialLibrarySnapshot.customAppThemes,
             readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
             readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette
         )
@@ -402,6 +405,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         pinnedLibraryBookIds = projected.pinnedLibraryBookIds,
                         useStrictFileFilter = projected.useStrictFileFilter,
                         appThemeMode = projected.appThemeMode,
+                        appContrastOption = projected.appContrastOption,
+                        appTextDimFactorLight = projected.appTextDimFactorLight,
+                        appTextDimFactorDark = projected.appTextDimFactorDark,
+                        appSeedColor = projected.appSeedColor,
+                        customAppThemes = projected.customAppThemes,
                         readerToolbarPreferences = projected.readerToolbarPreferences,
                         readerHighlightPalette = projected.readerHighlightPalette
                     )
@@ -849,30 +857,23 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
-    val colorScheme = if (state.appThemeMode == AppThemeMode.DARK) {
-        darkColorScheme(
-            primary = Color(0xFF70DBB2),
-            secondary = Color(0xFFD6C2AD),
-            tertiary = Color(0xFFFFB3B7),
-            surface = Color(0xFF111411),
-            surfaceVariant = Color(0xFF3F493F)
-        )
-    } else {
-        lightColorScheme(
-            primary = Color(0xFF006C4C),
-            secondary = Color(0xFF705D49),
-            tertiary = Color(0xFF9C4146),
-            surface = Color(0xFFFCFCF8),
-            surfaceVariant = Color(0xFFE5E8DE)
-        )
-    }
-
-    MaterialTheme(colorScheme = colorScheme) {
+    SharedAppTheme(
+        appThemeMode = state.appThemeMode,
+        appContrastOption = state.appContrastOption,
+        appTextDimFactorLight = state.appTextDimFactorLight,
+        appTextDimFactorDark = state.appTextDimFactorDark,
+        appSeedColor = state.appSeedColor
+    ) {
         Box(Modifier.fillMaxSize()) {
             SharedAppShell(
                 selectedTab = selectedTab,
                 snackbarHostState = snackbarHostState,
                 appThemeMode = state.appThemeMode,
+                appContrastOption = state.appContrastOption,
+                appTextDimFactorLight = state.appTextDimFactorLight,
+                appTextDimFactorDark = state.appTextDimFactorDark,
+                appSeedColor = state.appSeedColor,
+                customAppThemes = state.customAppThemes,
                 isTabsEnabled = state.isTabsEnabled,
                 onTabSelected = { selectedTab = it },
                 onImportFiles = { importFiles(chooseFiles()) },
@@ -881,6 +882,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     syncLocalFolders()
                 },
                 onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
+                onAppContrastOptionChange = { option -> updateState(state.reduce(AppAction.AppContrastChanged(option))) },
+                onAppTextDimFactorLightChange = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorLightChanged(factor))) },
+                onAppTextDimFactorDarkChange = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorDarkChanged(factor))) },
+                onAppSeedColorChange = { color -> updateState(state.reduce(AppAction.AppSeedColorChanged(color))) },
+                onCustomAppThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
+                onCustomAppThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
                 onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
             ) { tab ->
                 when (tab) {

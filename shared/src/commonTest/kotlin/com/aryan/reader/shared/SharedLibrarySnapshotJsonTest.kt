@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -105,6 +106,13 @@ class SharedLibrarySnapshotJsonTest {
             pinnedLibraryBookIds = setOf("book"),
             useStrictFileFilter = true,
             appThemeMode = AppThemeMode.DARK,
+            appContrastOption = AppContrastOption.HIGH,
+            appTextDimFactorLight = 0.75f,
+            appTextDimFactorDark = 0.65f,
+            appSeedColor = Color(0xFF006C4C),
+            customAppThemes = listOf(
+                CustomAppTheme(id = "forest", name = "Forest", seedColor = Color(0xFF006C4C))
+            ),
             readerToolbarPreferences = ReaderToolbarPreferences(
                 hiddenToolIds = setOf(ReaderTool.SEARCH.id),
                 toolOrder = listOf(ReaderTool.BOOKMARK, ReaderTool.THEME, ReaderTool.SEARCH),

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -31,7 +32,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
+import com.aryan.reader.shared.CustomAppTheme
 
 enum class SharedAppTab {
     HOME,
@@ -45,16 +49,28 @@ fun SharedAppShell(
     selectedTab: SharedAppTab,
     snackbarHostState: SnackbarHostState,
     appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
+    appTextDimFactorLight: Float = 1.0f,
+    appTextDimFactorDark: Float = 1.0f,
+    appSeedColor: Color? = null,
+    customAppThemes: List<CustomAppTheme> = emptyList(),
     isTabsEnabled: Boolean = false,
     onTabSelected: (SharedAppTab) -> Unit,
     onImportFiles: () -> Unit,
     onImportFolder: () -> Unit = {},
     onSyncRequested: () -> Unit,
     onAppThemeModeChange: (AppThemeMode) -> Unit = {},
+    onAppContrastOptionChange: (AppContrastOption) -> Unit = {},
+    onAppTextDimFactorLightChange: (Float) -> Unit = {},
+    onAppTextDimFactorDarkChange: (Float) -> Unit = {},
+    onAppSeedColorChange: (Color?) -> Unit = {},
+    onCustomAppThemeAdded: (CustomAppTheme) -> Unit = {},
+    onCustomAppThemeDeleted: (String) -> Unit = {},
     onTabsEnabledChange: (Boolean) -> Unit = {},
     content: @Composable (SharedAppTab) -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
+    var showAppThemeSettings by remember { mutableStateOf(false) }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
         Row(
@@ -102,10 +118,11 @@ fun SharedAppShell(
                 }
                 DropdownMenu(expanded = optionsExpanded, onDismissRequest = { optionsExpanded = false }) {
                     DropdownMenuItem(
-                        text = { Text(if (appThemeMode == AppThemeMode.DARK) "Use light theme" else "Use dark theme") },
+                        leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                        text = { Text("App theme") },
                         onClick = {
                             optionsExpanded = false
-                            onAppThemeModeChange(if (appThemeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK)
+                            showAppThemeSettings = true
                         }
                     )
                     HorizontalDivider()
@@ -123,5 +140,24 @@ fun SharedAppShell(
                 content(selectedTab)
             }
         }
+    }
+
+    if (showAppThemeSettings) {
+        SharedAppThemeSettingsDialog(
+            appThemeMode = appThemeMode,
+            appContrastOption = appContrastOption,
+            appTextDimFactorLight = appTextDimFactorLight,
+            appTextDimFactorDark = appTextDimFactorDark,
+            appSeedColor = appSeedColor,
+            customAppThemes = customAppThemes,
+            onThemeModeChanged = onAppThemeModeChange,
+            onContrastOptionChanged = onAppContrastOptionChange,
+            onTextDimFactorLightChanged = onAppTextDimFactorLightChange,
+            onTextDimFactorDarkChanged = onAppTextDimFactorDarkChange,
+            onSeedColorChanged = onAppSeedColorChange,
+            onCustomThemeAdded = onCustomAppThemeAdded,
+            onCustomThemeDeleted = onCustomAppThemeDeleted,
+            onDismiss = { showAppThemeSettings = false }
+        )
     }
 }

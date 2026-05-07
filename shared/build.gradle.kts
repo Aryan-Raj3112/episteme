@@ -33,6 +33,7 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.7.3")
+            implementation("com.materialkolor:material-kolor:5.0.0-alpha07")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

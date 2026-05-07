@@ -59,6 +59,21 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.NavigationRequested -> this
         is AppAction.AppThemeChanged -> copy(appThemeMode = action.mode)
         is AppAction.AppContrastChanged -> copy(appContrastOption = action.option)
+        is AppAction.AppTextDimFactorLightChanged -> copy(appTextDimFactorLight = action.factor.coerceIn(0.3f, 1.0f))
+        is AppAction.AppTextDimFactorDarkChanged -> copy(appTextDimFactorDark = action.factor.coerceIn(0.3f, 1.0f))
+        is AppAction.AppSeedColorChanged -> copy(appSeedColor = action.color)
+        is AppAction.CustomAppThemeAdded -> {
+            val updatedThemes = customAppThemes.filterNot { it.id == action.theme.id } + action.theme
+            copy(customAppThemes = updatedThemes, appSeedColor = action.theme.seedColor)
+        }
+        is AppAction.CustomAppThemeDeleted -> {
+            val updatedThemes = customAppThemes.filterNot { it.id == action.themeId }
+            val shouldClearSeed = appSeedColor != null && updatedThemes.none { it.seedColor == appSeedColor }
+            copy(
+                customAppThemes = updatedThemes,
+                appSeedColor = if (shouldClearSeed) null else appSeedColor
+            )
+        }
         is AppAction.SyncEnabledChanged -> copy(isSyncEnabled = action.enabled)
         is AppAction.FolderSyncEnabledChanged -> copy(isFolderSyncEnabled = action.enabled)
         is AppAction.TabsEnabledChanged -> copy(

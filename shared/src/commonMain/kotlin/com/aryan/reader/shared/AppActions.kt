@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 
@@ -57,6 +58,11 @@ sealed interface AppAction {
     data class NavigationRequested(val event: NavigationEvent) : AppAction
     data class AppThemeChanged(val mode: AppThemeMode) : AppAction
     data class AppContrastChanged(val option: AppContrastOption) : AppAction
+    data class AppTextDimFactorLightChanged(val factor: Float) : AppAction
+    data class AppTextDimFactorDarkChanged(val factor: Float) : AppAction
+    data class AppSeedColorChanged(val color: Color?) : AppAction
+    data class CustomAppThemeAdded(val theme: CustomAppTheme) : AppAction
+    data class CustomAppThemeDeleted(val themeId: String) : AppAction
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction
     data class FolderSyncEnabledChanged(val enabled: Boolean) : AppAction
     data class TabsEnabledChanged(val enabled: Boolean) : AppAction

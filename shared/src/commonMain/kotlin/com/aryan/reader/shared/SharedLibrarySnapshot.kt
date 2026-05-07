@@ -13,6 +13,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -32,12 +34,17 @@ data class SharedLibrarySnapshot(
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val useStrictFileFilter: Boolean = false,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
+    val appTextDimFactorLight: Float = 1.0f,
+    val appTextDimFactorDark: Float = 1.0f,
+    val appSeedColor: Color? = null,
+    val customAppThemes: List<CustomAppTheme> = emptyList(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 7
+    private const val SCHEMA_VERSION = 8
 
     private val json = Json {
         prettyPrint = true
@@ -69,6 +76,17 @@ object SharedLibrarySnapshotJson {
             appThemeMode = root.string("appThemeMode")
                 ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
                 ?: AppThemeMode.SYSTEM,
+            appContrastOption = root.string("appContrastOption")
+                ?.let { runCatching { AppContrastOption.valueOf(it) }.getOrNull() }
+                ?: AppContrastOption.STANDARD,
+            appTextDimFactorLight = root.float("appTextDimFactorLight")
+                ?: root.float("appTextDimFactor")
+                ?: 1.0f,
+            appTextDimFactorDark = root.float("appTextDimFactorDark")
+                ?: root.float("appTextDimFactor")
+                ?: 1.0f,
+            appSeedColor = root.int("appSeedColor")?.let { Color(it) },
+            customAppThemes = root.array("customAppThemes").mapNotNull { it.asCustomAppThemeOrNull() },
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderToolbarPreferencesOrNull()
@@ -97,6 +115,11 @@ object SharedLibrarySnapshotJson {
                 "pinnedLibraryBookIds" to snapshot.pinnedLibraryBookIds.toList().asJsonArray(),
                 "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
                 "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name),
+                "appContrastOption" to JsonPrimitive(snapshot.appContrastOption.name),
+                "appTextDimFactorLight" to JsonPrimitive(snapshot.appTextDimFactorLight),
+                "appTextDimFactorDark" to JsonPrimitive(snapshot.appTextDimFactorDark),
+                "appSeedColor" to snapshot.appSeedColor.asJson(),
+                "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject()
             )
@@ -240,6 +263,15 @@ private fun JsonElement.asSyncedFolderOrNull(): SyncedFolder? {
     )
 }
 
+private fun JsonElement.asCustomAppThemeOrNull(): CustomAppTheme? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return CustomAppTheme(
+        id = obj.string("id") ?: return null,
+        name = obj.string("name") ?: return null,
+        seedColor = obj.int("seedColor")?.let { Color(it) } ?: return null
+    )
+}
+
 private fun BookItem.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
@@ -309,11 +341,22 @@ private fun SyncedFolder.toJsonObject(): JsonObject {
     )
 }
 
+private fun CustomAppTheme.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "id" to JsonPrimitive(id),
+            "name" to JsonPrimitive(name),
+            "seedColor" to JsonPrimitive(seedColor.toArgb())
+        )
+    )
+}
+
 private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Float?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Double?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Int?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 private fun Long?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
+private fun Color?.asJson(): JsonElement = this?.let { JsonPrimitive(it.toArgb()) } ?: JsonNull
 
 private fun List<String>.asJsonArray(): JsonArray {
     return JsonArray(map { JsonPrimitive(it) })
