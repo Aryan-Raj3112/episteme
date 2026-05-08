@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +17,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -226,7 +229,7 @@ private fun SharedOpdsCatalogList(
     Column(Modifier.fillMaxSize()) {
         SharedScreenScaffold(
             title = "OPDS",
-            subtitle = "Catalogs, search, streams, and downloads",
+            subtitle = "Browse catalogs, streams, and downloads",
             trailing = {
                 Button(onClick = onAddCatalog) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -238,9 +241,11 @@ private fun SharedOpdsCatalogList(
             if (catalogs.isEmpty()) {
                 SharedOpdsEmptyState(onAddCatalog = onAddCatalog, modifier = Modifier.weight(1f))
             } else {
-                LazyColumn(
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(320.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(catalogs, key = { it.id }) { catalog ->
@@ -312,14 +317,24 @@ private fun SharedOpdsFeedView(
                             }
                         )
                     } else {
-                        Text(
-                            text = state.currentFeed?.title ?: "Loading",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = state.currentFeed?.title ?: "Loading",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            state.currentCatalog?.title?.let { catalogTitle ->
+                                Text(
+                                    catalogTitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                         if (state.searchUrlTemplate != null) {
                             IconButton(onClick = { showSearch = true }) {
                                 Icon(Icons.Default.Search, contentDescription = "Search")
@@ -400,20 +415,38 @@ private fun SharedOpdsCatalogCard(
     Surface(
         onClick = onOpenCatalog,
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Cloud, contentDescription = null)
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        catalog.url,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     if (catalog.isDefault) {
-                        Spacer(Modifier.width(8.dp))
                         Surface(
                             color = MaterialTheme.colorScheme.secondaryContainer,
                             shape = RoundedCornerShape(6.dp)
@@ -427,20 +460,14 @@ private fun SharedOpdsCatalogCard(
                         }
                     }
                 }
-                Text(
-                    catalog.url,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (!catalog.isDefault) {
-                IconButton(onClick = onEditCatalog) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit")
-                }
-                IconButton(onClick = onDeleteCatalog) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                Spacer(Modifier.weight(1f))
+                if (!catalog.isDefault) {
+                    IconButton(onClick = onEditCatalog) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                    }
+                    IconButton(onClick = onDeleteCatalog) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
                 }
             }
         }
@@ -449,15 +476,22 @@ private fun SharedOpdsCatalogCard(
 
 @Composable
 private fun SharedOpdsEmptyState(onAddCatalog: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-            Text("No catalogs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Add an OPDS catalog to browse remote books.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onAddCatalog) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Add catalog")
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+    ) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("No catalogs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Add an OPDS catalog to browse remote books.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onAddCatalog) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add catalog")
+                }
             }
         }
     }
