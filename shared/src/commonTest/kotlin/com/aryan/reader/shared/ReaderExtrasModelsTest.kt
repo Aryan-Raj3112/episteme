@@ -62,6 +62,44 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `shared cloud tts voices mirror android voice catalog`() {
+        assertEquals("Aoede", DEFAULT_CLOUD_TTS_SPEAKER_ID)
+        assertTrue(ReaderCloudTtsVoices.size >= 30)
+        assertEquals(ReaderCloudTtsVoices.map { it.id }, ReaderCloudTtsSpeakers)
+        assertEquals("Breezy, Middle pitch", readerCloudTtsVoiceById("Aoede")?.description)
+    }
+
+    @Test
+    fun `shared cloud tts chunking keeps android sentence behavior`() {
+        val chunks = splitReaderTextIntoTtsChunks(
+            "First sentence. Second sentence? Third sentence!",
+            maxLength = 32
+        )
+
+        assertEquals(
+            listOf("First sentence. Second sentence?", "Third sentence!"),
+            chunks
+        )
+    }
+
+    @Test
+    fun `shared cloud tts cache summary formats current voice label`() {
+        val empty = ReaderTtsCacheSummary()
+        val populated = ReaderTtsCacheSummary(
+            cachedChapterCount = 2,
+            cachedChunkCount = 3,
+            currentVoiceChunkCount = 2,
+            totalSizeBytes = 4096,
+            currentVoiceSizeBytes = 2048
+        )
+
+        assertEquals("No cached chunks for this voice", empty.currentVoiceLabel)
+        assertEquals("2 chunks, 2.0 KB", populated.currentVoiceLabel)
+        assertFalse(empty.hasCurrentVoiceCachedAudio)
+        assertTrue(populated.hasCurrentVoiceCachedAudio)
+    }
+
+    @Test
     fun `hidden reader ai follows android availability logic`() {
         val visible = ReaderAiByokSettings(
             groqKey = "gsk_test",

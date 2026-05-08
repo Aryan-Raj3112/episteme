@@ -55,5 +55,7 @@ interface AiAdapter {
 interface TtsAdapter {
     val isAvailable: Boolean
     suspend fun speak(text: String)
+    suspend fun pause() = Unit
+    suspend fun resume() = Unit
     suspend fun stop()
 }

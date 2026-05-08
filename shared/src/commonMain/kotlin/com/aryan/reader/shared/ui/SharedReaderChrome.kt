@@ -145,7 +145,9 @@ fun SharedReaderScreen(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit = { _, _ -> },
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit = { _, _ -> },
+    onCloudTtsPauseResume: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
+    onCloudTtsClearCache: () -> Unit = {},
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
     readerContent: @Composable ColumnScope.(
         html: String,
@@ -210,7 +212,9 @@ fun SharedReaderScreen(
                     onExternalLookup = onExternalLookup,
                     onAiAction = onAiAction,
                     onCloudTtsStart = onCloudTtsStart,
+                    onCloudTtsPauseResume = onCloudTtsPauseResume,
                     onCloudTtsStop = onCloudTtsStop,
+                    onCloudTtsClearCache = onCloudTtsClearCache,
                     onAutoScrollChange = onAutoScrollChange,
                     session = session,
                     extrasState = readerExtrasState,
@@ -401,7 +405,9 @@ fun SharedReaderScreen(
                         onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
                         onCloudTtsStart = onCloudTtsStart,
+                        onCloudTtsPauseResume = onCloudTtsPauseResume,
                         onCloudTtsStop = onCloudTtsStop,
+                        onCloudTtsClearCache = onCloudTtsClearCache,
                         onAutoScrollChange = onAutoScrollChange,
                         session = session,
                         extrasState = readerExtrasState,
@@ -421,7 +427,9 @@ fun SharedReaderScreen(
                 onExternalLookup = onExternalLookup,
                 onAiAction = onAiAction,
                 onCloudTtsStart = onCloudTtsStart,
+                onCloudTtsPauseResume = onCloudTtsPauseResume,
                 onCloudTtsStop = onCloudTtsStop,
+                onCloudTtsClearCache = onCloudTtsClearCache,
                 onAutoScrollChange = onAutoScrollChange,
                 onReaderAction = { action -> dispatch(action) }
             )
@@ -442,7 +450,9 @@ private fun SharedReaderQuickActions(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
+    onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
+    onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     session: ReaderSessionState,
     extrasState: ReaderExtrasState,
@@ -503,9 +513,12 @@ private fun SharedReaderQuickActions(
                 }
 
                 ReaderTool.TTS_CONTROLS -> TextButton(
-                    enabled = extrasState.cloudTts.isAvailable || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading,
+                    enabled = extrasState.cloudTts.isAvailable ||
+                        extrasState.cloudTts.isPlaying ||
+                        extrasState.cloudTts.isLoading ||
+                        extrasState.cloudTts.isPaused,
                     onClick = {
-                        if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading) {
+                        if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) {
                             onCloudTtsStop()
                         } else {
                             onCloudTtsStart(
@@ -515,7 +528,7 @@ private fun SharedReaderQuickActions(
                         }
                     }
                 ) {
-                    Text(if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading) "Stop" else "Read")
+                    Text(if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) "Stop" else "Read")
                 }
 
                 ReaderTool.AUTO_SCROLL -> TextButton(
@@ -545,7 +558,9 @@ private fun SharedReaderControlPanel(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
+    onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
+    onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onReaderAction: (ReaderAction) -> Unit
 ) {
@@ -612,7 +627,9 @@ private fun SharedReaderControlPanel(
                         onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
                         onCloudTtsStart = onCloudTtsStart,
+                        onCloudTtsPauseResume = onCloudTtsPauseResume,
                         onCloudTtsStop = onCloudTtsStop,
+                        onCloudTtsClearCache = onCloudTtsClearCache,
                         onAutoScrollChange = onAutoScrollChange
                     )
 
@@ -1024,7 +1041,9 @@ private fun SharedReaderExtrasControls(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
+    onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
+    onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit
 ) {
     val settings = aiByokSettings.sanitized()
@@ -1069,7 +1088,7 @@ private fun SharedReaderExtrasControls(
         }
 
         SharedReaderPanelSection("Cloud TTS") {
-            val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying
+            val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1079,6 +1098,7 @@ private fun SharedReaderExtrasControls(
                     Text(
                         when {
                             extrasState.cloudTts.isLoading -> "Preparing audio"
+                            extrasState.cloudTts.isPaused -> "Paused"
                             extrasState.cloudTts.isPlaying -> "Reading"
                             settings.isCloudTtsAvailable -> "Ready"
                             else -> "Needs Gemini key"
@@ -1107,6 +1127,13 @@ private fun SharedReaderExtrasControls(
                     }
                 ) {
                     Text(if (ttsBusy) "Stop" else "Read")
+                }
+            }
+            if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
+                SharedReaderChoiceRow {
+                    TextButton(onClick = onCloudTtsPauseResume) {
+                        Text(if (extrasState.cloudTts.isPaused) "Resume" else "Pause")
+                    }
                 }
             }
             SharedReaderChoiceRow {
@@ -1142,6 +1169,19 @@ private fun SharedReaderExtrasControls(
                     }
                 ) {
                     Text("From here")
+                }
+            }
+            val cacheSummary = extrasState.cloudTts.cacheSummary
+            if (cacheSummary.hasCachedAudio) {
+                Text(
+                    "Cache: ${cacheSummary.currentVoiceLabel}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (cacheSummary.hasCurrentVoiceCachedAudio) {
+                    TextButton(onClick = onCloudTtsClearCache) {
+                        Text("Clear voice cache")
+                    }
                 }
             }
         }

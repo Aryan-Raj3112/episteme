@@ -13,8 +13,14 @@ import com.aryan.reader.shared.reader.SharedEpubChapter
 
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
 const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
-const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Kore"
+const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
+
+data class ReaderCloudTtsVoice(
+    val id: String,
+    val name: String,
+    val description: String
+)
 
 enum class ReaderAiFeature(val displayName: String) {
     DEFINE("Smart dictionary"),
@@ -92,16 +98,93 @@ val ReaderAiModelOptions = listOf(
     ReaderAiModelOption("gemini", "gemini-3.1-flash-lite-preview")
 )
 
-val ReaderCloudTtsSpeakers = listOf(
-    "Kore",
-    "Puck",
-    "Charon",
-    "Aoede",
-    "Fenrir",
-    "Leda",
-    "Orus",
-    "Zephyr"
+val ReaderCloudTtsVoices = listOf(
+    ReaderCloudTtsVoice("Zephyr", "Zephyr", "Bright, Higher pitch"),
+    ReaderCloudTtsVoice("Puck", "Puck", "Upbeat, Middle pitch"),
+    ReaderCloudTtsVoice("Charon", "Charon", "Informative, Lower pitch"),
+    ReaderCloudTtsVoice("Kore", "Kore", "Firm, Middle pitch"),
+    ReaderCloudTtsVoice("Fenrir", "Fenrir", "Excitable, Lower middle pitch"),
+    ReaderCloudTtsVoice("Leda", "Leda", "Youthful, Higher pitch"),
+    ReaderCloudTtsVoice("Orus", "Orus", "Firm, Lower middle pitch"),
+    ReaderCloudTtsVoice("Aoede", "Aoede", "Breezy, Middle pitch"),
+    ReaderCloudTtsVoice("Callirrhoe", "Callirrhoe", "Easy-going, Middle pitch"),
+    ReaderCloudTtsVoice("Autonoe", "Autonoe", "Bright, Middle pitch"),
+    ReaderCloudTtsVoice("Enceladus", "Enceladus", "Breathy, Lower pitch"),
+    ReaderCloudTtsVoice("Iapetus", "Iapetus", "Clear, Lower middle pitch"),
+    ReaderCloudTtsVoice("Umbriel", "Umbriel", "Easy-going, Lower middle pitch"),
+    ReaderCloudTtsVoice("Algieba", "Algieba", "Smooth, Lower pitch"),
+    ReaderCloudTtsVoice("Despina", "Despina", "Smooth, Middle pitch"),
+    ReaderCloudTtsVoice("Erinome", "Erinome", "Clear, Middle pitch"),
+    ReaderCloudTtsVoice("Algenib", "Algenib", "Gravelly, Lower pitch"),
+    ReaderCloudTtsVoice("Rasalgethi", "Rasalgethi", "Informative, Middle pitch"),
+    ReaderCloudTtsVoice("Laomedeia", "Laomedeia", "Upbeat, Higher pitch"),
+    ReaderCloudTtsVoice("Achernar", "Achernar", "Soft, Higher pitch"),
+    ReaderCloudTtsVoice("Alnilam", "Alnilam", "Firm, Lower middle pitch"),
+    ReaderCloudTtsVoice("Schedar", "Schedar", "Even, Lower middle pitch"),
+    ReaderCloudTtsVoice("Gacrux", "Gacrux", "Mature, Middle pitch"),
+    ReaderCloudTtsVoice("Pulcherrima", "Pulcherrima", "Forward, Middle pitch"),
+    ReaderCloudTtsVoice("Achird", "Achird", "Friendly, Lower middle pitch"),
+    ReaderCloudTtsVoice("Zubenelgenubi", "Zubenelgenubi", "Casual, Lower middle pitch"),
+    ReaderCloudTtsVoice("Vindemiatrix", "Vindemiatrix", "Gentle, Middle pitch"),
+    ReaderCloudTtsVoice("Sadachbia", "Sadachbia", "Lively, Lower pitch"),
+    ReaderCloudTtsVoice("Sadaltager", "Sadaltager", "Lively, Lower pitch"),
+    ReaderCloudTtsVoice("Sulafat", "Sulafat", "Warm, Middle pitch")
 )
+
+val ReaderCloudTtsSpeakers = ReaderCloudTtsVoices.map { it.id }
+
+fun readerCloudTtsVoiceById(id: String): ReaderCloudTtsVoice? {
+    return ReaderCloudTtsVoices.firstOrNull { it.id == id }
+}
+
+fun formatReaderTtsBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = listOf("KB", "MB", "GB", "TB", "PB")
+    var value = bytes.toDouble() / 1024.0
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex++
+    }
+    return "${(value * 10).toInt() / 10.0} ${units[unitIndex]}"
+}
+
+fun splitReaderTextIntoTtsChunks(
+    text: String,
+    maxLength: Int = READER_TTS_CHUNK_MAX_LENGTH
+): List<String> {
+    if (text.isBlank()) return emptyList()
+    val sentenceBoundaryRegex = Regex("""(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?!\n])\s+""")
+    val sentences = text.trim()
+        .split(sentenceBoundaryRegex)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (sentences.isEmpty()) return emptyList()
+
+    val chunks = mutableListOf<String>()
+    val currentChunk = StringBuilder()
+    fun flush() {
+        if (currentChunk.isNotEmpty()) {
+            chunks += currentChunk.toString()
+            currentChunk.clear()
+        }
+    }
+
+    sentences.forEach { sentence ->
+        if (sentence.length > maxLength) {
+            flush()
+            chunks += sentence
+            return@forEach
+        }
+        if (currentChunk.isNotEmpty() && currentChunk.length + sentence.length + 1 > maxLength) {
+            flush()
+        }
+        if (currentChunk.isNotEmpty()) currentChunk.append(' ')
+        currentChunk.append(sentence)
+    }
+    flush()
+    return chunks
+}
 
 fun readerAiModelById(id: String): ReaderAiModelOption? {
     return ReaderAiModelOptions.firstOrNull { it.id == id }
@@ -196,6 +279,24 @@ data class ReaderTtsProgress(
     val currentPositionLabel: String?
         get() = currentChunk?.let { chunk ->
             "Part ${currentChunkIndex + 1}/${chunks.size} - ${chunk.chapterTitle.ifBlank { scope.label }}"
+        }
+}
+
+data class ReaderTtsCacheSummary(
+    val cachedChapterCount: Int = 0,
+    val cachedChunkCount: Int = 0,
+    val currentVoiceChunkCount: Int = 0,
+    val totalSizeBytes: Long = 0L,
+    val currentVoiceSizeBytes: Long = 0L
+) {
+    val hasCachedAudio: Boolean get() = cachedChunkCount > 0
+    val hasCurrentVoiceCachedAudio: Boolean get() = currentVoiceChunkCount > 0
+
+    val currentVoiceLabel: String
+        get() = if (hasCurrentVoiceCachedAudio) {
+            "$currentVoiceChunkCount chunks, ${formatReaderTtsBytes(currentVoiceSizeBytes)}"
+        } else {
+            "No cached chunks for this voice"
         }
 }
 
@@ -474,9 +575,11 @@ data class ReaderCloudTtsState(
     val isAvailable: Boolean = false,
     val isPlaying: Boolean = false,
     val isLoading: Boolean = false,
+    val isPaused: Boolean = false,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
-    val progress: ReaderTtsProgress = ReaderTtsProgress()
+    val progress: ReaderTtsProgress = ReaderTtsProgress(),
+    val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary()
 )
 
 data class ReaderAiResultState(
