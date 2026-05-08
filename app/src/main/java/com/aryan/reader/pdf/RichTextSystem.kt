@@ -64,6 +64,9 @@ import java.io.File
 const val PAGE_BREAK_CHAR = '\u000C'
 private const val ZWSP = "\u200B"
 
+internal fun String.hasRenderableRichText(): Boolean =
+    any { it != PAGE_BREAK_CHAR && !it.isWhitespace() }
+
 object PdfFontCache {
     private val cache = ConcurrentHashMap<String, FontFamily>()
     private var assetManager: android.content.res.AssetManager? = null
@@ -592,6 +595,9 @@ class RichTextController(
 
     var pageLayouts by mutableStateOf(emptyList<PageTextLayout>())
         private set
+
+    val hasRenderableText: Boolean
+        get() = globalTextFieldValue.text.hasRenderableRichText()
 
     var currentStyle: SpanStyle by mutableStateOf(SpanStyle(color = Color.Black, fontSize = 16.sp))
         private set

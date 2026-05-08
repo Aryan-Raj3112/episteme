@@ -2115,6 +2115,30 @@ fun PdfViewerScreen(
                     }
                 }
 
+                SaveMode.PDFIUM_ANNOTATED -> {
+                    if (currentBookId != null) {
+                        coroutineScope.launch {
+                            val currentRichTextLayouts = richTextController?.pageLayouts
+
+                            Timber.tag("PdfExportDebug").i("PDFIUM SAVE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                            if (userHighlights.isEmpty()) {
+                                Timber.tag("PdfExportDebug").w("Warning: userHighlights is EMPTY during PDFium save.")
+                            }
+
+                            viewModel.savePdfWithAnnotations(
+                                sourceUri = effectivePdfUri,
+                                destUri = uri,
+                                annotations = allAnnotations,
+                                richTextPageLayouts = currentRichTextLayouts,
+                                textBoxes = textBoxes.toList(),
+                                highlights = userHighlights.toList(),
+                                bookId = currentBookId!!,
+                                exportEngine = PdfExportEngine.PDFIUM
+                            )
+                        }
+                    }
+                }
+
                 SaveMode.ORIGINAL -> {
                     viewModel.saveOriginalPdf(effectivePdfUri, uri)
                 }
@@ -6727,15 +6751,29 @@ fun PdfViewerScreen(
             title = { Text(stringResource(R.string.title_save_to_device)) },
             text = { Text(stringResource(R.string.desc_choose_format_save)) },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSaveDialog = false
-                        pendingSaveMode = SaveMode.ANNOTATED
-                        val suggestedName = getSuggestedFilename(
-                            originalFileName, isAnnotated = true
-                        )
-                        saveLauncher.launch(suggestedName)
-                    }) { Text(stringResource(R.string.action_with_annotations)) }
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(
+                        onClick = {
+                            showSaveDialog = false
+                            pendingSaveMode = SaveMode.ANNOTATED
+                            val suggestedName = getSuggestedFilename(
+                                originalFileName, isAnnotated = true
+                            )
+                            saveLauncher.launch(suggestedName)
+                        }) { Text(stringResource(R.string.action_with_annotations)) }
+
+                    if (BuildConfig.DEBUG) {
+                        TextButton(
+                            onClick = {
+                                showSaveDialog = false
+                                pendingSaveMode = SaveMode.PDFIUM_ANNOTATED
+                                val suggestedName = getSuggestedFilename(
+                                    originalFileName, isAnnotated = true
+                                )
+                                saveLauncher.launch(suggestedName)
+                            }) { Text(stringResource(R.string.action_with_annotations_pdfium)) }
+                    }
+                }
             },
             dismissButton = {
                 Row {
@@ -6766,31 +6804,62 @@ fun PdfViewerScreen(
             title = { Text(stringResource(R.string.share_chooser_title)) },
             text = { Text(stringResource(R.string.desc_choose_format_share)) },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showShareDialog = false
-                        isShareLoading = true
-                        Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
-                        val filename = getSuggestedFilename(
-                            originalFileName, isAnnotated = true
-                        )
-                        coroutineScope.launch {
-                            val currentRichTextLayouts = richTextController?.pageLayouts
-
-                            viewModel.sharePdf(
-                                activityContext = context,
-                                sourceUri = effectivePdfUri,
-                                annotations = allAnnotations,
-                                richTextPageLayouts = currentRichTextLayouts,
-                                textBoxes = textBoxes.toList(),
-                                highlights = userHighlights.toList(),
-                                includeAnnotations = true,
-                                filename = filename,
-                                bookId = currentBookId
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(
+                        onClick = {
+                            showShareDialog = false
+                            isShareLoading = true
+                            Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                            val filename = getSuggestedFilename(
+                                originalFileName, isAnnotated = true
                             )
-                            isShareLoading = false
-                        }
-                    }) { Text(stringResource(R.string.action_with_annotations)) }
+                            coroutineScope.launch {
+                                val currentRichTextLayouts = richTextController?.pageLayouts
+
+                                viewModel.sharePdf(
+                                    activityContext = context,
+                                    sourceUri = effectivePdfUri,
+                                    annotations = allAnnotations,
+                                    richTextPageLayouts = currentRichTextLayouts,
+                                    textBoxes = textBoxes.toList(),
+                                    highlights = userHighlights.toList(),
+                                    includeAnnotations = true,
+                                    filename = filename,
+                                    bookId = currentBookId
+                                )
+                                isShareLoading = false
+                            }
+                        }) { Text(stringResource(R.string.action_with_annotations)) }
+
+                    if (BuildConfig.DEBUG) {
+                        TextButton(
+                            onClick = {
+                                showShareDialog = false
+                                isShareLoading = true
+                                Timber.tag("PdfExportDebug").i("PDFIUM SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                                val filename = getSuggestedFilename(
+                                    originalFileName, isAnnotated = true
+                                )
+                                coroutineScope.launch {
+                                    val currentRichTextLayouts = richTextController?.pageLayouts
+
+                                    viewModel.sharePdf(
+                                        activityContext = context,
+                                        sourceUri = effectivePdfUri,
+                                        annotations = allAnnotations,
+                                        richTextPageLayouts = currentRichTextLayouts,
+                                        textBoxes = textBoxes.toList(),
+                                        highlights = userHighlights.toList(),
+                                        includeAnnotations = true,
+                                        filename = filename,
+                                        bookId = currentBookId,
+                                        exportEngine = PdfExportEngine.PDFIUM
+                                    )
+                                    isShareLoading = false
+                                }
+                            }) { Text(stringResource(R.string.action_with_annotations_pdfium)) }
+                    }
+                }
             },
             dismissButton = {
                 Row {

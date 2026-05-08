@@ -83,8 +83,10 @@ import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
+import com.aryan.reader.pdf.PdfExportEngine
 import com.aryan.reader.pdf.PdfExporter
 import com.aryan.reader.pdf.PdfUserHighlight
+import com.aryan.reader.pdf.PdfiumAnnotationExporter
 import com.aryan.reader.pdf.ReflowWorker
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -1773,7 +1775,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         richTextPageLayouts: List<com.aryan.reader.pdf.PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
         highlights: List<PdfUserHighlight>? = null,
-        bookId: String
+        bookId: String,
+        exportEngine: PdfExportEngine = PdfExportEngine.PDFBOX
     ) {
         viewModelScope.launch {
             _internalState.update {
@@ -1783,16 +1786,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val virtualPages = pageLayoutRepository.getLayoutOrNull(bookId)
                 val outputStream = appContext.contentResolver.openOutputStream(destUri)
                 if (outputStream != null) {
-                    PdfExporter.exportAnnotatedPdf(
-                        context = appContext,
-                        sourceUri = sourceUri,
-                        destStream = outputStream,
-                        virtualPages = virtualPages,
-                        inkAnnotations = annotations,
-                        richTextPageLayouts = richTextPageLayouts,
-                        textBoxes = textBoxes,
-                        highlights = highlights
-                    )
+                    when (exportEngine) {
+                        PdfExportEngine.PDFBOX -> PdfExporter.exportAnnotatedPdf(
+                            context = appContext,
+                            sourceUri = sourceUri,
+                            destStream = outputStream,
+                            virtualPages = virtualPages,
+                            inkAnnotations = annotations,
+                            richTextPageLayouts = richTextPageLayouts,
+                            textBoxes = textBoxes,
+                            highlights = highlights
+                        )
+                        PdfExportEngine.PDFIUM -> PdfiumAnnotationExporter.exportAnnotatedPdf(
+                            context = appContext,
+                            sourceUri = sourceUri,
+                            destStream = outputStream,
+                            virtualPages = virtualPages,
+                            inkAnnotations = annotations,
+                            richTextPageLayouts = richTextPageLayouts,
+                            textBoxes = textBoxes,
+                            highlights = highlights
+                        )
+                    }
                     showBanner(appContext.getString(R.string.banner_pdf_saved))
                 } else {
                     showBanner(appContext.getString(R.string.error_open_file_saving), isError = true)
@@ -1870,7 +1885,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         highlights: List<PdfUserHighlight>? = null,
         includeAnnotations: Boolean,
         filename: String,
-        bookId: String? = null
+        bookId: String? = null,
+        exportEngine: PdfExportEngine = PdfExportEngine.PDFBOX
     ) {
         withContext(Dispatchers.IO) {
             val resolvedBookId =
@@ -1893,24 +1909,36 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val destFile = File(shareDir, filename)
-                val outputStream = FileOutputStream(destFile)
+                FileOutputStream(destFile).use { outputStream ->
+                    if (includeAnnotations) {
+                        val virtualPages = pageLayoutRepository.getLayoutOrNull(resolvedBookId)
 
-                if (includeAnnotations) {
-                    val virtualPages = pageLayoutRepository.getLayoutOrNull(resolvedBookId)
-
-                    PdfExporter.exportAnnotatedPdf(
-                        context = appContext,
-                        sourceUri = sourceUri,
-                        destStream = outputStream,
-                        virtualPages = virtualPages,
-                        inkAnnotations = annotations,
-                        richTextPageLayouts = richTextPageLayouts,
-                        textBoxes = textBoxes,
-                        highlights = highlights
-                    )
-                } else {
-                    appContext.contentResolver.openInputStream(sourceUri)?.use { input ->
-                        input.copyTo(outputStream)
+                        when (exportEngine) {
+                            PdfExportEngine.PDFBOX -> PdfExporter.exportAnnotatedPdf(
+                                context = appContext,
+                                sourceUri = sourceUri,
+                                destStream = outputStream,
+                                virtualPages = virtualPages,
+                                inkAnnotations = annotations,
+                                richTextPageLayouts = richTextPageLayouts,
+                                textBoxes = textBoxes,
+                                highlights = highlights
+                            )
+                            PdfExportEngine.PDFIUM -> PdfiumAnnotationExporter.exportAnnotatedPdf(
+                                context = appContext,
+                                sourceUri = sourceUri,
+                                destStream = outputStream,
+                                virtualPages = virtualPages,
+                                inkAnnotations = annotations,
+                                richTextPageLayouts = richTextPageLayouts,
+                                textBoxes = textBoxes,
+                                highlights = highlights
+                            )
+                        }
+                    } else {
+                        appContext.contentResolver.openInputStream(sourceUri)?.use { input ->
+                            input.copyTo(outputStream)
+                        }
                     }
                 }
 

@@ -5173,7 +5173,7 @@ private fun PdfPageRenderer(
                     val isEditable = isEditMode && selectedTool == InkType.TEXT
                     val hasContent = richTextController.pageLayouts.any {
                         it.pageIndex == selectionData.pageIndex
-                    }
+                    } || richTextController.hasRenderableText
 
                     if (isEditable || hasContent) {
                         PdfRichTextLayer(

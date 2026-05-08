@@ -175,6 +175,12 @@ class PdfReaderRichTextTest {
     }
 
     @Test
+    fun `hasRenderableRichText ignores whitespace and explicit page breaks`() {
+        assertFalse(" \n\t${PAGE_BREAK_CHAR}".hasRenderableRichText())
+        assertTrue("${PAGE_BREAK_CHAR}\nVisible".hasRenderableRichText())
+    }
+
+    @Test
     fun `PdfRichTextRepository saves and loads rich document with sanitized book id`() = runTest {
         val context = contextWithFilesDir(tempRoot("rich-save-load"))
         val repository = PdfRichTextRepository(context)

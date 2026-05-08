@@ -32,6 +32,38 @@ object NativePdfiumBridge {
     @JvmStatic external fun getAnnotSubtypeAtPoint(pagePtr: Long, x: Double, y: Double): Int
     @JvmStatic external fun getAnnotRectAtPoint(pagePtr: Long, x: Double, y: Double): FloatArray?
     @JvmStatic external fun checkActionSupport(): Boolean
+    @JvmStatic external fun exportAnnotatedPdf(
+        sourcePath: String,
+        destPath: String,
+        inkPageIndices: IntArray,
+        inkTypes: IntArray,
+        inkColors: IntArray,
+        inkStrokeWidths: FloatArray,
+        inkPointOffsets: IntArray,
+        inkPointCounts: IntArray,
+        inkPoints: FloatArray,
+        textPageIndices: IntArray,
+        textBounds: FloatArray,
+        textColors: IntArray,
+        textBackgroundColors: IntArray,
+        textFontSizes: FloatArray,
+        textFlags: IntArray,
+        textValues: Array<String>,
+        textFontPaths: Array<String>,
+        textFontNames: Array<String>,
+        rasterPageIndices: IntArray,
+        rasterBounds: FloatArray,
+        rasterWidths: IntArray,
+        rasterHeights: IntArray,
+        rasterPixelOffsets: IntArray,
+        rasterPixels: IntArray,
+        highlightPageIndices: IntArray,
+        highlightColors: IntArray,
+        highlightRectOffsets: IntArray,
+        highlightRectCounts: IntArray,
+        highlightRects: FloatArray,
+        highlightContents: Array<String>
+    ): Boolean
 
     const val ANNOT_TEXT = PdfiumAnnotationSubtype.TEXT
     const val ANNOT_LINK = PdfiumAnnotationSubtype.LINK

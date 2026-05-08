@@ -1038,6 +1038,7 @@
     <string name="title_save_to_device">Save to Device</string>
     <string name="desc_choose_format_save">Choose format to save:</string>
     <string name="action_with_annotations">With Annotations</string>
+    <string name="action_with_annotations_pdfium">With Annotations (Pdfium)</string>
     <string name="action_original">Original</string>
     <string name="desc_choose_format_share">Choose format to share:</string>
     <!-- PDF = file format name — do not translate. -->
