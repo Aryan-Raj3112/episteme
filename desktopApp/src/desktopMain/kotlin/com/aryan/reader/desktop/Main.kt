@@ -233,6 +233,7 @@ import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
+import com.aryan.reader.shared.ui.ReaderWorkspaceShell
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
@@ -259,10 +260,10 @@ import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
-import com.aryan.reader.shared.ui.SharedScreenScaffold
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
+import com.aryan.reader.shared.ui.pdfReaderWorkspaceModel
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
@@ -3708,91 +3709,357 @@ private fun PdfReaderScreen(
         }
     }
 
-    SharedScreenScaffold(
-        title = document.title,
-        subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
-        trailing = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpenPdf) {
-                    Text("Open PDF")
-                }
-                TextButton(onClick = onOpenBook) {
-                    Text("Open Book")
-                }
-                Text("${progressPercent.toInt()}%")
-            }
+    val pdfWorkspaceModel = pdfReaderWorkspaceModel(
+        state = pdfState,
+        displayMode = displayMode,
+        hasContents = document.toc.isNotEmpty(),
+        hasBookmarks = bookmarks.isNotEmpty(),
+        hasAnnotations = sortedAnnotations.isNotEmpty(),
+        hasEmbeddedComments = sortedEmbeddedAnnotations.isNotEmpty(),
+        searchActive = searchQuery.isNotBlank(),
+        annotationEditing = activeTextDraft != null ||
+            selectedAnnotation != null ||
+            selectedTool != PdfInkTool.PEN ||
+            !isTextSelectionMode,
+        richTextEditing = isRichTextMode,
+        loading = isRendering || isSearchIndexing,
+        errorMessage = renderError,
+        extrasState = pdfExtrasState,
+        aiAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable
+    )
+
+    fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (event.type != KeyEventType.KeyDown) return false
+        val isEditingTextAnnotation =
+            activeTextDraft != null ||
+                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
+        if ((isEditingTextAnnotation || isRichTextMode) && !event.isCtrlPressed) {
+            return false
         }
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            SharedPdfRichTextHiddenInput(
-                controller = richTextController,
-                enabled = isRichTextMode,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, bottom = 24.dp)
-                    .zIndex(10f)
-            )
-            Row(
-                Modifier
-                    .fillMaxSize()
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        val isEditingTextAnnotation =
-                            activeTextDraft != null ||
-                                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
-                        if ((isEditingTextAnnotation || isRichTextMode) && !event.isCtrlPressed) {
-                            return@onPreviewKeyEvent false
+        return when {
+            event.key == Key.DirectionLeft -> {
+                goToPage(pageIndex - 1)
+                true
+            }
+            event.key == Key.DirectionRight -> {
+                goToPage(pageIndex + 1)
+                true
+            }
+            event.key == Key.DirectionUp && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
+                goToPage(pageIndex - 1)
+                true
+            }
+            event.key == Key.DirectionDown && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
+                goToPage(pageIndex + 1)
+                true
+            }
+            event.key == Key.PageUp -> {
+                goToPage(pageIndex - 1)
+                true
+            }
+            event.key == Key.PageDown -> {
+                goToPage(pageIndex + 1)
+                true
+            }
+            event.key == Key.MoveHome -> {
+                goToPage(0)
+                true
+            }
+            event.key == Key.MoveEnd -> {
+                goToPage(document.pageCount - 1)
+                true
+            }
+            event.isCtrlPressed && event.key == Key.Equals -> {
+                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
+                true
+            }
+            event.isCtrlPressed && event.key == Key.Minus -> {
+                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
+                true
+            }
+            else -> false
+        }
+    }
+
+    @Composable
+    fun PdfNavigationSidebar() {
+        Surface(
+            modifier = Modifier
+                .width(300.dp)
+                .fillMaxHeight(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp),
+            tonalElevation = 2.dp
+        ) {
+            LazyColumn(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
+                            Text("Previous")
                         }
-                        when {
-                            event.key == Key.DirectionLeft -> {
-                                goToPage(pageIndex - 1)
-                                true
-                            }
-                            event.key == Key.DirectionRight -> {
-                                goToPage(pageIndex + 1)
-                                true
-                            }
-                            event.key == Key.DirectionUp && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                                goToPage(pageIndex - 1)
-                                true
-                            }
-                            event.key == Key.DirectionDown && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                                goToPage(pageIndex + 1)
-                                true
-                            }
-                            event.key == Key.PageUp -> {
-                                goToPage(pageIndex - 1)
-                                true
-                            }
-                            event.key == Key.PageDown -> {
-                                goToPage(pageIndex + 1)
-                                true
-                            }
-                            event.key == Key.MoveHome -> {
-                                goToPage(0)
-                                true
-                            }
-                            event.key == Key.MoveEnd -> {
-                                goToPage(document.pageCount - 1)
-                                true
-                            }
-                            event.isCtrlPressed && event.key == Key.Equals -> {
-                                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
-                                true
-                            }
-                            event.isCtrlPressed && event.key == Key.Minus -> {
-                                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
-                                true
-                            }
-                            else -> false
+                        TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
+                            Text("Next")
                         }
                     }
-                    .focusable(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                }
+                if (document.pageCount > 1) {
+                    item {
+                        Text(
+                            "Page ${pageIndex + 1} of ${document.pageCount}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = pageIndex.toFloat(),
+                            onValueChange = { value ->
+                                if (pageScrubStartPage == null) {
+                                    pageScrubStartPage = pdfState.pageIndex
+                                }
+                                val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
+                                pageScrubPreview = targetPage
+                                goToPage(targetPage)
+                            },
+                            onValueChangeFinished = {
+                                val startPage = pageScrubStartPage
+                                val targetPage = currentPdfPageIndex
+                                if (startPage != null) {
+                                    jumpHistory = jumpHistory.record(
+                                        currentPageIndex = startPage,
+                                        targetPageIndex = targetPage,
+                                        pageCount = document.pageCount
+                                    )
+                                }
+                                pageScrubStartPage = null
+                                pageScrubPreview = null
+                            },
+                            valueRange = 0f..(document.pageCount - 1).toFloat(),
+                            steps = (document.pageCount - 2).coerceAtLeast(0)
+                        )
+                    }
+                }
+                item {
+                    DesktopPdfJumpHistoryControls(
+                        backPage = jumpHistory.backPage,
+                        forwardPage = jumpHistory.forwardPage,
+                        onBack = ::goBackInJumpHistory,
+                        onForward = ::goForwardInJumpHistory,
+                        onClear = { jumpHistory = jumpHistory.clear() }
+                    )
+                }
+                item {
+                    val isBookmarked = bookmarks.any { it.pageIndex == pageIndex }
+                    TextButton(onClick = { toggleBookmark(pageIndex) }) {
+                        Text(if (isBookmarked) "Remove bookmark" else "Bookmark page")
+                    }
+                }
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { dispatchPdf(SharedPdfReaderAction.SearchChanged(it)) },
+                        label = { Text("Find in PDF") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (searchQuery.isNotBlank()) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when {
+                                    isSearchIndexing -> {
+                                        val progress = "Indexing ${indexedSearchPageCount.coerceAtMost(document.pageCount)}/${document.pageCount}"
+                                        if (searchResults.isEmpty()) progress else "${searchResults.size} matches - $progress"
+                                    }
+                                    searchResults.isEmpty() -> "No matches"
+                                    activeSearchIndex in searchResults.indices -> "${activeSearchIndex + 1} of ${searchResults.size}"
+                                    else -> "${searchResults.size} matches"
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { goToSearchResult(activeSearchIndex - 1) }, enabled = searchResults.isNotEmpty()) {
+                                Text("Prev")
+                            }
+                            TextButton(onClick = { goToSearchResult(activeSearchIndex + 1) }, enabled = searchResults.isNotEmpty()) {
+                                Text("Next")
+                            }
+                        }
+                    }
+                    items(searchResults, key = { "nav_search_${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
+                        Surface(
+                            color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                goToSearchResult(searchResults.indexOf(result))
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text("Page ${result.pageIndex + 1}", fontWeight = FontWeight.SemiBold)
+                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+                if (document.toc.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    itemsIndexed(document.toc, key = { index, entry -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }) { _, entry ->
+                        Surface(
+                            color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(start = (entry.nestLevel * 12).dp)
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                Text("p. ${entry.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                if (bookmarks.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
+                        Surface(
+                            color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
+                        ) {
+                            Text(
+                                bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+                if (sortedAnnotations.isNotEmpty() || sortedEmbeddedAnnotations.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Notes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
+                        Surface(
+                            color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
+                        Surface(
+                            color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun PdfBottomChrome() {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
+                    Text("Previous")
+                }
+                Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (document.pageCount > 1) {
+                    Slider(
+                        value = pageIndex.toFloat(),
+                        onValueChange = { value ->
+                            if (pageScrubStartPage == null) {
+                                pageScrubStartPage = pdfState.pageIndex
+                            }
+                            val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
+                            pageScrubPreview = targetPage
+                            goToPage(targetPage)
+                        },
+                        onValueChangeFinished = {
+                            val startPage = pageScrubStartPage
+                            val targetPage = currentPdfPageIndex
+                            if (startPage != null) {
+                                jumpHistory = jumpHistory.record(
+                                    currentPageIndex = startPage,
+                                    targetPageIndex = targetPage,
+                                    pageCount = document.pageCount
+                                )
+                            }
+                            pageScrubStartPage = null
+                            pageScrubPreview = null
+                        },
+                        valueRange = 0f..(document.pageCount - 1).toFloat(),
+                        steps = (document.pageCount - 2).coerceAtLeast(0),
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                Text("${progressPercent.toInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
+                    Text("Next")
+                }
+            }
+        }
+    }
+
+    ReaderWorkspaceShell(
+        model = pdfWorkspaceModel,
+        title = document.title,
+        subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
+        progressLabel = "${progressPercent.toInt()}%",
+        modifier = Modifier
+            .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
+            .focusable(),
+        topActions = {
+            TextButton(onClick = onOpenBook) {
+                Text("Open Book")
+            }
+            TextButton(onClick = onOpenPdf) {
+                Text("Open PDF")
+            }
+        },
+        leftSidebar = { PdfNavigationSidebar() },
+        rightInspector = {
             Surface(
                 modifier = Modifier
-                    .width(300.dp)
+                    .width(340.dp)
                     .fillMaxHeight(),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp)
@@ -3802,7 +4069,7 @@ private fun PdfReaderScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item {
-                        Text("Pages", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4216,12 +4483,21 @@ private fun PdfReaderScreen(
                     }
                 }
             }
-
+        },
+        bottomBar = { PdfBottomChrome() }
+    ) {
+        SharedPdfRichTextHiddenInput(
+            controller = richTextController,
+            enabled = isRichTextMode,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 16.dp, bottom = 24.dp)
+                .zIndex(10f)
+        )
             if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
+                        .fillMaxSize()
                         .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
                 ) {
                     LazyColumn(
@@ -4294,8 +4570,7 @@ private fun PdfReaderScreen(
             } else {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
+                        .fillMaxSize()
                         .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
                         .horizontalScroll(pageHorizontalScrollState)
                         .verticalScroll(pageVerticalScrollState)
@@ -4778,8 +5053,6 @@ private fun PdfReaderScreen(
             }
         }
     }
-}
-}
 }
 
 @Composable

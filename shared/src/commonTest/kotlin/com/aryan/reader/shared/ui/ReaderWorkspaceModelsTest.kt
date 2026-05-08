@@ -1,0 +1,166 @@
+package com.aryan.reader.shared.ui
+
+import com.aryan.reader.shared.PdfDisplayMode
+import com.aryan.reader.shared.ReaderAutoScrollState
+import com.aryan.reader.shared.ReaderCloudTtsState
+import com.aryan.reader.shared.ReaderExtrasState
+import com.aryan.reader.shared.ReaderTool
+import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.SampleReaderBooks
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class ReaderWorkspaceModelsTest {
+
+    @Test
+    fun `epub workspace maps shared toolbar preferences to reader sidebars and inspector`() {
+        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val preferences = ReaderToolbarPreferences(
+            hiddenToolIds = setOf(ReaderTool.THEME.id, ReaderTool.FORMAT.id),
+            bottomToolIds = setOf(ReaderTool.SLIDER.id, ReaderTool.SEARCH.id)
+        )
+
+        val model = epubReaderWorkspaceModel(
+            session = session,
+            toolbarPreferences = preferences,
+            extrasState = ReaderExtrasState(),
+            aiAvailable = true
+        )
+
+        assertEquals(ReaderWorkspaceKind.EPUB, model.kind)
+        assertTrue(ReaderWorkspaceLeftSection.CONTENTS in model.leftSections)
+        assertTrue(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
+        assertTrue(ReaderWorkspaceLeftSection.BOOKMARKS in model.leftSections)
+        assertFalse(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
+        assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
+        assertTrue(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)
+        assertTrue(ReaderWorkspaceTopAction.SEARCH in model.topActions)
+        assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
+        assertTrue(ReaderWorkspaceBottomAction.PAGE_SLIDER in model.bottomActions)
+    }
+
+    @Test
+    fun `chrome model is forced visible for active reader states`() {
+        val model = readerWorkspaceChromeModel(
+            preferAutoHide = true,
+            searchActive = true,
+            leftPanelOpen = false,
+            inspectorOpen = true,
+            annotationEditing = true,
+            richTextEditing = true,
+            loading = true,
+            errorMessage = "Failed",
+            autoScroll = ReaderAutoScrollState(enabled = true),
+            ttsBusy = true
+        )
+
+        assertTrue(model.preferAutoHide)
+        assertTrue(model.forceVisible)
+        assertEquals(
+            setOf("search", "inspector", "annotation", "rich-text", "loading", "error", "auto-scroll", "tts"),
+            model.forceVisibleReasons
+        )
+    }
+
+    @Test
+    fun `toolbar quick actions preserve visibility order and bottom placement`() {
+        val preferences = ReaderToolbarPreferences(
+            hiddenToolIds = setOf(ReaderTool.BOOKMARK.id),
+            toolOrder = listOf(
+                ReaderTool.AUTO_SCROLL,
+                ReaderTool.SEARCH,
+                ReaderTool.AI_FEATURES,
+                ReaderTool.THEME,
+                ReaderTool.BOOKMARK
+            ) + ReaderTool.entries,
+            bottomToolIds = setOf(ReaderTool.SEARCH.id, ReaderTool.AI_FEATURES.id)
+        )
+
+        val topTools = readerWorkspaceQuickActionTools(
+            toolbarPreferences = preferences,
+            bottom = false,
+            aiAvailable = true
+        )
+        val bottomToolsWithoutAi = readerWorkspaceQuickActionTools(
+            toolbarPreferences = preferences,
+            bottom = true,
+            aiAvailable = false
+        )
+        val bottomToolsWithAi = readerWorkspaceQuickActionTools(
+            toolbarPreferences = preferences,
+            bottom = true,
+            aiAvailable = true
+        )
+
+        assertEquals(listOf(ReaderTool.AUTO_SCROLL, ReaderTool.THEME), topTools.take(2))
+        assertEquals(listOf(ReaderTool.SEARCH), bottomToolsWithoutAi)
+        assertEquals(listOf(ReaderTool.SEARCH, ReaderTool.AI_FEATURES), bottomToolsWithAi)
+        assertFalse(ReaderTool.BOOKMARK in topTools)
+        assertFalse(ReaderTool.BOOKMARK in bottomToolsWithAi)
+    }
+
+    @Test
+    fun `pdf workspace defaults to reading first while keeping annotation tools in inspector`() {
+        val model = pdfReaderWorkspaceModel(
+            state = SharedPdfReaderState.initial(pageCount = 4),
+            displayMode = PdfDisplayMode.PAGINATION,
+            hasContents = true,
+            hasBookmarks = true,
+            hasAnnotations = true,
+            hasEmbeddedComments = true,
+            searchActive = false,
+            annotationEditing = false,
+            richTextEditing = false,
+            loading = false,
+            errorMessage = null,
+            extrasState = ReaderExtrasState(),
+            aiAvailable = true
+        )
+
+        assertEquals(ReaderWorkspaceKind.PDF, model.kind)
+        assertNull(model.defaultPdfInteractionMode)
+        assertTrue(ReaderWorkspaceLeftSection.CONTENTS in model.leftSections)
+        assertTrue(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
+        assertTrue(ReaderWorkspaceLeftSection.BOOKMARKS in model.leftSections)
+        assertTrue(ReaderWorkspaceLeftSection.NOTES in model.leftSections)
+        assertTrue(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
+        assertTrue(ReaderWorkspaceInspectorSection.TOOLS in model.inspectorSections)
+        assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
+        assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
+    }
+
+    @Test
+    fun `pdf workspace forces chrome for search editing errors tts and vertical auto scroll`() {
+        val model = pdfReaderWorkspaceModel(
+            state = SharedPdfReaderState.initial(pageCount = 4).copy(searchQuery = "needle"),
+            displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+            hasContents = false,
+            hasBookmarks = false,
+            hasAnnotations = false,
+            hasEmbeddedComments = false,
+            searchActive = false,
+            annotationEditing = true,
+            richTextEditing = false,
+            loading = false,
+            errorMessage = "Problem",
+            extrasState = ReaderExtrasState(
+                autoScroll = ReaderAutoScrollState(enabled = true),
+                cloudTts = ReaderCloudTtsState(isPlaying = true)
+            ),
+            aiAvailable = false
+        )
+
+        assertTrue(model.chrome.forceVisible)
+        assertTrue("search" in model.chrome.forceVisibleReasons)
+        assertTrue("annotation" in model.chrome.forceVisibleReasons)
+        assertTrue("error" in model.chrome.forceVisibleReasons)
+        assertTrue("auto-scroll" in model.chrome.forceVisibleReasons)
+        assertTrue("tts" in model.chrome.forceVisibleReasons)
+        assertFalse(ReaderWorkspaceTopAction.AI in model.topActions)
+    }
+}
