@@ -261,6 +261,22 @@ object ReaderHtmlDocumentBuilder {
                   background: color-mix(in srgb, var(--reader-highlight) 72%, transparent);
                   border-radius: 2px;
                 }
+                ::highlight(reader-tts-highlight) {
+                  background: rgba(125, 211, 252, 0.52);
+                  color: inherit;
+                }
+                #reader-tts-highlight-layer {
+                  position: absolute;
+                  inset: 0;
+                  z-index: 2;
+                  pointer-events: none;
+                }
+                .reader-tts-highlight-rect {
+                  position: absolute;
+                  background: rgba(125, 211, 252, 0.42);
+                  border-radius: 3px;
+                  box-shadow: 0 0 0 1px rgba(14, 116, 144, 0.12);
+                }
                 ${HighlightColor.entries.joinToString("\n") { ".${it.cssClass} { background: ${it.color.toCssHex()}; }" }}
                 #reader-selection-menu {
                   position: fixed;
@@ -321,6 +337,31 @@ object ReaderHtmlDocumentBuilder {
                     if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value));
                     return String(value).replace(/"/g, '\\"');
                   }
+                  function readerTtsLog(message) {
+                    var line = 'EPUB_TTS_HIGHLIGHT ' + message;
+                    try { console.log(line); } catch (error) {}
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try { window.kmpJsBridge.callNative('readerTtsHighlightLog', JSON.stringify({ message: line })); } catch (error) {}
+                    }
+                  }
+                  window.readerTtsLog = readerTtsLog;
+                  function readerTtsPreview(value, limit) {
+                    return String(value || '').replace(/\s+/g, ' ').trim().substring(0, limit || 120);
+                  }
+                  function readerTtsNormalized(value) {
+                    return String(value || '').replace(/\s+/g, ' ').trim();
+                  }
+                  function readerElementLabel(element) {
+                    if (!element || !element.tagName) return 'null';
+                    var label = element.tagName.toLowerCase();
+                    if (element.id) label += '#' + element.id;
+                    var cfi = element.getAttribute && element.getAttribute('data-reader-cfi');
+                    var start = element.getAttribute && element.getAttribute('data-reader-text-start');
+                    var end = element.getAttribute && element.getAttribute('data-reader-text-end');
+                    if (cfi) label += '[cfi=' + readerTtsPreview(cfi, 80) + ']';
+                    if (start !== null && end !== null) label += '[range=' + start + '..' + end + ']';
+                    return label;
+                  }
                   function scrollToLocator(locator) {
                     locator = locator || {};
                     var chapterIndex = locator.chapterIndex;
@@ -344,7 +385,7 @@ object ReaderHtmlDocumentBuilder {
                       var parsedEnd = parseInt(locator.endOffset === undefined || locator.endOffset === null ? activeStart : locator.endOffset, 10);
                       if (Number.isFinite(parsedStart)) {
                         var rangeEnd = Number.isFinite(parsedEnd) && parsedEnd > parsedStart ? parsedEnd : parsedStart + 1;
-                        var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd);
+                        var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd, locator.cfi);
                         if (exactRange) {
                           var rangeRects = exactRange.getClientRects();
                           var rangeRect = rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect();
@@ -403,13 +444,16 @@ object ReaderHtmlDocumentBuilder {
                       readerAutoScrollLastTime = 0;
                     }
                   };
-                  function textNodesUnder(root) {
+                  function textNodesUnder(root, includeWhitespace) {
+                    includeWhitespace = includeWhitespace === undefined ? true : includeWhitespace;
                     var nodes = [];
                     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
                       acceptNode: function (node) {
-                        if (!node.nodeValue || node.nodeValue.trim().length === 0) return NodeFilter.FILTER_REJECT;
+                        if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
                         var parent = node.parentElement;
                         if (parent && parent.closest && parent.closest('#reader-selection-menu')) return NodeFilter.FILTER_REJECT;
+                        if (parent && parent.closest && parent.closest('script, style')) return NodeFilter.FILTER_REJECT;
+                        if (!includeWhitespace && node.nodeValue.trim().length === 0) return NodeFilter.FILTER_REJECT;
                         return NodeFilter.FILTER_ACCEPT;
                       }
                     });
@@ -417,8 +461,59 @@ object ReaderHtmlDocumentBuilder {
                     while ((node = walker.nextNode())) nodes.push(node);
                     return nodes;
                   }
+                  function normalizedRangeForText(root, expectedText, debugTts) {
+                    var expected = readerTtsNormalized(expectedText);
+                    if (!root || !expected) return null;
+                    var nodes = textNodesUnder(root, true);
+                    var flatText = '';
+                    var flatMap = [];
+                    var sawText = false;
+                    var pendingWhitespace = false;
+                    nodes.forEach(function (node) {
+                      var value = node.nodeValue || '';
+                      for (var i = 0; i < value.length; i++) {
+                        if (/^\s$/.test(value[i])) {
+                          if (sawText) pendingWhitespace = true;
+                          continue;
+                        }
+                        if (pendingWhitespace && flatText.length > 0) {
+                          flatText += ' ';
+                          flatMap.push({ node: node, start: i, end: i });
+                          pendingWhitespace = false;
+                        }
+                        flatText += value[i];
+                        flatMap.push({ node: node, start: i, end: i + 1 });
+                        sawText = true;
+                      }
+                    });
+                    var index = flatText.indexOf(expected);
+                    if (debugTts) {
+                      readerTtsLog(
+                        'range_text_search root=' + readerElementLabel(root) +
+                        ' expectedChars=' + expected.length +
+                        ' flatChars=' + flatText.length +
+                        ' index=' + index +
+                        ' expected="' + readerTtsPreview(expected, 120) + '"'
+                      );
+                    }
+                    if (index < 0 || index >= flatMap.length) return null;
+                    var endIndex = Math.min(flatMap.length - 1, index + expected.length - 1);
+                    var startMap = flatMap[index];
+                    var endMap = flatMap[endIndex];
+                    if (!startMap || !endMap) return null;
+                    var range = document.createRange();
+                    try {
+                      range.setStart(startMap.node, startMap.start);
+                      range.setEnd(endMap.node, endMap.end);
+                    } catch (error) {
+                      range.detach && range.detach();
+                      if (debugTts) readerTtsLog('range_text_search_failed reason=set_range_error error=' + readerTtsPreview(error, 140));
+                      return null;
+                    }
+                    return range;
+                  }
                   function firstVisibleOffsetInContent(content) {
-                    var nodes = textNodesUnder(content);
+                    var nodes = textNodesUnder(content, false);
                     var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
                     var offset = contentStart;
                     var viewportTop = Math.max(8, window.innerHeight * 0.08);
@@ -457,7 +552,7 @@ object ReaderHtmlDocumentBuilder {
                     return { offset: contentStart, textNode: null };
                   }
                   function snippetFromContentOffset(content, startOffset) {
-                    var nodes = textNodesUnder(content);
+                    var nodes = textNodesUnder(content, false);
                     var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
                     var remaining = Math.max(0, startOffset - contentStart);
                     var text = '';
@@ -661,7 +756,8 @@ object ReaderHtmlDocumentBuilder {
                     return { start: rawStart + leadingWhitespace, end: rawEnd - trailingWhitespace };
                   }
                   function offsetForBoundary(host, container, offset) {
-                    var nodes = textNodesUnder(host);
+                    var includeWhitespace = host && host.getAttribute && host.hasAttribute('data-reader-text-start');
+                    var nodes = textNodesUnder(host, includeWhitespace);
                     var boundary = document.createRange();
                     try {
                       boundary.setStart(container, offset);
@@ -693,7 +789,8 @@ object ReaderHtmlDocumentBuilder {
                     return cursor;
                   }
                   function textBetweenOffsets(host, startOffset, endOffset) {
-                    var nodes = textNodesUnder(host);
+                    var includeWhitespace = host && host.getAttribute && host.hasAttribute('data-reader-text-start');
+                    var nodes = textNodesUnder(host, includeWhitespace);
                     var cursor = 0;
                     var text = '';
                     for (var n = 0; n < nodes.length; n++) {
@@ -721,36 +818,204 @@ object ReaderHtmlDocumentBuilder {
                       parent.normalize();
                     });
                   }
-                  function rangeForOffsets(chapterIndex, startOffset, endOffset) {
-                    var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
-                    if (!chapter) return null;
-                    var content = chapter.querySelector('.reader-content') || chapter;
-                    var nodes = textNodesUnder(content);
-                    var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
-                    var cursor = contentStart;
-                    var startNode = null;
-                    var startInNode = 0;
-                    var endNode = null;
-                    var endInNode = 0;
-                    for (var n = 0; n < nodes.length; n++) {
-                      var node = nodes[n];
-                      var length = (node.nodeValue || '').length;
-                      var next = cursor + length;
-                      if (!startNode && startOffset >= cursor && startOffset <= next) {
-                        startNode = node;
-                        startInNode = Math.max(0, Math.min(length, startOffset - cursor));
-                      }
-                      if (!endNode && endOffset >= cursor && endOffset <= next) {
-                        endNode = node;
-                        endInNode = Math.max(0, Math.min(length, endOffset - cursor));
-                        break;
-                      }
-                      cursor = next;
+                  function rangeForOffsets(chapterIndex, startOffset, endOffset, sourceCfi, debugTts) {
+                    debugTts = debugTts === true;
+                    function ttsRangeLog(message) {
+                      if (debugTts) readerTtsLog(message);
                     }
-                    if (!startNode || !endNode) return null;
+                    var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
+                    if (!chapter) {
+                      ttsRangeLog('range_failed reason=missing_chapter chapter=' + chapterIndex + ' offsets=' + startOffset + '..' + endOffset + ' cfi=' + readerTtsPreview(sourceCfi, 100));
+                      return null;
+                    }
+                    var content = chapter.querySelector('.reader-content') || chapter;
+                    var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end]'));
+                    ttsRangeLog(
+                      'range_start chapter=' + chapterIndex +
+                      ' offsets=' + startOffset + '..' + endOffset +
+                      ' cfi=' + readerTtsPreview(sourceCfi, 100) +
+                      ' hosts=' + hosts.length +
+                      ' contentRange=' + numberAttribute(content, 'data-reader-content-start', 'null') + '..' + numberAttribute(content, 'data-reader-content-end', 'null') +
+                      ' pageRange=' + numberAttribute(chapter, 'data-reader-page-start', 'null') + '..' + numberAttribute(chapter, 'data-reader-page-end', 'null')
+                    );
+                    function readerTextBlock(node) {
+                      var parent = node && node.parentElement;
+                      return parent && parent.closest
+                        ? parent.closest('p, li, blockquote, pre, h1, h2, h3, h4, h5, h6, td, th, figcaption, div, section')
+                        : null;
+                    }
+                    function textHostForOffset(offset, preferEnd) {
+                      if (sourceCfi) {
+                        var cfiHosts = hosts.filter(function (host) {
+                          return host.getAttribute && host.getAttribute('data-reader-cfi') === sourceCfi;
+                        });
+                        var cfiBest = null;
+                        var cfiBestSpan = Number.MAX_SAFE_INTEGER;
+                        cfiHosts.forEach(function (host) {
+                          var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                          var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                          if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
+                          var contains = preferEnd
+                            ? offset > hostStart && offset <= hostEnd
+                            : offset >= hostStart && offset < hostEnd;
+                          if (!contains) return;
+                          var span = hostEnd - hostStart;
+                          if (span < cfiBestSpan) {
+                            cfiBest = host;
+                            cfiBestSpan = span;
+                          }
+                        });
+                        if (cfiBest) {
+                          ttsRangeLog('range_host_cfi_match offset=' + offset + ' preferEnd=' + preferEnd + ' host=' + readerElementLabel(cfiBest));
+                          return cfiBest;
+                        }
+                        if (cfiHosts.length > 0) {
+                          ttsRangeLog(
+                            'range_cfi_hosts_no_offset_match offset=' + offset +
+                            ' preferEnd=' + preferEnd +
+                            ' cfiHosts=' + cfiHosts.length +
+                            ' firstHost=' + readerElementLabel(cfiHosts[0])
+                          );
+                        } else {
+                          ttsRangeLog('range_cfi_host_missing cfi=' + readerTtsPreview(sourceCfi, 100) + ' hostCount=' + hosts.length);
+                        }
+                      }
+                      var best = null;
+                      var bestSpan = Number.MAX_SAFE_INTEGER;
+                      hosts.forEach(function (host) {
+                        var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                        var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                        if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
+                        var contains = preferEnd
+                          ? offset > hostStart && offset <= hostEnd
+                          : offset >= hostStart && offset < hostEnd;
+                        if (!contains && offset === hostStart && offset === hostEnd) contains = true;
+                        if (!contains) return;
+                        var span = hostEnd - hostStart;
+                        if (span < bestSpan) {
+                          best = host;
+                          bestSpan = span;
+                        }
+                      });
+                      if (best) return best;
+                      var fallback = null;
+                      var fallbackDistance = Number.MAX_SAFE_INTEGER;
+                      hosts.forEach(function (host) {
+                        var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                        var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                        if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
+                        var distance = preferEnd
+                          ? Math.abs(offset - hostEnd)
+                          : Math.abs(offset - hostStart);
+                        if (distance < fallbackDistance) {
+                          fallback = host;
+                          fallbackDistance = distance;
+                        }
+                      });
+                      return fallback || content;
+                    }
+                    function boundaryForOffset(offset, preferEnd) {
+                      var host = textHostForOffset(offset, preferEnd);
+                      var hasExplicitTextOffsets = host && host.getAttribute && host.hasAttribute('data-reader-text-start');
+                      var nodes = textNodesUnder(host, true);
+                      var cursor = numberAttribute(
+                        host,
+                        'data-reader-text-start',
+                        numberAttribute(content, 'data-reader-content-start', numberAttribute(chapter, 'data-reader-page-start', 0))
+                      );
+                      if (nodes.length === 0) {
+                        ttsRangeLog('boundary_failed reason=no_nodes offset=' + offset + ' preferEnd=' + preferEnd + ' host=' + readerElementLabel(host));
+                        return null;
+                      }
+                      if (!hasExplicitTextOffsets) {
+                        var normalizedTarget = Math.max(0, offset - cursor);
+                        var normalizedCursor = 0;
+                        var sawText = false;
+                        var inWhitespace = false;
+                        var lastBoundary = { node: nodes[0], offset: 0 };
+                        var previousBlock = null;
+                        for (var nn = 0; nn < nodes.length; nn++) {
+                          var value = nodes[nn].nodeValue || '';
+                          var currentBlock = readerTextBlock(nodes[nn]);
+                          if (previousBlock && currentBlock && currentBlock !== previousBlock && sawText && !inWhitespace) {
+                            if (normalizedCursor >= normalizedTarget) return { node: nodes[nn], offset: 0 };
+                            inWhitespace = true;
+                            normalizedCursor += 1;
+                            if (normalizedCursor >= normalizedTarget) return { node: nodes[nn], offset: 0 };
+                          }
+                          if (currentBlock) previousBlock = currentBlock;
+                          for (var ii = 0; ii < value.length; ii++) {
+                            var before = { node: nodes[nn], offset: ii };
+                            var after = { node: nodes[nn], offset: ii + 1 };
+                            var isWhitespace = /^\s$/.test(value[ii]);
+                            if (isWhitespace) {
+                              lastBoundary = after;
+                              if (!sawText) continue;
+                              if (!inWhitespace) {
+                                if (normalizedCursor >= normalizedTarget) return before;
+                                inWhitespace = true;
+                                normalizedCursor += 1;
+                              }
+                              continue;
+                            }
+                            if (inWhitespace) {
+                              if (normalizedCursor >= normalizedTarget) return before;
+                              inWhitespace = false;
+                            }
+                            if (normalizedCursor >= normalizedTarget) return before;
+                            sawText = true;
+                            normalizedCursor += 1;
+                            lastBoundary = after;
+                            if (normalizedCursor >= normalizedTarget) return after;
+                          }
+                        }
+                        return lastBoundary;
+                      }
+                      for (var n = 0; n < nodes.length; n++) {
+                        var node = nodes[n];
+                        var length = (node.nodeValue || '').length;
+                        var next = cursor + length;
+                        var contains = preferEnd ? offset >= cursor && offset <= next : offset >= cursor && offset < next;
+                        if (contains || (n === nodes.length - 1 && offset >= next)) {
+                          return {
+                            node: node,
+                            offset: Math.max(0, Math.min(length, offset - cursor))
+                          };
+                        }
+                        cursor = next;
+                      }
+                      var last = nodes[nodes.length - 1];
+                      return { node: last, offset: (last.nodeValue || '').length };
+                    }
+                    var startBoundary = boundaryForOffset(startOffset, false);
+                    var endBoundary = boundaryForOffset(endOffset, true);
+                    if (!startBoundary || !endBoundary) {
+                      ttsRangeLog(
+                        'range_failed reason=missing_boundary startBoundary=' + !!startBoundary +
+                        ' endBoundary=' + !!endBoundary +
+                        ' offsets=' + startOffset + '..' + endOffset +
+                        ' cfi=' + readerTtsPreview(sourceCfi, 100)
+                      );
+                      return null;
+                    }
                     var range = document.createRange();
-                    range.setStart(startNode, startInNode);
-                    range.setEnd(endNode, endInNode);
+                    try {
+                      range.setStart(startBoundary.node, startBoundary.offset);
+                      range.setEnd(endBoundary.node, endBoundary.offset);
+                    } catch (error) {
+                      range.detach && range.detach();
+                      ttsRangeLog(
+                        'range_failed reason=set_range_error error=' + readerTtsPreview(error, 140) +
+                        ' startHost=' + readerElementLabel(startBoundary.node && startBoundary.node.parentElement) +
+                        ' endHost=' + readerElementLabel(endBoundary.node && endBoundary.node.parentElement)
+                      );
+                      return null;
+                    }
+                    ttsRangeLog(
+                      'range_success text="' + readerTtsPreview(range.toString(), 140) +
+                      '" startHost=' + readerElementLabel(startBoundary.node && startBoundary.node.parentElement) +
+                      ' endHost=' + readerElementLabel(endBoundary.node && endBoundary.node.parentElement)
+                    );
                     return range;
                   }
                   function applyHighlightObject(highlight) {
@@ -791,6 +1056,120 @@ object ReaderHtmlDocumentBuilder {
                     }
                     window.scrollTo({ top: previousY, left: previousX, behavior: 'auto' });
                   };
+                  var readerTtsLocator = null;
+                  var readerTtsOverlayTimer = null;
+                  function ensureTtsLayer() {
+                    var layer = document.getElementById('reader-tts-highlight-layer');
+                    if (!layer) {
+                      layer = document.createElement('div');
+                      layer.id = 'reader-tts-highlight-layer';
+                      document.body.appendChild(layer);
+                    }
+                    return layer;
+                  }
+                  function clearTtsHighlight() {
+                    if (window.CSS && CSS.highlights && CSS.highlights.delete) {
+                      CSS.highlights.delete('reader-tts-highlight');
+                    }
+                    var layer = document.getElementById('reader-tts-highlight-layer');
+                    if (layer) layer.innerHTML = '';
+                  }
+                  function paintTtsOverlay(range) {
+                    var layer = ensureTtsLayer();
+                    layer.innerHTML = '';
+                    var rects = Array.prototype.slice.call(range.getClientRects());
+                    var painted = 0;
+                    rects.forEach(function (rect) {
+                      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+                      var marker = document.createElement('div');
+                      marker.className = 'reader-tts-highlight-rect';
+                      marker.style.left = (rect.left + window.scrollX) + 'px';
+                      marker.style.top = (rect.top + window.scrollY) + 'px';
+                      marker.style.width = rect.width + 'px';
+                      marker.style.height = rect.height + 'px';
+                      layer.appendChild(marker);
+                      painted++;
+                    });
+                    readerTtsLog('overlay_paint rects=' + rects.length + ' painted=' + painted);
+                  }
+                  function applyTtsLocator(locator) {
+                    clearTtsHighlight();
+                    readerTtsLocator = locator || null;
+                    if (!readerTtsLocator) {
+                      readerTtsLog('locator_clear');
+                      return;
+                    }
+                    var chapterIndex = readerTtsLocator.chapterIndex;
+                    var startOffset = readerTtsLocator.startOffset;
+                    var endOffset = readerTtsLocator.endOffset;
+                    var sourceCfi = readerTtsLocator.cfi;
+                    readerTtsLog(
+                      'locator_apply chapter=' + chapterIndex +
+                      ' page=' + readerTtsLocator.pageIndex +
+                      ' offsets=' + startOffset + '..' + endOffset +
+                      ' cfi=' + readerTtsPreview(sourceCfi, 100) +
+                      ' expected="' + readerTtsPreview(readerTtsLocator.textQuote, 140) + '"'
+                    );
+                    if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
+                      readerTtsLog('locator_ignored reason=invalid_locator');
+                      return;
+                    }
+                    var range = rangeForOffsets(chapterIndex, startOffset, endOffset, sourceCfi, true);
+                    var expectedText = readerTtsLocator.textQuote;
+                    var expectedNormalized = readerTtsNormalized(expectedText);
+                    var actualNormalized = range && !range.collapsed ? readerTtsNormalized(range.toString()) : '';
+                    if (expectedNormalized) {
+                      readerTtsLog(
+                        'range_expected_compare expectedChars=' + expectedNormalized.length +
+                        ' actualChars=' + actualNormalized.length +
+                        ' exact=' + (actualNormalized === expectedNormalized) +
+                        ' actual="' + readerTtsPreview(actualNormalized, 140) + '"'
+                      );
+                    }
+                    if (expectedNormalized && (!range || range.collapsed || actualNormalized !== expectedNormalized)) {
+                      var chapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
+                      var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
+                      var searchRoot = content;
+                      if (content && sourceCfi) {
+                        searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
+                      }
+                      var textRange = normalizedRangeForText(searchRoot, expectedNormalized, true);
+                      if (textRange && !textRange.collapsed) {
+                        if (range && range.detach) range.detach();
+                        range = textRange;
+                        readerTtsLog('range_expected_fallback used=true root=' + readerElementLabel(searchRoot));
+                      } else {
+                        readerTtsLog('range_expected_fallback used=false root=' + readerElementLabel(searchRoot));
+                      }
+                    }
+                    if (!range || range.collapsed) {
+                      readerTtsLog('locator_failed reason=' + (!range ? 'no_range' : 'collapsed_range'));
+                      return;
+                    }
+                    if (window.CSS && window.Highlight && CSS.highlights && CSS.highlights.set) {
+                      CSS.highlights.set('reader-tts-highlight', new Highlight(range));
+                      readerTtsLog('css_highlight_set supported=true');
+                    } else {
+                      readerTtsLog('css_highlight_set supported=false');
+                    }
+                    paintTtsOverlay(range);
+                  }
+                  window.readerSetTtsLocator = function (locator, follow) {
+                    try {
+                      applyTtsLocator(locator);
+                      if (follow && locator) scrollToLocator(locator);
+                    } catch (error) {
+                      readerTtsLog('locator_exception error=' + readerTtsPreview(error, 180));
+                    }
+                  };
+                  function refreshTtsHighlight() {
+                    if (!readerTtsLocator) return;
+                    applyTtsLocator(readerTtsLocator);
+                  }
+                  window.addEventListener('resize', function () {
+                    if (readerTtsOverlayTimer !== null) window.clearTimeout(readerTtsOverlayTimer);
+                    readerTtsOverlayTimer = window.setTimeout(refreshTtsHighlight, 80);
+                  });
                   function highlightRange(colorId) {
                     if (!restoreRange()) return;
                     var selection = window.getSelection();

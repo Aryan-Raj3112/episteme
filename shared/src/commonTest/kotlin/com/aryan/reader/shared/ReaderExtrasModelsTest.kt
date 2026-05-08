@@ -1,7 +1,12 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.PaginatedReaderState
+import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
@@ -90,6 +95,144 @@ class ReaderExtrasModelsTest {
 
         assertEquals("Second chapter text", ReaderContextExtractor.currentChapterText(paginated))
         assertEquals("Second chapter text", ReaderContextExtractor.currentChapterText(vertical))
+    }
+
+    @Test
+    fun `tts planner follows android sentence chunking`() {
+        val sentenceOne = "First " + "word ".repeat(20).trim() + "."
+        val sentenceTwo = "Second " + "word ".repeat(20).trim() + "!"
+        val sentenceThree = "Third " + "word ".repeat(20).trim() + "?"
+        val text = listOf(sentenceOne, sentenceTwo, sentenceThree).joinToString(" ")
+        val chunks = ReaderTtsPlanner.chunksForText(
+            text = text,
+            pageIndex = 4,
+            chapterIndex = 2,
+            chapterTitle = "Offsets",
+            sourceStartOffset = 12
+        )
+
+        assertEquals(
+            listOf(
+                "$sentenceOne $sentenceTwo",
+                sentenceThree
+            ),
+            chunks.map { it.text }
+        )
+        assertTrue(chunks.all { it.text.length <= READER_TTS_CHUNK_MAX_LENGTH })
+        assertEquals(chunks.indices.toList(), chunks.map { it.index })
+        assertEquals(12, chunks.first().startOffset)
+        assertEquals(12 + text.trimEnd().length, chunks.last().endOffset)
+        assertTrue(chunks.all { it.pageIndex == 4 && it.chapterIndex == 2 })
+    }
+
+    @Test
+    fun `tts planner keeps android long sentence behavior`() {
+        val text = "word ".repeat(80).trim()
+        val chunks = ReaderTtsPlanner.chunksForText(
+            text = text,
+            pageIndex = 4,
+            chapterIndex = 2,
+            chapterTitle = "Offsets"
+        )
+
+        assertEquals(listOf(text), chunks.map { it.text })
+    }
+
+    @Test
+    fun `tts planner can read page chapter or onward from current location`() {
+        val book = SharedEpubBook(
+            id = "tts",
+            fileName = "tts.epub",
+            title = "TTS",
+            chapters = listOf(
+                SharedEpubChapter("one", "One", "First page text."),
+                SharedEpubChapter("two", "Two", "Second page text.")
+            )
+        )
+        val session = ReaderEngine().createSession(book)
+
+        assertEquals(listOf(0), ReaderTtsPlanner.chunksForCurrentPage(session).map { it.chapterIndex }.distinct())
+        assertEquals(listOf(0), ReaderTtsPlanner.chunksForCurrentChapter(session).map { it.chapterIndex }.distinct())
+        assertEquals(listOf(0, 1), ReaderTtsPlanner.chunksFromCurrentLocation(session).map { it.chapterIndex }.distinct())
+    }
+
+    @Test
+    fun `tts planner maps trimmed page text back to source offsets`() {
+        val source = "Intro.\n\n   Leading words continue."
+        val book = SharedEpubBook(
+            id = "tts-offsets",
+            fileName = "tts-offsets.epub",
+            title = "TTS offsets",
+            chapters = listOf(SharedEpubChapter("one", "One", source))
+        )
+        val page = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "Leading words continue.",
+            startOffset = 8,
+            endOffset = source.length
+        )
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(
+                book = book,
+                pages = listOf(page),
+                currentPageIndex = 0
+            )
+        )
+
+        val chunk = ReaderTtsPlanner.chunksForCurrentPage(session).first()
+
+        assertEquals(source.indexOf("Leading"), chunk.startOffset)
+        assertEquals("Leading words continue.", source.substring(chunk.startOffset, chunk.endOffset))
+    }
+
+    @Test
+    fun `tts planner prefers semantic source cfi chunks when available`() {
+        val source = "First sentence. Second sentence."
+        val semanticBlock = SemanticParagraph(
+            text = source,
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = null,
+            cfi = "/4/2",
+            startCharOffsetInSource = 5,
+            blockIndex = 1
+        )
+        val book = SharedEpubBook(
+            id = "tts-semantic",
+            fileName = "tts-semantic.epub",
+            title = "TTS semantic",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = source,
+                    semanticBlocks = listOf(semanticBlock)
+                )
+            )
+        )
+        val page = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = source,
+            startOffset = 0,
+            endOffset = source.length + 5
+        )
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(
+                book = book,
+                pages = listOf(page),
+                currentPageIndex = 0
+            )
+        )
+
+        val chunks = ReaderTtsPlanner.chunksForCurrentPage(session)
+
+        assertEquals("/4/2", chunks.first().sourceCfi)
+        assertEquals(5, chunks.first().startOffset)
+        assertEquals("/4/2", chunks.first().toLocator().cfi)
     }
 
     @Test

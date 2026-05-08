@@ -1,10 +1,20 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedEpubChapter
 
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
 const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Kore"
+const val READER_TTS_CHUNK_MAX_LENGTH = 250
 
 enum class ReaderAiFeature(val displayName: String) {
     DEFINE("Smart dictionary"),
@@ -130,12 +140,343 @@ data class ReaderAutoScrollState(
     }
 }
 
+enum class ReaderTtsReadScope(val label: String) {
+    PAGE("Page"),
+    CHAPTER("Chapter"),
+    BOOK("From here")
+}
+
+data class ReaderTtsChunk(
+    val index: Int,
+    val pageIndex: Int,
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val text: String,
+    val startOffset: Int,
+    val endOffset: Int,
+    val sourceCfi: String? = null
+) {
+    fun toLocator(): ReaderLocator {
+        val boundedEnd = endOffset.coerceAtLeast(startOffset)
+        return ReaderLocator(
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            startOffset = startOffset,
+            endOffset = boundedEnd,
+            textQuote = text,
+            cfi = sourceCfi ?: "desktop:$chapterIndex:$startOffset:$boundedEnd"
+        )
+    }
+
+    fun toHighlight(sessionId: Long): UserHighlight {
+        val locator = toLocator()
+        return UserHighlight(
+            id = "tts_${sessionId}_$index",
+            cfi = locator.cfi.orEmpty(),
+            text = text,
+            color = HighlightColor.YELLOW,
+            chapterIndex = chapterIndex,
+            locator = locator
+        )
+    }
+}
+
+data class ReaderTtsProgress(
+    val sessionId: Long = 0L,
+    val scope: ReaderTtsReadScope = ReaderTtsReadScope.PAGE,
+    val chunks: List<ReaderTtsChunk> = emptyList(),
+    val currentChunkIndex: Int = -1
+) {
+    val currentChunk: ReaderTtsChunk?
+        get() = chunks.getOrNull(currentChunkIndex)
+
+    val isActive: Boolean
+        get() = currentChunk != null
+
+    val currentPositionLabel: String?
+        get() = currentChunk?.let { chunk ->
+            "Part ${currentChunkIndex + 1}/${chunks.size} - ${chunk.chapterTitle.ifBlank { scope.label }}"
+        }
+}
+
+object ReaderTtsPlanner {
+    fun chunksForCurrentPage(session: ReaderSessionState): List<ReaderTtsChunk> {
+        val page = session.reader.currentPage ?: return emptyList()
+        return chunksForPages(session.reader.book, listOf(page))
+    }
+
+    fun chunksForCurrentChapter(session: ReaderSessionState): List<ReaderTtsChunk> {
+        val page = session.reader.currentPage ?: return emptyList()
+        return chunksForPages(
+            session.reader.book,
+            session.reader.pages
+                .asSequence()
+                .filter { it.pageIndex >= page.pageIndex && it.chapterIndex == page.chapterIndex }
+                .toList()
+        )
+    }
+
+    fun chunksFromCurrentLocation(session: ReaderSessionState): List<ReaderTtsChunk> {
+        val pageIndex = session.reader.currentPageIndex
+        return chunksForPages(session.reader.book, session.reader.pages.drop(pageIndex.coerceAtLeast(0)))
+    }
+
+    fun chunksForText(
+        text: String,
+        pageIndex: Int,
+        chapterIndex: Int,
+        chapterTitle: String,
+        sourceStartOffset: Int = 0
+    ): List<ReaderTtsChunk> {
+        return splitTextIntoRanges(text).mapIndexed { index, range ->
+            ReaderTtsChunk(
+                index = index,
+                pageIndex = pageIndex,
+                chapterIndex = chapterIndex,
+                chapterTitle = chapterTitle,
+                text = range.text,
+                startOffset = sourceStartOffset + range.start,
+                endOffset = sourceStartOffset + range.end
+            )
+        }
+    }
+
+    private fun chunksForPages(book: SharedEpubBook, pages: List<ReaderPage>): List<ReaderTtsChunk> {
+        var nextIndex = 0
+        return pages
+            .groupBy { it.chapterIndex }
+            .entries
+            .sortedBy { (chapterIndex, _) ->
+                pages.indexOfFirst { it.chapterIndex == chapterIndex }.takeIf { it >= 0 } ?: Int.MAX_VALUE
+            }
+            .flatMap { chapterPages ->
+                val chapter = book.chapters.getOrNull(chapterPages.key)
+                val semanticChunks = chapter
+                    ?.let { chunksForSemanticPages(it, chapterPages.value) }
+                    .orEmpty()
+                if (semanticChunks.isNotEmpty()) {
+                    semanticChunks
+                } else {
+                    chunksForPlainPages(book, chapterPages.value)
+                }
+            }
+            .distinctBy { "${it.sourceCfi}:${it.startOffset}:${it.endOffset}:${it.text}" }
+            .map { it.copy(index = nextIndex++) }
+            .toList()
+    }
+
+    private fun chunksForPlainPages(book: SharedEpubBook, pages: List<ReaderPage>): List<ReaderTtsChunk> {
+        return pages.flatMap { page ->
+            val chapterText = book.chapters
+                .getOrNull(page.chapterIndex)
+                ?.normalizedTtsSourceText()
+                .orEmpty()
+            val sourceStartOffset = page.sourceTextStartOffset(chapterText)
+            splitTextIntoRanges(page.text).map { range ->
+                ReaderTtsChunk(
+                    index = 0,
+                    pageIndex = page.pageIndex,
+                    chapterIndex = page.chapterIndex,
+                    chapterTitle = page.chapterTitle,
+                    text = range.text,
+                    startOffset = sourceStartOffset + range.start,
+                    endOffset = sourceStartOffset + range.end
+                )
+            }
+        }
+    }
+
+    private fun chunksForSemanticPages(
+        chapter: SharedEpubChapter,
+        pages: List<ReaderPage>
+    ): List<ReaderTtsChunk> {
+        if (chapter.semanticBlocks.isEmpty() || pages.isEmpty()) return emptyList()
+        val ranges = pages.map { it.startOffset to it.endOffset }
+        val textBlocks = chapter.semanticBlocks.semanticTextBlocks()
+            .filter { block ->
+                block.cfi != null &&
+                    block.text.isNotBlank() &&
+                    ranges.any { (start, end) -> block.intersects(start, end) }
+            }
+        return textBlocks.flatMap { block ->
+            val blockStart = block.startCharOffsetInSource.coerceAtLeast(0)
+            splitTextIntoRanges(block.text).mapNotNull { range ->
+                val chunkStart = blockStart + range.start
+                val chunkEnd = blockStart + range.end
+                if (ranges.none { (start, end) -> chunkStart < end && chunkEnd > start }) return@mapNotNull null
+                val page = pages.firstOrNull { it.intersects(chunkStart, chunkEnd) }
+                    ?: pages.minByOrNull { kotlin.math.abs(it.startOffset - chunkStart) }
+                    ?: return@mapNotNull null
+                ReaderTtsChunk(
+                    index = 0,
+                    pageIndex = page.pageIndex,
+                    chapterIndex = page.chapterIndex,
+                    chapterTitle = page.chapterTitle,
+                    text = range.text,
+                    startOffset = chunkStart,
+                    endOffset = chunkEnd,
+                    sourceCfi = block.cfi
+                )
+            }
+        }
+    }
+
+    private fun List<SemanticBlock>.semanticTextBlocks(): List<SemanticTextBlock> {
+        val blocks = mutableListOf<SemanticTextBlock>()
+        fun visit(block: SemanticBlock) {
+            when (block) {
+                is SemanticTextBlock -> blocks += block
+                is SemanticFlexContainer -> block.children.forEach(::visit)
+                is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> cell.content.forEach(::visit) } }
+                is SemanticList -> block.items.forEach(::visit)
+                is SemanticWrappingBlock -> block.paragraphsToWrap.forEach(::visit)
+                else -> Unit
+            }
+        }
+        forEach(::visit)
+        return blocks
+    }
+
+    private fun SemanticTextBlock.intersects(startOffset: Int, endOffset: Int): Boolean {
+        val start = startCharOffsetInSource
+        val end = start + text.length
+        return start < endOffset && end > startOffset
+    }
+
+    private fun ReaderPage.intersects(startOffset: Int, endOffset: Int): Boolean {
+        return startOffset < endOffset && startOffset < this.endOffset && endOffset > this.startOffset
+    }
+
+    private fun ReaderPage.sourceTextStartOffset(chapterText: String): Int {
+        if (chapterText.isBlank()) return startOffset
+        val boundedStart = startOffset.coerceIn(0, chapterText.length)
+        val boundedEnd = endOffset.coerceIn(boundedStart, chapterText.length)
+        val pageSlice = chapterText.substring(boundedStart, boundedEnd)
+        val trimAdjustedStart = boundedStart + pageSlice.leadingWhitespaceLength()
+        val exactTextStart = text
+            .takeIf { it.isNotBlank() }
+            ?.let { needle ->
+                chapterText.indexOf(needle, startIndex = boundedStart)
+                    .takeIf { found -> found >= boundedStart && found + needle.length <= boundedEnd }
+            }
+        if (exactTextStart != null) return exactTextStart
+        val trimmedTextStart = text
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?.let { needle ->
+                chapterText.indexOf(needle, startIndex = boundedStart)
+                    .takeIf { found -> found >= boundedStart && found + needle.length <= boundedEnd }
+            }
+        return trimmedTextStart ?: trimAdjustedStart
+    }
+
+    private fun String.leadingWhitespaceLength(): Int {
+        return length - trimStart().length
+    }
+
+    private fun SharedEpubChapter.normalizedTtsSourceText(): String {
+        return plainText
+            .replace("\r\n", "\n")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    private fun splitTextIntoRanges(
+        text: String,
+        maxLength: Int = READER_TTS_CHUNK_MAX_LENGTH
+    ): List<ReaderTtsTextRange> {
+        val sourceStart = text.indexOfFirst { !it.isWhitespace() }
+        if (sourceStart < 0) return emptyList()
+        val sourceEnd = text.indexOfLast { !it.isWhitespace() } + 1
+        val source = text.substring(sourceStart, sourceEnd)
+        val sentenceRanges = androidStyleSentenceRanges(source, sourceStart)
+        if (sentenceRanges.isEmpty()) return emptyList()
+
+        val chunks = mutableListOf<ReaderTtsTextRange>()
+        var currentText = StringBuilder()
+        var currentStart = -1
+        var currentEnd = -1
+        fun flushCurrent() {
+            if (currentText.isNotEmpty() && currentStart >= 0 && currentEnd >= currentStart) {
+                chunks += ReaderTtsTextRange(
+                    text = currentText.toString(),
+                    start = currentStart,
+                    end = currentStart + currentText.length
+                )
+            }
+            currentText = StringBuilder()
+            currentStart = -1
+            currentEnd = -1
+        }
+
+        for (sentence in sentenceRanges) {
+            if (sentence.text.length > maxLength) {
+                flushCurrent()
+                chunks += sentence
+                continue
+            }
+            if (currentText.isNotEmpty() && currentText.length + sentence.text.length + 1 > maxLength) {
+                flushCurrent()
+                currentText.append(sentence.text)
+                currentStart = sentence.start
+                currentEnd = sentence.end
+            } else {
+                if (currentText.isNotEmpty()) currentText.append(" ")
+                currentText.append(sentence.text)
+                if (currentStart < 0) currentStart = sentence.start
+                currentEnd = sentence.end
+            }
+        }
+        flushCurrent()
+        return chunks
+    }
+
+    private fun androidStyleSentenceRanges(source: String, sourceOffset: Int): List<ReaderTtsTextRange> {
+        val sentenceBoundaryRegex = Regex("""(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?!\n])\s+""")
+        val ranges = mutableListOf<ReaderTtsTextRange>()
+        var start = 0
+        sentenceBoundaryRegex.findAll(source).forEach { match ->
+            val end = match.range.first
+            if (end > start) {
+                source.substring(start, end)
+                    .takeIf { it.isNotBlank() }
+                    ?.let { sentence ->
+                        ranges += ReaderTtsTextRange(
+                            text = sentence,
+                            start = sourceOffset + start,
+                            end = sourceOffset + end
+                        )
+                    }
+            }
+            start = match.range.last + 1
+        }
+        if (start < source.length) {
+            val sentence = source.substring(start)
+            if (sentence.isNotBlank()) {
+                ranges += ReaderTtsTextRange(
+                    text = sentence,
+                    start = sourceOffset + start,
+                    end = sourceOffset + source.length
+                )
+            }
+        }
+        return ranges
+    }
+
+    private data class ReaderTtsTextRange(
+        val text: String,
+        val start: Int,
+        val end: Int
+    )
+}
+
 data class ReaderCloudTtsState(
     val isAvailable: Boolean = false,
     val isPlaying: Boolean = false,
     val isLoading: Boolean = false,
     val statusMessage: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val progress: ReaderTtsProgress = ReaderTtsProgress()
 )
 
 data class ReaderAiResultState(

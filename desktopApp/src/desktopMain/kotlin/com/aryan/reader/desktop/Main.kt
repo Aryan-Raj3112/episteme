@@ -139,6 +139,10 @@ import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFolderPathResolver
@@ -576,6 +580,38 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
+    fun syncBookSidecars(book: BookItem) {
+        if (book.sourceFolder.isNullOrBlank()) return
+        scope.launch(Dispatchers.IO) {
+            DesktopLocalFolderSync.saveBookSidecars(book)
+        }
+    }
+
+    fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
+        activeReaderBookId?.let { bookId ->
+            var updatedBook: BookItem? = null
+            val next = state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                    if (book.id == bookId) {
+                        book.copy(
+                            progressPercentage = progress,
+                            timestamp = System.currentTimeMillis(),
+                            isRecent = true,
+                            lastPageIndex = pageIndex,
+                            readerSettings = session?.reader?.settings ?: book.readerSettings,
+                            readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
+                            readerHighlights = session?.highlights ?: book.readerHighlights
+                        ).also { updatedBook = it }
+                    } else {
+                        book
+                    }
+                }
+            )
+            updateState(next)
+            updatedBook?.let(::syncBookSidecars)
+        }
+    }
+
     fun stopReaderCloudTts() {
         logDesktopTts("reader_stop_requested")
         readerTtsJob?.cancel()
@@ -588,6 +624,114 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     statusMessage = "Stopped"
                 )
             )
+        }
+    }
+
+    fun startReaderCloudTts(readScope: ReaderTtsReadScope, chunks: List<ReaderTtsChunk>) {
+        val ttsChunks = chunks.filter { it.text.isNotBlank() }
+        val settings = aiByokSettings.sanitized()
+        logDesktopTts(
+            "reader_sequence_toggle scope=${readScope.name} chunks=${ttsChunks.size} " +
+                "isPlaying=${readerExtrasState.cloudTts.isPlaying} isLoading=${readerExtrasState.cloudTts.isLoading} " +
+                "keyPresent=${settings.geminiKey.isNotBlank()} ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" " +
+                "available=${desktopTtsAdapter.isAvailable}"
+        )
+        if (readerExtrasState.cloudTts.isPlaying || readerExtrasState.cloudTts.isLoading) {
+            stopReaderCloudTts()
+            return
+        }
+        if (ttsChunks.isEmpty()) {
+            logDesktopTts("reader_sequence_ignored reason=blank_text scope=${readScope.name}")
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = readerExtrasState.cloudTts.copy(
+                    errorMessage = "There is no text here to read."
+                )
+            )
+            return
+        }
+        if (!desktopTtsAdapter.isAvailable) {
+            logDesktopTts("reader_sequence_blocked reason=adapter_unavailable")
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = false,
+                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+                )
+            )
+            return
+        }
+        val ttsSessionId = System.currentTimeMillis()
+        val initialProgress = ReaderTtsProgress(
+            sessionId = ttsSessionId,
+            scope = readScope,
+            chunks = ttsChunks,
+            currentChunkIndex = -1
+        )
+        readerExtrasState = readerExtrasState.copy(
+            cloudTts = ReaderCloudTtsState(
+                isAvailable = true,
+                isLoading = true,
+                statusMessage = "Preparing ${readScope.label.lowercase()}",
+                progress = initialProgress
+            )
+        )
+        readerTtsJob = scope.launch {
+            runCatching {
+                logDesktopTts("reader_sequence_start scope=${readScope.name} chunks=${ttsChunks.size}")
+                desktopTtsAdapter.speakSequence(ttsChunks.map { it.text }) { index ->
+                    if (!isActive) throw kotlinx.coroutines.CancellationException("Reader cloud TTS stopped")
+                    val chunk = ttsChunks[index]
+                    val progress = initialProgress.copy(currentChunkIndex = index)
+                    if (readerSession.reader.currentPageIndex != chunk.pageIndex) {
+                        val updatedSession = readerEngine.goToPage(readerSession, chunk.pageIndex)
+                        readerSession = updatedSession
+                        updateActiveBookReadingState(
+                            pageIndex = updatedSession.reader.currentPageIndex,
+                            progress = updatedSession.reader.progress,
+                            session = updatedSession
+                        )
+                    }
+                    readerExtrasState = readerExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = true,
+                            isPlaying = true,
+                            statusMessage = progress.currentPositionLabel ?: "Reading",
+                            progress = progress
+                        )
+                    )
+                    logDesktopTts(
+                        "reader_chunk_start scope=${readScope.name} index=${index + 1}/${ttsChunks.size} " +
+                        "page=${chunk.pageIndex + 1} chapter=${chunk.chapterIndex} offsets=${chunk.startOffset}..${chunk.endOffset} " +
+                            "sourceCfi=\"${chunk.sourceCfi.orEmpty().logPreview()}\" chars=${chunk.text.length} " +
+                            "text=\"${chunk.text.logPreview()}\""
+                    )
+                }
+            }.onFailure { error ->
+                logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
+                if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
+                if (error is kotlinx.coroutines.CancellationException) {
+                    readerExtrasState = readerExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            statusMessage = "Stopped"
+                        )
+                    )
+                } else {
+                    readerExtrasState = readerExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            errorMessage = error.message ?: "Cloud TTS failed."
+                        )
+                    )
+                }
+            }.onSuccess {
+                logDesktopTts("reader_sequence_success chunks=${ttsChunks.size}")
+                readerExtrasState = readerExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = aiByokSettings.isCloudTtsAvailable,
+                        statusMessage = "Finished"
+                    )
+                )
+            }
         }
     }
 
@@ -798,38 +942,6 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             return
         }
         syncLocalFolders(targetFolder = folder)
-    }
-
-    fun syncBookSidecars(book: BookItem) {
-        if (book.sourceFolder.isNullOrBlank()) return
-        scope.launch(Dispatchers.IO) {
-            DesktopLocalFolderSync.saveBookSidecars(book)
-        }
-    }
-
-    fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
-        activeReaderBookId?.let { bookId ->
-            var updatedBook: BookItem? = null
-            val next = state.copy(
-                rawLibraryBooks = state.rawLibraryBooks.map { book ->
-                    if (book.id == bookId) {
-                        book.copy(
-                            progressPercentage = progress,
-                            timestamp = System.currentTimeMillis(),
-                            isRecent = true,
-                            lastPageIndex = pageIndex,
-                            readerSettings = session?.reader?.settings ?: book.readerSettings,
-                            readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
-                            readerHighlights = session?.highlights ?: book.readerHighlights
-                        ).also { updatedBook = it }
-                    } else {
-                        book
-                    }
-                }
-            )
-            updateState(next)
-            updatedBook?.let(::syncBookSidecars)
-        }
     }
 
     fun removeSelectedBooks() {
@@ -1434,6 +1546,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     onExternalLookup = ::openReaderExternalLookup,
                                     onAiAction = ::runReaderAiAction,
                                     onCloudTtsToggle = ::toggleReaderCloudTts,
+                                    onCloudTtsStart = ::startReaderCloudTts,
                                     onCloudTtsStop = ::stopReaderCloudTts,
                                     onAutoScrollChange = ::updateReaderAutoScroll,
                                     webViewRuntimeState = webViewRuntimeState
@@ -2419,6 +2532,7 @@ private fun PdfReaderScreen(
             ?: selectedAnnotation?.takeIf { it.kind == PdfAnnotationKind.TEXT }?.sharedPdfTextStyle()
             ?: textStyleConfig
     }
+    val activePdfTtsChunk = pdfExtrasState.cloudTts.progress.currentChunk
 
     DesktopExternalLinkDialog(
         url = externalLinkDialogUrl,
@@ -2711,6 +2825,31 @@ private fun PdfReaderScreen(
         return runCatching { document.textPageData(pageIndex).text.trim().take(maxChars) }.getOrDefault("")
     }
 
+    fun pdfTtsChunksForPages(pageIndices: Iterable<Int>): List<ReaderTtsChunk> {
+        val chunks = mutableListOf<ReaderTtsChunk>()
+        pageIndices.forEach { targetPage ->
+            if (targetPage !in 0 until document.pageCount) return@forEach
+            val pageText = runCatching { document.textPageData(targetPage).text }.getOrDefault("")
+            ReaderTtsPlanner.chunksForText(
+                text = pageText,
+                pageIndex = targetPage,
+                chapterIndex = 0,
+                chapterTitle = "Page ${targetPage + 1}"
+            ).forEach { chunk ->
+                chunks += chunk.copy(index = chunks.size)
+            }
+        }
+        return chunks
+    }
+
+    fun pdfTtsChunksForScope(readScope: ReaderTtsReadScope, startPageIndex: Int = pageIndex): List<ReaderTtsChunk> {
+        return when (readScope) {
+            ReaderTtsReadScope.PAGE -> pdfTtsChunksForPages(listOf(startPageIndex))
+            ReaderTtsReadScope.CHAPTER,
+            ReaderTtsReadScope.BOOK -> pdfTtsChunksForPages(startPageIndex until document.pageCount)
+        }
+    }
+
     fun pdfTextBeforeCurrentPage(maxChars: Int = 24_000): String {
         val indexedText = document.indexedSearchPages()
             .filter { it.pageIndex <= pageIndex }
@@ -2762,6 +2901,106 @@ private fun PdfReaderScreen(
                     statusMessage = "Stopped"
                 )
             )
+        }
+    }
+
+    fun startPdfCloudTts(readScope: ReaderTtsReadScope) {
+        val settings = aiByokSettings.sanitized()
+        val startPageIndex = pageIndex
+        logDesktopTts(
+            "pdf_sequence_toggle scope=${readScope.name} startPage=${startPageIndex + 1} " +
+                "isPlaying=${pdfExtrasState.cloudTts.isPlaying} isLoading=${pdfExtrasState.cloudTts.isLoading} " +
+                "keyPresent=${settings.geminiKey.isNotBlank()} ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" " +
+                "available=${ttsAdapter.isAvailable}"
+        )
+        if (pdfExtrasState.cloudTts.isPlaying || pdfExtrasState.cloudTts.isLoading) {
+            stopPdfCloudTts()
+            return
+        }
+        if (!ttsAdapter.isAvailable) {
+            logDesktopTts("pdf_sequence_blocked reason=adapter_unavailable")
+            pdfExtrasState = pdfExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = false,
+                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+                )
+            )
+            return
+        }
+        val ttsSessionId = System.currentTimeMillis()
+        pdfExtrasState = pdfExtrasState.copy(
+            cloudTts = ReaderCloudTtsState(
+                isAvailable = true,
+                isLoading = true,
+                statusMessage = "Preparing ${readScope.label.lowercase()}"
+            )
+        )
+        val noTextMessage = "There is no text here to read."
+        pdfTtsJob = pdfScope.launch {
+            var completedChunkCount = 0
+            runCatching {
+                val ttsChunks = withContext(Dispatchers.IO) {
+                    pdfTtsChunksForScope(readScope, startPageIndex).filter { it.text.isNotBlank() }
+                }
+                if (ttsChunks.isEmpty()) {
+                    logDesktopTts("pdf_sequence_ignored reason=blank_text scope=${readScope.name}")
+                    throw IllegalStateException(noTextMessage)
+                }
+                val initialProgress = ReaderTtsProgress(
+                    sessionId = ttsSessionId,
+                    scope = readScope,
+                    chunks = ttsChunks,
+                    currentChunkIndex = -1
+                )
+                logDesktopTts("pdf_sequence_start scope=${readScope.name} chunks=${ttsChunks.size}")
+                ttsAdapter.speakSequence(ttsChunks.map { it.text }) { index ->
+                    if (!isActive) throw kotlinx.coroutines.CancellationException("PDF cloud TTS stopped")
+                    val chunk = ttsChunks[index]
+                    val progress = initialProgress.copy(currentChunkIndex = index)
+                    if (chunk.pageIndex != pdfState.pageIndex) {
+                        goToPage(chunk.pageIndex, recordJump = false)
+                    }
+                    pdfExtrasState = pdfExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = true,
+                            isPlaying = true,
+                            statusMessage = progress.currentPositionLabel ?: "Reading",
+                            progress = progress
+                        )
+                    )
+                    logDesktopTts(
+                        "pdf_chunk_start scope=${readScope.name} index=${index + 1}/${ttsChunks.size} " +
+                            "page=${chunk.pageIndex + 1} offsets=${chunk.startOffset}..${chunk.endOffset} chars=${chunk.text.length}"
+                    )
+                    completedChunkCount = index + 1
+                }
+            }.onFailure { error ->
+                logDesktopTts("pdf_sequence_failed error=\"${error.desktopTtsSummary()}\"")
+                if (error !is kotlinx.coroutines.CancellationException && error.message != noTextMessage) error.printStackTrace()
+                if (error is kotlinx.coroutines.CancellationException) {
+                    pdfExtrasState = pdfExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            statusMessage = "Stopped"
+                        )
+                    )
+                } else {
+                    pdfExtrasState = pdfExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            errorMessage = error.message ?: "Cloud TTS failed."
+                        )
+                    )
+                }
+            }.onSuccess {
+                logDesktopTts("pdf_sequence_success chunks=$completedChunkCount")
+                pdfExtrasState = pdfExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = aiByokSettings.isCloudTtsAvailable,
+                        statusMessage = "Finished"
+                    )
+                )
+            }
         }
     }
 
@@ -3400,7 +3639,7 @@ private fun PdfReaderScreen(
                             aiByokSettings = aiByokSettings,
                             onExternalLookup = ::openPdfExternalLookup,
                             onAiAction = ::runPdfAiAction,
-                            onCloudTtsToggle = ::togglePdfCloudTts,
+                            onCloudTtsStart = ::startPdfCloudTts,
                             onCloudTtsStop = ::stopPdfCloudTts,
                             onAutoScrollChange = ::updatePdfAutoScroll
                         )
@@ -3507,6 +3746,7 @@ private fun PdfReaderScreen(
                                 searchResults = searchResults,
                                 activeSearchIndex = activeSearchIndex,
                                 searchHighlightMode = searchHighlightMode,
+                                activeTtsChunk = activePdfTtsChunk,
                                 searchQuery = searchQuery,
                                 isTextSelectionMode = isTextSelectionMode,
                                 selectedAnnotationId = selectedAnnotationId,
@@ -3624,6 +3864,28 @@ private fun PdfReaderScreen(
                                         .filter { it.right > it.left && it.bottom > it.top }
                                         .mergePdfBoundsByLine()
                                 }
+                            }
+                        }
+                        val ttsHighlightBounds: List<PdfPageBounds> = remember(
+                            document.path,
+                            activePdfTtsChunk,
+                            pageIndex,
+                            pageCanvasSize
+                        ) {
+                            val chunk = activePdfTtsChunk?.takeIf { it.pageIndex == pageIndex }
+                            if (chunk == null || pageCanvasSize.width <= 0 || pageCanvasSize.height <= 0 || chunk.endOffset <= chunk.startOffset) {
+                                emptyList()
+                            } else {
+                                DesktopPdfium.textRectsForRange(
+                                    document = document,
+                                    pageIndex = pageIndex,
+                                    startIndex = chunk.startOffset,
+                                    endIndex = chunk.endOffset - 1,
+                                    viewportWidth = pageCanvasSize.width,
+                                    viewportHeight = pageCanvasSize.height
+                                ).map { it.toPdfPageBounds() }
+                                    .filter { it.right > it.left && it.bottom > it.top }
+                                    .mergePdfBoundsByLine()
                             }
                         }
                         Box(
@@ -3904,6 +4166,11 @@ private fun PdfReaderScreen(
                                     SearchHighlightMode.ALL -> Color(0x55FDD835)
                                     SearchHighlightMode.FOCUSED -> Color(0x88FF9800)
                                 }
+                            )
+                            PdfSearchHighlightOverlay(
+                                bounds = ttsHighlightBounds,
+                                canvasSize = pageCanvasSize,
+                                color = Color(0x887DD3FC)
                             )
                             PdfTextSelectionOverlay(
                                 selection = textSelection,
@@ -4243,7 +4510,7 @@ private fun DesktopPdfExtrasPanel(
     aiByokSettings: ReaderAiByokSettings,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
-    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit
 ) {
@@ -4275,6 +4542,7 @@ private fun DesktopPdfExtrasPanel(
             onValueChange = { onAutoScrollChange(autoScroll.copy(speed = it).sanitized()) },
             valueRange = 12f..160f
         )
+        val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -4289,18 +4557,37 @@ private fun DesktopPdfExtrasPanel(
                 extrasState.cloudTts.errorMessage?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
+                val statusMessage = extrasState.cloudTts.progress.currentPositionLabel
+                    ?: extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
+                statusMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             TextButton(
-                enabled = settings.isCloudTtsAvailable || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying,
+                enabled = settings.isCloudTtsAvailable || ttsBusy,
                 onClick = {
-                    if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) {
+                    if (ttsBusy) {
                         onCloudTtsStop()
                     } else {
-                        onCloudTtsToggle(pageText)
+                        onCloudTtsStart(ReaderTtsReadScope.BOOK)
                     }
                 }
             ) {
-                Text(if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) "Stop" else "Read")
+                Text(if (ttsBusy) "Stop" else "Read")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            TextButton(
+                enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
+                onClick = { onCloudTtsStart(ReaderTtsReadScope.PAGE) }
+            ) {
+                Text("Page")
+            }
+            TextButton(
+                enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
+                onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
+            ) {
+                Text("From here")
             }
         }
         if (settings.areReaderAiFeaturesAvailable) {
@@ -4448,6 +4735,7 @@ private fun DesktopVerticalPdfPage(
     searchResults: List<SharedPdfSearchResult>,
     activeSearchIndex: Int,
     searchHighlightMode: SearchHighlightMode,
+    activeTtsChunk: ReaderTtsChunk?,
     searchQuery: String,
     isTextSelectionMode: Boolean,
     selectedAnnotationId: String?,
@@ -4899,6 +5187,28 @@ private fun DesktopVerticalPdfPage(
                             }
                         }
                     }
+                    val ttsHighlightBounds: List<PdfPageBounds> = remember(
+                        document.path,
+                        activeTtsChunk,
+                        pageIndex,
+                        pageCanvasSize
+                    ) {
+                        val chunk = activeTtsChunk?.takeIf { it.pageIndex == pageIndex }
+                        if (chunk == null || pageCanvasSize.width <= 0 || pageCanvasSize.height <= 0 || chunk.endOffset <= chunk.startOffset) {
+                            emptyList()
+                        } else {
+                            DesktopPdfium.textRectsForRange(
+                                document = document,
+                                pageIndex = pageIndex,
+                                startIndex = chunk.startOffset,
+                                endIndex = chunk.endOffset - 1,
+                                viewportWidth = pageCanvasSize.width,
+                                viewportHeight = pageCanvasSize.height
+                            ).map { it.toPdfPageBounds() }
+                                .filter { it.right > it.left && it.bottom > it.top }
+                                .mergePdfBoundsByLine()
+                        }
+                    }
 
                     Image(
                         bitmap = pageRender.image,
@@ -4920,6 +5230,11 @@ private fun DesktopVerticalPdfPage(
                             SearchHighlightMode.ALL -> Color(0x55FDD835)
                             SearchHighlightMode.FOCUSED -> Color(0x88FF9800)
                         }
+                    )
+                    PdfSearchHighlightOverlay(
+                        bounds = ttsHighlightBounds,
+                        canvasSize = pageCanvasSize,
+                        color = Color(0x887DD3FC)
                     )
                     PdfTextSelectionOverlay(
                         selection = textSelection,
@@ -5619,6 +5934,7 @@ private fun ReaderScreen(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
@@ -5646,7 +5962,7 @@ private fun ReaderScreen(
         aiByokSettings = aiByokSettings,
         onExternalLookup = onExternalLookup,
         onAiAction = onAiAction,
-        onCloudTtsToggle = onCloudTtsToggle,
+        onCloudTtsStart = onCloudTtsStart,
         onCloudTtsStop = onCloudTtsStop,
         onAutoScrollChange = onAutoScrollChange
     ) { html, background, navigationTarget, highlights, onVisiblePageChanged ->
@@ -5804,6 +6120,17 @@ private fun DesktopEpubWebView(
                 }
             }
         }
+        val ttsHighlightLogHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerTtsHighlightLog"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                logDesktopTts("epub_highlight_js ${message.params.logPreview(500)}")
+            }
+        }
         val linkHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerLinkClicked"
 
@@ -5828,11 +6155,13 @@ private fun DesktopEpubWebView(
         bridge.register(highlightHandler)
         bridge.register(positionHandler)
         bridge.register(selectionActionHandler)
+        bridge.register(ttsHighlightLogHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
             bridge.unregister(positionHandler)
             bridge.unregister(selectionActionHandler)
+            bridge.unregister(ttsHighlightLogHandler)
             bridge.unregister(linkHandler)
         }
     }
@@ -5880,6 +6209,32 @@ private fun DesktopEpubWebView(
                 if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
                 val locator = navigationTarget.locator ?: return@LaunchedEffect
                 navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
+            }
+
+            LaunchedEffect(
+                navigationTarget.ttsRequestId,
+                navigationTarget.ttsLocator,
+                navigationTarget.readingMode,
+                state.loadingState
+            ) {
+                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+                val locator = navigationTarget.ttsLocator
+                val command = if (locator == null) {
+                    logDesktopTts(
+                        "epub_highlight_command clear mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId}"
+                    )
+                    "window.readerSetTtsLocator && window.readerSetTtsLocator(null, false);"
+                } else {
+                    val follow = navigationTarget.readingMode == com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL
+                    logDesktopTts(
+                        "epub_highlight_command set mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId} " +
+                            "follow=$follow chapter=${locator.chapterIndex} page=${locator.pageIndex} " +
+                            "offsets=${locator.startOffset}..${locator.endOffset} cfi=\"${locator.cfi.orEmpty().logPreview()}\" " +
+                            "text=\"${locator.textQuote.orEmpty().logPreview()}\""
+                    )
+                    "window.readerSetTtsLocator && window.readerSetTtsLocator(${locator.toReaderLocatorJson()}, $follow);"
+                }
+                navigator.evaluateJavaScript(command)
             }
 
             LaunchedEffect(highlights, navigationTarget.readingMode, state.loadingState) {
@@ -6067,10 +6422,37 @@ private fun ReaderLocator.toReaderLocatorJson(): String {
             pageIndex?.let { add("\"pageIndex\":$it") }
             startOffset?.let { add("\"startOffset\":$it") }
             endOffset?.let { add("\"endOffset\":$it") }
+            cfi?.let { add("\"cfi\":${it.toJsonStringLiteral()}") }
+            textQuote?.let { add("\"textQuote\":${it.toJsonStringLiteral()}") }
         }
         append(values.joinToString(","))
         append("}")
     }
+}
+
+private fun String.toJsonStringLiteral(): String {
+    val builder = StringBuilder("\"")
+    forEach { char ->
+        when (char) {
+            '\\' -> builder.append("\\\\")
+            '"' -> builder.append("\\\"")
+            '\n' -> builder.append("\\n")
+            '\r' -> builder.append("\\r")
+            '\t' -> builder.append("\\t")
+            '\b' -> builder.append("\\b")
+            '\u000C' -> builder.append("\\f")
+            else -> {
+                if (char.code < 0x20) {
+                    builder.append("\\u")
+                    builder.append(char.code.toString(16).padStart(4, '0'))
+                } else {
+                    builder.append(char)
+                }
+            }
+        }
+    }
+    builder.append('"')
+    return builder.toString()
 }
 
 @Composable

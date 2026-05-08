@@ -74,6 +74,9 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.reduce
@@ -93,7 +96,9 @@ data class ReaderContentNavigationTarget(
     val locator: ReaderLocator?,
     val requestId: Long,
     val readingMode: ReaderReadingMode,
-    val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState()
+    val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState(),
+    val ttsLocator: ReaderLocator? = null,
+    val ttsRequestId: Long = 0L
 )
 
 @Composable
@@ -137,7 +142,7 @@ fun SharedReaderScreen(
     aiByokSettings: ReaderAiByokSettings = ReaderAiByokSettings(),
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit = { _, _ -> },
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
-    onCloudTtsToggle: (String) -> Unit = {},
+    onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit = { _, _ -> },
     onCloudTtsStop: () -> Unit = {},
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
     readerContent: @Composable ColumnScope.(
@@ -155,6 +160,10 @@ fun SharedReaderScreen(
     val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
+    val activeTtsProgress = readerExtrasState.cloudTts.progress
+    val activeTtsChunk = activeTtsProgress.currentChunk
+    val activeTtsLocator = activeTtsChunk?.toLocator()
+    val ttsRequestId = activeTtsChunk?.let { activeTtsProgress.sessionId + it.index + 1L } ?: 0L
     val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
@@ -198,7 +207,7 @@ fun SharedReaderScreen(
                     },
                     onExternalLookup = onExternalLookup,
                     onAiAction = onAiAction,
-                    onCloudTtsToggle = onCloudTtsToggle,
+                    onCloudTtsStart = onCloudTtsStart,
                     onCloudTtsStop = onCloudTtsStop,
                     onAutoScrollChange = onAutoScrollChange,
                     session = session,
@@ -340,7 +349,9 @@ fun SharedReaderScreen(
                         locator = navigationLocator,
                         requestId = session.navigationRequestId,
                         readingMode = settings.readingMode,
-                        autoScroll = readerExtrasState.autoScroll.sanitized()
+                        autoScroll = readerExtrasState.autoScroll.sanitized(),
+                        ttsLocator = activeTtsLocator,
+                        ttsRequestId = ttsRequestId
                     ),
                     if (settings.readingMode == ReaderReadingMode.VERTICAL) session.highlights else emptyList(),
                     { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) }
@@ -387,7 +398,7 @@ fun SharedReaderScreen(
                         },
                         onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
-                        onCloudTtsToggle = onCloudTtsToggle,
+                        onCloudTtsStart = onCloudTtsStart,
                         onCloudTtsStop = onCloudTtsStop,
                         onAutoScrollChange = onAutoScrollChange,
                         session = session,
@@ -406,7 +417,7 @@ fun SharedReaderScreen(
                 aiByokSettings = byokSettings,
                 onExternalLookup = onExternalLookup,
                 onAiAction = onAiAction,
-                onCloudTtsToggle = onCloudTtsToggle,
+                onCloudTtsStart = onCloudTtsStart,
                 onCloudTtsStop = onCloudTtsStop,
                 onAutoScrollChange = onAutoScrollChange,
                 onReaderAction = { action -> dispatch(action) }
@@ -427,7 +438,7 @@ private fun SharedReaderQuickActions(
     onToggleSearch: () -> Unit,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
-    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     session: ReaderSessionState,
@@ -494,7 +505,10 @@ private fun SharedReaderQuickActions(
                         if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading) {
                             onCloudTtsStop()
                         } else {
-                            onCloudTtsToggle(ReaderContextExtractor.currentPageText(session))
+                            onCloudTtsStart(
+                                ReaderTtsReadScope.BOOK,
+                                ReaderTtsPlanner.chunksFromCurrentLocation(session)
+                            )
                         }
                     }
                 ) {
@@ -526,7 +540,7 @@ private fun SharedReaderControlPanel(
     aiByokSettings: ReaderAiByokSettings,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
-    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onReaderAction: (ReaderAction) -> Unit
@@ -592,7 +606,7 @@ private fun SharedReaderControlPanel(
                         aiByokSettings = aiByokSettings,
                         onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
-                        onCloudTtsToggle = onCloudTtsToggle,
+                        onCloudTtsStart = onCloudTtsStart,
                         onCloudTtsStop = onCloudTtsStop,
                         onAutoScrollChange = onAutoScrollChange
                     )
@@ -976,7 +990,7 @@ private fun SharedReaderExtrasControls(
     aiByokSettings: ReaderAiByokSettings,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
-    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit
 ) {
@@ -1022,6 +1036,7 @@ private fun SharedReaderExtrasControls(
         }
 
         SharedReaderPanelSection("Cloud TTS") {
+            val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1038,23 +1053,62 @@ private fun SharedReaderExtrasControls(
                         fontWeight = FontWeight.SemiBold
                     )
                     val errorMessage = extrasState.cloudTts.errorMessage?.takeIf { it.isNotBlank() }
-                    val statusMessage = extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
+                    val statusMessage = extrasState.cloudTts.progress.currentPositionLabel
+                        ?: extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
                     when {
                         errorMessage != null -> Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         statusMessage != null -> Text(statusMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 TextButton(
-                    enabled = settings.isCloudTtsAvailable || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying,
+                    enabled = settings.isCloudTtsAvailable || ttsBusy,
                     onClick = {
-                        if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) {
+                        if (ttsBusy) {
                             onCloudTtsStop()
                         } else {
-                            onCloudTtsToggle(currentPageText)
+                            onCloudTtsStart(
+                                ReaderTtsReadScope.BOOK,
+                                ReaderTtsPlanner.chunksFromCurrentLocation(session)
+                            )
                         }
                     }
                 ) {
-                    Text(if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) "Stop" else "Read")
+                    Text(if (ttsBusy) "Stop" else "Read")
+                }
+            }
+            SharedReaderChoiceRow {
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable && !ttsBusy && currentPageText.isNotBlank(),
+                    onClick = {
+                        onCloudTtsStart(
+                            ReaderTtsReadScope.PAGE,
+                            ReaderTtsPlanner.chunksForCurrentPage(session)
+                        )
+                    }
+                ) {
+                    Text("Page")
+                }
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable && !ttsBusy && currentChapterText.isNotBlank(),
+                    onClick = {
+                        onCloudTtsStart(
+                            ReaderTtsReadScope.CHAPTER,
+                            ReaderTtsPlanner.chunksForCurrentChapter(session)
+                        )
+                    }
+                ) {
+                    Text("Chapter")
+                }
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable && !ttsBusy && currentPageText.isNotBlank(),
+                    onClick = {
+                        onCloudTtsStart(
+                            ReaderTtsReadScope.BOOK,
+                            ReaderTtsPlanner.chunksFromCurrentLocation(session)
+                        )
+                    }
+                ) {
+                    Text("From here")
                 }
             }
         }
