@@ -17,7 +17,6 @@ import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
-import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import io.mockk.*
@@ -131,9 +130,6 @@ class MainViewModelTest {
                         .build()
                 )
         }
-        mockkStatic(PDFBoxResourceLoader::class)
-        every { PDFBoxResourceLoader.init(any()) } just Runs
-
         mockkConstructor(AuthRepository::class)
         mockkConstructor(RecentFilesRepository::class)
         mockkConstructor(BillingClientWrapper::class)

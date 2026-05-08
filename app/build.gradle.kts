@@ -237,7 +237,6 @@ dependencies {
 
     implementation("com.jakewharton.timber:timber:5.0.1")
 
-    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("me.zhanghai.android.libarchive:library:1.1.6")
 
     implementation("androidx.paging:paging-runtime-ktx:3.3.6")

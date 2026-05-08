@@ -8,11 +8,7 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.tts.TtsPlaybackManager
 
 internal enum class SaveMode {
-    ORIGINAL, ANNOTATED, PDFIUM_ANNOTATED
-}
-
-enum class PdfExportEngine {
-    PDFBOX, PDFIUM
+    ORIGINAL, ANNOTATED
 }
 
 enum class SearchHighlightMode {
