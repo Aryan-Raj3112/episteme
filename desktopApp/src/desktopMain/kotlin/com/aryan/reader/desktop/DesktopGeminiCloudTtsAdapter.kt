@@ -19,7 +19,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -29,6 +28,7 @@ import java.util.Base64
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.SourceDataLine
@@ -48,30 +48,40 @@ class DesktopGeminiCloudTtsAdapter(
 
     override suspend fun speak(text: String) {
         val trimmed = text.trim()
+        logDesktopTts("speak_start textChars=${trimmed.length}")
         if (trimmed.isBlank()) return
         stop()
-        val audio = synthesize(trimmed.take(5_000))
-        playPcm(audio)
+        stream(trimmed.take(5_000))
+        logDesktopTts("speak_finished")
     }
 
     override suspend fun stop() {
         withContext(Dispatchers.IO) {
+            logDesktopTts("stop_requested hasWebSocket=${activeWebSocket != null} hasLine=${activeLine != null}")
             runCatching { activeWebSocket?.abort() }
             activeWebSocket = null
             runCatching { activeLine?.stop() }
             runCatching { activeLine?.flush() }
             runCatching { activeLine?.close() }
             activeLine = null
+            logDesktopTts("stop_complete")
         }
     }
 
-    private suspend fun synthesize(text: String): ByteArray = withContext(Dispatchers.IO) {
+    private suspend fun stream(text: String) = withContext(Dispatchers.IO) {
         val settings = settingsProvider().sanitized()
+        logDesktopTts(
+            "stream_start textChars=${text.length} keyPresent=${settings.geminiKey.isNotBlank()} " +
+                "ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" speaker=\"${settings.ttsSpeakerId.desktopTtsPreview()}\" " +
+                "available=${settings.isCloudTtsAvailable}"
+        )
         if (!settings.isCloudTtsAvailable) {
+            logDesktopTts("stream_blocked reason=not_available")
             throw IllegalStateException("Cloud TTS needs a saved Gemini key and the Gemini cloud TTS model selected.")
         }
 
-        val audioBytes = ByteArrayOutputStream()
+        val audioBytesReceived = AtomicLong(0)
+        val player = DesktopStreamingPcmPlayer { activeLine = it }
         val setupComplete = CompletableDeferred<Unit>()
         val turnComplete = CompletableDeferred<Unit>()
         val failure = CompletableDeferred<Throwable>()
@@ -81,15 +91,38 @@ class DesktopGeminiCloudTtsAdapter(
             override fun onOpen(webSocket: WebSocket) {
                 activeWebSocket = webSocket
                 webSocket.request(1)
+                logDesktopTts("ws_open send_setup model=\"$GEMINI_CLOUD_TTS_MODEL\" speaker=\"${settings.ttsSpeakerId.desktopTtsPreview()}\"")
                 webSocket.sendText(buildGeminiTtsSetup(settings.ttsSpeakerId), true)
+                    .whenComplete { _, error ->
+                        if (error != null) {
+                            logDesktopTts("ws_setup_send_failed error=\"${error.desktopTtsSummary()}\"")
+                            failure.complete(error)
+                        } else {
+                            logDesktopTts("ws_setup_send_complete")
+                        }
+                    }
             }
 
             override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*> {
                 messageBuffer.append(data)
+                logDesktopTts("ws_message_text chunkChars=${data.length} last=$last bufferChars=${messageBuffer.length}")
                 if (last) {
                     val message = messageBuffer.toString()
                     messageBuffer.clear()
-                    handleGeminiTtsMessage(message, audioBytes, setupComplete, turnComplete, failure)
+                    handleGeminiTtsMessage(
+                        message = message,
+                        setupComplete = setupComplete,
+                        turnComplete = turnComplete,
+                        failure = failure,
+                        onAudioPart = { bytes ->
+                            audioBytesReceived.addAndGet(bytes.size.toLong())
+                            runCatching { player.write(bytes) }
+                                .onFailure { error ->
+                                    logDesktopTts("stream_audio_write_failed error=\"${error.desktopTtsSummary()}\"")
+                                    failure.complete(error)
+                                }
+                        }
+                    )
                 }
                 webSocket.request(1)
                 return CompletableFuture.completedFuture(null)
@@ -99,20 +132,36 @@ class DesktopGeminiCloudTtsAdapter(
                 val bytes = ByteArray(data.remaining())
                 data.get(bytes)
                 messageBuffer.append(bytes.decodeToString())
+                logDesktopTts("ws_message_binary chunkBytes=${bytes.size} last=$last bufferChars=${messageBuffer.length}")
                 if (last) {
                     val message = messageBuffer.toString()
                     messageBuffer.clear()
-                    handleGeminiTtsMessage(message, audioBytes, setupComplete, turnComplete, failure)
+                    handleGeminiTtsMessage(
+                        message = message,
+                        setupComplete = setupComplete,
+                        turnComplete = turnComplete,
+                        failure = failure,
+                        onAudioPart = { bytes ->
+                            audioBytesReceived.addAndGet(bytes.size.toLong())
+                            runCatching { player.write(bytes) }
+                                .onFailure { error ->
+                                    logDesktopTts("stream_audio_write_failed error=\"${error.desktopTtsSummary()}\"")
+                                    failure.complete(error)
+                                }
+                        }
+                    )
                 }
                 webSocket.request(1)
                 return CompletableFuture.completedFuture(null)
             }
 
             override fun onError(webSocket: WebSocket, error: Throwable) {
+                logDesktopTts("ws_error error=\"${error.desktopTtsSummary()}\"")
                 failure.complete(error)
             }
 
             override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*> {
+                logDesktopTts("ws_close status=$statusCode reason=\"${reason.desktopTtsPreview()}\" turnComplete=${turnComplete.isCompleted}")
                 if (!turnComplete.isCompleted && !failure.isCompleted) {
                     failure.complete(IllegalStateException("Cloud TTS connection closed: $reason"))
                 }
@@ -122,64 +171,59 @@ class DesktopGeminiCloudTtsAdapter(
 
         val encodedKey = URLEncoder.encode(settings.geminiKey, Charsets.UTF_8.name())
         val uri = URI("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$encodedKey")
-        val webSocket = httpClient.newWebSocketBuilder()
-            .buildAsync(uri, listener)
-            .get(15, TimeUnit.SECONDS)
+        logDesktopTts("ws_connect_start endpoint=GeminiLive keyChars=${settings.geminiKey.length}")
+        val webSocket = runCatching {
+            httpClient.newWebSocketBuilder()
+                .buildAsync(uri, listener)
+                .get(15, TimeUnit.SECONDS)
+        }.getOrElse { error ->
+            logDesktopTts("ws_connect_failed error=\"${error.desktopTtsSummary()}\"")
+            throw error
+        }
         activeWebSocket = webSocket
+        logDesktopTts("ws_connect_complete")
 
+        logDesktopTts("setup_wait_start timeoutMs=15000")
         withTimeout(15_000) {
             select<Unit> {
                 setupComplete.onAwait { }
                 failure.onAwait { throw it }
             }
         }
+        logDesktopTts("setup_wait_complete")
 
-        webSocket.sendText(buildGeminiTtsTextInput(text), true).join()
-
-        withTimeout(45_000) {
-            select<Unit> {
-                turnComplete.onAwait { }
-                failure.onAwait { throw it }
+        logDesktopTts("text_send_start textChars=${text.length}")
+        runCatching { webSocket.sendText(buildGeminiTtsTextInput(text), true).join() }
+            .onFailure { error ->
+                logDesktopTts("text_send_failed error=\"${error.desktopTtsSummary()}\"")
+                throw error
             }
-        }
+        logDesktopTts("text_send_complete")
 
-        val bytes = audioBytes.toByteArray()
-        if (bytes.isEmpty()) throw IllegalStateException("Cloud TTS returned no audio.")
-        runCatching { webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join() }
-        activeWebSocket = null
-        bytes
-    }
-
-    private fun playPcm(audioBytes: ByteArray) {
-        runCatching {
-            playPcmWithFormat(audioBytes, 24_000f)
-        }.getOrElse { firstError ->
-            runCatching {
-                playPcmWithFormat(audioBytes.upsample16BitMonoLe2x(), 48_000f)
-            }.getOrElse {
-                throw firstError
-            }
-        }
-    }
-
-    private fun playPcmWithFormat(audioBytes: ByteArray, sampleRate: Float) {
-        val format = AudioFormat(sampleRate, 16, 1, true, false)
-        val line = AudioSystem.getSourceDataLine(format)
-        activeLine = line
-        line.open(format)
-        line.start()
+        val turnTimeoutMs = (30_000L + text.length * 80L).coerceIn(60_000L, 600_000L)
+        logDesktopTts("turn_wait_start timeoutMs=$turnTimeoutMs")
         try {
-            var offset = 0
-            while (offset < audioBytes.size && activeLine === line) {
-                val written = line.write(audioBytes, offset, (audioBytes.size - offset).coerceAtMost(4096))
-                if (written <= 0) break
-                offset += written
+            withTimeout(turnTimeoutMs) {
+                select<Unit> {
+                    turnComplete.onAwait { }
+                    failure.onAwait { throw it }
+                }
             }
-            line.drain()
-        } finally {
-            runCatching { line.stop() }
-            runCatching { line.close() }
-            if (activeLine === line) activeLine = null
+            logDesktopTts("turn_wait_complete audioBytes=${audioBytesReceived.get()}")
+
+            if (audioBytesReceived.get() == 0L) {
+                logDesktopTts("stream_failed reason=empty_audio")
+                throw IllegalStateException("Cloud TTS returned no audio.")
+            }
+            player.drainAndClose()
+            runCatching { webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join() }
+            activeWebSocket = null
+            logDesktopTts("stream_complete audioBytes=${audioBytesReceived.get()}")
+        } catch (error: Throwable) {
+            runCatching { webSocket.abort() }
+            activeWebSocket = null
+            player.closeNow()
+            throw error
         }
     }
 }
@@ -242,17 +286,23 @@ private fun buildGeminiTtsTextInput(text: String): String {
 
 private fun handleGeminiTtsMessage(
     message: String,
-    audioBytes: ByteArrayOutputStream,
     setupComplete: CompletableDeferred<Unit>,
     turnComplete: CompletableDeferred<Unit>,
-    failure: CompletableDeferred<Throwable>
+    failure: CompletableDeferred<Throwable>,
+    onAudioPart: (ByteArray) -> Unit
 ) {
-    val json = runCatching { DesktopGeminiTtsJson.parseToJsonElement(message).jsonObject }.getOrElse { return }
+    logDesktopTts("message_handle chars=${message.length} preview=\"${message.desktopTtsPreview()}\"")
+    val json = runCatching { DesktopGeminiTtsJson.parseToJsonElement(message).jsonObject }.getOrElse { error ->
+        logDesktopTts("message_parse_failed error=\"${error.desktopTtsSummary()}\"")
+        return
+    }
     json["error"]?.let { error ->
+        logDesktopTts("message_provider_error body=\"${error.toString().desktopTtsPreview(300)}\"")
         failure.complete(IllegalStateException(error.toString()))
         return
     }
     if (json.containsKey("setupComplete") || json.containsKey("setup_complete")) {
+        logDesktopTts("message_setup_complete")
         setupComplete.complete(Unit)
     }
 
@@ -263,10 +313,13 @@ private fun handleGeminiTtsMessage(
         val inlineData = part.jsonObjectOrNull()?.jsonObjectValue("inlineData", "inline_data")
         val encoded = inlineData?.get("data")?.jsonPrimitive?.contentOrNull
         if (!encoded.isNullOrBlank()) {
-            audioBytes.write(Base64.getMimeDecoder().decode(encoded))
+            val decoded = Base64.getMimeDecoder().decode(encoded)
+            onAudioPart(decoded)
+            logDesktopTts("message_audio_part bytes=${decoded.size}")
         }
     }
     if (serverContent.booleanValue("turnComplete", "turn_complete")) {
+        logDesktopTts("message_turn_complete")
         turnComplete.complete(Unit)
     }
 }
@@ -302,4 +355,94 @@ private fun ByteArray.upsample16BitMonoLe2x(): ByteArray {
         outputIndex += 4
     }
     return output
+}
+
+private class DesktopStreamingPcmPlayer(
+    private val onLineChanged: (SourceDataLine?) -> Unit
+) {
+    private var line: SourceDataLine? = null
+    private var fallbackTo48Khz = false
+    private var closed = false
+    private var bytesWritten = 0L
+
+    init {
+        logDesktopTts("play_stream_start mixers=\"${availableAudioMixers().desktopTtsPreview(260)}\"")
+    }
+
+    @Synchronized
+    fun write(pcm24Khz: ByteArray) {
+        if (closed || pcm24Khz.isEmpty()) return
+        val activeLine = line ?: openBestLine()
+        val bytes = if (fallbackTo48Khz) pcm24Khz.upsample16BitMonoLe2x() else pcm24Khz
+        var offset = 0
+        while (offset < bytes.size && !closed) {
+            val written = activeLine.write(bytes, offset, (bytes.size - offset).coerceAtMost(4096))
+            if (written <= 0) break
+            offset += written
+            bytesWritten += written
+        }
+        logDesktopTts("play_stream_write inputBytes=${pcm24Khz.size} writtenBytes=$offset totalWritten=$bytesWritten")
+    }
+
+    @Synchronized
+    fun drainAndClose() {
+        val activeLine = line
+        if (activeLine != null && !closed) {
+            logDesktopTts("play_stream_drain totalWritten=$bytesWritten")
+            runCatching { activeLine.drain() }
+                .onFailure { error -> logDesktopTts("play_stream_drain_failed error=\"${error.desktopTtsSummary()}\"") }
+        }
+        closeNow()
+    }
+
+    @Synchronized
+    fun closeNow() {
+        if (closed) return
+        closed = true
+        line?.let { activeLine ->
+            runCatching { activeLine.stop() }
+            runCatching { activeLine.flush() }
+            runCatching { activeLine.close() }
+        }
+        line = null
+        onLineChanged(null)
+        logDesktopTts("play_stream_closed totalWritten=$bytesWritten")
+    }
+
+    private fun openBestLine(): SourceDataLine {
+        return runCatching {
+            openLine(24_000f)
+        }.getOrElse { firstError ->
+            logDesktopTts("play_primary_failed sampleRate=24000 error=\"${firstError.desktopTtsSummary()}\"")
+            fallbackTo48Khz = true
+            runCatching {
+                openLine(48_000f)
+            }.onFailure { secondError ->
+                logDesktopTts("play_fallback_failed sampleRate=48000 error=\"${secondError.desktopTtsSummary()}\"")
+                secondError.printStackTrace()
+            }.getOrElse {
+                throw firstError
+            }
+        }
+    }
+
+    private fun openLine(sampleRate: Float): SourceDataLine {
+        val format = AudioFormat(sampleRate, 16, 1, true, false)
+        logDesktopTts("play_line_request sampleRate=${sampleRate.toInt()}")
+        val openedLine = AudioSystem.getSourceDataLine(format)
+        openedLine.open(format)
+        openedLine.start()
+        line = openedLine
+        onLineChanged(openedLine)
+        logDesktopTts("play_line_started sampleRate=${sampleRate.toInt()} line=\"${openedLine.lineInfo.toString().desktopTtsPreview(160)}\"")
+        return openedLine
+    }
+}
+
+private fun availableAudioMixers(): String {
+    return runCatching {
+        AudioSystem.getMixerInfo()
+            .joinToString(limit = 8, truncated = "...") { "${it.name}/${it.description}" }
+            .ifBlank { "none" }
+    }.getOrDefault("unavailable")
 }

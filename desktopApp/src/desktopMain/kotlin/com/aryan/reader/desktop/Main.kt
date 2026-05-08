@@ -515,6 +515,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
         val sanitized = next.sanitized()
+        logDesktopTts(
+            "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
+                "ttsModel=\"${sanitized.ttsModel.desktopTtsPreview()}\" speaker=\"${sanitized.ttsSpeakerId.desktopTtsPreview()}\" " +
+                "cloudAvailable=${sanitized.isCloudTtsAvailable}"
+        )
         aiByokSettings = sanitized
         readerExtrasState = readerExtrasState.copy(
             cloudTts = readerExtrasState.cloudTts.copy(
@@ -524,6 +529,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
         runCatching { aiByokStore.save(sanitized) }
             .onFailure { error ->
+                logDesktopTts("settings_save_failed error=\"${error.desktopTtsSummary()}\"")
                 scope.launch {
                     snackbarHostState.showSnackbar(error.message ?: "AI settings could not be saved securely.")
                 }
@@ -571,6 +577,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun stopReaderCloudTts() {
+        logDesktopTts("reader_stop_requested")
         readerTtsJob?.cancel()
         readerTtsJob = null
         scope.launch {
@@ -586,12 +593,27 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
     fun toggleReaderCloudTts(text: String) {
         val normalizedText = text.trim()
+        val settings = aiByokSettings.sanitized()
+        logDesktopTts(
+            "reader_toggle textChars=${normalizedText.length} isPlaying=${readerExtrasState.cloudTts.isPlaying} " +
+                "isLoading=${readerExtrasState.cloudTts.isLoading} keyPresent=${settings.geminiKey.isNotBlank()} " +
+                "ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" available=${desktopTtsAdapter.isAvailable}"
+        )
         if (readerExtrasState.cloudTts.isPlaying || readerExtrasState.cloudTts.isLoading) {
             stopReaderCloudTts()
             return
         }
-        if (normalizedText.isBlank()) return
+        if (normalizedText.isBlank()) {
+            logDesktopTts("reader_toggle_ignored reason=blank_text")
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = readerExtrasState.cloudTts.copy(
+                    errorMessage = "There is no text on this page to read."
+                )
+            )
+            return
+        }
         if (!desktopTtsAdapter.isAvailable) {
+            logDesktopTts("reader_toggle_blocked reason=adapter_unavailable")
             readerExtrasState = readerExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
@@ -609,6 +631,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
         readerTtsJob = scope.launch {
             runCatching {
+                logDesktopTts("reader_job_start textChars=${normalizedText.length}")
                 readerExtrasState = readerExtrasState.copy(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = true,
@@ -618,6 +641,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 )
                 desktopTtsAdapter.speak(normalizedText)
             }.onFailure { error ->
+                logDesktopTts("reader_job_failed error=\"${error.desktopTtsSummary()}\"")
+                if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
                 if (error is kotlinx.coroutines.CancellationException) {
                     readerExtrasState = readerExtrasState.copy(
                         cloudTts = ReaderCloudTtsState(
@@ -634,6 +659,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     )
                 }
             }.onSuccess {
+                logDesktopTts("reader_job_success")
                 readerExtrasState = readerExtrasState.copy(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = aiByokSettings.isCloudTtsAvailable,
@@ -2725,6 +2751,7 @@ private fun PdfReaderScreen(
     }
 
     fun stopPdfCloudTts() {
+        logDesktopTts("pdf_stop_requested")
         pdfTtsJob?.cancel()
         pdfTtsJob = null
         pdfScope.launch {
@@ -2740,12 +2767,27 @@ private fun PdfReaderScreen(
 
     fun togglePdfCloudTts(text: String) {
         val normalizedText = text.trim()
+        val settings = aiByokSettings.sanitized()
+        logDesktopTts(
+            "pdf_toggle textChars=${normalizedText.length} isPlaying=${pdfExtrasState.cloudTts.isPlaying} " +
+                "isLoading=${pdfExtrasState.cloudTts.isLoading} keyPresent=${settings.geminiKey.isNotBlank()} " +
+                "ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" available=${ttsAdapter.isAvailable}"
+        )
         if (pdfExtrasState.cloudTts.isPlaying || pdfExtrasState.cloudTts.isLoading) {
             stopPdfCloudTts()
             return
         }
-        if (normalizedText.isBlank()) return
+        if (normalizedText.isBlank()) {
+            logDesktopTts("pdf_toggle_ignored reason=blank_text")
+            pdfExtrasState = pdfExtrasState.copy(
+                cloudTts = pdfExtrasState.cloudTts.copy(
+                    errorMessage = "There is no text on this page to read."
+                )
+            )
+            return
+        }
         if (!ttsAdapter.isAvailable) {
+            logDesktopTts("pdf_toggle_blocked reason=adapter_unavailable")
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
@@ -2763,6 +2805,7 @@ private fun PdfReaderScreen(
         )
         pdfTtsJob = pdfScope.launch {
             runCatching {
+                logDesktopTts("pdf_job_start textChars=${normalizedText.length}")
                 pdfExtrasState = pdfExtrasState.copy(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = true,
@@ -2772,6 +2815,8 @@ private fun PdfReaderScreen(
                 )
                 ttsAdapter.speak(normalizedText)
             }.onFailure { error ->
+                logDesktopTts("pdf_job_failed error=\"${error.desktopTtsSummary()}\"")
+                if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
                 if (error is kotlinx.coroutines.CancellationException) {
                     pdfExtrasState = pdfExtrasState.copy(
                         cloudTts = ReaderCloudTtsState(
@@ -2788,6 +2833,7 @@ private fun PdfReaderScreen(
                     )
                 }
             }.onSuccess {
+                logDesktopTts("pdf_job_success")
                 pdfExtrasState = pdfExtrasState.copy(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = aiByokSettings.isCloudTtsAvailable,

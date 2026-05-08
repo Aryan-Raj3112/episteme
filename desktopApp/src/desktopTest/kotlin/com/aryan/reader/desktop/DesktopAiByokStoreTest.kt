@@ -63,6 +63,29 @@ class DesktopAiByokStoreTest {
         assertTrue(raw.contains("groqKeyProtected="))
     }
 
+    @Test
+    fun `model settings persist when secure key storage is unavailable`() {
+        val settingsFile = Files.createTempDirectory("reader-ai-store-unavailable").resolve("ai-byok.properties")
+        val store = DesktopAiByokStore(settingsFile.toFile(), UnavailableSecretCodec)
+
+        store.save(
+            ReaderAiByokSettings(
+                geminiKey = "session_only",
+                modelForAll = "groq:qwen/qwen3-32b",
+                ttsModel = GEMINI_CLOUD_TTS_MODEL_ID
+            )
+        )
+
+        val raw = settingsFile.readText()
+        assertFalse(raw.contains("session_only"))
+        assertFalse(raw.contains("geminiKeyProtected="))
+
+        val loaded = store.load()
+        assertEquals("", loaded.geminiKey)
+        assertEquals("groq:qwen/qwen3-32b", loaded.modelForAll)
+        assertEquals(GEMINI_CLOUD_TTS_MODEL_ID, loaded.ttsModel)
+    }
+
     private object ReversibleSecretCodec : DesktopSecretCodec {
         override val isAvailable: Boolean = true
 
@@ -73,5 +96,11 @@ class DesktopAiByokStoreTest {
         override fun unprotect(value: String): String {
             return value.removePrefix("test:").reversed()
         }
+    }
+
+    private object UnavailableSecretCodec : DesktopSecretCodec {
+        override val isAvailable: Boolean = false
+        override fun protect(value: String): String = ""
+        override fun unprotect(value: String): String = ""
     }
 }
