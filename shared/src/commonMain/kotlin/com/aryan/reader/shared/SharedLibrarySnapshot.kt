@@ -25,6 +25,7 @@ data class SharedLibrarySnapshot(
     val shelfRecords: List<ShelfRecord> = emptyList(),
     val shelfRefs: List<BookShelfRef> = emptyList(),
     val tags: List<Tag> = emptyList(),
+    val customFonts: List<CustomFontItem> = emptyList(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val recentFilesLimit: Int = 12,
     val isTabsEnabled: Boolean = false,
@@ -44,7 +45,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 8
+    private const val SCHEMA_VERSION = 9
 
     private val json = Json {
         prettyPrint = true
@@ -65,6 +66,7 @@ object SharedLibrarySnapshotJson {
             shelfRecords = root.array("shelves").mapNotNull { it.asShelfRecordOrNull() },
             shelfRefs = root.array("bookShelfRefs").mapNotNull { it.asBookShelfRefOrNull() },
             tags = root.array("tags").mapNotNull { it.asTagOrNull() },
+            customFonts = root.array("customFonts").mapNotNull { it.asCustomFontItemOrNull() },
             syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
             recentFilesLimit = root.int("recentFilesLimit", 12),
             isTabsEnabled = root.boolean("isTabsEnabled", false),
@@ -106,6 +108,7 @@ object SharedLibrarySnapshotJson {
                 "shelves" to JsonArray(snapshot.shelfRecords.map { it.toJsonObject() }),
                 "bookShelfRefs" to JsonArray(snapshot.shelfRefs.map { it.toJsonObject() }),
                 "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() }),
+                "customFonts" to JsonArray(snapshot.customFonts.map { it.toJsonObject() }),
                 "syncedFolders" to JsonArray(snapshot.syncedFolders.map { it.toJsonObject() }),
                 "recentFilesLimit" to JsonPrimitive(snapshot.recentFilesLimit),
                 "isTabsEnabled" to JsonPrimitive(snapshot.isTabsEnabled),
@@ -250,6 +253,19 @@ private fun JsonElement.asTagOrNull(): Tag? {
     )
 }
 
+private fun JsonElement.asCustomFontItemOrNull(): CustomFontItem? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return CustomFontItem(
+        id = obj.string("id") ?: return null,
+        displayName = obj.string("displayName") ?: return null,
+        fileName = obj.string("fileName") ?: return null,
+        fileExtension = obj.string("fileExtension") ?: return null,
+        path = obj.string("path") ?: return null,
+        timestamp = obj.long("timestamp"),
+        isDeleted = obj.boolean("isDeleted", false)
+    )
+}
+
 private fun JsonElement.asSyncedFolderOrNull(): SyncedFolder? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     return SyncedFolder(
@@ -326,6 +342,20 @@ private fun Tag.toJsonObject(): JsonObject {
             "id" to JsonPrimitive(id),
             "name" to JsonPrimitive(name),
             "color" to color.asJson()
+        )
+    )
+}
+
+private fun CustomFontItem.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "id" to JsonPrimitive(id),
+            "displayName" to JsonPrimitive(displayName),
+            "fileName" to JsonPrimitive(fileName),
+            "fileExtension" to JsonPrimitive(fileExtension),
+            "path" to JsonPrimitive(path),
+            "timestamp" to JsonPrimitive(timestamp),
+            "isDeleted" to JsonPrimitive(isDeleted)
         )
     )
 }

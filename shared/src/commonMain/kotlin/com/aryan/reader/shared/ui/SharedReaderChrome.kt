@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BuiltInReaderThemes
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
@@ -138,6 +139,7 @@ fun SharedReaderScreen(
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     onPickCustomFont: (() -> String?)? = null,
+    customFonts: List<CustomFontItem> = emptyList(),
     readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
     aiByokSettings: ReaderAiByokSettings = ReaderAiByokSettings(),
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit = { _, _ -> },
@@ -413,6 +415,7 @@ fun SharedReaderScreen(
                 toolbarPreferences = toolbarPreferences,
                 onToolbarPreferencesChange = onToolbarPreferencesChange,
                 onPickCustomFont = onPickCustomFont,
+                customFonts = customFonts,
                 extrasState = readerExtrasState,
                 aiByokSettings = byokSettings,
                 onExternalLookup = onExternalLookup,
@@ -536,6 +539,7 @@ private fun SharedReaderControlPanel(
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     onPickCustomFont: (() -> String?)?,
+    customFonts: List<CustomFontItem>,
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
@@ -587,6 +591,7 @@ private fun SharedReaderControlPanel(
                         settings = session.reader.settings,
                         toolbarPreferences = toolbarPreferences,
                         onPickCustomFont = onPickCustomFont,
+                        customFonts = customFonts,
                         onReaderAction = onReaderAction
                     )
 
@@ -652,6 +657,7 @@ private fun SharedReaderFormatControls(
     settings: ReaderSettings,
     toolbarPreferences: ReaderToolbarPreferences,
     onPickCustomFont: (() -> String?)?,
+    customFonts: List<CustomFontItem>,
     onReaderAction: (ReaderAction) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -736,6 +742,33 @@ private fun SharedReaderFormatControls(
                             }
                         ) {
                             Text("Clear")
+                        }
+                    }
+                }
+
+                val activeCustomFonts = customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }
+                if (activeCustomFonts.isNotEmpty()) {
+                    Text(
+                        "Imported fonts",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SharedReaderChoiceRow {
+                        activeCustomFonts.forEach { font ->
+                            FilterChip(
+                                selected = settings.customFontPath == font.path,
+                                onClick = {
+                                    onReaderAction(
+                                        ReaderAction.SettingsChanged(
+                                            settings.copy(
+                                                fontFamily = font.displayName,
+                                                customFontPath = font.path
+                                            )
+                                        )
+                                    )
+                                },
+                                label = { Text(font.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
                         }
                     }
                 }

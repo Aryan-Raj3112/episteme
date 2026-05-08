@@ -97,6 +97,16 @@ class SharedLibrarySnapshotJsonTest {
             shelfRecords = listOf(ShelfRecord(id = "shelf", name = "Shelf", isSmart = true, smartRulesJson = "{}")),
             shelfRefs = listOf(BookShelfRef(bookId = "book", shelfId = "shelf", addedAt = 11L)),
             tags = listOf(tag),
+            customFonts = listOf(
+                CustomFontItem(
+                    id = "font",
+                    displayName = "Literata",
+                    fileName = "font.ttf",
+                    fileExtension = "ttf",
+                    path = "C:/Fonts/font.ttf",
+                    timestamp = 13L
+                )
+            ),
             syncedFolders = listOf(SyncedFolder("C:/Books", "Books", lastScanTime = 12L, allowedFileTypes = setOf(FileType.EPUB, FileType.PDF))),
             recentFilesLimit = 20,
             isTabsEnabled = true,

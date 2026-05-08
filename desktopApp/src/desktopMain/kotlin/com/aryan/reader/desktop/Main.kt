@@ -88,6 +88,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.platform.Font as DesktopFont
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,6 +116,7 @@ import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
@@ -222,9 +224,12 @@ import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
 import com.aryan.reader.shared.ui.SharedAppTheme
+import com.aryan.reader.shared.ui.SharedAboutScreen
 import com.aryan.reader.shared.ui.SharedBookEditDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
+import com.aryan.reader.shared.ui.SharedCustomFontsScreen
+import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedMarkdownText
@@ -242,6 +247,7 @@ import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedScreenScaffold
 import com.aryan.reader.shared.ui.SharedShelvesScreen
+import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
@@ -336,6 +342,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
+    val customFontStore = remember { DesktopCustomFontStore() }
     val opdsRepository = remember { DesktopOpdsRepository() }
     val opdsController = remember {
         SharedOpdsController(
@@ -427,6 +434,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
     var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
+    var customFonts by remember {
+        mutableStateOf(initialLibrarySnapshot.customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() })
+    }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     var readerExtrasState by remember {
@@ -468,7 +478,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
     }
 
-    fun persistSnapshot(projected: SharedReaderScreenState, records: List<ShelfRecord> = shelfRecords, refs: List<BookShelfRef> = shelfRefs) {
+    fun persistSnapshot(
+        projected: SharedReaderScreenState,
+        records: List<ShelfRecord> = shelfRecords,
+        refs: List<BookShelfRef> = shelfRefs,
+        fonts: List<CustomFontItem> = customFonts
+    ) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 libraryDatabase.save(
@@ -477,6 +492,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         shelfRecords = records,
                         shelfRefs = refs,
                         tags = projected.allTags,
+                        customFonts = fonts,
                         syncedFolders = projected.syncedFolders,
                         recentFilesLimit = projected.recentFilesLimit,
                         isTabsEnabled = projected.isTabsEnabled,
@@ -942,6 +958,60 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             return
         }
         syncLocalFolders(targetFolder = folder)
+    }
+
+    fun importCustomFont(file: File?): CustomFontItem? {
+        val source = file ?: return null
+        return customFontStore.importFont(source)
+            .onSuccess { font ->
+                customFonts = (customFonts.filterNot { it.id == font.id } + font)
+                    .filterNot { it.isDeleted }
+                    .sortedBy { it.displayName.lowercase() }
+                updateState(state.withBanner("Imported ${font.displayName}."))
+            }
+            .onFailure { error ->
+                updateState(state.withBanner(error.message ?: "Could not import font.", isError = true))
+            }
+            .getOrNull()
+    }
+
+    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                customFontStore.downloadGoogleFont(fontName)
+            }
+            result
+                .onSuccess { font ->
+                    customFonts = (customFonts.filterNot { it.id == font.id } + font)
+                        .filterNot { it.isDeleted }
+                        .sortedBy { it.displayName.lowercase() }
+                    updateState(state.withBanner("${font.displayName} downloaded successfully."))
+                }
+                .onFailure { error ->
+                    updateState(state.withBanner(error.message ?: "Could not download $fontName.", isError = true))
+                }
+            onComplete()
+        }
+    }
+
+    fun deleteCustomFont(font: CustomFontItem) {
+        customFontStore.deleteFont(font)
+        customFonts = customFonts.filterNot { it.id == font.id }
+        val clearedSettings = state.rawLibraryBooks.map { book ->
+            val settings = book.readerSettings
+            if (settings?.customFontPath == font.path) {
+                book.copy(readerSettings = settings.copy(fontFamily = "Default", customFontPath = null))
+            } else {
+                book
+            }
+        }
+        if (readerSession.reader.settings.customFontPath == font.path) {
+            readerSession = readerEngine.updateSettings(
+                readerSession,
+                readerSession.reader.settings.copy(fontFamily = "Default", customFontPath = null)
+            )
+        }
+        updateState(state.copy(rawLibraryBooks = clearedSettings).withBanner("Deleted ${font.displayName}."))
     }
 
     fun removeSelectedBooks() {
@@ -1494,6 +1564,35 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onClearError = { emitOpds(opdsController.clearError()) }
                         )
 
+                        SharedAppTab.CUSTOM_FONTS -> SharedCustomFontsScreen(
+                            fonts = customFonts,
+                            onImportFont = { importCustomFont(chooseFontFile()) },
+                            onDeleteFont = ::deleteCustomFont,
+                            googleFontsAvailable = true,
+                            getGoogleFonts = { customFontStore.loadGoogleFontsList() },
+                            onDownloadGoogleFont = ::downloadGoogleFont,
+                            fontFamilyForPreview = { font -> font.toDesktopPreviewFontFamily() }
+                        )
+
+                        SharedAppTab.FEEDBACK -> SharedHelpFeedbackScreen(
+                            onOpenGitHubIssues = { openExternalUrl(EpistemeIssuesUrl) },
+                            onEmailSupport = {
+                                openExternalUrl("mailto:$EpistemeSupportEmail?subject=${EpistemeFeedbackSubject.urlEncode()}")
+                            }
+                        )
+
+                        SharedAppTab.SUPPORT -> SharedSupportProjectScreen(
+                            onOpenGitHubSponsors = { openExternalUrl(EpistemeGitHubSponsorsUrl) },
+                            onOpenPatreon = { openExternalUrl(EpistemePatreonUrl) }
+                        )
+
+                        SharedAppTab.ABOUT -> SharedAboutScreen(
+                            versionName = desktopAppVersionName(),
+                            buildLabel = "Desktop build",
+                            onOpenSource = { openExternalUrl(EpistemeSourceUrl) },
+                            onOpenIssues = { openExternalUrl(EpistemeIssuesUrl) }
+                        )
+
                         SharedAppTab.READER -> {
                             val pdfDocument = activePdfDocument
                             if (pdfDocument != null) {
@@ -1539,8 +1638,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
                                     },
                                     onPickCustomFont = {
-                                        chooseFontFile()?.toURI()?.toString()
+                                        importCustomFont(chooseFontFile())?.path
                                     },
+                                    customFonts = customFonts,
                                     readerExtrasState = readerExtrasState,
                                     aiByokSettings = aiByokSettings,
                                     onExternalLookup = ::openReaderExternalLookup,
@@ -5929,6 +6029,7 @@ private fun ReaderScreen(
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     onPickCustomFont: () -> String?,
+    customFonts: List<CustomFontItem>,
     readerExtrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
@@ -5958,6 +6059,7 @@ private fun ReaderScreen(
         highlightPalette = highlightPalette,
         onHighlightPaletteChange = onHighlightPaletteChange,
         onPickCustomFont = onPickCustomFont,
+        customFonts = customFonts,
         readerExtrasState = readerExtrasState,
         aiByokSettings = aiByokSettings,
         onExternalLookup = onExternalLookup,
@@ -6716,6 +6818,10 @@ private fun String.toComposeFontFamily(): FontFamily {
     }
 }
 
+private fun CustomFontItem.toDesktopPreviewFontFamily(): FontFamily? {
+    return runCatching { FontFamily(DesktopFont(File(path))) }.getOrNull()
+}
+
 @Composable
 private fun ReaderSidebar(
     session: ReaderSessionState,
@@ -6886,7 +6992,7 @@ private fun choosePdfFile(): File? {
 
 private fun chooseFontFile(): File? {
     val dialog = FileDialog(null as Frame?, "Choose font", FileDialog.LOAD).apply {
-        file = "*.ttf;*.otf"
+        file = "*.ttf;*.otf;*.woff2"
         isVisible = true
     }
     val directory = dialog.directory ?: return null
@@ -6921,6 +7027,21 @@ private val DesktopBookFileDialogPattern = SharedFileCapabilities.all
     .filter { it.type in DesktopBookFileTypes }
     .flatMap { capability -> capability.extensions.map { extension -> "*.$extension" } }
     .joinToString(";")
+
+private const val EpistemeSourceUrl = "https://github.com/Aryan-Raj3112/episteme"
+private const val EpistemeIssuesUrl = "https://github.com/Aryan-Raj3112/episteme/issues"
+private const val EpistemeGitHubSponsorsUrl = "https://github.com/sponsors/Aryan-Raj3112"
+private const val EpistemePatreonUrl = "https://www.patreon.com/c/epistemereader"
+private const val EpistemeSupportEmail = "epistemereader@gmail.com"
+private const val EpistemeFeedbackSubject = "Feedback: Episteme Reader"
+
+private fun desktopAppVersionName(): String {
+    return EpistemeDesktopAppVersion::class.java.getPackage()?.implementationVersion
+        ?.let { "Version $it" }
+        ?: "Desktop development build"
+}
+
+private object EpistemeDesktopAppVersion
 
 private fun ImportedBookFile.desktopFileType(): FileType {
     return SharedFileCapabilities.fileTypeForName(name)
@@ -7063,7 +7184,12 @@ private fun openExternalUrl(url: String) {
     val normalizedUrl = url.normalizedExternalUrl()
     runCatching {
         if (Desktop.isDesktopSupported()) {
-            Desktop.getDesktop().browse(URI(normalizedUrl))
+            val desktop = Desktop.getDesktop()
+            if (normalizedUrl.startsWith("mailto:", ignoreCase = true)) {
+                desktop.mail(URI(normalizedUrl))
+            } else {
+                desktop.browse(URI(normalizedUrl))
+            }
             logExternalLink("open_system_browser_success url=\"${normalizedUrl.logPreview()}\"")
         } else {
             logExternalLink("open_system_browser_unavailable url=\"${normalizedUrl.logPreview()}\"")

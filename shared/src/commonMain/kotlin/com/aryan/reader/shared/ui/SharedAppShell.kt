@@ -13,10 +13,14 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Feedback
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -45,7 +49,11 @@ enum class SharedAppTab {
     LIBRARY,
     SHELVES,
     CATALOGS,
-    READER
+    READER,
+    CUSTOM_FONTS,
+    SUPPORT,
+    FEEDBACK,
+    ABOUT
 }
 
 @Composable
@@ -150,6 +158,39 @@ fun SharedAppShell(
                             }
                         )
                     }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) },
+                        text = { Text("Custom fonts") },
+                        onClick = {
+                            optionsExpanded = false
+                            onTabSelected(SharedAppTab.CUSTOM_FONTS)
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Feedback, contentDescription = null) },
+                        text = { Text("Help & feedback") },
+                        onClick = {
+                            optionsExpanded = false
+                            onTabSelected(SharedAppTab.FEEDBACK)
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null) },
+                        text = { Text("Support project") },
+                        onClick = {
+                            optionsExpanded = false
+                            onTabSelected(SharedAppTab.SUPPORT)
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                        text = { Text("About Episteme") },
+                        onClick = {
+                            optionsExpanded = false
+                            onTabSelected(SharedAppTab.ABOUT)
+                        }
+                    )
                     HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text(if (isTabsEnabled) "Disable active tabs" else "Enable active tabs") },
