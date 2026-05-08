@@ -3491,6 +3491,7 @@ fun PdfViewerScreen(
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
         ) { _ ->
+            var stylusButtonHovering by remember { mutableStateOf(false) }
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
@@ -3508,6 +3509,9 @@ fun PdfViewerScreen(
                                                     "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackPressed}, " +
                                                     "forward=${buttons.isForwardPressed}"
                                         )
+                                        if (!change.pressed) {
+                                            stylusButtonHovering = buttons.isPrimaryPressed || buttons.isSecondaryPressed
+                                        }
                                     }
                                 }
                             }
@@ -3914,6 +3918,7 @@ fun PdfViewerScreen(
                                                 },
                                                 richTextController = richTextController,
                                                 isStylusOnlyMode = isStylusOnlyMode,
+                                                stylusButtonHovering = stylusButtonHovering,
                                                 isAutoScrollPlaying = isAutoScrollPlaying,
                                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                                 isEditMode = isDrawingActive,
@@ -4321,6 +4326,7 @@ fun PdfViewerScreen(
                                             selectedTool = selectedTool,
                                             richTextController = richTextController,
                                             isStylusOnlyMode = isStylusOnlyMode,
+                                            stylusButtonHovering = stylusButtonHovering,
                                             isEditMode = isDrawingActive,
                                             textBoxes = textBoxes,
                                             selectedTextBoxId = selectedTextBoxId,

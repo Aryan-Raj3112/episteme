@@ -242,6 +242,7 @@ internal fun PdfVerticalReader(
     autoScrollSpeed: Float = 1.0f,
     onInteractionListener: () -> Unit = {},
     isStylusOnlyMode: Boolean = false,
+    stylusButtonHovering: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
@@ -994,7 +995,7 @@ internal fun PdfVerticalReader(
                 )
 
                 val isEraserOverride = down.type == PointerType.Eraser ||
-                        (down.type == PointerType.Stylus && currentEvent.buttons.isSecondaryPressed)
+                        (down.type == PointerType.Stylus && (currentEvent.buttons.isSecondaryPressed || currentEvent.buttons.isPrimaryPressed || stylusButtonHovering))
                 isStylusEraserOverride = isEraserOverride
 
                 fun getPageAndPoint(screenOffset: Offset): Pair<Int, PdfPoint>? {
@@ -1730,6 +1731,7 @@ internal fun PdfVerticalReader(
                                     selectedTool = selectedTool,
                                     richTextController = richTextController,
                                     isStylusOnlyMode = isStylusOnlyMode,
+                                    stylusButtonHovering = stylusButtonHovering,
                                     isAutoScrollPlaying = isAutoScrollPlaying,
                                     textBoxes = textBoxes.filter { it.pageIndex == page.index },
                                     selectedTextBoxId = selectedTextBoxId,

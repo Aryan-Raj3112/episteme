@@ -539,6 +539,7 @@ internal fun PdfPageComposable(
     isActivePage: Boolean = true,
     isBubbleZoomModeActive: Boolean = false,
     isStylusOnlyMode: Boolean = false,
+    stylusButtonHovering: Boolean = false,
     isAutoScrollPlaying: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
@@ -3335,7 +3336,7 @@ internal fun PdfPageComposable(
                             "Page $pageIndex | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
                         )
 
-                        val isEraserOverride = down.type == PointerType.Eraser || (down.type == PointerType.Stylus && currentEvent.buttons.isSecondaryPressed)
+                        val isEraserOverride = down.type == PointerType.Eraser || (down.type == PointerType.Stylus && (currentEvent.buttons.isSecondaryPressed || currentEvent.buttons.isPrimaryPressed || stylusButtonHovering))
                         isStylusEraserOverride = isEraserOverride
 
                         val dragPointerId = down.id
