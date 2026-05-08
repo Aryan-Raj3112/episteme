@@ -18,6 +18,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,6 +112,30 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("""data-action="speak""""))
         assertTrue(html.contains("""data-action="dictionary""""))
         assertTrue(html.contains("""data-action="web-search""""))
+    }
+
+    @Test
+    fun `page document uses supplied texture data uri`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta",
+                startOffset = 0,
+                endOffset = 10
+            ),
+            settings = ReaderSettings(
+                textureId = ReaderTexture.PAPER.id,
+                textureAlpha = 0.5f
+            ),
+            textureDataUri = "data:image/png;base64,readertexture"
+        )
+
+        assertTrue(html.contains("url('data:image/png;base64,readertexture')"))
+        assertTrue(html.contains("mix-blend-mode: multiply"))
+        assertTrue(html.contains("opacity: 0.5"))
     }
 
     @Test

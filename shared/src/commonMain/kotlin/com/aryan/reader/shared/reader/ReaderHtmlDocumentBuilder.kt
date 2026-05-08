@@ -34,7 +34,8 @@ object ReaderHtmlDocumentBuilder {
         navigationLocator: ReaderLocator? = null,
         pages: List<ReaderPage> = emptyList(),
         readerAiFeaturesEnabled: Boolean = true,
-        cloudTtsEnabled: Boolean = true
+        cloudTtsEnabled: Boolean = true,
+        textureDataUri: String? = null
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
             val chapterText = chapter.normalizedReaderText()
@@ -64,7 +65,8 @@ object ReaderHtmlDocumentBuilder {
             navigationLocator = navigationLocator,
             pageAnchors = pages,
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
-            cloudTtsEnabled = cloudTtsEnabled
+            cloudTtsEnabled = cloudTtsEnabled,
+            textureDataUri = textureDataUri
         )
     }
 
@@ -78,7 +80,8 @@ object ReaderHtmlDocumentBuilder {
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
         navigationLocator: ReaderLocator? = null,
         readerAiFeaturesEnabled: Boolean = true,
-        cloudTtsEnabled: Boolean = true
+        cloudTtsEnabled: Boolean = true,
+        textureDataUri: String? = null
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
@@ -124,7 +127,8 @@ object ReaderHtmlDocumentBuilder {
             navigationLocator = navigationLocator,
             pageAnchors = emptyList(),
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
-            cloudTtsEnabled = cloudTtsEnabled
+            cloudTtsEnabled = cloudTtsEnabled,
+            textureDataUri = textureDataUri
         )
     }
 
@@ -139,7 +143,8 @@ object ReaderHtmlDocumentBuilder {
         navigationLocator: ReaderLocator?,
         pageAnchors: List<ReaderPage>,
         readerAiFeaturesEnabled: Boolean,
-        cloudTtsEnabled: Boolean
+        cloudTtsEnabled: Boolean,
+        textureDataUri: String?
     ): String {
         val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
         val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
@@ -165,7 +170,7 @@ object ReaderHtmlDocumentBuilder {
         }
         val textureOverlayCss = settings.textureId
             ?.takeIf { settings.textureAlpha > 0.01f }
-            ?.toTextureOverlayCss(settings.textureAlpha, settings.darkMode)
+            ?.toTextureOverlayCss(settings.textureAlpha, settings.darkMode, textureDataUri)
             .orEmpty()
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
@@ -1765,28 +1770,36 @@ object ReaderHtmlDocumentBuilder {
             .replace("(", "%28")
     }
 
-    private fun String.toTextureOverlayCss(alpha: Float, darkMode: Boolean): String {
-        val texture = when (this) {
-            ReaderTexture.NATURAL_WHITE.id,
-            ReaderTexture.PAPER.id -> "radial-gradient(circle at 20% 30%, rgba(0,0,0,.09) 0 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.22), rgba(0,0,0,.04))"
-            ReaderTexture.NATURAL_BLACK.id,
-            ReaderTexture.SLATE.id -> "radial-gradient(circle at 20% 30%, rgba(255,255,255,.12) 0 1px, transparent 1px), linear-gradient(120deg, rgba(255,255,255,.08), rgba(0,0,0,.18))"
-            ReaderTexture.LIGHT_VENEER.id,
-            ReaderTexture.RETINA_WOOD.id -> "repeating-linear-gradient(90deg, rgba(120,76,32,.10) 0 3px, rgba(255,255,255,.09) 3px 7px)"
-            ReaderTexture.GREY_WASH.id -> "repeating-linear-gradient(135deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,.08) 2px 5px)"
-            ReaderTexture.CLASSY_FABRIC.id,
-            ReaderTexture.CANVAS.id -> "repeating-linear-gradient(0deg, rgba(255,255,255,.08) 0 1px, transparent 1px 4px), repeating-linear-gradient(90deg, rgba(0,0,0,.08) 0 1px, transparent 1px 4px)"
-            ReaderTexture.RETRO_INTRO.id,
-            ReaderTexture.EINK.id -> "radial-gradient(circle, rgba(0,0,0,.12) 0 1px, transparent 1px)"
-            else -> "linear-gradient(135deg, rgba(255,255,255,.08), rgba(0,0,0,.08))"
-        }
-        val size = when (this) {
-            ReaderTexture.EINK.id,
-            ReaderTexture.RETRO_INTRO.id,
-            ReaderTexture.PAPER.id,
-            ReaderTexture.NATURAL_WHITE.id,
-            ReaderTexture.NATURAL_BLACK.id -> "7px 7px, 100% 100%"
-            else -> "auto"
+    private fun String.toTextureOverlayCss(alpha: Float, darkMode: Boolean, dataUri: String?): String {
+        val hasTextureData = !dataUri.isNullOrBlank()
+        val texture = dataUri
+            ?.takeIf { hasTextureData }
+            ?.let { "url('${it.escapeCssString()}')" }
+            ?: when (this) {
+                ReaderTexture.NATURAL_WHITE.id,
+                ReaderTexture.PAPER.id -> "radial-gradient(circle at 20% 30%, rgba(0,0,0,.09) 0 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.22), rgba(0,0,0,.04))"
+                ReaderTexture.NATURAL_BLACK.id,
+                ReaderTexture.SLATE.id -> "radial-gradient(circle at 20% 30%, rgba(255,255,255,.12) 0 1px, transparent 1px), linear-gradient(120deg, rgba(255,255,255,.08), rgba(0,0,0,.18))"
+                ReaderTexture.LIGHT_VENEER.id,
+                ReaderTexture.RETINA_WOOD.id -> "repeating-linear-gradient(90deg, rgba(120,76,32,.10) 0 3px, rgba(255,255,255,.09) 3px 7px)"
+                ReaderTexture.GREY_WASH.id -> "repeating-linear-gradient(135deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,.08) 2px 5px)"
+                ReaderTexture.CLASSY_FABRIC.id,
+                ReaderTexture.CANVAS.id -> "repeating-linear-gradient(0deg, rgba(255,255,255,.08) 0 1px, transparent 1px 4px), repeating-linear-gradient(90deg, rgba(0,0,0,.08) 0 1px, transparent 1px 4px)"
+                ReaderTexture.RETRO_INTRO.id,
+                ReaderTexture.EINK.id -> "radial-gradient(circle, rgba(0,0,0,.12) 0 1px, transparent 1px)"
+                else -> "linear-gradient(135deg, rgba(255,255,255,.08), rgba(0,0,0,.08))"
+            }
+        val size = if (hasTextureData) {
+            "auto"
+        } else {
+            when (this) {
+                ReaderTexture.EINK.id,
+                ReaderTexture.RETRO_INTRO.id,
+                ReaderTexture.PAPER.id,
+                ReaderTexture.NATURAL_WHITE.id,
+                ReaderTexture.NATURAL_BLACK.id -> "7px 7px, 100% 100%"
+                else -> "auto"
+            }
         }
         return """
                 body::before {
@@ -1801,6 +1814,10 @@ object ReaderHtmlDocumentBuilder {
                   z-index: 0;
                 }
         """.trimIndent()
+    }
+
+    private fun String.escapeCssString(): String {
+        return replace("\\", "\\\\").replace("'", "\\'")
     }
 
     private fun String.applyUserHighlights(

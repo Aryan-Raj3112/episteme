@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -73,6 +74,8 @@ import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTexture
+import com.aryan.reader.shared.ReaderTextureFilePrefix
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
@@ -81,6 +84,8 @@ import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.readerTextureDisplayName
+import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
@@ -149,6 +154,9 @@ fun SharedReaderScreen(
     onCloudTtsStop: () -> Unit = {},
     onCloudTtsClearCache: () -> Unit = {},
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
+    readerTextureDataUri: (String) -> String? = { null },
+    readerCustomTextureIds: List<String> = emptyList(),
+    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     readerContent: @Composable ColumnScope.(
         html: String,
         background: Color,
@@ -318,7 +326,8 @@ fun SharedReaderScreen(
                             navigationLocator = null,
                             pages = readerState.pages,
                             readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
-                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable
+                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable,
+                            textureDataUri = settings.textureId?.let(readerTextureDataUri)
                         )
                     }
                 } else {
@@ -344,7 +353,8 @@ fun SharedReaderScreen(
                             highlightPalette = highlightPalette,
                             navigationLocator = navigationLocator,
                             readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
-                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable
+                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable,
+                            textureDataUri = settings.textureId?.let(readerTextureDataUri)
                         )
                     }
                 }
@@ -431,6 +441,8 @@ fun SharedReaderScreen(
                 onCloudTtsStop = onCloudTtsStop,
                 onCloudTtsClearCache = onCloudTtsClearCache,
                 onAutoScrollChange = onAutoScrollChange,
+                readerCustomTextureIds = readerCustomTextureIds,
+                onImportReaderTexture = onImportReaderTexture,
                 onReaderAction = { action -> dispatch(action) }
             )
         }
@@ -562,6 +574,8 @@ private fun SharedReaderControlPanel(
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    readerCustomTextureIds: List<String>,
+    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderAction: (ReaderAction) -> Unit
 ) {
     val sections = toolbarPreferences.availableReaderControlSections()
@@ -612,7 +626,9 @@ private fun SharedReaderControlPanel(
 
                     ReaderControlSection.THEME -> SharedReaderThemeControls(
                         settings = session.reader.settings,
-                        onReaderAction = onReaderAction
+                        customTextureIds = readerCustomTextureIds,
+                        onImportTexture = onImportReaderTexture,
+                        onSettingsChange = { onReaderAction(ReaderAction.SettingsChanged(it)) }
                     )
 
                     ReaderControlSection.VISUAL -> SharedReaderVisualOptionsControls(
@@ -897,12 +913,23 @@ private fun SharedReaderFormatControls(
 }
 
 @Composable
-private fun SharedReaderThemeControls(
+fun SharedReaderThemeControls(
     settings: ReaderSettings,
-    onReaderAction: (ReaderAction) -> Unit
+    builtInThemes: List<ReaderTheme> = BuiltInReaderThemes,
+    customTextureIds: List<String> = emptyList(),
+    onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
+    onSettingsChange: (ReaderSettings) -> Unit
 ) {
     var textured by remember(settings.themeId, settings.textureId) { mutableStateOf(settings.textureId != null) }
-    val activeThemes = BuiltInReaderThemes.filter { (it.textureId != null) == textured }
+    val activeThemes = builtInThemes.filter { (it.textureId != null) == textured }
+    val visibleCustomTextureIds = remember(customTextureIds, settings.textureId) {
+        buildList {
+            addAll(customTextureIds.distinct())
+            settings.textureId
+                ?.takeIf { it.startsWith(ReaderTextureFilePrefix) && it !in this }
+                ?.let(::add)
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         SharedReaderPanelSection("Reading Themes") {
@@ -924,7 +951,7 @@ private fun SharedReaderThemeControls(
                         SharedReaderThemeChoice(
                             theme = theme,
                             selected = settings.themeId == theme.id || (settings.themeId == null && theme.id == "system"),
-                            onSelected = { onReaderAction(ReaderAction.ThemeChanged(theme)) },
+                            onSelected = { onSettingsChange(theme.toReaderSettings(settings)) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -940,14 +967,31 @@ private fun SharedReaderThemeControls(
                 SharedReaderChoiceRow {
                     FilterChip(
                         selected = settings.textureId == null,
-                        onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = null))) },
+                        onClick = { onSettingsChange(settings.copy(textureId = null)) },
                         label = { Text("None") }
                     )
+                    if (onImportTexture != null) {
+                        FilterChip(
+                            selected = settings.textureId?.startsWith(ReaderTextureFilePrefix) == true,
+                            onClick = {
+                                onImportTexture(settings)?.let(onSettingsChange)
+                            },
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                            label = { Text("Import") }
+                        )
+                    }
                     ReaderTexture.entries.forEach { texture ->
                         FilterChip(
                             selected = settings.textureId == texture.id,
-                            onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureId = texture.id))) },
+                            onClick = { onSettingsChange(settings.copy(textureId = texture.id)) },
                             label = { Text(texture.displayName) }
+                        )
+                    }
+                    visibleCustomTextureIds.forEach { textureId ->
+                        FilterChip(
+                            selected = settings.textureId == textureId,
+                            onClick = { onSettingsChange(settings.copy(textureId = textureId)) },
+                            label = { Text(readerTextureDisplayName(textureId)) }
                         )
                     }
                 }
@@ -956,7 +1000,7 @@ private fun SharedReaderThemeControls(
                         label = "Texture strength",
                         value = settings.textureAlpha.coerceIn(0f, 1f),
                         onValueChange = { value ->
-                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textureAlpha = value)))
+                            onSettingsChange(settings.copy(textureAlpha = value))
                         },
                         valueRange = 0f..1f,
                         valueLabel = "${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%"

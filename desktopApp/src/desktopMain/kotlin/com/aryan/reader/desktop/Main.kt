@@ -68,8 +68,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -116,6 +124,7 @@ import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType
@@ -140,6 +149,9 @@ import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.ReaderTexture
+import com.aryan.reader.shared.ReaderTextureFilePrefix
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsPlanner
@@ -206,6 +218,7 @@ import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderLinkTarget
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -245,6 +258,7 @@ import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
+import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedScreenScaffold
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
@@ -291,13 +305,16 @@ import java.awt.dnd.DropTargetAdapter
 import java.awt.dnd.DropTargetDragEvent
 import java.awt.dnd.DropTargetEvent
 import java.awt.dnd.DropTargetDropEvent
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Base64
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import javax.imageio.ImageIO
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
@@ -361,6 +378,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
+    var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -643,6 +661,34 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             updateState(next)
             updatedBook?.let(::syncBookSidecars)
         }
+    }
+
+    fun updateActiveBookReaderSettings(settings: ReaderSettings) {
+        activeReaderBookId?.let { bookId ->
+            var updatedBook: BookItem? = null
+            val next = state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                    if (book.id == bookId) {
+                        book.copy(
+                            timestamp = System.currentTimeMillis(),
+                            isRecent = true,
+                            readerSettings = settings
+                        ).also { updatedBook = it }
+                    } else {
+                        book
+                    }
+                }
+            )
+            updateState(next)
+            updatedBook?.let(::syncBookSidecars)
+        }
+    }
+
+    fun importDesktopReaderTexture(settings: ReaderSettings): ReaderSettings? {
+        val source = chooseReaderTextureFile() ?: return null
+        val textureId = DesktopReaderTextures.importTexture(source) ?: return null
+        readerCustomTextureIds = DesktopReaderTextures.importedTextureIds()
+        return settings.copy(textureId = textureId)
     }
 
     fun stopReaderCloudTts() {
@@ -1622,11 +1668,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     initialPageIndex = activeReaderBookId
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
                                         ?: 0,
+                                    initialReaderSettings = activeReaderBookId
+                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.readerSettings },
                                     onOpenPdf = ::importAndOpenPdf,
                                     onOpenBook = ::importAndOpenBook,
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
                                     },
+                                    onReaderSettingsChange = ::updateActiveBookReaderSettings,
+                                    customTextureIds = readerCustomTextureIds,
+                                    onImportTexture = ::importDesktopReaderTexture,
                                     onLocalSidecarsChanged = {
                                         activeReaderBookId
                                             ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
@@ -1672,6 +1723,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     onCloudTtsStop = ::stopReaderCloudTts,
                                     onCloudTtsClearCache = ::clearReaderCloudTtsCache,
                                     onAutoScrollChange = ::updateReaderAutoScroll,
+                                    readerTextureDataUri = DesktopReaderTextures::dataUriFor,
+                                    readerCustomTextureIds = readerCustomTextureIds,
+                                    onImportReaderTexture = ::importDesktopReaderTexture,
                                     webViewRuntimeState = webViewRuntimeState
                                 )
                             }
@@ -2341,6 +2395,235 @@ private val DesktopPdfAnnotationTools = listOf(
     PdfInkTool.ERASER
 )
 
+private data class DesktopPdfThemeStyle(
+    val theme: ReaderTheme,
+    val viewerBackgroundColor: Color,
+    val colorFilter: ColorFilter?,
+    val textureBitmap: ImageBitmap?,
+    val textureAlpha: Float,
+    val textureBlendMode: BlendMode
+)
+
+@Composable
+private fun DesktopPdfThemedPageImage(
+    bitmap: ImageBitmap,
+    contentDescription: String,
+    themeStyle: DesktopPdfThemeStyle,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = contentDescription,
+            colorFilter = themeStyle.colorFilter,
+            modifier = Modifier.fillMaxSize()
+        )
+        val textureBitmap = themeStyle.textureBitmap
+        if (textureBitmap != null && themeStyle.textureAlpha > 0f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(
+                    brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
+                    size = size,
+                    blendMode = themeStyle.textureBlendMode,
+                    alpha = themeStyle.textureAlpha
+                )
+            }
+        }
+    }
+}
+
+private fun ReaderSettings?.toDesktopPdfReaderSettings(): ReaderSettings {
+    val defaults = ReaderSettings(themeId = "no_theme")
+    val settings = this ?: defaults
+    val themeId = settings.themeId
+    val hasPdfTheme = BuiltInPdfReaderThemes.any { it.id == themeId }
+    val hasCustomColors = settings.backgroundColorArgb != null && settings.textColorArgb != null
+    return settings.copy(
+        themeId = when {
+            themeId == null -> "no_theme"
+            hasPdfTheme || hasCustomColors -> themeId
+            else -> "no_theme"
+        }
+    )
+}
+
+private fun ReaderSettings.toDesktopPdfThemeStyle(displayMode: PdfDisplayMode): DesktopPdfThemeStyle {
+    val theme = toDesktopPdfTheme()
+    val viewerBackground = when (theme.id) {
+        "no_theme", "system" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.White else Color.Black
+        "reverse" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.Black else Color.White
+        else -> theme.backgroundColor.takeIf { it.isSpecified }
+            ?: if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.White else Color.Black
+    }
+    val isDarkTexture = theme.isDark || theme.id == "reverse"
+    return DesktopPdfThemeStyle(
+        theme = theme,
+        viewerBackgroundColor = viewerBackground,
+        colorFilter = theme.toDesktopPdfColorFilter(),
+        textureBitmap = DesktopReaderTextures.imageBitmapFor(textureId),
+        textureAlpha = if (textureId == null) 0f else textureAlpha.coerceIn(0f, 1f),
+        textureBlendMode = if (isDarkTexture) BlendMode.Screen else BlendMode.Multiply
+    )
+}
+
+private fun ReaderSettings.toDesktopPdfTheme(): ReaderTheme {
+    BuiltInPdfReaderThemes.firstOrNull { it.id == themeId }?.let { return it }
+    val background = backgroundColorArgb?.toComposeColor()
+    val text = textColorArgb?.toComposeColor()
+    return if (background != null && text != null) {
+        ReaderTheme(
+            id = themeId ?: "desktop_pdf_custom",
+            name = "Custom",
+            backgroundColor = background,
+            textColor = text,
+            isDark = darkMode,
+            textureId = textureId,
+            isCustom = true
+        )
+    } else {
+        BuiltInPdfReaderThemes.first()
+    }
+}
+
+private fun ReaderTheme.toDesktopPdfColorFilter(): ColorFilter? {
+    return when (id) {
+        "no_theme", "system" -> null
+        "reverse" -> {
+            val colorMatrix = floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f
+            )
+            ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
+        }
+        else -> {
+            if (!backgroundColor.isSpecified || !textColor.isSpecified) return null
+            val bgR = backgroundColor.red * 255f
+            val bgG = backgroundColor.green * 255f
+            val bgB = backgroundColor.blue * 255f
+            val fgR = textColor.red * 255f
+            val fgG = textColor.green * 255f
+            val fgB = textColor.blue * 255f
+            val dr = (bgR - fgR) / 255f
+            val dg = (bgG - fgG) / 255f
+            val db = (bgB - fgB) / 255f
+            val lumR = 0.2126f
+            val lumG = 0.7152f
+            val lumB = 0.0722f
+            val colorMatrix = floatArrayOf(
+                dr * lumR, dr * lumG, dr * lumB, 0f, fgR,
+                dg * lumR, dg * lumG, dg * lumB, 0f, fgG,
+                db * lumR, db * lumG, db * lumB, 0f, fgB,
+                0f, 0f, 0f, 1f, 0f
+            )
+            ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
+        }
+    }
+}
+
+private object DesktopReaderTextures {
+    private val bytesCache = mutableMapOf<String, ByteArray?>()
+    private val dataUriCache = mutableMapOf<String, String?>()
+    private val imageCache = mutableMapOf<String, ImageBitmap?>()
+    private val importExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+
+    fun importedTextureIds(): List<String> {
+        return readerTextureDirectory()
+            .listFiles { file -> file.isFile && file.extension.lowercase(Locale.ROOT) in importExtensions }
+            ?.sortedBy { it.name.lowercase(Locale.ROOT) }
+            ?.map { ReaderTextureFilePrefix + it.absolutePath }
+            .orEmpty()
+    }
+
+    fun importTexture(source: File): String? {
+        if (!source.isFile) return null
+        val extension = source.extension.lowercase(Locale.ROOT)
+            .takeIf { it in importExtensions }
+            ?: return null
+        val safeName = source.nameWithoutExtension
+            .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            .trim('_')
+            .ifBlank { "texture" }
+        val directory = readerTextureDirectory().apply { mkdirs() }
+        val target = File(directory, "texture_${System.currentTimeMillis()}_$safeName.$extension")
+        return runCatching {
+            source.copyTo(target, overwrite = false)
+            val textureId = ReaderTextureFilePrefix + target.absolutePath
+            bytesCache.remove(textureId)
+            dataUriCache.remove(textureId)
+            imageCache.remove(textureId)
+            textureId
+        }.getOrNull()
+    }
+
+    fun dataUriFor(textureId: String): String? {
+        return dataUriCache.getOrPut(textureId) {
+            val bytes = bytesFor(textureId) ?: return@getOrPut null
+            val extension = textureExtension(textureId)
+            "data:${imageMimeTypeForExtension(extension)};base64," +
+                Base64.getEncoder().encodeToString(bytes)
+        }
+    }
+
+    fun imageBitmapFor(textureId: String?): ImageBitmap? {
+        val id = textureId ?: return null
+        return imageCache.getOrPut(id) {
+            val bytes = bytesFor(id) ?: return@getOrPut null
+            runCatching {
+                ImageIO.read(ByteArrayInputStream(bytes))?.toComposeImageBitmap()
+            }.getOrNull()
+        }
+    }
+
+    private fun bytesFor(textureId: String): ByteArray? {
+        return bytesCache.getOrPut(textureId) {
+            if (textureId.startsWith(ReaderTextureFilePrefix)) {
+                File(textureId.removePrefix(ReaderTextureFilePrefix)).takeIf { it.isFile }?.readBytes()
+            } else {
+                val texture = ReaderTexture.entries.firstOrNull { it.id == textureId } ?: return@getOrPut null
+                val classLoader = Thread.currentThread().contextClassLoader ?: DesktopReaderTextures::class.java.classLoader
+                classLoader
+                    ?.getResourceAsStream(texture.assetPath)
+                    ?.use { it.readBytes() }
+                    ?: DesktopReaderTextures::class.java.classLoader
+                        ?.getResourceAsStream(texture.assetPath)
+                        ?.use { it.readBytes() }
+            }
+        }
+    }
+
+    private fun textureExtension(textureId: String): String {
+        if (textureId.startsWith(ReaderTextureFilePrefix)) {
+            return File(textureId.removePrefix(ReaderTextureFilePrefix)).extension
+        }
+        return ReaderTexture.entries.firstOrNull { it.id == textureId }
+            ?.assetPath
+            ?.substringAfterLast('.', "png")
+            ?: "png"
+    }
+
+    private fun readerTextureDirectory(): File {
+        val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
+            ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
+        return File(baseDir, "Episteme/reader_textures")
+    }
+}
+
+private fun imageMimeTypeForExtension(extension: String): String {
+    return when (extension.lowercase(Locale.ROOT)) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        else -> "image/png"
+    }
+}
+
+private fun Long.toComposeColor(): Color {
+    return Color(this and 0xFFFFFFFFL)
+}
+
 private val PdfInkTool.isDesktopHighlighter: Boolean
     get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
 
@@ -2370,15 +2653,22 @@ private fun List<PdfPagePoint>.withDesktopPdfDragPoint(
 private fun PdfReaderScreen(
     document: DesktopPdfDocument,
     initialPageIndex: Int,
+    initialReaderSettings: ReaderSettings? = null,
     onOpenPdf: () -> Unit,
     onOpenBook: () -> Unit,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
+    onReaderSettingsChange: (ReaderSettings) -> Unit = {},
+    customTextureIds: List<String> = emptyList(),
+    onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     onLocalSidecarsChanged: () -> Unit = {},
     aiByokSettings: ReaderAiByokSettings,
     aiAdapter: DesktopByokAiAdapter,
     ttsAdapter: DesktopGeminiCloudTtsAdapter
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
+    var pdfReaderSettings by remember(document.path) {
+        mutableStateOf(initialReaderSettings.toDesktopPdfReaderSettings())
+    }
     var pdfState by remember(document.path) {
         val defaultTool = PdfInkTool.PEN
         val defaultToolConfig = SharedPdfAnnotationDefaults.configFor(defaultTool)
@@ -2485,6 +2775,12 @@ private fun PdfReaderScreen(
         if (next.pageIndex != previousPage) {
             clearPdfInteractionState()
         }
+    }
+
+    fun updatePdfReaderSettings(settings: ReaderSettings) {
+        val nextSettings = settings.toDesktopPdfReaderSettings()
+        pdfReaderSettings = nextSettings
+        onReaderSettingsChange(nextSettings)
     }
 
     fun commitActiveTextDraft() {
@@ -2630,6 +2926,9 @@ private fun PdfReaderScreen(
     val canGoPrevious = pdfState.canGoPrevious
     val canGoNext = pdfState.canGoNext
     val progressPercent = pdfState.progressPercent
+    val pdfThemeStyle = remember(pdfReaderSettings, displayMode) {
+        pdfReaderSettings.toDesktopPdfThemeStyle(displayMode)
+    }
     val verticalRenderWindow = remember(pageIndex, document.pageCount) {
         val start = (pageIndex - 1).coerceAtLeast(0)
         val end = (pageIndex + 1).coerceAtMost((document.pageCount - 1).coerceAtLeast(0))
@@ -3591,6 +3890,16 @@ private fun PdfReaderScreen(
                             Text(if (isBookmarked) "Remove bookmark" else "Bookmark page")
                         }
                     }
+                    item {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        SharedReaderThemeControls(
+                            settings = pdfReaderSettings,
+                            builtInThemes = BuiltInPdfReaderThemes,
+                            customTextureIds = customTextureIds,
+                            onImportTexture = onImportTexture,
+                            onSettingsChange = ::updatePdfReaderSettings
+                        )
+                    }
                     if (bookmarks.isNotEmpty()) {
                         item {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -3913,7 +4222,7 @@ private fun PdfReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(Color(0xFFE8E5DC), RoundedCornerShape(8.dp))
+                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
                 ) {
                     LazyColumn(
                         state = verticalListState,
@@ -3948,6 +4257,7 @@ private fun PdfReaderScreen(
                                 isRichTextMode = isRichTextMode,
                                 readerAiFeaturesAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
                                 cloudTtsAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                themeStyle = pdfThemeStyle,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = {
                                     goToPage(
@@ -3986,7 +4296,7 @@ private fun PdfReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(Color(0xFFE8E5DC), RoundedCornerShape(8.dp))
+                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
                         .horizontalScroll(pageHorizontalScrollState)
                         .verticalScroll(pageVerticalScrollState)
                         .padding(24.dp),
@@ -4334,9 +4644,10 @@ private fun PdfReaderScreen(
                                     }
                                 }
                         ) {
-                            Image(
+                            DesktopPdfThemedPageImage(
                                 bitmap = pageRender.image,
                                 contentDescription = "PDF page ${pageIndex + 1}",
+                                themeStyle = pdfThemeStyle,
                                 modifier = Modifier.fillMaxSize()
                             )
                             SharedPdfRichTextLayer(
@@ -4975,6 +5286,7 @@ private fun DesktopVerticalPdfPage(
     isRichTextMode: Boolean,
     readerAiFeaturesAvailable: Boolean,
     cloudTtsAvailable: Boolean,
+    themeStyle: DesktopPdfThemeStyle,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
@@ -5436,9 +5748,10 @@ private fun DesktopVerticalPdfPage(
                         }
                     }
 
-                    Image(
+                    DesktopPdfThemedPageImage(
                         bitmap = pageRender.image,
                         contentDescription = "PDF page ${pageIndex + 1}",
+                        themeStyle = themeStyle,
                         modifier = Modifier.fillMaxSize()
                     )
                     SharedPdfRichTextLayer(
@@ -6166,6 +6479,9 @@ private fun ReaderScreen(
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    readerTextureDataUri: (String) -> String?,
+    readerCustomTextureIds: List<String>,
+    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
@@ -6196,7 +6512,10 @@ private fun ReaderScreen(
         onCloudTtsPauseResume = onCloudTtsPauseResume,
         onCloudTtsStop = onCloudTtsStop,
         onCloudTtsClearCache = onCloudTtsClearCache,
-        onAutoScrollChange = onAutoScrollChange
+        onAutoScrollChange = onAutoScrollChange,
+        readerTextureDataUri = readerTextureDataUri,
+        readerCustomTextureIds = readerCustomTextureIds,
+        onImportReaderTexture = onImportReaderTexture
     ) { html, background, navigationTarget, highlights, onVisiblePageChanged ->
         Surface(
             color = background,
@@ -7123,6 +7442,16 @@ private fun choosePdfFile(): File? {
 private fun chooseFontFile(): File? {
     val dialog = FileDialog(null as Frame?, "Choose font", FileDialog.LOAD).apply {
         file = "*.ttf;*.otf;*.woff2"
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
+private fun chooseReaderTextureFile(): File? {
+    val dialog = FileDialog(null as Frame?, "Choose reader texture", FileDialog.LOAD).apply {
+        file = "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp"
         isVisible = true
     }
     val directory = dialog.directory ?: return null
