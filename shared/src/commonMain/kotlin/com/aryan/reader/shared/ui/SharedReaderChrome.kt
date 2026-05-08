@@ -41,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,12 @@ import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
+import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderAutoScrollState
+import com.aryan.reader.shared.ReaderContextExtractor
+import com.aryan.reader.shared.ReaderExtrasState
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
@@ -79,12 +86,14 @@ import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 data class ReaderContentNavigationTarget(
     val locator: ReaderLocator?,
     val requestId: Long,
-    val readingMode: ReaderReadingMode
+    val readingMode: ReaderReadingMode,
+    val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState()
 )
 
 @Composable
@@ -124,6 +133,13 @@ fun SharedReaderScreen(
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     onPickCustomFont: (() -> String?)? = null,
+    readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
+    aiByokSettings: ReaderAiByokSettings = ReaderAiByokSettings(),
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit = { _, _ -> },
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onCloudTtsToggle: (String) -> Unit = {},
+    onCloudTtsStop: () -> Unit = {},
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
     readerContent: @Composable ColumnScope.(
         html: String,
         background: Color,
@@ -135,12 +151,26 @@ fun SharedReaderScreen(
     val readerState = session.reader
     val page = readerState.currentPage
     val settings = readerState.settings
+    val byokSettings = aiByokSettings.sanitized()
     val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
     val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
+    }
+
+    LaunchedEffect(
+        readerExtrasState.autoScroll.sanitized(),
+        settings.readingMode,
+        readerState.currentPageIndex,
+        readerState.canGoNext
+    ) {
+        val autoScroll = readerExtrasState.autoScroll.sanitized()
+        if (!autoScroll.enabled || settings.readingMode != ReaderReadingMode.PAGINATED || !readerState.canGoNext) return@LaunchedEffect
+        val delayMs = (180_000f / autoScroll.speed).roundToInt().coerceIn(1_200, 12_000)
+        delay(delayMs.toLong())
+        dispatch(ReaderAction.NextPage)
     }
 
     SharedScreenScaffold(
@@ -165,7 +195,15 @@ fun SharedReaderScreen(
                     onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
                     onToggleSearch = {
                         dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
-                    }
+                    },
+                    onExternalLookup = onExternalLookup,
+                    onAiAction = onAiAction,
+                    onCloudTtsToggle = onCloudTtsToggle,
+                    onCloudTtsStop = onCloudTtsStop,
+                    onAutoScrollChange = onAutoScrollChange,
+                    session = session,
+                    extrasState = readerExtrasState,
+                    aiByokSettings = byokSettings
                 )
             }
         }
@@ -251,7 +289,9 @@ fun SharedReaderScreen(
                         session.searchQuery,
                         session.searchOptions,
                         highlightPalette,
-                        readerState.pages
+                        readerState.pages,
+                        byokSettings.areReaderAiFeaturesAvailable,
+                        byokSettings.isCloudTtsAvailable
                     ) {
                         ReaderHtmlDocumentBuilder.verticalDocument(
                             book = readerState.book,
@@ -261,7 +301,9 @@ fun SharedReaderScreen(
                             highlights = emptyList(),
                             highlightPalette = highlightPalette,
                             navigationLocator = null,
-                            pages = readerState.pages
+                            pages = readerState.pages,
+                            readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
+                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable
                         )
                     }
                 } else {
@@ -273,7 +315,9 @@ fun SharedReaderScreen(
                         session.searchOptions,
                         session.highlights,
                         highlightPalette,
-                        navigationLocator
+                        navigationLocator,
+                        byokSettings.areReaderAiFeaturesAvailable,
+                        byokSettings.isCloudTtsAvailable
                     ) {
                         ReaderHtmlDocumentBuilder.pageDocument(
                             book = readerState.book,
@@ -283,7 +327,9 @@ fun SharedReaderScreen(
                             searchOptions = session.searchOptions,
                             highlights = session.highlights,
                             highlightPalette = highlightPalette,
-                            navigationLocator = navigationLocator
+                            navigationLocator = navigationLocator,
+                            readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
+                            cloudTtsEnabled = byokSettings.isCloudTtsAvailable
                         )
                     }
                 }
@@ -293,7 +339,8 @@ fun SharedReaderScreen(
                     ReaderContentNavigationTarget(
                         locator = navigationLocator,
                         requestId = session.navigationRequestId,
-                        readingMode = settings.readingMode
+                        readingMode = settings.readingMode,
+                        autoScroll = readerExtrasState.autoScroll.sanitized()
                     ),
                     if (settings.readingMode == ReaderReadingMode.VERTICAL) session.highlights else emptyList(),
                     { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) }
@@ -337,7 +384,15 @@ fun SharedReaderScreen(
                         onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
                         onToggleSearch = {
                             dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
-                        }
+                        },
+                        onExternalLookup = onExternalLookup,
+                        onAiAction = onAiAction,
+                        onCloudTtsToggle = onCloudTtsToggle,
+                        onCloudTtsStop = onCloudTtsStop,
+                        onAutoScrollChange = onAutoScrollChange,
+                        session = session,
+                        extrasState = readerExtrasState,
+                        aiByokSettings = byokSettings
                     )
                 }
             }
@@ -347,6 +402,13 @@ fun SharedReaderScreen(
                 toolbarPreferences = toolbarPreferences,
                 onToolbarPreferencesChange = onToolbarPreferencesChange,
                 onPickCustomFont = onPickCustomFont,
+                extrasState = readerExtrasState,
+                aiByokSettings = byokSettings,
+                onExternalLookup = onExternalLookup,
+                onAiAction = onAiAction,
+                onCloudTtsToggle = onCloudTtsToggle,
+                onCloudTtsStop = onCloudTtsStop,
+                onAutoScrollChange = onAutoScrollChange,
                 onReaderAction = { action -> dispatch(action) }
             )
         }
@@ -362,10 +424,22 @@ private fun SharedReaderQuickActions(
     isSearchActive: Boolean,
     onToggleBookmark: () -> Unit,
     onToggleTheme: () -> Unit,
-    onToggleSearch: () -> Unit
+    onToggleSearch: () -> Unit,
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit,
+    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStop: () -> Unit,
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    session: ReaderSessionState,
+    extrasState: ReaderExtrasState,
+    aiByokSettings: ReaderAiByokSettings
 ) {
     val tools = toolbarPreferences.orderedVisibleTools()
-        .filter { it.supportsDesktopQuickAction && toolbarPreferences.isBottom(it) == bottom }
+        .filter { tool ->
+            tool.supportsDesktopQuickAction &&
+                toolbarPreferences.isBottom(tool) == bottom &&
+                (tool != ReaderTool.AI_FEATURES || aiByokSettings.areReaderAiFeaturesAvailable)
+        }
     if (tools.isEmpty()) return
 
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -389,6 +463,53 @@ private fun SharedReaderQuickActions(
                     )
                 }
 
+                ReaderTool.DICTIONARY -> TextButton(
+                    onClick = { onExternalLookup(ReaderExternalLookupAction.DICTIONARY, ReaderContextExtractor.currentPageText(session)) }
+                ) {
+                    Text("Dict")
+                }
+
+                ReaderTool.AI_FEATURES -> Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    TextButton(
+                        enabled = aiByokSettings.areReaderAiFeaturesAvailable &&
+                            ReaderContextExtractor.currentPageText(session).isNotBlank() &&
+                            !extrasState.aiResult.isLoading,
+                        onClick = { onAiAction(ReaderAiFeature.DEFINE, ReaderContextExtractor.currentPageText(session).take(1200)) }
+                    ) {
+                        Text("Define")
+                    }
+                    TextButton(
+                        enabled = aiByokSettings.areReaderAiFeaturesAvailable &&
+                            ReaderContextExtractor.currentChapterText(session).isNotBlank() &&
+                            !extrasState.aiResult.isLoading,
+                        onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, ReaderContextExtractor.currentChapterText(session)) }
+                    ) {
+                        Text("Summary")
+                    }
+                }
+
+                ReaderTool.TTS_CONTROLS -> TextButton(
+                    enabled = extrasState.cloudTts.isAvailable || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading,
+                    onClick = {
+                        if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading) {
+                            onCloudTtsStop()
+                        } else {
+                            onCloudTtsToggle(ReaderContextExtractor.currentPageText(session))
+                        }
+                    }
+                ) {
+                    Text(if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading) "Stop" else "Read")
+                }
+
+                ReaderTool.AUTO_SCROLL -> TextButton(
+                    onClick = {
+                        val autoScroll = extrasState.autoScroll.sanitized()
+                        onAutoScrollChange(autoScroll.copy(enabled = !autoScroll.enabled))
+                    }
+                ) {
+                    Text(if (extrasState.autoScroll.enabled) "Stop scroll" else "Auto")
+                }
+
                 else -> Unit
             }
         }
@@ -401,6 +522,13 @@ private fun SharedReaderControlPanel(
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     onPickCustomFont: (() -> String?)?,
+    extrasState: ReaderExtrasState,
+    aiByokSettings: ReaderAiByokSettings,
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit,
+    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStop: () -> Unit,
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onReaderAction: (ReaderAction) -> Unit
 ) {
     val sections = toolbarPreferences.availableReaderControlSections()
@@ -458,6 +586,17 @@ private fun SharedReaderControlPanel(
                         onReaderAction = onReaderAction
                     )
 
+                    ReaderControlSection.EXTRAS -> SharedReaderExtrasControls(
+                        session = session,
+                        extrasState = extrasState,
+                        aiByokSettings = aiByokSettings,
+                        onExternalLookup = onExternalLookup,
+                        onAiAction = onAiAction,
+                        onCloudTtsToggle = onCloudTtsToggle,
+                        onCloudTtsStop = onCloudTtsStop,
+                        onAutoScrollChange = onAutoScrollChange
+                    )
+
                     ReaderControlSection.TOOLBAR -> SharedReaderToolbarControls(
                         toolbarPreferences = toolbarPreferences,
                         onToolbarPreferencesChange = onToolbarPreferencesChange
@@ -472,6 +611,7 @@ private enum class ReaderControlSection(val title: String) {
     FORMAT("Format"),
     THEME("Theme"),
     VISUAL("Visual"),
+    EXTRAS("Extras"),
     TOOLBAR("Toolbar")
 }
 
@@ -480,6 +620,15 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(): List<Read
         if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
         if (isVisible(ReaderTool.VISUAL_OPTIONS)) add(ReaderControlSection.VISUAL)
+        if (
+            isVisible(ReaderTool.DICTIONARY) ||
+            isVisible(ReaderTool.AI_FEATURES) ||
+            isVisible(ReaderTool.TTS_CONTROLS) ||
+            isVisible(ReaderTool.TTS_SETTINGS) ||
+            isVisible(ReaderTool.AUTO_SCROLL)
+        ) {
+            add(ReaderControlSection.EXTRAS)
+        }
         add(ReaderControlSection.TOOLBAR)
     }
 }
@@ -816,6 +965,143 @@ private fun SharedReaderVisualOptionsControls(
                 valueRange = 0.5f..2.0f,
                 valueLabel = "${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x"
             )
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderExtrasControls(
+    session: ReaderSessionState,
+    extrasState: ReaderExtrasState,
+    aiByokSettings: ReaderAiByokSettings,
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit,
+    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStop: () -> Unit,
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit
+) {
+    val settings = aiByokSettings.sanitized()
+    val currentPageText = ReaderContextExtractor.currentPageText(session)
+    val currentChapterText = ReaderContextExtractor.currentChapterText(session)
+    val recapText = ReaderContextExtractor.textBeforeCurrentLocation(session)
+
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SharedReaderPanelSection("External Apps") {
+            SharedReaderChoiceRow {
+                ReaderExternalLookupAction.entries.forEach { action ->
+                    FilterChip(
+                        selected = false,
+                        enabled = currentPageText.isNotBlank(),
+                        onClick = { onExternalLookup(action, currentPageText) },
+                        label = { Text(action.title) }
+                    )
+                }
+            }
+        }
+
+        SharedReaderPanelSection("Auto Scroll") {
+            val autoScroll = extrasState.autoScroll.sanitized()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Auto scroll", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = autoScroll.enabled,
+                    onCheckedChange = { enabled -> onAutoScrollChange(autoScroll.copy(enabled = enabled)) }
+                )
+            }
+            SharedReaderSettingSlider(
+                label = "Speed",
+                value = autoScroll.speed,
+                onValueChange = { speed -> onAutoScrollChange(autoScroll.copy(speed = speed).sanitized()) },
+                valueRange = 12f..160f,
+                valueLabel = "${autoScroll.speed.roundToInt()}"
+            )
+        }
+
+        SharedReaderPanelSection("Cloud TTS") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            extrasState.cloudTts.isLoading -> "Preparing audio"
+                            extrasState.cloudTts.isPlaying -> "Reading"
+                            settings.isCloudTtsAvailable -> "Ready"
+                            else -> "Needs Gemini key"
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    val errorMessage = extrasState.cloudTts.errorMessage?.takeIf { it.isNotBlank() }
+                    val statusMessage = extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
+                    when {
+                        errorMessage != null -> Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        statusMessage != null -> Text(statusMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying,
+                    onClick = {
+                        if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) {
+                            onCloudTtsStop()
+                        } else {
+                            onCloudTtsToggle(currentPageText)
+                        }
+                    }
+                ) {
+                    Text(if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) "Stop" else "Read")
+                }
+            }
+        }
+
+        if (settings.areReaderAiFeaturesAvailable) {
+            SharedReaderPanelSection("AI") {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                ) {
+                    TextButton(
+                        enabled = currentPageText.isNotBlank() && !extrasState.aiResult.isLoading,
+                        onClick = { onAiAction(ReaderAiFeature.DEFINE, currentPageText.take(1200)) }
+                    ) {
+                        Text("Define page")
+                    }
+                    TextButton(
+                        enabled = currentChapterText.isNotBlank() && !extrasState.aiResult.isLoading,
+                        onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, currentChapterText) }
+                    ) {
+                        Text("Summarize chapter")
+                    }
+                    TextButton(
+                        enabled = recapText.isNotBlank() && !extrasState.aiResult.isLoading,
+                        onClick = { onAiAction(ReaderAiFeature.RECAP, recapText) }
+                    ) {
+                        Text("Recap")
+                    }
+                }
+                if (extrasState.aiResult.hasContent) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(extrasState.aiResult.title ?: "AI", fontWeight = FontWeight.SemiBold)
+                            when {
+                                extrasState.aiResult.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                extrasState.aiResult.errorMessage != null -> Text(extrasState.aiResult.errorMessage, color = MaterialTheme.colorScheme.error)
+                                else -> SharedMarkdownText(extrasState.aiResult.text)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

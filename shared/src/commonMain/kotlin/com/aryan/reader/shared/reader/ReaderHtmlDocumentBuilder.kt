@@ -32,7 +32,9 @@ object ReaderHtmlDocumentBuilder {
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
         navigationLocator: ReaderLocator? = null,
-        pages: List<ReaderPage> = emptyList()
+        pages: List<ReaderPage> = emptyList(),
+        readerAiFeaturesEnabled: Boolean = true,
+        cloudTtsEnabled: Boolean = true
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
             val chapterText = chapter.normalizedReaderText()
@@ -60,7 +62,9 @@ object ReaderHtmlDocumentBuilder {
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
             navigationLocator = navigationLocator,
-            pageAnchors = pages
+            pageAnchors = pages,
+            readerAiFeaturesEnabled = readerAiFeaturesEnabled,
+            cloudTtsEnabled = cloudTtsEnabled
         )
     }
 
@@ -72,7 +76,9 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
-        navigationLocator: ReaderLocator? = null
+        navigationLocator: ReaderLocator? = null,
+        readerAiFeaturesEnabled: Boolean = true,
+        cloudTtsEnabled: Boolean = true
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
         val body = if (page == null || chapter == null) {
@@ -116,7 +122,9 @@ object ReaderHtmlDocumentBuilder {
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
             navigationLocator = navigationLocator,
-            pageAnchors = emptyList()
+            pageAnchors = emptyList(),
+            readerAiFeaturesEnabled = readerAiFeaturesEnabled,
+            cloudTtsEnabled = cloudTtsEnabled
         )
     }
 
@@ -129,7 +137,9 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions,
         highlightPalette: ReaderHighlightPalette,
         navigationLocator: ReaderLocator?,
-        pageAnchors: List<ReaderPage>
+        pageAnchors: List<ReaderPage>,
+        readerAiFeaturesEnabled: Boolean,
+        cloudTtsEnabled: Boolean
     ): String {
         val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
         val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
@@ -159,6 +169,16 @@ object ReaderHtmlDocumentBuilder {
             .orEmpty()
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
+        }
+        val defineButton = if (readerAiFeaturesEnabled) {
+            """<button type="button" data-action="define">Define</button>"""
+        } else {
+            ""
+        }
+        val speakButton = if (cloudTtsEnabled) {
+            """<button type="button" data-action="speak">Speak</button>"""
+        } else {
+            ""
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         val pageAnchorJson = pageAnchors.toPageAnchorJson()
@@ -276,7 +296,11 @@ object ReaderHtmlDocumentBuilder {
               <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
                 <button type="button" data-action="copy">Copy</button>
                 $highlightButtons
+                $defineButton
+                $speakButton
+                <button type="button" data-action="dictionary">Dict</button>
                 <button type="button" data-action="find">Find</button>
+                <button type="button" data-action="web-search">Web</button>
                 <button type="button" data-action="translate">Translate</button>
                 <button type="button" data-action="clear">Clear</button>
               </div>
@@ -351,6 +375,34 @@ object ReaderHtmlDocumentBuilder {
                     });
                   }
                   window.readerScrollToLocator = scrollToLocator;
+                  var readerAutoScrollFrame = null;
+                  var readerAutoScrollLastTime = 0;
+                  var readerAutoScrollSpeed = 36;
+                  function readerAutoScrollStep(timestamp) {
+                    if (readerAutoScrollFrame === null) return;
+                    if (!readerAutoScrollLastTime) readerAutoScrollLastTime = timestamp;
+                    var elapsed = Math.max(0, timestamp - readerAutoScrollLastTime);
+                    readerAutoScrollLastTime = timestamp;
+                    window.scrollBy(0, readerAutoScrollSpeed * elapsed / 1000);
+                    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+                      window.readerAutoScroll.stop();
+                      return;
+                    }
+                    readerAutoScrollFrame = window.requestAnimationFrame(readerAutoScrollStep);
+                  }
+                  window.readerAutoScroll = {
+                    start: function (speed) {
+                      readerAutoScrollSpeed = Math.max(12, Math.min(160, Number(speed) || 36));
+                      if (readerAutoScrollFrame !== null) window.cancelAnimationFrame(readerAutoScrollFrame);
+                      readerAutoScrollLastTime = 0;
+                      readerAutoScrollFrame = window.requestAnimationFrame(readerAutoScrollStep);
+                    },
+                    stop: function () {
+                      if (readerAutoScrollFrame !== null) window.cancelAnimationFrame(readerAutoScrollFrame);
+                      readerAutoScrollFrame = null;
+                      readerAutoScrollLastTime = 0;
+                    }
+                  };
                   function textNodesUnder(root) {
                     var nodes = [];
                     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -571,6 +623,30 @@ object ReaderHtmlDocumentBuilder {
                     document.execCommand('copy');
                     document.body.removeChild(textarea);
                   }
+                  function fallbackSelectionAction(action, text) {
+                    if (action === 'translate') {
+                      window.open('https://translate.google.com/?sl=auto&tl=en&text=' + encodeURIComponent(text) + '&op=translate', '_blank');
+                    } else if (action === 'dictionary') {
+                      window.open('https://www.google.com/search?q=define+' + encodeURIComponent(text), '_blank');
+                    } else if (action === 'web-search') {
+                      window.open('https://www.google.com/search?q=' + encodeURIComponent(text), '_blank');
+                    }
+                  }
+                  function sendSelectionAction(action, text) {
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify({
+                          action: action,
+                          text: text
+                        }));
+                        return true;
+                      } catch (error) {
+                        console.log('READER_SELECTION_ACTION bridge_error action=' + action + ' error=' + error);
+                      }
+                    }
+                    fallbackSelectionAction(action, text);
+                    return false;
+                  }
                   function selectionOffsetsWithin(host, range) {
                     var rawStart = offsetForBoundary(host, range.startContainer, range.startOffset);
                     var rawEnd = offsetForBoundary(host, range.endContainer, range.endOffset);
@@ -785,8 +861,12 @@ object ReaderHtmlDocumentBuilder {
                     }
                     if (action === 'copy') copyText(text);
                     if (action === 'highlight') highlightRange(event.target.getAttribute('data-color-id') || 'yellow');
+                    if (action === 'define') sendSelectionAction('define', text);
+                    if (action === 'speak') sendSelectionAction('speak', text);
+                    if (action === 'dictionary') sendSelectionAction('dictionary', text);
                     if (action === 'find') window.find(text);
-                    if (action === 'translate') window.open('https://translate.google.com/?sl=auto&tl=en&text=' + encodeURIComponent(text) + '&op=translate', '_blank');
+                    if (action === 'web-search') sendSelectionAction('web-search', text);
+                    if (action === 'translate') sendSelectionAction('translate', text);
                     if (action === 'clear') {
                       window.getSelection().removeAllRanges();
                       hideMenu();

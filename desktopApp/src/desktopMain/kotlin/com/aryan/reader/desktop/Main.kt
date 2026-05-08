@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +51,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -86,6 +88,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -117,7 +120,20 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.PdfDisplayMode
+import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
+import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
+import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderAiModelOption
+import com.aryan.reader.shared.ReaderAiModelOptions
+import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderAction
+import com.aryan.reader.shared.ReaderAutoScrollState
+import com.aryan.reader.shared.ReaderCloudTtsState
+import com.aryan.reader.shared.ReaderCloudTtsSpeakers
+import com.aryan.reader.shared.ReaderContextExtractor
+import com.aryan.reader.shared.ReaderExtrasState
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
@@ -141,6 +157,8 @@ import com.aryan.reader.shared.SmartRule
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.externalLookupUrl
+import com.aryan.reader.shared.maskedReaderAiKey
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfNormalizedPoint
@@ -205,6 +223,7 @@ import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
+import com.aryan.reader.shared.ui.SharedMarkdownText
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
@@ -274,6 +293,7 @@ import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 fun main() {
     configureComposeSwingInterop()
@@ -318,6 +338,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             repository = opdsRepository,
             idFactory = { UUID.randomUUID().toString() }
         )
+    }
+    val aiByokStore = remember { DesktopAiByokStore() }
+    var aiByokSettings by remember { mutableStateOf(aiByokStore.load()) }
+    val desktopAiAdapter = remember {
+        DesktopByokAiAdapter { aiByokSettings }
+    }
+    val desktopTtsAdapter = remember {
+        DesktopGeminiCloudTtsAdapter(settingsProvider = { aiByokSettings })
     }
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
@@ -397,6 +425,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
+    var readerExtrasState by remember {
+        mutableStateOf(
+            ReaderExtrasState(
+                cloudTts = ReaderCloudTtsState(isAvailable = aiByokSettings.isCloudTtsAvailable)
+            )
+        )
+    }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
@@ -405,11 +440,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     var folderToRemove by remember { mutableStateOf<Shelf?>(null) }
     var showAddToShelfDialog by remember { mutableStateOf(false) }
     var showTagSelectionDialog by remember { mutableStateOf(false) }
+    var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
     var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
     var opdsState by remember { mutableStateOf(opdsController.state) }
+    var readerTtsJob by remember { mutableStateOf<Job?>(null) }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -474,6 +511,137 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         val projected = projectState(next)
         state = projected
         persistSnapshot(projected)
+    }
+
+    fun updateAiByokSettings(next: ReaderAiByokSettings) {
+        val sanitized = next.sanitized()
+        aiByokSettings = sanitized
+        readerExtrasState = readerExtrasState.copy(
+            cloudTts = readerExtrasState.cloudTts.copy(
+                isAvailable = sanitized.isCloudTtsAvailable,
+                errorMessage = null
+            )
+        )
+        runCatching { aiByokStore.save(sanitized) }
+            .onFailure { error ->
+                scope.launch {
+                    snackbarHostState.showSnackbar(error.message ?: "AI settings could not be saved securely.")
+                }
+            }
+    }
+
+    fun updateReaderAutoScroll(autoScroll: ReaderAutoScrollState) {
+        readerExtrasState = readerExtrasState.copy(autoScroll = autoScroll.sanitized())
+    }
+
+    fun openReaderExternalLookup(action: ReaderExternalLookupAction, text: String) {
+        val normalizedText = text.trim()
+        if (normalizedText.isBlank()) return
+        openExternalUrl(externalLookupUrl(action, normalizedText.take(1800)))
+    }
+
+    fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
+        val normalizedText = text.trim()
+        if (normalizedText.isBlank()) return
+        if (!aiByokSettings.sanitized().areReaderAiFeaturesAvailable) return
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = ReaderAiResultState(
+                title = feature.displayName,
+                isLoading = true
+            )
+        )
+        scope.launch {
+            val result = when (feature) {
+                ReaderAiFeature.DEFINE -> desktopAiAdapter.define(
+                    text = normalizedText.take(2400),
+                    context = ReaderContextExtractor.currentPageText(readerSession)
+                ).let { it.definition to it.error }
+                ReaderAiFeature.SUMMARIZE -> desktopAiAdapter.summarize(normalizedText).let { it.summary to it.error }
+                ReaderAiFeature.RECAP -> desktopAiAdapter.recap(normalizedText).let { it.recap to it.error }
+            }
+            readerExtrasState = readerExtrasState.copy(
+                aiResult = ReaderAiResultState(
+                    title = feature.displayName,
+                    text = result.first.orEmpty(),
+                    errorMessage = result.second,
+                    isLoading = false
+                )
+            )
+        }
+    }
+
+    fun stopReaderCloudTts() {
+        readerTtsJob?.cancel()
+        readerTtsJob = null
+        scope.launch {
+            desktopTtsAdapter.stop()
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = aiByokSettings.isCloudTtsAvailable,
+                    statusMessage = "Stopped"
+                )
+            )
+        }
+    }
+
+    fun toggleReaderCloudTts(text: String) {
+        val normalizedText = text.trim()
+        if (readerExtrasState.cloudTts.isPlaying || readerExtrasState.cloudTts.isLoading) {
+            stopReaderCloudTts()
+            return
+        }
+        if (normalizedText.isBlank()) return
+        if (!desktopTtsAdapter.isAvailable) {
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = false,
+                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+                )
+            )
+            return
+        }
+        readerExtrasState = readerExtrasState.copy(
+            cloudTts = ReaderCloudTtsState(
+                isAvailable = true,
+                isLoading = true,
+                statusMessage = "Preparing audio"
+            )
+        )
+        readerTtsJob = scope.launch {
+            runCatching {
+                readerExtrasState = readerExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = true,
+                        isPlaying = true,
+                        statusMessage = "Reading"
+                    )
+                )
+                desktopTtsAdapter.speak(normalizedText)
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) {
+                    readerExtrasState = readerExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            statusMessage = "Stopped"
+                        )
+                    )
+                } else {
+                    readerExtrasState = readerExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            errorMessage = error.message ?: "Cloud TTS failed."
+                        )
+                    )
+                }
+            }.onSuccess {
+                readerExtrasState = readerExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = aiByokSettings.isCloudTtsAvailable,
+                        statusMessage = "Finished"
+                    )
+                )
+            }
+        }
     }
 
     fun importFiles(files: List<ImportedBookFile>) {
@@ -1057,6 +1225,15 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
+    LaunchedEffect(aiByokSettings) {
+        readerExtrasState = readerExtrasState.copy(
+            cloudTts = readerExtrasState.cloudTts.copy(
+                isAvailable = aiByokSettings.isCloudTtsAvailable,
+                errorMessage = null
+            )
+        )
+    }
+
     SharedAppTheme(
         appThemeMode = state.appThemeMode,
         appContrastOption = state.appContrastOption,
@@ -1092,7 +1269,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 onAppSeedColorChange = { color -> updateState(state.reduce(AppAction.AppSeedColorChanged(color))) },
                 onCustomAppThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
                 onCustomAppThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
-                onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) }
+                onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) },
+                onAiSettingsRequested = { showAiByokSettingsDialog = true }
             ) { tab ->
                 when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
@@ -1195,7 +1373,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         activeReaderBookId
                                             ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
                                             ?.let(::syncBookSidecars)
-                                    }
+                                    },
+                                    aiByokSettings = aiByokSettings,
+                                    aiAdapter = desktopAiAdapter,
+                                    ttsAdapter = desktopTtsAdapter
                                 )
                             } else {
                                 ReaderScreen(
@@ -1222,6 +1403,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     onPickCustomFont = {
                                         chooseFontFile()?.toURI()?.toString()
                                     },
+                                    readerExtrasState = readerExtrasState,
+                                    aiByokSettings = aiByokSettings,
+                                    onExternalLookup = ::openReaderExternalLookup,
+                                    onAiAction = ::runReaderAiAction,
+                                    onCloudTtsToggle = ::toggleReaderCloudTts,
+                                    onCloudTtsStop = ::stopReaderCloudTts,
+                                    onAutoScrollChange = ::updateReaderAutoScroll,
                                     webViewRuntimeState = webViewRuntimeState
                                 )
                             }
@@ -1229,6 +1417,15 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 }
             }
             DesktopDropImportOverlay(dropImportState)
+        }
+
+        if (showAiByokSettingsDialog) {
+            DesktopAiByokSettingsDialog(
+                settings = aiByokSettings,
+                secureStorageAvailable = aiByokStore.isSecureStorageAvailable,
+                onSettingsChange = ::updateAiByokSettings,
+                onDismiss = { showAiByokSettingsDialog = false }
+            )
         }
 
         if (showCreateShelfDialog) {
@@ -1914,7 +2111,10 @@ private fun PdfReaderScreen(
     onOpenPdf: () -> Unit,
     onOpenBook: () -> Unit,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
-    onLocalSidecarsChanged: () -> Unit = {}
+    onLocalSidecarsChanged: () -> Unit = {},
+    aiByokSettings: ReaderAiByokSettings,
+    aiAdapter: DesktopByokAiAdapter,
+    ttsAdapter: DesktopGeminiCloudTtsAdapter
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
     var pdfState by remember(document.path) {
@@ -1952,6 +2152,14 @@ private fun PdfReaderScreen(
     var pageScrubStartPage by remember(document.path) { mutableStateOf<Int?>(null) }
     var jumpHistory by remember(document.path) { mutableStateOf(SharedPdfJumpHistory()) }
     var externalLinkDialogUrl by remember(document.path) { mutableStateOf<String?>(null) }
+    var pdfExtrasState by remember(document.path) {
+        mutableStateOf(
+            ReaderExtrasState(
+                cloudTts = ReaderCloudTtsState(isAvailable = aiByokSettings.isCloudTtsAvailable)
+            )
+        )
+    }
+    var pdfTtsJob by remember(document.path) { mutableStateOf<Job?>(null) }
     val annotationFile = remember(document.path) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(document.path) { desktopPdfBookmarkFile(document.path) }
     val richTextFile = remember(document.path) { desktopPdfRichTextFile(document.path) }
@@ -2190,6 +2398,15 @@ private fun PdfReaderScreen(
         url = externalLinkDialogUrl,
         onDismiss = { externalLinkDialogUrl = null }
     )
+
+    LaunchedEffect(aiByokSettings) {
+        pdfExtrasState = pdfExtrasState.copy(
+            cloudTts = pdfExtrasState.cloudTts.copy(
+                isAvailable = aiByokSettings.isCloudTtsAvailable,
+                errorMessage = null
+            )
+        )
+    }
 
     LaunchedEffect(document.path) {
         arePdfAnnotationsLoaded = false
@@ -2455,7 +2672,130 @@ private fun PdfReaderScreen(
     }
 
     fun translateSelection(selection: DesktopPdfTextSelection) {
-        openExternalUrl("https://translate.google.com/?sl=auto&tl=en&text=${selection.text.urlEncode()}&op=translate")
+        openExternalUrl(externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, selection.text))
+    }
+
+    fun openPdfExternalLookup(action: ReaderExternalLookupAction, text: String) {
+        val normalizedText = text.trim()
+        if (normalizedText.isBlank()) return
+        openExternalUrl(externalLookupUrl(action, normalizedText.take(1800)))
+    }
+
+    fun currentPdfPageText(maxChars: Int = 8000): String {
+        return runCatching { document.textPageData(pageIndex).text.trim().take(maxChars) }.getOrDefault("")
+    }
+
+    fun pdfTextBeforeCurrentPage(maxChars: Int = 24_000): String {
+        val indexedText = document.indexedSearchPages()
+            .filter { it.pageIndex <= pageIndex }
+            .joinToString("\n\n") { "Page ${it.pageIndex + 1}\n${it.text}" }
+            .trim()
+        return indexedText.ifBlank { currentPdfPageText(maxChars) }.takeLast(maxChars)
+    }
+
+    fun updatePdfAutoScroll(autoScroll: ReaderAutoScrollState) {
+        pdfExtrasState = pdfExtrasState.copy(autoScroll = autoScroll.sanitized())
+    }
+
+    fun runPdfAiAction(feature: ReaderAiFeature, text: String) {
+        val normalizedText = text.trim()
+        if (normalizedText.isBlank()) return
+        if (!aiByokSettings.sanitized().areReaderAiFeaturesAvailable) return
+        pdfExtrasState = pdfExtrasState.copy(
+            aiResult = ReaderAiResultState(
+                title = feature.displayName,
+                isLoading = true
+            )
+        )
+        pdfScope.launch {
+            val result = when (feature) {
+                ReaderAiFeature.DEFINE -> aiAdapter.define(normalizedText.take(2400), currentPdfPageText()).let { it.definition to it.error }
+                ReaderAiFeature.SUMMARIZE -> aiAdapter.summarize(normalizedText).let { it.summary to it.error }
+                ReaderAiFeature.RECAP -> aiAdapter.recap(normalizedText).let { it.recap to it.error }
+            }
+            pdfExtrasState = pdfExtrasState.copy(
+                aiResult = ReaderAiResultState(
+                    title = feature.displayName,
+                    text = result.first.orEmpty(),
+                    errorMessage = result.second,
+                    isLoading = false
+                )
+            )
+        }
+    }
+
+    fun stopPdfCloudTts() {
+        pdfTtsJob?.cancel()
+        pdfTtsJob = null
+        pdfScope.launch {
+            ttsAdapter.stop()
+            pdfExtrasState = pdfExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = aiByokSettings.isCloudTtsAvailable,
+                    statusMessage = "Stopped"
+                )
+            )
+        }
+    }
+
+    fun togglePdfCloudTts(text: String) {
+        val normalizedText = text.trim()
+        if (pdfExtrasState.cloudTts.isPlaying || pdfExtrasState.cloudTts.isLoading) {
+            stopPdfCloudTts()
+            return
+        }
+        if (normalizedText.isBlank()) return
+        if (!ttsAdapter.isAvailable) {
+            pdfExtrasState = pdfExtrasState.copy(
+                cloudTts = ReaderCloudTtsState(
+                    isAvailable = false,
+                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+                )
+            )
+            return
+        }
+        pdfExtrasState = pdfExtrasState.copy(
+            cloudTts = ReaderCloudTtsState(
+                isAvailable = true,
+                isLoading = true,
+                statusMessage = "Preparing audio"
+            )
+        )
+        pdfTtsJob = pdfScope.launch {
+            runCatching {
+                pdfExtrasState = pdfExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = true,
+                        isPlaying = true,
+                        statusMessage = "Reading"
+                    )
+                )
+                ttsAdapter.speak(normalizedText)
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) {
+                    pdfExtrasState = pdfExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            statusMessage = "Stopped"
+                        )
+                    )
+                } else {
+                    pdfExtrasState = pdfExtrasState.copy(
+                        cloudTts = ReaderCloudTtsState(
+                            isAvailable = aiByokSettings.isCloudTtsAvailable,
+                            errorMessage = error.message ?: "Cloud TTS failed."
+                        )
+                    )
+                }
+            }.onSuccess {
+                pdfExtrasState = pdfExtrasState.copy(
+                    cloudTts = ReaderCloudTtsState(
+                        isAvailable = aiByokSettings.isCloudTtsAvailable,
+                        statusMessage = "Finished"
+                    )
+                )
+            }
+        }
     }
 
     fun updateAnnotation(annotation: SharedPdfAnnotation) {
@@ -2512,6 +2852,18 @@ private fun PdfReaderScreen(
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL && pageIndex in 0 until document.pageCount) {
             verticalListState.scrollToItem(pageIndex)
         }
+    }
+
+    LaunchedEffect(pdfExtrasState.autoScroll.sanitized(), pageIndex, canGoNext, displayMode) {
+        val autoScroll = pdfExtrasState.autoScroll.sanitized()
+        if (!autoScroll.enabled) return@LaunchedEffect
+        if (!canGoNext) {
+            updatePdfAutoScroll(autoScroll.copy(enabled = false))
+            return@LaunchedEffect
+        }
+        val delayMs = (180_000f / autoScroll.speed).roundToInt().coerceIn(1_200, 12_000)
+        delay(delayMs.toLong())
+        goToPage(pageIndex + 1)
     }
 
     LaunchedEffect(document.path, displayMode, verticalListState) {
@@ -2995,6 +3347,19 @@ private fun PdfReaderScreen(
                         }
                     }
                     item {
+                        DesktopPdfExtrasPanel(
+                            pageText = currentPdfPageText(),
+                            recapText = pdfTextBeforeCurrentPage(),
+                            extrasState = pdfExtrasState,
+                            aiByokSettings = aiByokSettings,
+                            onExternalLookup = ::openPdfExternalLookup,
+                            onAiAction = ::runPdfAiAction,
+                            onCloudTtsToggle = ::togglePdfCloudTts,
+                            onCloudTtsStop = ::stopPdfCloudTts,
+                            onAutoScrollChange = ::updatePdfAutoScroll
+                        )
+                    }
+                    item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
@@ -3107,6 +3472,8 @@ private fun PdfReaderScreen(
                                 activeTextDraft = activeTextDraft,
                                 richTextController = richTextController,
                                 isRichTextMode = isRichTextMode,
+                                readerAiFeaturesAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
+                                cloudTtsAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = {
                                     goToPage(
@@ -3118,6 +3485,10 @@ private fun PdfReaderScreen(
                                 onCopySelection = ::copySelection,
                                 onHighlightSelection = ::highlightSelection,
                                 onSearchSelection = ::searchSelection,
+                                onWebSearchSelection = { openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, it.text) },
+                                onDictionarySelection = { openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, it.text) },
+                                onDefineSelection = { runPdfAiAction(ReaderAiFeature.DEFINE, it.text) },
+                                onSpeakSelection = { togglePdfCloudTts(it.text) },
                                 onTranslateSelection = ::translateSelection,
                                 onEmbeddedAnnotationSelected = ::selectEmbeddedAnnotation,
                                 onLinkActivated = ::activatePdfLink,
@@ -3561,10 +3932,28 @@ private fun PdfReaderScreen(
                                     textSelection?.let(::searchSelection)
                                     selectionMenuOffset = null
                                 },
+                                onWebSearch = {
+                                    textSelection?.let { openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, it.text) }
+                                    selectionMenuOffset = null
+                                },
+                                onDictionary = {
+                                    textSelection?.let { openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, it.text) }
+                                    selectionMenuOffset = null
+                                },
+                                onDefine = {
+                                    textSelection?.let { runPdfAiAction(ReaderAiFeature.DEFINE, it.text) }
+                                    selectionMenuOffset = null
+                                },
+                                onSpeak = {
+                                    textSelection?.let { togglePdfCloudTts(it.text) }
+                                    selectionMenuOffset = null
+                                },
                                 onTranslate = {
                                     textSelection?.let(::translateSelection)
                                     selectionMenuOffset = null
                                 },
+                                showDefine = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
+                                showSpeak = aiByokSettings.sanitized().isCloudTtsAvailable,
                                 onClear = ::clearSelection
                             )
                         }
@@ -3579,6 +3968,325 @@ private fun PdfReaderScreen(
     }
 }
 }
+}
+
+@Composable
+private fun DesktopAiByokSettingsDialog(
+    settings: ReaderAiByokSettings,
+    secureStorageAvailable: Boolean,
+    onSettingsChange: (ReaderAiByokSettings) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sanitized = settings.sanitized()
+    var selectedProvider by remember { mutableStateOf("gemini") }
+    var pendingKey by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AI keys and models") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 640.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (!secureStorageAvailable) {
+                    Text(
+                        "Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Text("Saved keys", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                DesktopSavedAiKeyRow(
+                    label = "Gemini",
+                    keyValue = sanitized.geminiKey,
+                    onClear = { onSettingsChange(sanitized.copy(geminiKey = "", ttsModel = "")) }
+                )
+                DesktopSavedAiKeyRow(
+                    label = "Groq",
+                    keyValue = sanitized.groqKey,
+                    onClear = { onSettingsChange(sanitized.copy(groqKey = "")) }
+                )
+
+                HorizontalDivider()
+
+                Text("Add or replace key", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf("gemini" to "Gemini", "groq" to "Groq").forEach { (provider, label) ->
+                        FilterChip(
+                            selected = selectedProvider == provider,
+                            onClick = { selectedProvider = provider },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = pendingKey,
+                    onValueChange = { pendingKey = it },
+                    label = { Text("API key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                TextButton(
+                    enabled = pendingKey.isNotBlank(),
+                    onClick = {
+                        val trimmed = pendingKey.trim()
+                        val next = when (selectedProvider) {
+                            "gemini" -> sanitized.copy(
+                                geminiKey = trimmed,
+                                ttsModel = sanitized.ttsModel.ifBlank { GEMINI_CLOUD_TTS_MODEL_ID }
+                            )
+                            "groq" -> sanitized.copy(groqKey = trimmed)
+                            else -> sanitized
+                        }
+                        onSettingsChange(next)
+                        pendingKey = ""
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Save key")
+                }
+
+                HorizontalDivider()
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Show AI in reader", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Matches the Android hide toggle for smart dictionary, summaries, and recaps.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = !sanitized.hideReaderAiFeatures,
+                        onCheckedChange = { enabled ->
+                            onSettingsChange(sanitized.copy(hideReaderAiFeatures = !enabled))
+                        }
+                    )
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use one model for all features", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Turn this off to choose separate models per reader AI feature.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = sanitized.useOneModel,
+                        onCheckedChange = { onSettingsChange(sanitized.copy(useOneModel = it)) }
+                    )
+                }
+
+                if (sanitized.useOneModel) {
+                    DesktopAiModelSelector(
+                        title = "All AI features",
+                        description = "Smart dictionary, summaries, and recaps all use this model.",
+                        selectedId = sanitized.modelForAll,
+                        onSelected = { onSettingsChange(sanitized.copy(modelForAll = it)) }
+                    )
+                } else {
+                    DesktopAiModelSelector(
+                        title = "Smart dictionary",
+                        description = "Used when defining selected words or phrases.",
+                        selectedId = sanitized.defineModel,
+                        onSelected = { onSettingsChange(sanitized.copy(defineModel = it)) }
+                    )
+                    DesktopAiModelSelector(
+                        title = "Summaries",
+                        description = "Used for EPUB summaries and PDF page summaries.",
+                        selectedId = sanitized.summarizeModel,
+                        onSelected = { onSettingsChange(sanitized.copy(summarizeModel = it)) }
+                    )
+                    DesktopAiModelSelector(
+                        title = "Recaps",
+                        description = "Used for story recap generation.",
+                        selectedId = sanitized.recapModel,
+                        onSelected = { onSettingsChange(sanitized.copy(recapModel = it)) }
+                    )
+                }
+
+                DesktopAiModelSelector(
+                    title = "Cloud TTS",
+                    description = "Uses the saved Gemini key. Only $GEMINI_CLOUD_TTS_MODEL is supported for now.",
+                    selectedId = sanitized.ttsModel,
+                    options = listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
+                    onSelected = { onSettingsChange(sanitized.copy(ttsModel = it)) }
+                )
+                Text("Cloud TTS voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    ReaderCloudTtsSpeakers.forEach { speaker ->
+                        FilterChip(
+                            selected = sanitized.ttsSpeakerId == speaker,
+                            onClick = { onSettingsChange(sanitized.copy(ttsSpeakerId = speaker)) },
+                            label = { Text(speaker) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        }
+    )
+}
+
+@Composable
+private fun DesktopSavedAiKeyRow(
+    label: String,
+    keyValue: String,
+    onClear: () -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.SemiBold)
+            Text(
+                keyValue.takeIf { it.isNotBlank() }?.let(::maskedReaderAiKey) ?: "No key saved",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(enabled = keyValue.isNotBlank(), onClick = onClear) {
+            Text("Clear")
+        }
+    }
+}
+
+@Composable
+private fun DesktopAiModelSelector(
+    title: String,
+    description: String,
+    selectedId: String,
+    options: List<ReaderAiModelOption> = ReaderAiModelOptions,
+    onSelected: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            FilterChip(
+                selected = selectedId.isBlank(),
+                onClick = { onSelected("") },
+                label = { Text("No model") }
+            )
+            options.forEach { option ->
+                FilterChip(
+                    selected = selectedId == option.id,
+                    onClick = { onSelected(option.id) },
+                    label = { Text(option.label) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfExtrasPanel(
+    pageText: String,
+    recapText: String,
+    extrasState: ReaderExtrasState,
+    aiByokSettings: ReaderAiByokSettings,
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit,
+    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStop: () -> Unit,
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit
+) {
+    val settings = aiByokSettings.sanitized()
+    val autoScroll = extrasState.autoScroll.sanitized()
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text("Extras", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            ReaderExternalLookupAction.entries.forEach { action ->
+                FilterChip(
+                    selected = false,
+                    enabled = pageText.isNotBlank(),
+                    onClick = { onExternalLookup(action, pageText) },
+                    label = { Text(action.title) }
+                )
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Auto scroll", modifier = Modifier.weight(1f))
+            Switch(
+                checked = autoScroll.enabled,
+                onCheckedChange = { onAutoScrollChange(autoScroll.copy(enabled = it)) }
+            )
+        }
+        Slider(
+            value = autoScroll.speed,
+            onValueChange = { onAutoScrollChange(autoScroll.copy(speed = it).sanitized()) },
+            valueRange = 12f..160f
+        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    when {
+                        extrasState.cloudTts.isLoading -> "Preparing audio"
+                        extrasState.cloudTts.isPlaying -> "Reading"
+                        settings.isCloudTtsAvailable -> "Cloud TTS ready"
+                        else -> "Cloud TTS needs Gemini"
+                    },
+                    fontWeight = FontWeight.SemiBold
+                )
+                extrasState.cloudTts.errorMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            TextButton(
+                enabled = settings.isCloudTtsAvailable || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying,
+                onClick = {
+                    if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) {
+                        onCloudTtsStop()
+                    } else {
+                        onCloudTtsToggle(pageText)
+                    }
+                }
+            ) {
+                Text(if (extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying) "Stop" else "Read")
+            }
+        }
+        if (settings.areReaderAiFeaturesAvailable) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(
+                    enabled = pageText.isNotBlank() && !extrasState.aiResult.isLoading,
+                    onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, pageText) }
+                ) {
+                    Text("Summarize page")
+                }
+                TextButton(
+                    enabled = recapText.isNotBlank() && !extrasState.aiResult.isLoading,
+                    onClick = { onAiAction(ReaderAiFeature.RECAP, recapText) }
+                ) {
+                    Text("Recap")
+                }
+            }
+            if (extrasState.aiResult.hasContent) {
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val aiErrorMessage = extrasState.aiResult.errorMessage
+                        Text(extrasState.aiResult.title ?: "AI", fontWeight = FontWeight.SemiBold)
+                        when {
+                            extrasState.aiResult.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            aiErrorMessage != null -> Text(aiErrorMessage, color = MaterialTheme.colorScheme.error)
+                            else -> SharedMarkdownText(extrasState.aiResult.text)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -3705,11 +4413,17 @@ private fun DesktopVerticalPdfPage(
     activeTextDraft: SharedPdfTextDraft?,
     richTextController: SharedPdfRichTextController,
     isRichTextMode: Boolean,
+    readerAiFeaturesAvailable: Boolean,
+    cloudTtsAvailable: Boolean,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
     onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize) -> Unit,
     onSearchSelection: (DesktopPdfTextSelection) -> Unit,
+    onWebSearchSelection: (DesktopPdfTextSelection) -> Unit,
+    onDictionarySelection: (DesktopPdfTextSelection) -> Unit,
+    onDefineSelection: (DesktopPdfTextSelection) -> Unit,
+    onSpeakSelection: (DesktopPdfTextSelection) -> Unit,
     onTranslateSelection: (DesktopPdfTextSelection) -> Unit,
     onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit,
     onLinkActivated: (DesktopPdfLinkTarget) -> Unit,
@@ -4234,10 +4948,28 @@ private fun DesktopVerticalPdfPage(
                             textSelection?.let(onSearchSelection)
                             selectionMenuOffset = null
                         },
+                        onWebSearch = {
+                            textSelection?.let(onWebSearchSelection)
+                            selectionMenuOffset = null
+                        },
+                        onDictionary = {
+                            textSelection?.let(onDictionarySelection)
+                            selectionMenuOffset = null
+                        },
+                        onDefine = {
+                            textSelection?.let(onDefineSelection)
+                            selectionMenuOffset = null
+                        },
+                        onSpeak = {
+                            textSelection?.let(onSpeakSelection)
+                            selectionMenuOffset = null
+                        },
                         onTranslate = {
                             textSelection?.let(onTranslateSelection)
                             selectionMenuOffset = null
                         },
+                        showDefine = readerAiFeaturesAvailable,
+                        showSpeak = cloudTtsAvailable,
                         onClear = ::clearSelection
                     )
                 }
@@ -4519,7 +5251,13 @@ private fun PdfSelectionMenu(
     onCopy: () -> Unit,
     onHighlight: () -> Unit,
     onSearch: () -> Unit,
+    onWebSearch: () -> Unit,
+    onDictionary: () -> Unit,
+    onDefine: () -> Unit,
+    onSpeak: () -> Unit,
     onTranslate: () -> Unit,
+    showDefine: Boolean,
+    showSpeak: Boolean,
     onClear: () -> Unit
 ) {
     selection ?: return
@@ -4541,13 +5279,19 @@ private fun PdfSelectionMenu(
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            modifier = Modifier
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onCopy) { Text("Copy") }
             TextButton(onClick = onHighlight) { Text("Highlight") }
+            if (showDefine) TextButton(onClick = onDefine) { Text("Define") }
+            if (showSpeak) TextButton(onClick = onSpeak) { Text("Speak") }
+            TextButton(onClick = onDictionary) { Text("Dict") }
             TextButton(onClick = onSearch) { Text("Find") }
+            TextButton(onClick = onWebSearch) { Text("Web") }
             TextButton(onClick = onTranslate) { Text("Translate") }
             TextButton(onClick = onClear) { Text("Clear") }
         }
@@ -4721,7 +5465,7 @@ private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
     )
 }
 
-private const val PdfSelectionMenuWidthPx = 360f
+private const val PdfSelectionMenuWidthPx = 620f
 private const val PdfSelectionMenuHeightPx = 54f
 private const val PdfSelectionMenuMarginPx = 6f
 
@@ -4824,6 +5568,13 @@ private fun ReaderScreen(
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     onPickCustomFont: () -> String?,
+    readerExtrasState: ReaderExtrasState,
+    aiByokSettings: ReaderAiByokSettings,
+    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit,
+    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsStop: () -> Unit,
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     webViewRuntimeState: DesktopWebViewRuntimeState
 ) {
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
@@ -4844,7 +5595,14 @@ private fun ReaderScreen(
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         highlightPalette = highlightPalette,
         onHighlightPaletteChange = onHighlightPaletteChange,
-        onPickCustomFont = onPickCustomFont
+        onPickCustomFont = onPickCustomFont,
+        readerExtrasState = readerExtrasState,
+        aiByokSettings = aiByokSettings,
+        onExternalLookup = onExternalLookup,
+        onAiAction = onAiAction,
+        onCloudTtsToggle = onCloudTtsToggle,
+        onCloudTtsStop = onCloudTtsStop,
+        onAutoScrollChange = onAutoScrollChange
     ) { html, background, navigationTarget, highlights, onVisiblePageChanged ->
         Surface(
             color = background,
@@ -4860,6 +5618,20 @@ private fun ReaderScreen(
                     highlights = highlights,
                     onHighlightCreated = { highlight ->
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
+                    },
+                    onSelectionAction = { action, text ->
+                        val settings = aiByokSettings.sanitized()
+                        when (action) {
+                            DesktopReaderSelectionAction.DEFINE -> {
+                                if (settings.areReaderAiFeaturesAvailable) onAiAction(ReaderAiFeature.DEFINE, text)
+                            }
+                            DesktopReaderSelectionAction.SPEAK -> {
+                                if (settings.isCloudTtsAvailable) onCloudTtsToggle(text)
+                            }
+                            DesktopReaderSelectionAction.DICTIONARY -> onExternalLookup(ReaderExternalLookupAction.DICTIONARY, text)
+                            DesktopReaderSelectionAction.TRANSLATE -> onExternalLookup(ReaderExternalLookupAction.TRANSLATE, text)
+                            DesktopReaderSelectionAction.SEARCH -> onExternalLookup(ReaderExternalLookupAction.SEARCH, text)
+                        }
                     },
                     onLinkClicked = { link ->
                         val now = System.currentTimeMillis()
@@ -4913,11 +5685,13 @@ private fun DesktopEpubWebView(
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
     val scope = rememberCoroutineScope()
@@ -4970,6 +5744,20 @@ private fun DesktopEpubWebView(
                 }
             }
         }
+        val selectionActionHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerSelectionAction"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                val selectionAction = message.params.readerSelectionActionOrNull()
+                if (selectionAction != null) {
+                    scope.launch { latestOnSelectionAction(selectionAction.action, selectionAction.text) }
+                }
+            }
+        }
         val linkHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerLinkClicked"
 
@@ -4993,10 +5781,12 @@ private fun DesktopEpubWebView(
         }
         bridge.register(highlightHandler)
         bridge.register(positionHandler)
+        bridge.register(selectionActionHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
             bridge.unregister(positionHandler)
+            bridge.unregister(selectionActionHandler)
             bridge.unregister(linkHandler)
         }
     }
@@ -5018,6 +5808,22 @@ private fun DesktopEpubWebView(
                 navigator = navigator,
                 webViewJsBridge = bridge
             )
+
+            LaunchedEffect(
+                navigationTarget.autoScroll,
+                navigationTarget.readingMode,
+                state.loadingState
+            ) {
+                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+                val autoScroll = navigationTarget.autoScroll.sanitized()
+                val command = if (autoScroll.enabled) {
+                    "window.readerAutoScroll && window.readerAutoScroll.start(${autoScroll.speed});"
+                } else {
+                    "window.readerAutoScroll && window.readerAutoScroll.stop();"
+                }
+                navigator.evaluateJavaScript(command)
+            }
 
             LaunchedEffect(
                 navigationTarget.requestId,
@@ -5065,6 +5871,51 @@ private data class DesktopEpubHandledLink(
     val href: String,
     val handledAtMs: Long
 )
+
+private enum class DesktopReaderSelectionAction {
+    DEFINE,
+    SPEAK,
+    DICTIONARY,
+    TRANSLATE,
+    SEARCH
+}
+
+private data class DesktopReaderSelectionActionPayload(
+    val action: DesktopReaderSelectionAction,
+    val text: String
+)
+
+private fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionPayload? {
+    fun parse(rawJson: String): DesktopReaderSelectionActionPayload? = runCatching {
+        val obj = Json.parseToJsonElement(rawJson).jsonObject
+        val text = obj["text"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: return@runCatching null
+        val action = when (
+            obj["action"]
+                ?.takeUnless { it is JsonNull }
+                ?.jsonPrimitive
+                ?.contentOrNull
+                ?.lowercase()
+        ) {
+            "define" -> DesktopReaderSelectionAction.DEFINE
+            "speak" -> DesktopReaderSelectionAction.SPEAK
+            "dictionary" -> DesktopReaderSelectionAction.DICTIONARY
+            "translate" -> DesktopReaderSelectionAction.TRANSLATE
+            "web-search", "search" -> DesktopReaderSelectionAction.SEARCH
+            else -> return@runCatching null
+        }
+        DesktopReaderSelectionActionPayload(action, text)
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
 
 private fun String.readerPositionOrNull(): DesktopReaderPosition? {
     fun parse(rawJson: String): DesktopReaderPosition? = runCatching {

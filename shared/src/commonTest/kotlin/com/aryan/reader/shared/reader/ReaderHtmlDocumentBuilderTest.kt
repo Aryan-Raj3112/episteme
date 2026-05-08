@@ -21,6 +21,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ReaderHtmlDocumentBuilderTest {
@@ -87,6 +88,29 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-active-chapter-index=\"1\""))
         assertTrue(html.contains("data-reader-active-start-offset=\"7\""))
         assertTrue(html.contains("scrollToActiveLocator"))
+    }
+
+    @Test
+    fun `selection menu omits ai and tts actions when disabled`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta",
+                startOffset = 0,
+                endOffset = 10
+            ),
+            settings = ReaderSettings(),
+            readerAiFeaturesEnabled = false,
+            cloudTtsEnabled = false
+        )
+
+        assertFalse(html.contains("""data-action="define""""))
+        assertFalse(html.contains("""data-action="speak""""))
+        assertTrue(html.contains("""data-action="dictionary""""))
+        assertTrue(html.contains("""data-action="web-search""""))
     }
 
     @Test

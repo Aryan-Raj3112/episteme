@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -70,6 +71,7 @@ fun SharedAppShell(
     onCustomAppThemeAdded: (CustomAppTheme) -> Unit = {},
     onCustomAppThemeDeleted: (String) -> Unit = {},
     onTabsEnabledChange: (Boolean) -> Unit = {},
+    onAiSettingsRequested: (() -> Unit)? = null,
     content: @Composable (SharedAppTab) -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
@@ -138,6 +140,16 @@ fun SharedAppShell(
                             showAppThemeSettings = true
                         }
                     )
+                    if (onAiSettingsRequested != null) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            text = { Text("AI keys and models") },
+                            onClick = {
+                                optionsExpanded = false
+                                onAiSettingsRequested()
+                            }
+                        )
+                    }
                     HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text(if (isTabsEnabled) "Disable active tabs" else "Enable active tabs") },

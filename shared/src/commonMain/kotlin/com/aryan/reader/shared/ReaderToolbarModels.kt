@@ -16,14 +16,14 @@ enum class ReaderTool(
     val category: String,
     val supportsDesktopQuickAction: Boolean = false
 ) {
-    DICTIONARY("dictionary", "External Apps", "Top Bar"),
+    DICTIONARY("dictionary", "External Apps", "Top Bar", supportsDesktopQuickAction = true),
     THEME("theme", "Theme Settings", "Top Bar", supportsDesktopQuickAction = true),
     SLIDER("slider", "Navigation Slider", "Bottom Bar"),
     TOC("toc", "Sidebar", "Bottom Bar"),
     FORMAT("format", "Text Formatting", "Bottom Bar"),
     SEARCH("search", "Search", "Bottom Bar", supportsDesktopQuickAction = true),
-    AI_FEATURES("ai_features", "AI Features", "Bottom Bar"),
-    TTS_CONTROLS("tts_controls", "TTS Controls", "Bottom Bar"),
+    AI_FEATURES("ai_features", "AI Features", "Bottom Bar", supportsDesktopQuickAction = true),
+    TTS_CONTROLS("tts_controls", "TTS Controls", "Bottom Bar", supportsDesktopQuickAction = true),
     READING_MODE("reading_mode", "Reading Mode", "Overflow Menu"),
     BOOKMARK("bookmark", "Bookmark", "Overflow Menu", supportsDesktopQuickAction = true),
     TAP_TO_TURN("tap_to_turn", "Tap to Turn Pages", "Overflow Menu"),
@@ -31,7 +31,7 @@ enum class ReaderTool(
     PAGE_TURN_ANIM("page_turn_anim", "Realistic Page Turns", "Overflow Menu"),
     KEEP_SCREEN_ON("keep_screen_on", "Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
-    AUTO_SCROLL("auto_scroll", "Auto Scroll", "Overflow Menu"),
+    AUTO_SCROLL("auto_scroll", "Auto Scroll", "Overflow Menu", supportsDesktopQuickAction = true),
     TTS_SETTINGS("tts_settings", "TTS Voice Settings", "Overflow Menu");
 
     companion object {
