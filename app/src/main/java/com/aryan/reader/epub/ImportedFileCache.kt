@@ -17,8 +17,16 @@ object ImportedFileCache {
         return File(context.cacheDir, activeBookDirName(bookId))
     }
 
-    fun prepareActiveBookDir(context: Context, bookId: String): File {
+    fun ensureActiveBookDir(context: Context, bookId: String): File {
+        return activeBookDir(context, bookId).also { it.mkdirs() }
+    }
+
+    fun resetActiveBookDir(context: Context, bookId: String): File {
         return prepareDirectory(activeBookDir(context, bookId))
+    }
+
+    fun prepareActiveBookDir(context: Context, bookId: String): File {
+        return resetActiveBookDir(context, bookId)
     }
 
     fun createTemporaryBookDir(context: Context, bookId: String, purpose: String): File {

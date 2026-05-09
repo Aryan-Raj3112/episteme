@@ -81,6 +81,18 @@ data class ReaderSessionState(
 class ReaderEngine(
     private val paginator: SimplePaginator = SimplePaginator()
 ) {
+    private data class PaginationCacheKey(
+        val bookId: String,
+        val chapterSignature: Int,
+        val settings: ReaderSettings
+    )
+
+    private val paginationCache = object : LinkedHashMap<PaginationCacheKey, List<ReaderPage>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaginationCacheKey, List<ReaderPage>>?): Boolean {
+            return size > 8
+        }
+    }
+
     fun createSession(
         book: SharedEpubBook,
         settings: ReaderSettings = ReaderSettings(),
@@ -88,7 +100,7 @@ class ReaderEngine(
         bookmarks: List<ReaderBookmark> = emptyList(),
         highlights: List<UserHighlight> = emptyList()
     ): ReaderSessionState {
-        val pages = paginator.paginate(book, settings)
+        val pages = pagesFor(book, settings)
         val initialIndex = initialPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
         val reader = PaginatedReaderState(
             book = book,
@@ -274,8 +286,38 @@ class ReaderEngine(
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
-        val updated = state.copy(reader = paginator.repaginate(state.reader, settings))
+        val current = state.reader.currentPage
+        val pages = pagesFor(state.reader.book, settings)
+        val newIndex = if (current == null) {
+            0
+        } else {
+            pages.indexOfFirst {
+                it.chapterIndex == current.chapterIndex && it.startOffset <= current.startOffset && it.endOffset >= current.startOffset
+            }.takeIf { it >= 0 } ?: 0
+        }
+        val updated = state.copy(
+            reader = state.reader.copy(
+                pages = pages,
+                currentPageIndex = newIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)),
+                settings = settings
+            )
+        )
         return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
+    }
+
+    private fun pagesFor(book: SharedEpubBook, settings: ReaderSettings): List<ReaderPage> {
+        val key = PaginationCacheKey(
+            bookId = book.id,
+            chapterSignature = book.chapters.fold(1) { acc, chapter ->
+                31 * acc + chapter.id.hashCode() + chapter.plainText.length + chapter.plainText.hashCode()
+            },
+            settings = settings
+        )
+        return synchronized(paginationCache) {
+            paginationCache.getOrPut(key) {
+                paginator.paginate(book, settings)
+            }
+        }
     }
 
     fun openSearch(state: ReaderSessionState): ReaderSessionState {

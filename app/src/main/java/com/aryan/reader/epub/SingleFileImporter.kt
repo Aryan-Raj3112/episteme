@@ -189,18 +189,20 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
+        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
             try {
                 val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                    .copy(extractionBasePath = extractionDir.absolutePath)
                 Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
                 return@withContext cachedBook
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load cached MD, parsing again")
             }
         }
+        ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown START | file=$originalBookNameHint")
@@ -323,18 +325,20 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
+        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
             try {
                 val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                    .copy(extractionBasePath = extractionDir.absolutePath)
                 Timber.tag("FileOpenPerf").d("[TXT] Loaded from cache instantly | bookId=$bookId")
                 return@withContext cachedBook
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load cached TXT, parsing again")
             }
         }
+        ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[TXT] parsePlainText START | file=$originalBookNameHint")
@@ -484,18 +488,20 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
+        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
             try {
                 val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                    .copy(extractionBasePath = extractionDir.absolutePath)
                 Timber.tag("FileOpenPerf").d("[HTML] Loaded from cache instantly | bookId=$bookId")
                 return@withContext cachedBook
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load cached HTML, parsing again")
             }
         }
+        ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[HTML] parseHtml START | file=$originalBookNameHint")
@@ -711,18 +717,20 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.prepareActiveBookDir(context, bookId)
+        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = File(extractionDir, "book_metadata.json")
 
         if (metadataFile.exists()) {
             try {
                 val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                    .copy(extractionBasePath = extractionDir.absolutePath)
                 Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
                 return@withContext cachedBook
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load cached DOCX, parsing again")
             }
         }
+        ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")

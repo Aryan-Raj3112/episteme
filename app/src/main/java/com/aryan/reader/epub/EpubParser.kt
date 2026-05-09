@@ -26,6 +26,9 @@ import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.w3c.dom.Element
 import org.w3c.dom.Node
@@ -42,6 +45,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 class EpubParser(private val context: Context) {
+    private val jsonSerializer = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
     data class EpubDocument(
         val metadata: Node, val manifest: Node, val spine: Node, val opfFilePath: String
     )
@@ -65,6 +70,15 @@ class EpubParser(private val context: Context) {
     data class NcxMetadata(
         val title: String,
         val depth: Int
+    )
+
+    @Serializable
+    private data class EpubExtractionCacheManifest(
+        val bookId: String,
+        val originalBookNameHint: String,
+        val parserVersion: Int,
+        val parseContent: Boolean,
+        val shouldUseToc: Boolean
     )
 
     // EpubFile can still represent in-memory file data during initial parsing before extraction
@@ -92,6 +106,9 @@ class EpubParser(private val context: Context) {
 
     companion object {
         const val TAG = "EpubParser"
+        private const val BOOK_METADATA_FILE = "book_metadata.json"
+        private const val CACHE_MANIFEST_FILE = "epub_cache_manifest.json"
+        private const val EPUB_EXTRACTION_CACHE_VERSION = 1
     }
 
     internal val String.decodedURL: String
@@ -173,8 +190,24 @@ class EpubParser(private val context: Context) {
         return withContext(Dispatchers.IO) {
             Timber.d("Parsing EPUB input stream for bookId: $bookId")
 
-            val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
-                ?: ImportedFileCache.prepareActiveBookDir(context, bookId)
+            val shouldDeleteExtractionDir = !parseContent && extractionDirOverride == null
+            val extractionDir = if (extractionDirOverride != null) {
+                ImportedFileCache.prepareDirectory(extractionDirOverride)
+            } else if (!parseContent) {
+                ImportedFileCache.createTemporaryBookDir(context, bookId, "metadata")
+            } else {
+                val activeDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+                readCachedEpubBook(
+                    extractionDir = activeDir,
+                    bookId = bookId,
+                    originalBookNameHint = originalBookNameHint,
+                    shouldUseToc = shouldUseToc
+                )?.let { cachedBook ->
+                    Timber.tag("FileOpenPerf").d("[EPUB] Loaded extracted book from cache | bookId=$bookId")
+                    return@withContext cachedBook
+                }
+                ImportedFileCache.resetActiveBookDir(context, bookId)
+            }
 
             val tempFile = File.createTempFile("epub_stream", ".epub", context.cacheDir)
             val filesMap: Map<String, EpubFile>
@@ -190,7 +223,77 @@ class EpubParser(private val context: Context) {
             val document = createEpubDocument(filesMap)
             val book = parseAndCreateEbook(filesMap, document, shouldUseToc, extractionDir.absolutePath,
                 originalBookNameHint, parseContent)
+            if (parseContent && extractionDirOverride == null) {
+                writeCachedEpubBook(
+                    extractionDir = extractionDir,
+                    bookId = bookId,
+                    originalBookNameHint = originalBookNameHint,
+                    shouldUseToc = shouldUseToc,
+                    book = book
+                )
+            }
+            if (shouldDeleteExtractionDir) {
+                extractionDir.deleteRecursively()
+            }
             return@withContext book
+        }
+    }
+
+    private fun readCachedEpubBook(
+        extractionDir: File,
+        bookId: String,
+        originalBookNameHint: String,
+        shouldUseToc: Boolean
+    ): EpubBook? {
+        val metadataFile = File(extractionDir, BOOK_METADATA_FILE)
+        val manifestFile = File(extractionDir, CACHE_MANIFEST_FILE)
+        if (!metadataFile.isFile || !manifestFile.isFile) return null
+
+        return try {
+            val manifest = jsonSerializer.decodeFromString<EpubExtractionCacheManifest>(manifestFile.readText())
+            val isCompatible = manifest.bookId == bookId &&
+                manifest.originalBookNameHint == originalBookNameHint &&
+                manifest.parserVersion == EPUB_EXTRACTION_CACHE_VERSION &&
+                manifest.parseContent &&
+                manifest.shouldUseToc == shouldUseToc
+
+            if (!isCompatible) {
+                Timber.d("EPUB extraction cache manifest is stale for bookId=$bookId")
+                return null
+            }
+
+            val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+                .copy(extractionBasePath = extractionDir.absolutePath)
+
+            cachedBook.takeIf { it.hasReadableExtractedContent() }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to read EPUB extraction cache for bookId=$bookId")
+            null
+        }
+    }
+
+    private fun writeCachedEpubBook(
+        extractionDir: File,
+        bookId: String,
+        originalBookNameHint: String,
+        shouldUseToc: Boolean,
+        book: EpubBook
+    ) {
+        try {
+            File(extractionDir, BOOK_METADATA_FILE).writeText(jsonSerializer.encodeToString(book))
+            File(extractionDir, CACHE_MANIFEST_FILE).writeText(
+                jsonSerializer.encodeToString(
+                    EpubExtractionCacheManifest(
+                        bookId = bookId,
+                        originalBookNameHint = originalBookNameHint,
+                        parserVersion = EPUB_EXTRACTION_CACHE_VERSION,
+                        parseContent = true,
+                        shouldUseToc = shouldUseToc
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to write EPUB extraction cache for bookId=$bookId")
         }
     }
 

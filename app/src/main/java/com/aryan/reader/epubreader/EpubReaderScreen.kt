@@ -575,6 +575,7 @@ fun EpubReaderScreen(
                 }
             }
         } else null,
+        stableBookId = uiState.selectedBookId,
         viewModel = viewModel
     )
 }
@@ -605,6 +606,7 @@ fun EpubReaderHost(
     onImportFont: (Uri) -> Unit,
     onToggleReflow: ((Int) -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
+    stableBookId: String? = null,
     viewModel: MainViewModel
 ) {
     val view = LocalView.current
@@ -673,11 +675,16 @@ fun EpubReaderHost(
         )
     }
 
-    val locatorConverter = remember(context) {
+    val readerCacheBookId = remember(stableBookId, epubBook.title, epubBook.fileName) {
+        stableBookId ?: if (epubBook.fileName.length > 20) epubBook.fileName else getBookIdForPrefs(epubBook.title)
+    }
+
+    val locatorConverter = remember(context, readerCacheBookId) {
         LocatorConverter(
             bookCacheDao = BookCacheDatabase.getDatabase(context).bookCacheDao(),
             proto = ProtoBuf { serializersModule = semanticBlockModule },
-            context = context
+            context = context,
+            stableBookId = readerCacheBookId
         )
     }
 
@@ -703,9 +710,7 @@ fun EpubReaderHost(
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
     var isTtsCollapsed by remember { mutableStateOf(false) }
 
-    val bookId = remember(epubBook.title, epubBook.fileName) {
-        if (epubBook.fileName.length > 20) epubBook.fileName else getBookIdForPrefs(epubBook.title)
-    }
+    val bookId = readerCacheBookId
     var isAutoScrollLocal by remember { mutableStateOf(loadAutoScrollLocalMode(context, bookId)) }
 
     val initialSettings = remember(isAutoScrollLocal) {
@@ -3892,6 +3897,7 @@ fun EpubReaderHost(
                         ) {
                             PaginatedReaderScreen(
                                 book = epubBook,
+                                bookId = readerCacheBookId,
                                 isDarkTheme = isDarkTheme,
                                 effectiveBg = effectiveBg,
                                 effectiveText = effectiveText,

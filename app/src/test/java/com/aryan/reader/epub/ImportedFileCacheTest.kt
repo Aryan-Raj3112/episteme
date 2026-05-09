@@ -3,6 +3,7 @@ package com.aryan.reader.epub
 import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -39,6 +40,22 @@ class ImportedFileCacheTest {
 
         assertTrue(prepared.isDirectory)
         assertTrue(prepared.listFiles().isNullOrEmpty())
+    }
+
+    @Test
+    fun `ensureActiveBookDir preserves active contents and resetActiveBookDir clears them`() {
+        val context = contextWithCache(temp.newFolder("ensure-active-cache"))
+        val active = ImportedFileCache.ensureActiveBookDir(context, "Book")
+        File(active, "book_metadata.json").writeText("cached")
+
+        val ensuredAgain = ImportedFileCache.ensureActiveBookDir(context, "Book")
+
+        assertEquals("cached", File(ensuredAgain, "book_metadata.json").readText())
+
+        val reset = ImportedFileCache.resetActiveBookDir(context, "Book")
+
+        assertTrue(reset.isDirectory)
+        assertTrue(reset.listFiles().isNullOrEmpty())
     }
 
     @Test

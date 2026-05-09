@@ -24,6 +24,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
@@ -77,7 +78,8 @@ class PaginatedReaderViewModel : ViewModel() {
         context: Context,
         initialChapterToPaginate: Int?,
         mathMLRenderer: MathMLRenderer,
-        paragraphGapMultiplier: Float
+        paragraphGapMultiplier: Float,
+        bookId: String? = null
     ) {
         if (paginator != null) return
 
@@ -88,16 +90,16 @@ class PaginatedReaderViewModel : ViewModel() {
             val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
+            val layoutTextStyle = textStyle.copy(color = Color.Unspecified)
 
             val uaResult = CssParser.parse(
                 cssContent = userAgentStylesheet,
                 cssPath = null,
-                baseFontSizeSp = textStyle.fontSize.value,
+                baseFontSizeSp = layoutTextStyle.fontSize.value,
                 density = density.density,
                 constraints = textConstraints,
-                isDarkTheme = isDarkTheme,
-                themeBackgroundColor = themeBackgroundColor,
-                themeTextColor = themeTextColor
+                isDarkTheme = false,
+                adaptThemeColors = false
             )
             allRules = allRules.merge(uaResult.rules)
             allFontFaces.addAll(uaResult.fontFaces)
@@ -106,12 +108,11 @@ class PaginatedReaderViewModel : ViewModel() {
                 val bookCssResult = CssParser.parse(
                     cssContent = content,
                     cssPath = path,
-                    baseFontSizeSp = textStyle.fontSize.value,
+                    baseFontSizeSp = layoutTextStyle.fontSize.value,
                     density = density.density,
                     constraints = textConstraints,
-                    isDarkTheme = isDarkTheme,
-                    themeBackgroundColor = themeBackgroundColor,
-                    themeTextColor = themeTextColor
+                    isDarkTheme = false,
+                    adaptThemeColors = false
                 )
                 allRules = allRules.merge(bookCssResult.rules)
                 allFontFaces.addAll(bookCssResult.fontFaces)
@@ -120,21 +121,21 @@ class PaginatedReaderViewModel : ViewModel() {
                 fontFaces = allFontFaces,
                 extractionPath = book.extractionBasePath
             )
-            val bookId = book.title
+            val cacheBookId = bookId ?: if (book.fileName.length > 20) book.fileName else book.title
             val bookCacheDao = BookCacheDatabase.getDatabase(context.applicationContext).bookCacheDao()
             val newPaginator = BookPaginator(
                 coroutineScope = viewModelScope,
                 chapters = book.chaptersForPagination,
                 textMeasurer = textMeasurer,
                 constraints = textConstraints,
-                textStyle = textStyle,
+                textStyle = layoutTextStyle,
                 extractionBasePath = book.extractionBasePath,
                 density = density,
                 fontFamilyMap = fontFamilyMap,
                 isDarkTheme = isDarkTheme,
                 themeBackgroundColor = themeBackgroundColor,
                 themeTextColor = themeTextColor,
-                bookId = bookId,
+                bookId = cacheBookId,
                 bookCacheDao = bookCacheDao,
                 proto = proto,
                 initialChapterToPaginate = initialChapterToPaginate ?: 0,

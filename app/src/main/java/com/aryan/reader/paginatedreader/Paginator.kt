@@ -35,7 +35,10 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
+
+private const val DEBUG_PAGINATION_LOGS = false
 
 interface BlockMeasurementProvider {
     suspend fun measure(block: ContentBlock): Int
@@ -53,9 +56,13 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val density: Density,
     private val imageSizeMultiplier: Float
 ) : BlockMeasurementProvider {
+    private val measurementCache = ConcurrentHashMap<Int, Int>()
 
     override suspend fun measure(block: ContentBlock): Int {
-        return measureBlockHeight(
+        val cacheKey = blockMeasurementCacheKey(block)
+        measurementCache[cacheKey]?.let { return it }
+
+        val measured = measureBlockHeight(
             block = block,
             textMeasurer = textMeasurer,
             constraints = constraints,
@@ -64,6 +71,17 @@ class SuspendingAndroidBlockMeasurementProvider(
             density = density,
             imageSizeMultiplier = imageSizeMultiplier
         )
+        measurementCache[cacheKey] = measured
+        return measured
+    }
+
+    private fun blockMeasurementCacheKey(block: ContentBlock): Int {
+        var result = block.hashCode()
+        result = 31 * result + constraints.maxWidth
+        result = 31 * result + constraints.maxHeight
+        result = 31 * result + textStyle.hashCode()
+        result = 31 * result + imageSizeMultiplier.hashCode()
+        return result
     }
 
     override suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock>? {
@@ -280,7 +298,9 @@ class SuspendingAndroidBlockMeasurementProvider(
             block.style.padding.bottom.toPx() + (block.style.borderBottom?.width?.toPx() ?: 0f)
         }.roundToInt()
 
-        Timber.tag("PAGINATION_DEBUG").d("SplitTable: avail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom")
+        if (DEBUG_PAGINATION_LOGS) {
+            Timber.tag("PAGINATION_DEBUG").d("SplitTable: avail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom")
+        }
         currentHeight += decorationTop
 
         for (i in block.rows.indices) {
@@ -305,7 +325,9 @@ class SuspendingAndroidBlockMeasurementProvider(
             }
 
             if (currentHeight + maxRowHeight + decorationBottom > availableHeight) {
-                Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$maxRowHeight")
+                if (DEBUG_PAGINATION_LOGS) {
+                    Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$maxRowHeight")
+                }
                 splitRowIndex = i
                 break
             }
@@ -410,7 +432,9 @@ suspend fun paginate(
     if (blocks.isEmpty()) {
         return emptyList()
     }
-    Timber.d("Starting pagination for ${blocks.size} blocks with page height $pageHeight.")
+    if (DEBUG_PAGINATION_LOGS) {
+        Timber.d("Starting pagination for ${blocks.size} blocks with page height $pageHeight.")
+    }
 
     val pages = mutableListOf<Page>()
     var currentPageContent = mutableListOf<ContentBlock>()
@@ -437,8 +461,10 @@ suspend fun paginate(
 
         val spaceRequired = blockHeightWithSafetyMargin + spaceBetweenBlocks
 
-        Timber.tag("PAGINATION_DEBUG")
-            .d("Processing ${block::class.simpleName}: req=$spaceRequired, remaining=$remainingHeight, margin=$spaceBetweenBlocks, heightOnly=$blockHeight")
+        if (DEBUG_PAGINATION_LOGS) {
+            Timber.tag("PAGINATION_DEBUG")
+                .d("Processing ${block::class.simpleName}: req=$spaceRequired, remaining=$remainingHeight, margin=$spaceBetweenBlocks, heightOnly=$blockHeight")
+        }
 
         if (spaceRequired <= remainingHeight) {
             var blockToAdd = block
@@ -608,23 +634,31 @@ suspend fun paginate(
                     }
 
                     else -> {
-                        Timber.d("Page ${pageIndex + 1}: Block type is not splittable.")
+                        if (DEBUG_PAGINATION_LOGS) {
+                            Timber.d("Page ${pageIndex + 1}: Block type is not splittable.")
+                        }
                     }
                 }
             } else {
-                Timber.d("Page ${pageIndex + 1}: Not enough height for splitting ($heightForSplitting <= 50).")
+                if (DEBUG_PAGINATION_LOGS) {
+                    Timber.d("Page ${pageIndex + 1}: Not enough height for splitting ($heightForSplitting <= 50).")
+                }
             }
 
             if (!wasSplit) {
                 if (currentPageContent.isEmpty()) {
-                    Timber.tag("PAGINATION_DEBUG")
-                        .w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
+                    if (DEBUG_PAGINATION_LOGS) {
+                        Timber.tag("PAGINATION_DEBUG")
+                            .w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
+                    }
                     val forcedHeight = blockHeight + spaceBetweenBlocks
                     val blockToAdd = setBlockExpectedHeight(block, forcedHeight)
                     currentPageContent.add(blockToAdd)
                 } else {
-                    Timber.tag("PAGINATION_DEBUG")
-                        .d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
+                    if (DEBUG_PAGINATION_LOGS) {
+                        Timber.tag("PAGINATION_DEBUG")
+                            .d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
+                    }
                     remainingBlocks.add(0, block)
                 }
             }
@@ -643,7 +677,9 @@ suspend fun paginate(
         pages.add(Page(content = currentPageContent.toList()))
     }
 
-    Timber.i("Pagination complete. Produced ${pages.size} pages from ${blocks.size} initial blocks.")
+    if (DEBUG_PAGINATION_LOGS) {
+        Timber.i("Pagination complete. Produced ${pages.size} pages from ${blocks.size} initial blocks.")
+    }
     return pages
 }
 
@@ -906,7 +942,9 @@ private suspend fun measureBlockHeight(
         (contentHeight + verticalPaddingPx + verticalBorderPx).roundToInt()
     }
 
-    Timber.tag("PAGINATION_DEBUG").v("Measure result for ${block::class.simpleName}: content=$contentHeight, paddingV=$verticalPaddingPx, borderV=$verticalBorderPx, total=$finalHeight")
+    if (DEBUG_PAGINATION_LOGS) {
+        Timber.tag("PAGINATION_DEBUG").v("Measure result for ${block::class.simpleName}: content=$contentHeight, paddingV=$verticalPaddingPx, borderV=$verticalBorderPx, total=$finalHeight")
+    }
     return finalHeight
 }
 
@@ -935,10 +973,14 @@ private suspend fun splitParagraphBlock(
 
     val availableTextHeight = availableHeight - decorationTop - decorationBottom - centeredSafetyPaddingPx
 
-    Timber.tag("PAGINATION_DEBUG").d("SplitPara: totalAvail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom, textAvail=$availableTextHeight")
+    if (DEBUG_PAGINATION_LOGS) {
+        Timber.tag("PAGINATION_DEBUG").d("SplitPara: totalAvail=$availableHeight, topDec=$decorationTop, botDec=$decorationBottom, textAvail=$availableTextHeight")
+    }
 
     if (availableTextHeight <= 0) {
-        Timber.tag("PAGINATION_DEBUG").w("SplitPara aborted: availableTextHeight <= 0")
+        if (DEBUG_PAGINATION_LOGS) {
+            Timber.tag("PAGINATION_DEBUG").w("SplitPara aborted: availableTextHeight <= 0")
+        }
         return null
     }
 
@@ -969,7 +1011,9 @@ private suspend fun splitParagraphBlock(
     }
 
     if (lastVisibleLine == 0) {
-        Timber.d("Orphan control: Preventing split that would leave one line at the bottom of the page.")
+        if (DEBUG_PAGINATION_LOGS) {
+            Timber.d("Orphan control: Preventing split that would leave one line at the bottom of the page.")
+        }
         return null
     }
 
@@ -985,7 +1029,9 @@ private suspend fun splitParagraphBlock(
             )
         }
         if (part2Layout.lineCount == 1) {
-            Timber.d("Widow control: Adjusting split to prevent a single line at the top of the next page.")
+            if (DEBUG_PAGINATION_LOGS) {
+                Timber.d("Widow control: Adjusting split to prevent a single line at the top of the next page.")
+            }
             lastVisibleLine--
             splitOffset = layoutResult.getLineEnd(lastVisibleLine, visibleEnd = true)
         }
@@ -1046,7 +1092,9 @@ private suspend fun splitParagraphBlock(
         endCharOffsetInSource = block.endCharOffsetInSource
     )
 
-    Timber.d("Split block at offset $splitOffset. Part 1 len: ${part1.content.length}, Part 2 len: ${part2.content.length}")
+    if (DEBUG_PAGINATION_LOGS) {
+        Timber.d("Split block at offset $splitOffset. Part 1 len: ${part1.content.length}, Part 2 len: ${part2.content.length}")
+    }
 
     return part1 to part2
 }
@@ -1090,7 +1138,9 @@ private suspend fun calculateContentHeightWithMargins(
             }
         }.roundToInt()
         totalHeight += (childHeight + margin)
-        Timber.tag("PAGINATION_DEBUG").v("  Internal Child ${child::class.simpleName}: h=$childHeight, margin=$margin, runningTotal=$totalHeight")
+        if (DEBUG_PAGINATION_LOGS) {
+            Timber.tag("PAGINATION_DEBUG").v("  Internal Child ${child::class.simpleName}: h=$childHeight, margin=$margin, runningTotal=$totalHeight")
+        }
     }
     if (children.isNotEmpty()) {
         totalHeight += with(density) { children.last().style.margin.bottom.toPx().roundToInt() }

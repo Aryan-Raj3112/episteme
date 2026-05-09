@@ -60,6 +60,30 @@ class SingleFileImporterTest {
     }
 
     @Test
+    fun `plain text import reuses cached metadata before reading the stream`() = runTest {
+        val cache = temp.newFolder("txt-cache-reuse")
+        val importer = SingleFileImporter(contextWithCache(cache))
+
+        val first = importer.importSingleFile(
+            inputStream = ByteArrayInputStream("Cached content".toByteArray()),
+            type = FileType.TXT,
+            originalBookNameHint = "Cached.txt",
+            bookId = "cached-book"
+        )
+
+        val second = importer.importSingleFile(
+            inputStream = ByteArrayInputStream("Different content that should not be parsed".toByteArray()),
+            type = FileType.TXT,
+            originalBookNameHint = "Cached.txt",
+            bookId = "cached-book"
+        )
+
+        assertEquals(first.title, second.title)
+        assertEquals(first.chapters.single().plainTextContent, second.chapters.single().plainTextContent)
+        assertTrue(second.chapters.single().plainTextContent.contains("Cached content"))
+    }
+
+    @Test
     fun `html import extracts title author style skips scripts and splits page breaks`() = runTest {
         val importer = SingleFileImporter(contextWithCache(temp.newFolder("html-cache")))
         val html = """

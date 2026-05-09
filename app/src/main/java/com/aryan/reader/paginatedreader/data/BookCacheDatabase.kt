@@ -28,6 +28,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Dao
 abstract class BookCacheDao {
@@ -151,12 +153,19 @@ abstract class BookCacheDao {
     @Query("DELETE FROM configuration_cache WHERE bookId = :bookId")
     abstract suspend fun deleteConfigurationCacheForBook(bookId: String)
 
+    @Query("DELETE FROM page_cache_metadata WHERE book_id = :bookId")
+    protected abstract suspend fun deletePageCacheMetadataForBook(bookId: String)
+
+    @Query("DELETE FROM page_cache_metadata WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex")
+    protected abstract suspend fun deletePageCacheMetadataForChapter(bookId: String, configHash: Int, chapterIndex: Int)
+
     @Transaction
     open suspend fun deleteEntireBookCache(bookId: String) {
         deleteBook(bookId)
         deleteChaptersForBook(bookId)
         deleteAnchorsForBook(bookId)
         deleteConfigurationCacheForBook(bookId)
+        deletePageCacheMetadataForBook(bookId)
     }
 
     @Query("DELETE FROM anchor_index")
@@ -165,12 +174,16 @@ abstract class BookCacheDao {
     @Query("DELETE FROM configuration_cache")
     abstract suspend fun clearConfigurationCache()
 
+    @Query("DELETE FROM page_cache_metadata")
+    protected abstract suspend fun clearPageCacheMetadata()
+
     @Transaction
     open suspend fun clearAllCache() {
         clearProcessedBooks()
         clearProcessedChapters()
         clearAnchors()
         clearConfigurationCache()
+        clearPageCacheMetadata()
     }
 
     @Query("SELECT * FROM configuration_cache WHERE bookId = :bookId AND configHash = :configHash")
@@ -188,6 +201,101 @@ abstract class BookCacheDao {
         )
     """)
     abstract suspend fun cleanupOldConfigurations(bookId: String)
+
+    @Query("SELECT * FROM page_cache_metadata WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex")
+    protected abstract suspend fun getPageCacheMetadata(bookId: String, configHash: Int, chapterIndex: Int): PageCacheMetadata?
+
+    @Query("SELECT chunk_data FROM page_cache_chunks WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex ORDER BY chunk_index ASC")
+    protected abstract suspend fun getPageCacheChunks(bookId: String, configHash: Int, chapterIndex: Int): List<ByteArray>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun insertPageCacheMetadata(metadata: PageCacheMetadata)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun insertPageCacheChunks(chunks: List<PageCacheChunk>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertPageIndexEntries(entries: List<PageIndexEntry>)
+
+    @Query("SELECT * FROM page_index_entries WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex ORDER BY page_in_chapter ASC")
+    abstract suspend fun getPageIndexEntries(bookId: String, configHash: Int, chapterIndex: Int): List<PageIndexEntry>
+
+    @Transaction
+    open suspend fun getPageCache(bookId: String, configHash: Int, chapterIndex: Int): PageCacheEntry? {
+        val metadata = getPageCacheMetadata(bookId, configHash, chapterIndex) ?: return null
+        val chunks = getPageCacheChunks(bookId, configHash, chapterIndex)
+        if (chunks.isEmpty()) return null
+
+        val totalSize = chunks.sumOf { it.size }
+        val mergedData = ByteArray(totalSize)
+        var offset = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, mergedData, offset, chunk.size)
+            offset += chunk.size
+        }
+
+        return PageCacheEntry(
+            bookId = metadata.bookId,
+            configHash = metadata.configHash,
+            chapterIndex = metadata.chapterIndex,
+            processingVersion = metadata.processingVersion,
+            pageCacheVersion = metadata.pageCacheVersion,
+            contentVersion = metadata.contentVersion,
+            pageCount = metadata.pageCount,
+            pagesProto = mergedData
+        )
+    }
+
+    @Transaction
+    open suspend fun insertPageCache(entry: PageCacheEntry, pageIndexEntries: List<PageIndexEntry>) {
+        @Suppress("LocalVariableName") val CHUNK_SIZE = 900 * 1024
+
+        deletePageCacheMetadataForChapter(entry.bookId, entry.configHash, entry.chapterIndex)
+
+        insertPageCacheMetadata(
+            PageCacheMetadata(
+                bookId = entry.bookId,
+                configHash = entry.configHash,
+                chapterIndex = entry.chapterIndex,
+                processingVersion = entry.processingVersion,
+                pageCacheVersion = entry.pageCacheVersion,
+                contentVersion = entry.contentVersion,
+                pageCount = entry.pageCount
+            )
+        )
+
+        val chunks = ArrayList<PageCacheChunk>()
+        var offset = 0
+        var chunkIndex = 0
+        while (offset < entry.pagesProto.size) {
+            val end = (offset + CHUNK_SIZE).coerceAtMost(entry.pagesProto.size)
+            chunks.add(
+                PageCacheChunk(
+                    bookId = entry.bookId,
+                    configHash = entry.configHash,
+                    chapterIndex = entry.chapterIndex,
+                    chunkIndex = chunkIndex,
+                    chunkData = entry.pagesProto.copyOfRange(offset, end)
+                )
+            )
+            offset = end
+            chunkIndex++
+        }
+        insertPageCacheChunks(chunks)
+        if (pageIndexEntries.isNotEmpty()) {
+            insertPageIndexEntries(pageIndexEntries)
+        }
+    }
+
+    @Query("""
+        DELETE FROM page_cache_metadata
+        WHERE book_id = :bookId AND config_hash NOT IN (
+            SELECT configHash FROM configuration_cache
+            WHERE bookId = :bookId
+            ORDER BY rowid DESC LIMIT 3
+        )
+    """)
+    abstract suspend fun cleanupOldPageCaches(bookId: String)
 }
 
 @Database(
@@ -196,9 +304,12 @@ abstract class BookCacheDao {
         ProcessedChapterMetadata::class,
         ProcessedChapterChunk::class,
         ConfigurationCache::class,
-        AnchorIndexEntry::class
+        AnchorIndexEntry::class,
+        PageCacheMetadata::class,
+        PageCacheChunk::class,
+        PageIndexEntry::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class BookCacheDatabase : RoomDatabase() {
@@ -215,10 +326,72 @@ abstract class BookCacheDatabase : RoomDatabase() {
                     BookCacheDatabase::class.java,
                     "book_cache_database"
                 )
+                    .addMigrations(MIGRATION_10_11)
                     .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `page_cache_metadata` (
+                        `book_id` TEXT NOT NULL,
+                        `config_hash` INTEGER NOT NULL,
+                        `chapter_index` INTEGER NOT NULL,
+                        `processing_version` INTEGER NOT NULL,
+                        `page_cache_version` INTEGER NOT NULL,
+                        `content_version` INTEGER NOT NULL,
+                        `page_count` INTEGER NOT NULL,
+                        PRIMARY KEY(`book_id`, `config_hash`, `chapter_index`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `page_cache_chunks` (
+                        `book_id` TEXT NOT NULL,
+                        `config_hash` INTEGER NOT NULL,
+                        `chapter_index` INTEGER NOT NULL,
+                        `chunk_index` INTEGER NOT NULL,
+                        `chunk_data` BLOB NOT NULL,
+                        PRIMARY KEY(`book_id`, `config_hash`, `chapter_index`, `chunk_index`),
+                        FOREIGN KEY(`book_id`, `config_hash`, `chapter_index`)
+                            REFERENCES `page_cache_metadata`(`book_id`, `config_hash`, `chapter_index`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_page_cache_chunks_book_id_config_hash_chapter_index` ON `page_cache_chunks` (`book_id`, `config_hash`, `chapter_index`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `page_index_entries` (
+                        `book_id` TEXT NOT NULL,
+                        `config_hash` INTEGER NOT NULL,
+                        `chapter_index` INTEGER NOT NULL,
+                        `page_in_chapter` INTEGER NOT NULL,
+                        `first_block_index` INTEGER NOT NULL,
+                        `last_block_index` INTEGER NOT NULL,
+                        `first_text_block_index` INTEGER,
+                        `first_text_char_offset` INTEGER NOT NULL,
+                        `first_text_end_offset` INTEGER NOT NULL,
+                        `first_cfi` TEXT,
+                        `anchors` TEXT NOT NULL,
+                        PRIMARY KEY(`book_id`, `config_hash`, `chapter_index`, `page_in_chapter`),
+                        FOREIGN KEY(`book_id`, `config_hash`, `chapter_index`)
+                            REFERENCES `page_cache_metadata`(`book_id`, `config_hash`, `chapter_index`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_page_index_entries_book_id_config_hash_chapter_index` ON `page_index_entries` (`book_id`, `config_hash`, `chapter_index`)"
+                )
             }
         }
     }

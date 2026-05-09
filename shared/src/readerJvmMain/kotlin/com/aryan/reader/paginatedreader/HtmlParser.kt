@@ -107,7 +107,8 @@ fun htmlToSemanticBlocks(
     imageDimensionsCache: Map<String, Pair<Float, Float>> = emptyMap(),
     mathSvgCache: Map<String, String> = emptyMap(),
     resourceResolver: HtmlResourceResolver = NoOpHtmlResourceResolver,
-    fontFamilyLoader: HtmlFontFamilyLoader = NoOpHtmlFontFamilyLoader
+    fontFamilyLoader: HtmlFontFamilyLoader = NoOpHtmlFontFamilyLoader,
+    adaptThemeColors: Boolean = false
 ): List<SemanticBlock> {
     return SemanticHtmlParser(
         cssRules,
@@ -120,7 +121,8 @@ fun htmlToSemanticBlocks(
         imageDimensionsCache,
         mathSvgCache,
         resourceResolver,
-        fontFamilyLoader
+        fontFamilyLoader,
+        adaptThemeColors
     ).parse(html)
 }
 
@@ -138,7 +140,8 @@ private class SemanticHtmlParser(
     private val imageDimensionsCache: Map<String, Pair<Float, Float>>,
     private val mathSvgCache: Map<String, String>,
     private val resourceResolver: HtmlResourceResolver,
-    private val fontFamilyLoader: HtmlFontFamilyLoader
+    private val fontFamilyLoader: HtmlFontFamilyLoader,
+    private val adaptThemeColors: Boolean
 ) {
     private val styleCache = mutableMapOf<String, CssStyle>()
     private var combinedRules: OptimizedCssRules = cssRules
@@ -157,7 +160,8 @@ private class SemanticHtmlParser(
                 baseFontSizeSp = textStyle.fontSize.value,
                 density = density.density,
                 constraints = constraints,
-                isDarkTheme = false
+                isDarkTheme = false,
+                adaptThemeColors = adaptThemeColors
             )
 
             if (inlineParseResult.fontFaces.isNotEmpty()) {
@@ -242,7 +246,15 @@ private class SemanticHtmlParser(
         var elementStyle = baseStyle
         val inlineStyleAttribute = element.attr("style")
         if (inlineStyleAttribute.isNotBlank()) {
-            val inlineStyle = CssParser.parseProperties(inlineStyleAttribute, textStyle.fontSize.value, density.density, constraints, onlyImportant = false, isDarkTheme = false)
+            val inlineStyle = CssParser.parseProperties(
+                inlineStyleAttribute,
+                textStyle.fontSize.value,
+                density.density,
+                constraints,
+                onlyImportant = false,
+                isDarkTheme = false,
+                adaptThemeColors = adaptThemeColors
+            )
             elementStyle = elementStyle.merge(inlineStyle)
         }
 

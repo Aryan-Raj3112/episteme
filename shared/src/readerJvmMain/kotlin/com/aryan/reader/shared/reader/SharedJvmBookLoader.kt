@@ -23,6 +23,19 @@ import java.util.UUID
 import java.util.zip.ZipFile
 
 object SharedJvmBookLoader {
+    private data class LoaderCacheKey(
+        val canonicalPath: String,
+        val type: FileType,
+        val length: Long,
+        val lastModified: Long
+    )
+
+    private val loadedBookCache = object : LinkedHashMap<LoaderCacheKey, SharedEpubBook>(12, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LoaderCacheKey, SharedEpubBook>?): Boolean {
+            return size > 12
+        }
+    }
+
     fun load(
         file: File,
         type: FileType,
@@ -30,17 +43,27 @@ object SharedJvmBookLoader {
         authorOverride: String? = null
     ): SharedEpubBook {
         require(file.isFile) { "Missing reader file: ${file.absolutePath}" }
-        val loaded = when (type) {
-            FileType.EPUB -> loadEpub(file)
-            FileType.HTML -> loadHtml(file)
-            FileType.TXT,
-            FileType.MD -> loadPlainText(file)
-            FileType.FB2 -> loadFb2(file)
-            FileType.DOCX -> loadDocx(file)
-            FileType.ODT -> loadOdt(file, isFlat = false)
-            FileType.FODT -> loadOdt(file, isFlat = true)
-            FileType.MOBI -> loadMobi(file)
-            else -> error("${type.name} is not supported by the shared JVM reader loader.")
+        val key = LoaderCacheKey(
+            canonicalPath = file.canonicalPath,
+            type = type,
+            length = file.length(),
+            lastModified = file.lastModified()
+        )
+        val loaded = synchronized(loadedBookCache) {
+            loadedBookCache.getOrPut(key) {
+                when (type) {
+                    FileType.EPUB -> loadEpub(file)
+                    FileType.HTML -> loadHtml(file)
+                    FileType.TXT,
+                    FileType.MD -> loadPlainText(file)
+                    FileType.FB2 -> loadFb2(file)
+                    FileType.DOCX -> loadDocx(file)
+                    FileType.ODT -> loadOdt(file, isFlat = false)
+                    FileType.FODT -> loadOdt(file, isFlat = true)
+                    FileType.MOBI -> loadMobi(file)
+                    else -> error("${type.name} is not supported by the shared JVM reader loader.")
+                }
+            }
         }
         return loaded.withOverrides(titleOverride = titleOverride, authorOverride = authorOverride)
     }
@@ -1061,7 +1084,8 @@ object SharedJvmBookLoader {
             baseFontSizeSp = 18f,
             density = 1f,
             constraints = constraints,
-            isDarkTheme = false
+            isDarkTheme = false,
+            adaptThemeColors = false
         ).rules
 
         return cssByPath.entries.fold(baseRules) { rules, (path, css) ->
@@ -1075,7 +1099,8 @@ object SharedJvmBookLoader {
                         baseFontSizeSp = 18f,
                         density = 1f,
                         constraints = constraints,
-                        isDarkTheme = false
+                        isDarkTheme = false,
+                        adaptThemeColors = false
                     ).rules
                 )
             }

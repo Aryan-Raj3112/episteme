@@ -48,10 +48,20 @@ data class Locator(
 class LocatorConverter(
     private val bookCacheDao: BookCacheDao,
     private val proto: ProtoBuf,
-    private val context: Context
+    private val context: Context,
+    private val stableBookId: String? = null
 ) {
-    private suspend fun processAndCacheChapter(book: EpubBook, chapterIndex: Int): List<SemanticBlock>? = withContext(Dispatchers.IO) {
-        Timber.tag("POS_DIAG").d("processAndCacheChapter: Processing for bookId='${book.title}' index=$chapterIndex")
+    private fun cacheBookId(book: EpubBook, overrideBookId: String? = null): String {
+        return overrideBookId ?: stableBookId ?: book.title
+    }
+
+    private suspend fun processAndCacheChapter(
+        book: EpubBook,
+        chapterIndex: Int,
+        explicitBookId: String? = null
+    ): List<SemanticBlock>? = withContext(Dispatchers.IO) {
+        val cacheBookId = cacheBookId(book, explicitBookId)
+        Timber.tag("POS_DIAG").d("processAndCacheChapter: Processing for bookId='$cacheBookId' index=$chapterIndex")
         try {
             val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
 
@@ -98,7 +108,8 @@ class LocatorConverter(
                     baseFontSizeSp = 16f,
                     density = density.density,
                     constraints = constraints,
-                    isDarkTheme = false
+                    isDarkTheme = false,
+                    adaptThemeColors = false
                 )
 
                 val rules = bookCssResult.rules
@@ -123,16 +134,17 @@ class LocatorConverter(
                 extractionBasePath = book.extractionBasePath,
                 density = density,
                 fontFamilyMap = emptyMap(),
-                constraints = constraints
+                constraints = constraints,
+                adaptThemeColors = false
             )
 
             val protoBytes = proto.encodeToByteArray(semanticBlocks)
 
             val newCacheEntry = ProcessedChapter(
-                bookId = book.title,
+                bookId = cacheBookId,
                 chapterIndex = chapterIndex,
                 contentBlocksProto = protoBytes,
-                estimatedPageCount = 0
+                estimatedPageCount = estimateSemanticPageCount(semanticBlocks)
             )
             bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
             semanticBlocks
@@ -141,9 +153,9 @@ class LocatorConverter(
         }
     }
 
-    suspend fun getLocatorFromCfi(book: EpubBook, chapterIndex: Int, cfi: String): Locator? = withContext(Dispatchers.IO) {
+    suspend fun getLocatorFromCfi(book: EpubBook, chapterIndex: Int, cfi: String, bookId: String? = null): Locator? = withContext(Dispatchers.IO) {
         Timber.tag("POS_DIAG").d("getLocatorFromCfi: Input CFI='$cfi' for chapterIndex=$chapterIndex")
-        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = chapterIndex)
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = cacheBookId(book, bookId), chapterIndex = chapterIndex)
 
         var allBlocks: List<SemanticBlock>? = null
 
@@ -154,7 +166,7 @@ class LocatorConverter(
         }
 
         if (allBlocks.isNullOrEmpty()) {
-            allBlocks = processAndCacheChapter(book, chapterIndex)
+            allBlocks = processAndCacheChapter(book, chapterIndex, bookId)
         }
 
         if (allBlocks.isNullOrEmpty()) {
@@ -224,8 +236,8 @@ class LocatorConverter(
         return bestMatch
     }
 
-    suspend fun getTtsChunksForChapter(book: EpubBook, chapterIndex: Int): List<TtsChunk>? = withContext(Dispatchers.IO) {
-        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = chapterIndex)
+    suspend fun getTtsChunksForChapter(book: EpubBook, chapterIndex: Int, bookId: String? = null): List<TtsChunk>? = withContext(Dispatchers.IO) {
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = cacheBookId(book, bookId), chapterIndex = chapterIndex)
 
         var allBlocks: List<SemanticBlock>? = null
         if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
@@ -235,7 +247,7 @@ class LocatorConverter(
         }
 
         if (allBlocks.isNullOrEmpty()) {
-            allBlocks = processAndCacheChapter(book, chapterIndex)
+            allBlocks = processAndCacheChapter(book, chapterIndex, bookId)
         }
 
         if (allBlocks.isNullOrEmpty()) return@withContext null
@@ -279,9 +291,9 @@ class LocatorConverter(
         chunks
     }
 
-    suspend fun getCfiFromLocator(book: EpubBook, locator: Locator): String? = withContext(Dispatchers.IO) {
+    suspend fun getCfiFromLocator(book: EpubBook, locator: Locator, bookId: String? = null): String? = withContext(Dispatchers.IO) {
         Timber.tag("POS_DIAG").d("getCfiFromLocator: Input $locator")
-        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = cacheBookId(book, bookId), chapterIndex = locator.chapterIndex)
 
         var blocks: List<SemanticBlock>? = null
         if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
@@ -291,7 +303,7 @@ class LocatorConverter(
         }
 
         if (blocks.isNullOrEmpty()) {
-            blocks = processAndCacheChapter(book, locator.chapterIndex)
+            blocks = processAndCacheChapter(book, locator.chapterIndex, bookId)
         }
 
         if (blocks.isNullOrEmpty()) {
@@ -331,8 +343,26 @@ class LocatorConverter(
         return null
     }
 
-    suspend fun getTextOffset(book: EpubBook, locator: Locator): Int? = withContext(Dispatchers.IO) {
-        val processedChapter = bookCacheDao.getProcessedChapter(bookId = book.title, chapterIndex = locator.chapterIndex)
+    private fun estimateSemanticPageCount(blocks: List<SemanticBlock>): Int {
+        var charCount = 0
+
+        fun walk(block: SemanticBlock) {
+            when (block) {
+                is SemanticTextBlock -> charCount += block.text.length
+                is SemanticFlexContainer -> block.children.forEach(::walk)
+                is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> cell.content.forEach(::walk) } }
+                is SemanticList -> block.items.forEach(::walk)
+                is SemanticWrappingBlock -> block.paragraphsToWrap.forEach(::walk)
+                else -> Unit
+            }
+        }
+
+        blocks.forEach(::walk)
+        return ((charCount + 2_499) / 2_500).coerceAtLeast(1)
+    }
+
+    suspend fun getTextOffset(book: EpubBook, locator: Locator, bookId: String? = null): Int? = withContext(Dispatchers.IO) {
+        val processedChapter = bookCacheDao.getProcessedChapter(bookId = cacheBookId(book, bookId), chapterIndex = locator.chapterIndex)
 
         var allBlocks: List<SemanticBlock>? = null
         if (processedChapter != null && processedChapter.contentBlocksProto.isNotEmpty()) {
@@ -342,7 +372,7 @@ class LocatorConverter(
         }
 
         if (allBlocks.isNullOrEmpty()) {
-            allBlocks = processAndCacheChapter(book, locator.chapterIndex)
+            allBlocks = processAndCacheChapter(book, locator.chapterIndex, bookId)
         }
 
         if (allBlocks.isNullOrEmpty()) return@withContext null

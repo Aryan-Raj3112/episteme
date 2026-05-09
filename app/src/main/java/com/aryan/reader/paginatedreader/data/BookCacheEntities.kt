@@ -25,7 +25,8 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-const val LATEST_PROCESSING_VERSION = 10
+const val LATEST_PROCESSING_VERSION = 11
+const val LATEST_PAGE_CACHE_VERSION = 3
 
 @Entity(tableName = "processed_books")
 data class ProcessedBook(
@@ -130,4 +131,122 @@ data class ConfigurationCache(
     val bookId: String,
     val configHash: Int,
     val chapterPageCounts: String
+)
+
+data class PageCacheEntry(
+    val bookId: String,
+    val configHash: Int,
+    val chapterIndex: Int,
+    val processingVersion: Int,
+    val pageCacheVersion: Int,
+    val contentVersion: Int,
+    val pageCount: Int,
+    val pagesProto: ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as PageCacheEntry
+        if (bookId != other.bookId) return false
+        if (configHash != other.configHash) return false
+        if (chapterIndex != other.chapterIndex) return false
+        if (processingVersion != other.processingVersion) return false
+        if (pageCacheVersion != other.pageCacheVersion) return false
+        if (contentVersion != other.contentVersion) return false
+        if (pageCount != other.pageCount) return false
+        if (!pagesProto.contentEquals(other.pagesProto)) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = bookId.hashCode()
+        result = 31 * result + configHash
+        result = 31 * result + chapterIndex
+        result = 31 * result + processingVersion
+        result = 31 * result + pageCacheVersion
+        result = 31 * result + contentVersion
+        result = 31 * result + pageCount
+        result = 31 * result + pagesProto.contentHashCode()
+        return result
+    }
+}
+
+@Entity(tableName = "page_cache_metadata", primaryKeys = ["book_id", "config_hash", "chapter_index"])
+data class PageCacheMetadata(
+    @ColumnInfo(name = "book_id") val bookId: String,
+    @ColumnInfo(name = "config_hash") val configHash: Int,
+    @ColumnInfo(name = "chapter_index") val chapterIndex: Int,
+    @ColumnInfo(name = "processing_version") val processingVersion: Int,
+    @ColumnInfo(name = "page_cache_version") val pageCacheVersion: Int,
+    @ColumnInfo(name = "content_version") val contentVersion: Int,
+    @ColumnInfo(name = "page_count") val pageCount: Int
+)
+
+@Entity(
+    tableName = "page_cache_chunks",
+    primaryKeys = ["book_id", "config_hash", "chapter_index", "chunk_index"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PageCacheMetadata::class,
+            parentColumns = ["book_id", "config_hash", "chapter_index"],
+            childColumns = ["book_id", "config_hash", "chapter_index"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["book_id", "config_hash", "chapter_index"])]
+)
+data class PageCacheChunk(
+    @ColumnInfo(name = "book_id") val bookId: String,
+    @ColumnInfo(name = "config_hash") val configHash: Int,
+    @ColumnInfo(name = "chapter_index") val chapterIndex: Int,
+    @ColumnInfo(name = "chunk_index") val chunkIndex: Int,
+    @ColumnInfo(name = "chunk_data", typeAffinity = ColumnInfo.BLOB) val chunkData: ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as PageCacheChunk
+        if (bookId != other.bookId) return false
+        if (configHash != other.configHash) return false
+        if (chapterIndex != other.chapterIndex) return false
+        if (chunkIndex != other.chunkIndex) return false
+        if (!chunkData.contentEquals(other.chunkData)) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = bookId.hashCode()
+        result = 31 * result + configHash
+        result = 31 * result + chapterIndex
+        result = 31 * result + chunkIndex
+        result = 31 * result + chunkData.contentHashCode()
+        return result
+    }
+}
+
+@Entity(
+    tableName = "page_index_entries",
+    primaryKeys = ["book_id", "config_hash", "chapter_index", "page_in_chapter"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PageCacheMetadata::class,
+            parentColumns = ["book_id", "config_hash", "chapter_index"],
+            childColumns = ["book_id", "config_hash", "chapter_index"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["book_id", "config_hash", "chapter_index"])]
+)
+data class PageIndexEntry(
+    @ColumnInfo(name = "book_id") val bookId: String,
+    @ColumnInfo(name = "config_hash") val configHash: Int,
+    @ColumnInfo(name = "chapter_index") val chapterIndex: Int,
+    @ColumnInfo(name = "page_in_chapter") val pageInChapter: Int,
+    @ColumnInfo(name = "first_block_index") val firstBlockIndex: Int,
+    @ColumnInfo(name = "last_block_index") val lastBlockIndex: Int,
+    @ColumnInfo(name = "first_text_block_index") val firstTextBlockIndex: Int?,
+    @ColumnInfo(name = "first_text_char_offset") val firstTextCharOffset: Int,
+    @ColumnInfo(name = "first_text_end_offset") val firstTextEndOffset: Int,
+    @ColumnInfo(name = "first_cfi") val firstCfi: String?,
+    @ColumnInfo(name = "anchors") val anchors: String
 )

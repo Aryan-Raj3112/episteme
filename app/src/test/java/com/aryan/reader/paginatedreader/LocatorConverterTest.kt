@@ -6,6 +6,9 @@ import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.data.AnchorIndexEntry
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.ConfigurationCache
+import com.aryan.reader.paginatedreader.data.PageCacheChunk
+import com.aryan.reader.paginatedreader.data.PageCacheMetadata
+import com.aryan.reader.paginatedreader.data.PageIndexEntry
 import com.aryan.reader.paginatedreader.data.ProcessedBook
 import com.aryan.reader.paginatedreader.data.ProcessedChapter
 import com.aryan.reader.paginatedreader.data.ProcessedChapterChunk
@@ -36,6 +39,31 @@ class LocatorConverterTest {
         val locator = converter.getLocatorFromCfi(book, chapterIndex = 0, cfi = "/4/2/6:13")
 
         assertEquals(Locator(chapterIndex = 0, blockIndex = 2, charOffset = 13), locator)
+    }
+
+    @Test
+    fun `zero estimate semantic cache remains usable`() = runTest {
+        val converter = converterFor(semanticBlocks(), estimatedPageCount = 0)
+
+        val locator = converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2/6:7")
+
+        assertEquals(Locator(chapterIndex = 0, blockIndex = 2, charOffset = 7), locator)
+    }
+
+    @Test
+    fun `stable book id is used for locator cache lookups`() = runTest {
+        val chapter = ProcessedChapter(
+            bookId = "stable-book-id",
+            chapterIndex = 0,
+            contentBlocksProto = proto.encodeToByteArray(semanticBlocks()),
+            estimatedPageCount = 1
+        )
+        val dao = FakeBookCacheDao(chapter)
+        val converter = LocatorConverter(dao, proto, mockk<Context>(relaxed = true), stableBookId = "stable-book-id")
+
+        converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2")
+
+        assertEquals("stable-book-id", dao.requestedBookIds.single())
     }
 
     @Test
@@ -142,12 +170,12 @@ class LocatorConverterTest {
         assertNull(converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2"))
     }
 
-    private fun converterFor(blocks: List<SemanticBlock>): LocatorConverter {
+    private fun converterFor(blocks: List<SemanticBlock>, estimatedPageCount: Int = 1): LocatorConverter {
         val chapter = ProcessedChapter(
             bookId = "Book",
             chapterIndex = 0,
             contentBlocksProto = proto.encodeToByteArray(blocks),
-            estimatedPageCount = 1
+            estimatedPageCount = estimatedPageCount
         )
         return LocatorConverter(FakeBookCacheDao(chapter), proto, mockk<Context>(relaxed = true))
     }
@@ -207,7 +235,12 @@ class LocatorConverterTest {
     private class FakeBookCacheDao(
         private val chapter: ProcessedChapter?
     ) : BookCacheDao() {
-        override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int): ProcessedChapter? = chapter
+        val requestedBookIds = mutableListOf<String>()
+
+        override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int): ProcessedChapter? {
+            requestedBookIds += bookId
+            return chapter
+        }
         override suspend fun insertProcessedChapters(chapters: List<ProcessedChapter>) = Unit
 
         override suspend fun getProcessedBook(bookId: String): ProcessedBook? = null
@@ -223,6 +256,9 @@ class LocatorConverterTest {
         override suspend fun getConfigurationCache(bookId: String, configHash: Int): ConfigurationCache? = null
         override suspend fun insertConfigurationCache(cache: ConfigurationCache) = Unit
         override suspend fun cleanupOldConfigurations(bookId: String) = Unit
+        override suspend fun insertPageIndexEntries(entries: List<PageIndexEntry>) = Unit
+        override suspend fun getPageIndexEntries(bookId: String, configHash: Int, chapterIndex: Int): List<PageIndexEntry> = emptyList()
+        override suspend fun cleanupOldPageCaches(bookId: String) = Unit
 
         protected override suspend fun getChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata? = null
         protected override suspend fun getChapterChunks(bookId: String, chapterIndex: Int): List<ByteArray> = emptyList()
@@ -230,5 +266,12 @@ class LocatorConverterTest {
         protected override suspend fun insertChapterChunks(chunks: List<ProcessedChapterChunk>) = Unit
         protected override suspend fun deleteChapterMetadataForBook(bookId: String) = Unit
         protected override suspend fun deleteAllChapterMetadata() = Unit
+        protected override suspend fun deletePageCacheMetadataForBook(bookId: String) = Unit
+        protected override suspend fun deletePageCacheMetadataForChapter(bookId: String, configHash: Int, chapterIndex: Int) = Unit
+        protected override suspend fun clearPageCacheMetadata() = Unit
+        protected override suspend fun getPageCacheMetadata(bookId: String, configHash: Int, chapterIndex: Int): PageCacheMetadata? = null
+        protected override suspend fun getPageCacheChunks(bookId: String, configHash: Int, chapterIndex: Int): List<ByteArray> = emptyList()
+        protected override suspend fun insertPageCacheMetadata(metadata: PageCacheMetadata) = Unit
+        protected override suspend fun insertPageCacheChunks(chunks: List<PageCacheChunk>) = Unit
     }
 }

@@ -723,6 +723,7 @@ private fun WrappingContentLayout(
 fun PaginatedReaderScreen(
     modifier: Modifier = Modifier,
     book: EpubBook,
+    bookId: String? = null,
     isDarkTheme: Boolean,
     effectiveBg: Color,
     effectiveText: Color,
@@ -797,15 +798,11 @@ fun PaginatedReaderScreen(
         var anchorLocatorForReconfig by remember { mutableStateOf<Locator?>(null) }
         val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
 
-        val previousState = remember {
-            arrayOf<Any>(this.constraints, isDarkTheme, effectiveBg, effectiveText)
+        var previousConstraints by remember {
+            mutableStateOf(this.constraints)
         }
 
-        if (previousState[0] != this.constraints ||
-            previousState[1] != isDarkTheme ||
-            previousState[2] != effectiveBg ||
-            previousState[3] != effectiveText
-        ) {
+        if (previousConstraints != this.constraints) {
             val activePaginator = currentPaginatorRef.value
             if (activePaginator is BookPaginator) {
                 val currentPage = pagerState.currentPage
@@ -814,19 +811,16 @@ fun PaginatedReaderScreen(
 
                 Timber.tag("ThemeReconfig").d("""
             RECONFIG DETECTED
-            - Reason: ${if (previousState[0] != this.constraints) "Constraints" else "Theme/Colors"}
+            - Reason: Constraints
             - Current Page: $currentPage
             - Saved Locator: $locator
         """.trimIndent())
             }
-            previousState[0] = this.constraints
-            previousState[1] = isDarkTheme
-            previousState[2] = effectiveBg
-            previousState[3] = effectiveText
+            previousConstraints = this.constraints
         }
 
-        val textStyle = remember(
-            baseTextStyle, effectiveText,
+        val layoutTextStyle = remember(
+            baseTextStyle,
             debouncedFontSizeMult,
             debouncedLineHeightMult,
             debouncedFontFamily
@@ -835,7 +829,7 @@ fun PaginatedReaderScreen(
             val adjustedLineHeight = adjustedFontSize * paginationLineHeightMultiplierForWebViewSetting(debouncedLineHeightMult)
 
             baseTextStyle.copy(
-                color = effectiveText,
+                color = Color.Unspecified,
                 fontSize = adjustedFontSize,
                 lineHeight = adjustedLineHeight,
                 fontFamily = debouncedFontFamily,
@@ -847,6 +841,9 @@ fun PaginatedReaderScreen(
                     trim = LineHeightStyle.Trim.None
                 )
             )
+        }
+        val textStyle = remember(layoutTextStyle, effectiveText) {
+            layoutTextStyle.copy(color = effectiveText)
         }
 
         LaunchedEffect(pagerState) {
@@ -955,7 +952,7 @@ fun PaginatedReaderScreen(
             remember(initialChapterIndexInBook, anchorLocatorForReconfig) {
                 anchorLocatorForReconfig?.chapterIndex ?: initialChapterIndexInBook ?: 0
             }
-        val paginator = remember(book, textConstraints, isDarkTheme, textStyle, userTextAlign, effectiveBg, effectiveText, debouncedParagraphGapMult) {
+        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedVerticalMarginMult) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -963,12 +960,11 @@ fun PaginatedReaderScreen(
             val uaResult = CssParser.parse(
                 cssContent = userAgentStylesheet,
                 cssPath = null,
-                baseFontSizeSp = textStyle.fontSize.value,
+                baseFontSizeSp = layoutTextStyle.fontSize.value,
                 density = density.density,
                 constraints = textConstraints,
-                isDarkTheme = isDarkTheme,
-                themeBackgroundColor = effectiveBg,
-                themeTextColor = effectiveText
+                isDarkTheme = false,
+                adaptThemeColors = false
             )
             allRules = allRules.merge(uaResult.rules)
             allFontFaces.addAll(uaResult.fontFaces)
@@ -977,12 +973,11 @@ fun PaginatedReaderScreen(
                 val bookCssResult = CssParser.parse(
                     cssContent = content,
                     cssPath = path,
-                    baseFontSizeSp = textStyle.fontSize.value,
+                    baseFontSizeSp = layoutTextStyle.fontSize.value,
                     density = density.density,
                     constraints = textConstraints,
-                    isDarkTheme = isDarkTheme,
-                    themeBackgroundColor = effectiveBg,
-                    themeTextColor = effectiveText
+                    isDarkTheme = false,
+                    adaptThemeColors = false
                 )
                 allRules = allRules.merge(bookCssResult.rules)
                 allFontFaces.addAll(bookCssResult.fontFaces)
@@ -990,12 +985,11 @@ fun PaginatedReaderScreen(
             val fontFamilyMap = loadFontFamilies(
                 fontFaces = allFontFaces, extractionPath = book.extractionBasePath
             )
-            book.title
             val bookCacheDao =
                 BookCacheDatabase.getDatabase(context.applicationContext).bookCacheDao()
             val proto = ProtoBuf { serializersModule = semanticBlockModule }
 
-            val uniqueBookId = if (book.fileName.length > 20) book.fileName else book.title
+            val uniqueBookId = bookId ?: if (book.fileName.length > 20) book.fileName else book.title
 
             Timber.d("Recreating BookPaginator for ID: $uniqueBookId. TextAlign: $userTextAlign")
             Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: Instantiating BookPaginator. book.chaptersForPagination.size=${book.chaptersForPagination.size}, initialChapter=$effectiveInitialChapter")
@@ -1005,7 +999,7 @@ fun PaginatedReaderScreen(
                 chapters = book.chaptersForPagination,
                 textMeasurer = textMeasurer,
                 constraints = textConstraints,
-                textStyle = textStyle,
+                textStyle = layoutTextStyle,
                 extractionBasePath = book.extractionBasePath,
                 density = density,
                 fontFamilyMap = fontFamilyMap,
@@ -2218,6 +2212,13 @@ internal fun PaginatedReaderContent(
 
                         var pageContent by remember { mutableStateOf<Page?>(null) }
                         var currentChapterPath by remember { mutableStateOf<String?>(null) }
+                        val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
+                            pageContent?.applyReaderThemeForDisplay(
+                                isDarkTheme = isDarkTheme,
+                                themeBackgroundColor = effectiveBg,
+                                themeTextColor = effectiveText
+                            )
+                        }
 
                         LaunchedEffect(pageIndex, uiState.generation) {
                             val fetchStartTime = System.currentTimeMillis()
@@ -2236,7 +2237,7 @@ internal fun PaginatedReaderContent(
                         }
 
                         val textBlocksOnPage =
-                            pageContent?.content?.extractTextBlocks()
+                            themedPageContent?.content?.extractTextBlocks()
                                 ?.filter { it.cfi != null } ?: emptyList()
                         val lastTextBlock = textBlocksOnPage.lastOrNull()
                         val lastBlockAbs = lastTextBlock?.let {
@@ -2379,7 +2380,8 @@ internal fun PaginatedReaderContent(
                                     horizontal = horizontalPadding,
                                     vertical = verticalPadding
                                 ), contentAlignment = Alignment.TopStart) {
-                                    if (pageContent != null) {
+                                    if (themedPageContent != null) {
+                                        val displayPage = themedPageContent
                                         val onGeneralTapCallback: (Offset) -> Unit = { offset ->
                                             activeSelection = null
                                             onTap(offset)
@@ -2405,7 +2407,7 @@ internal fun PaginatedReaderContent(
                                             val ttsHighlightColor =
                                                 MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
 
-                                            pageContent!!.content.forEach { block ->
+                                            displayPage.content.forEach { block ->
                                                 val marginModifier = Modifier.padding(
                                                     top = block.style.margin.top.coerceAtLeast(0.dp),
                                                     bottom = block.style.margin.bottom.coerceAtLeast(

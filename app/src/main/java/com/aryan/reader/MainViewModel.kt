@@ -2239,7 +2239,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             while (nextIdx < totalChapters) {
                 Timber.tag("TTS_BG_ADVANCE").d("Trying chapter $nextIdx natively.")
-                val nativeChunks = locatorConverter.getTtsChunksForChapter(book, nextIdx)
+                val nativeChunks = locatorConverter.getTtsChunksForChapter(book, nextIdx, bookId)
 
                 if (!nativeChunks.isNullOrEmpty()) {
                     val token = getAuthToken()
@@ -2266,7 +2266,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     // Save reading position locally
                     val cfi = nativeChunks.firstOrNull()?.sourceCfi
                     if (cfi != null) {
-                        val locator = locatorConverter.getLocatorFromCfi(book, nextIdx, cfi)
+                        val locator = locatorConverter.getLocatorFromCfi(book, nextIdx, cfi, bookId)
                         if (locator != null) {
                             recentFilesRepository.getFileByBookId(bookId)?.uriString?.let { uriString ->
                                 recentFilesRepository.updateEpubReadingPosition(uriString, locator, cfi, 0f)

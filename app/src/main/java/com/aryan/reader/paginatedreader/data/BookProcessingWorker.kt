@@ -63,7 +63,8 @@ import kotlin.math.abs
 data class SerializableEpubChapter(
     @ProtoNumber(1) val htmlContent: String,
     @ProtoNumber(2) val title: String,
-    @ProtoNumber(3) val absPath: String
+    @ProtoNumber(3) val absPath: String,
+    @ProtoNumber(4) val htmlFilePath: String = absPath
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -208,7 +209,8 @@ class BookProcessingWorker(
                 baseFontSizeSp = textStyle.fontSize.value,
                 density = density.density,
                 constraints = constraints,
-                isDarkTheme = false // GUARANTEED LIGHT THEME
+                isDarkTheme = false,
+                adaptThemeColors = false
             )
             lightThemeCssRules = lightThemeCssRules.merge(uaResult.rules)
 
@@ -219,7 +221,8 @@ class BookProcessingWorker(
                     baseFontSizeSp = textStyle.fontSize.value,
                     density = density.density,
                     constraints = constraints,
-                    isDarkTheme = false // GUARANTEED LIGHT THEME
+                    isDarkTheme = false,
+                    adaptThemeColors = false
                 )
                 lightThemeCssRules = lightThemeCssRules.merge(bookCssResult.rules)
             }
@@ -242,7 +245,20 @@ class BookProcessingWorker(
                         Timber.d("Async task started for chapter index $index.")
                         if (db.bookCacheDao().getProcessedChapter(bookId, index) == null) {
                             Timber.d("[BG_PROC] Caching chapter $index: ${chapter.title}")
-                            val document = Jsoup.parse(chapter.htmlContent, chapter.absPath)
+                            val htmlToParse = chapter.htmlContent.ifBlank {
+                                val backingFile = File(extractionBasePath, chapter.htmlFilePath)
+                                if (backingFile.exists()) {
+                                    backingFile.readText()
+                                } else {
+                                    ""
+                                }
+                            }
+                            if (htmlToParse.isBlank()) {
+                                Timber.w("[BG_PROC] Skipping chapter $index because no HTML content was available.")
+                                return@async null
+                            }
+
+                            val document = Jsoup.parse(htmlToParse, chapter.absPath)
                             val mathElements = document.select("math")
                             val svgResults = mutableMapOf<String, String>()
 
@@ -294,7 +310,7 @@ class BookProcessingWorker(
                                 bookId = bookId,
                                 chapterIndex = index,
                                 contentBlocksProto = protoBytes,
-                                estimatedPageCount = 0
+                                estimatedPageCount = estimateSemanticPageCount(semanticBlocks)
                             )
                         } else {
                             Timber.d("Chapter $index was already in the database. Skipping.")
@@ -370,5 +386,29 @@ class BookProcessingWorker(
 
         blocks.forEach { walk(it) }
         return anchors
+    }
+
+    private fun estimateSemanticPageCount(
+        blocks: List<com.aryan.reader.paginatedreader.SemanticBlock>
+    ): Int {
+        var charCount = 0
+
+        fun walk(block: com.aryan.reader.paginatedreader.SemanticBlock) {
+            when (block) {
+                is com.aryan.reader.paginatedreader.SemanticTextBlock -> {
+                    charCount += block.text.length
+                }
+                is com.aryan.reader.paginatedreader.SemanticFlexContainer -> block.children.forEach(::walk)
+                is com.aryan.reader.paginatedreader.SemanticTable -> {
+                    block.rows.forEach { row -> row.forEach { cell -> cell.content.forEach(::walk) } }
+                }
+                is com.aryan.reader.paginatedreader.SemanticList -> block.items.forEach(::walk)
+                is com.aryan.reader.paginatedreader.SemanticWrappingBlock -> block.paragraphsToWrap.forEach(::walk)
+                else -> Unit
+            }
+        }
+
+        blocks.forEach(::walk)
+        return ((charCount + 2_499) / 2_500).coerceAtLeast(1)
     }
 }

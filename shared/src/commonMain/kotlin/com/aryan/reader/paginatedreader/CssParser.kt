@@ -178,7 +178,8 @@ object CssParser {
         constraints: Constraints,
         isDarkTheme: Boolean,
         themeBackgroundColor: Color = Color.Unspecified,
-        themeTextColor: Color = Color.Unspecified
+        themeTextColor: Color = Color.Unspecified,
+        adaptThemeColors: Boolean = true
     ): OptimizedCssParseResult {
         val byTag = mutableMapOf<String, MutableList<CssRule>>()
         val byClass = mutableMapOf<String, MutableList<CssRule>>()
@@ -193,7 +194,7 @@ object CssParser {
         val mediaQueryRegex = Regex("@media[^{]+\\{((?>[^{}]+|\\{[^{}]*\\})*)\\}")
         mediaQueryRegex.findAll(cleanedCss).forEach { match ->
             val condition = match.groups[0]?.value?.trim() ?: ""
-            if (isDarkTheme && condition.contains("prefers-color-scheme: dark")) {
+            if (adaptThemeColors && isDarkTheme && condition.contains("prefers-color-scheme: dark")) {
                 val darkCss = match.groups[1]?.value ?: ""
                 cleanedCss += "\n$darkCss"
             }
@@ -231,12 +232,26 @@ object CssParser {
                 }
                 val specificity = calculateSpecificity(originalSelector)
                 val normalStyle = parseProperties(
-                    propertiesGroup, baseFontSizeSp, density, constraints, onlyImportant = false,
-                    isDarkTheme, themeBackgroundColor, themeTextColor
+                    properties = propertiesGroup,
+                    baseFontSizeSp = baseFontSizeSp,
+                    density = density,
+                    constraints = constraints,
+                    onlyImportant = false,
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor,
+                    adaptThemeColors = adaptThemeColors
                 )
                 val importantStyle = parseProperties(
-                    propertiesGroup, baseFontSizeSp, density, constraints, onlyImportant = true,
-                    isDarkTheme, themeBackgroundColor, themeTextColor
+                    properties = propertiesGroup,
+                    baseFontSizeSp = baseFontSizeSp,
+                    density = density,
+                    constraints = constraints,
+                    onlyImportant = true,
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor,
+                    adaptThemeColors = adaptThemeColors
                 )
 
                 fun addRule(style: CssStyle, spec: Int) {
@@ -376,7 +391,8 @@ object CssParser {
         onlyImportant: Boolean,
         isDarkTheme: Boolean,
         themeBackgroundColor: Color = Color.Unspecified,
-        themeTextColor: Color = Color.Unspecified
+        themeTextColor: Color = Color.Unspecified,
+        adaptThemeColors: Boolean = true
     ): CssStyle {
         var spanStyle = SpanStyle()
         var paragraphStyle = ParagraphStyle()
@@ -451,6 +467,14 @@ object CssParser {
         var borderBottomRightRadius: Dp = 0.dp
         var borderBottomLeftRadius: Dp = 0.dp
 
+        fun maybeAdaptColor(color: Color, isBackground: Boolean): Color {
+            return if (adaptThemeColors) {
+                this@CssParser.adaptColorForTheme(color, isDarkTheme, isBackground, themeBackgroundColor, themeTextColor)
+            } else {
+                color
+            }
+        }
+
         splitDeclarations(properties).filter { it.isNotBlank() }.forEach { prop ->
             val parts = prop.split(':', limit = 2).map { it.trim() }
             if (parts.size == 2) {
@@ -473,7 +497,7 @@ object CssParser {
                     styleStr: String?
                 ) {
                     val parsedWidth = widthStr?.let { parseCssSizeToDp(it, baseFontSizeSp, density, containerWidthPx) } ?: 0.dp
-                    val parsedColor = colorStr?.let { parseColor(it) }?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor) }
+                    val parsedColor = colorStr?.let { parseColor(it) }?.let { maybeAdaptColor(it, isBackground = false) }
 
                     val isExplicitWidth = widthStr != null
 
@@ -528,7 +552,7 @@ object CssParser {
                     }
                     "color" -> {
                         parseColor(value)?.let {
-                            spanStyle = spanStyle.copy(color = this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor))
+                            spanStyle = spanStyle.copy(color = maybeAdaptColor(it, isBackground = false))
                         }
                     }
                     "text-align" -> {
@@ -585,7 +609,7 @@ object CssParser {
                         val styles = listOf("solid", "double", "dotted", "dashed", "wavy")
                         parts.firstOrNull { it in styles }?.let { textDecorationStyle = it }
                         parts.firstNotNullOfOrNull { parseColor(it) }?.let { color ->
-                            textDecorationColor = this@CssParser.adaptColorForTheme(color, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
+                            textDecorationColor = maybeAdaptColor(color, isBackground = false)
                         }
                     }
                     "word-spacing" -> {
@@ -601,7 +625,7 @@ object CssParser {
                     }
                     "text-decoration-color" -> {
                         parseColor(value)?.let {
-                            textDecorationColor = this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
+                            textDecorationColor = maybeAdaptColor(it, isBackground = false)
                         }
                     }
                     "text-underline-offset" -> {
@@ -661,7 +685,7 @@ object CssParser {
 
                     "background-color" -> {
                         val originalColor = parseColor(value) ?: Color.Unspecified
-                        backgroundColor = this@CssParser.adaptColorForTheme(originalColor, isDarkTheme, isBackground = true, themeBackgroundColor, themeTextColor)
+                        backgroundColor = maybeAdaptColor(originalColor, isBackground = true)
                     }
 
                     // Border Properties
@@ -801,7 +825,7 @@ object CssParser {
                         textEmphasisStyleString = value
                     }
                     "text-emphasis-color", "-epub-text-emphasis-color" -> {
-                        textEmphasisColor = parseColor(value)?.let { this@CssParser.adaptColorForTheme(it, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor) }
+                        textEmphasisColor = parseColor(value)?.let { maybeAdaptColor(it, isBackground = false) }
                     }
                     "text-emphasis-position", "-epub-text-emphasis-position" -> {
                         if (value in listOf("over", "under")) {
@@ -859,7 +883,7 @@ object CssParser {
             val finalStyle = style ?: "none"
             val finalColor = color ?: spanStyle.color.takeIf { it.isSpecified } ?: Color.Black
 
-            val adaptedColor = this@CssParser.adaptColorForTheme(finalColor, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
+            val adaptedColor = maybeAdaptColor(finalColor, isBackground = false)
 
             if (finalWidth > 0.dp && finalStyle != "none" && finalStyle != "hidden") {
                 return BorderStyle(finalWidth, adaptedColor, finalStyle)

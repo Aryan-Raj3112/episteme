@@ -169,7 +169,11 @@ class MobiParser(private val context: Context) {
         val bookAuthor = parsedData.author ?: "Unknown Author"
 
         val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
-            ?: ImportedFileCache.prepareActiveBookDir(context, bookId)
+            ?: if (parseContent) {
+                ImportedFileCache.prepareActiveBookDir(context, bookId)
+            } else {
+                ImportedFileCache.createTemporaryBookDir(context, bookId, "metadata")
+            }
 
         val sequentialImageMap = parsedData.resources
             .filter { it.mediaType.startsWith("image/") }

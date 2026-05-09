@@ -62,7 +62,8 @@ fun androidHtmlToSemanticBlocks(
     fontFamilyMap: Map<String, FontFamily>,
     constraints: androidx.compose.ui.unit.Constraints,
     imageDimensionsCache: Map<String, Pair<Float, Float>> = emptyMap(),
-    mathSvgCache: Map<String, String> = emptyMap()
+    mathSvgCache: Map<String, String> = emptyMap(),
+    adaptThemeColors: Boolean = false
 ): List<SemanticBlock> {
     return htmlToSemanticBlocks(
         html = html,
@@ -76,6 +77,7 @@ fun androidHtmlToSemanticBlocks(
         imageDimensionsCache = imageDimensionsCache,
         mathSvgCache = mathSvgCache,
         resourceResolver = AndroidHtmlResourceResolver,
-        fontFamilyLoader = AndroidHtmlFontFamilyLoader
+        fontFamilyLoader = AndroidHtmlFontFamilyLoader,
+        adaptThemeColors = adaptThemeColors
     )
 }

@@ -4,6 +4,7 @@ import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ReaderEngineTest {
@@ -23,6 +24,17 @@ class ReaderEngineTest {
 
         assertEquals(2, restored.reader.currentPageIndex)
         assertEquals(listOf("keep"), restored.bookmarks.map { it.id })
+    }
+
+    @Test
+    fun `createSession reuses paginated pages for the same book and settings`() {
+        val engine = ReaderEngine()
+        val book = longBook()
+
+        val first = engine.createSession(book)
+        val second = engine.createSession(book)
+
+        assertSame(first.reader.pages, second.reader.pages)
     }
 
     @Test

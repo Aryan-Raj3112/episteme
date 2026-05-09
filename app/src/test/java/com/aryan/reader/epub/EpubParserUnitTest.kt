@@ -104,6 +104,50 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `createEpubBook reuses active extraction cache on matching warm open`() = runTest {
+        val cacheDir = temp.newFolder("cache-warm-open")
+        val parser = EpubParser(contextWithCache(cacheDir))
+
+        val first = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(sampleEpubBytes()),
+            bookId = "warm-book",
+            shouldUseToc = true,
+            originalBookNameHint = "warm.epub"
+        )
+        val activeDir = ImportedFileCache.activeBookDir(contextWithCache(cacheDir), "warm-book")
+        File(activeDir, "sentinel.txt").writeText("still here")
+
+        val second = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(minimalEpubBytesWithoutOptionalMetadata()),
+            bookId = "warm-book",
+            shouldUseToc = true,
+            originalBookNameHint = "warm.epub"
+        )
+
+        assertEquals(first.title, second.title)
+        assertEquals(first.chapters.size, second.chapters.size)
+        assertTrue(File(activeDir, "sentinel.txt").isFile)
+    }
+
+    @Test
+    fun `metadata only parse does not clear active extracted content`() = runTest {
+        val cacheDir = temp.newFolder("cache-metadata-preserve")
+        val context = contextWithCache(cacheDir)
+        val parser = EpubParser(context)
+        val activeDir = ImportedFileCache.ensureActiveBookDir(context, "metadata-book")
+        File(activeDir, "sentinel.txt").writeText("active")
+
+        parser.createEpubBook(
+            inputStream = ByteArrayInputStream(sampleEpubBytes()),
+            bookId = "metadata-book",
+            parseContent = false,
+            originalBookNameHint = "metadata.epub"
+        )
+
+        assertTrue(File(activeDir, "sentinel.txt").isFile)
+    }
+
+    @Test
     fun `createEpubBook falls back to file hint author language and chapter titles when metadata and ncx are absent`() = runTest {
         val parser = EpubParser(contextWithCache(temp.newFolder("cache-fallback")))
         val extractionDir = temp.newFolder("extract-fallback")
