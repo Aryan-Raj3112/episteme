@@ -315,7 +315,13 @@ class FolderSyncWorker(
                                     val lastModified = if (!cursor.isNull(modCol)) cursor.getLong(modCol) else 0L
 
                                     val type = getFileType(name, mimeType)
-                                    if (type != null && type in allowedFileTypes && !name.endsWith(".json") && !name.startsWith(".")) {
+                                    if (
+                                        type != null &&
+                                        type in allowedFileTypes &&
+                                        isLocalFolderSyncEligibleFile(name, mimeType) &&
+                                        !name.endsWith(".json") &&
+                                        !name.startsWith(".")
+                                    ) {
                                         supportedBooksSeen++
                                         val stableId = buildStableBookId(name, rootDocId, docId)
                                         foundBookIds.add(stableId)

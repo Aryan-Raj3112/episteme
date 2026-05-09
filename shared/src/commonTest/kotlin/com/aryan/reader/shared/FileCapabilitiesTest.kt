@@ -2,7 +2,6 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class FileCapabilitiesTest {
@@ -30,6 +29,10 @@ class FileCapabilitiesTest {
                 FileType.FODT
             ),
             SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
+            SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP),
+            SharedFileCapabilities.syncableTypesFor(ReaderPlatform.DESKTOP)
         )
     }
 

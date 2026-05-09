@@ -16,7 +16,8 @@ data class FileTypeCapability(
     val displayName: String,
     val extensions: Set<String>,
     val androidSurface: ReaderFeatureSurface?,
-    val desktopSurface: ReaderFeatureSurface?
+    val desktopSurface: ReaderFeatureSurface?,
+    val syncEligible: Boolean = true
 ) {
     val isReadableOnAndroid: Boolean get() = androidSurface != null
     val isReadableOnDesktop: Boolean get() = desktopSurface != null
@@ -156,6 +157,12 @@ object SharedFileCapabilities {
     fun readableTypesFor(platform: ReaderPlatform): Set<FileType> {
         return all.mapNotNullTo(mutableSetOf()) { capability ->
             capability.type.takeIf { capability.surfaceFor(platform) != null }
+        }
+    }
+
+    fun syncableTypesFor(platform: ReaderPlatform): Set<FileType> {
+        return all.mapNotNullTo(mutableSetOf()) { capability ->
+            capability.type.takeIf { capability.syncEligible && capability.surfaceFor(platform) != null }
         }
     }
 

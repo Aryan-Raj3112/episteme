@@ -7750,6 +7750,7 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
 }
 
 private val DesktopReadableFileTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
+private val DesktopSyncableFileTypes = SharedFileCapabilities.syncableTypesFor(ReaderPlatform.DESKTOP)
 private val DesktopBookFileTypes = SharedFileCapabilities.all
     .filter { capability ->
         capability.type in DesktopReadableFileTypes && capability.type != FileType.PDF
@@ -7792,7 +7793,7 @@ private fun mergeSyncedFolders(
             uriString = root,
             name = rootFile.name.takeIf { it.isNotBlank() } ?: root,
             lastScanTime = nowMillis,
-            allowedFileTypes = DesktopReadableFileTypes
+            allowedFileTypes = DesktopSyncableFileTypes
         )
     }
     return byRoot.values.sortedBy { it.name.lowercase() }

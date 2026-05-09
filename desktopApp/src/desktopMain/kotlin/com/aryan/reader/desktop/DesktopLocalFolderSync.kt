@@ -43,7 +43,7 @@ data class DesktopLocalFolderSyncResult(
 )
 
 object DesktopLocalFolderSync {
-    private val desktopReadableTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
+    private val desktopSyncableTypes = SharedFileCapabilities.syncableTypesFor(ReaderPlatform.DESKTOP)
 
     fun hasSupportedFiles(folder: File): Boolean {
         if (!folder.isDirectory) return false
@@ -52,7 +52,7 @@ object DesktopLocalFolderSync {
             .any { file ->
                 file.isFile &&
                     file.shouldSyncBookFile() &&
-                    SharedFileCapabilities.fileTypeForName(file.name) in desktopReadableTypes
+                    SharedFileCapabilities.fileTypeForName(file.name) in desktopSyncableTypes
             }
     }
 
@@ -216,7 +216,7 @@ object DesktopLocalFolderSync {
                 uriString = rootPath,
                 name = root.name.takeIf { it.isNotBlank() } ?: rootPath,
                 lastScanTime = nowMillis,
-                allowedFileTypes = desktopReadableTypes
+                allowedFileTypes = desktopSyncableTypes
             )
         )
     }
@@ -228,7 +228,7 @@ object DesktopLocalFolderSync {
             .filter { it.isFile && it.shouldSyncBookFile() }
             .mapNotNull { file ->
                 val type = SharedFileCapabilities.fileTypeForName(file.name)
-                    .takeIf { it in desktopReadableTypes }
+                    .takeIf { it in desktopSyncableTypes }
                     ?: return@mapNotNull null
                 val relativePath = runCatching {
                     rootPath.relativize(file.toPath().toAbsolutePath().normalize())

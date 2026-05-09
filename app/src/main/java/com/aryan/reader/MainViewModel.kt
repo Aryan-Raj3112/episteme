@@ -53,6 +53,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
@@ -1953,6 +1954,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.d("Skipping metadata sync for local folder book: ${book.displayName}")
             return
         }
+
+        if (book.isManualOnlyReaderFile()) {
+            Timber.d("Skipping metadata sync for manual-only reader file: ${book.displayName}")
+            return
+        }
         val currentUser = uiState.value.currentUser ?: return
 
         viewModelScope.launch {
@@ -2901,24 +2907,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 } else {
                     allFiles.filter { it.sourceFolderUri == null }
                 }
-                filtered.filterNot { it.uriString?.startsWith("opds-pse") == true }
+                filtered
+                    .filterNot { it.uriString?.startsWith("opds-pse") == true }
+                    .filterNot { it.isManualOnlyReaderFile() }
             }
 
             val localShelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()).orEmpty()
+            val remoteBooks = remoteBooksDeferred.await()
+                .filterNot { it.isManualOnlyReaderFile() }
+            val remoteShelves = remoteShelvesDeferred.await()
+            val syncableBookIds = (localBooks.map { it.bookId } + remoteBooks.map { it.bookId }).toSet()
             val allKnownShelfNames =
-                (localShelfNames + remoteShelvesDeferred.await().map { it.name }).toSet()
+                (localShelfNames + remoteShelves.map { it.name }).toSet()
             val localShelves = allKnownShelfNames.mapNotNull { name ->
                 val timestamp = prefs.getLong("$KEY_SHELF_TIMESTAMP_PREFIX$name", 0L)
                 if (timestamp == 0L && name !in localShelfNames) return@mapNotNull null
                 val bookIds = prefs.getStringSet(
                     "$KEY_SHELF_CONTENT_PREFIX$name", emptySet()
-                ).orEmpty().toList()
+                ).orEmpty().filter { it in syncableBookIds }
                 val isDeleted = prefs.getBoolean("$KEY_SHELF_DELETED_PREFIX$name", false)
                 ShelfMetadata(name, bookIds, timestamp, isDeleted)
             }
-
-            val remoteBooks = remoteBooksDeferred.await()
-            val remoteShelves = remoteShelvesDeferred.await()
 
             // 3. Merge Books
             val localBooksMap = localBooks.associateBy { it.bookId }
@@ -3014,7 +3023,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 currentShelves.add(remote.name)
                                 putStringSet(
                                     "$KEY_SHELF_CONTENT_PREFIX${remote.name}",
-                                    remote.bookIds.toSet()
+                                    remote.bookIds.filter { it in syncableBookIds }.toSet()
                                 )
                             }
                             putStringSet(KEY_SHELVES, currentShelves)
@@ -3043,7 +3052,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     currentShelves.add(remote.name)
                                     putStringSet(
                                         "$KEY_SHELF_CONTENT_PREFIX${remote.name}",
-                                        remote.bookIds.toSet()
+                                        remote.bookIds.filter { it in syncableBookIds }.toSet()
                                     )
                                 }
                                 putStringSet(KEY_SHELVES, currentShelves)
@@ -3062,7 +3071,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             val finalMergedBooks = withContext(Dispatchers.IO) {
                 recentFilesRepository.getAllFilesForSync()
-            }
+            }.filterNot { it.isManualOnlyReaderFile() }
             val remoteFiles = withContext(Dispatchers.IO) {
                 googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
             }
@@ -4837,7 +4846,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val db = com.aryan.reader.data.AppDatabase.getDatabase(appContext)
             val shelf = db.shelfDao().getShelfById(shelfId) ?: return@launch
             val crossRefs = db.shelfDao().getCrossRefsForShelf(shelfId)
+            val manualOnlyBookIds = recentFilesRepository.getAllFilesForSync()
+                .filter { it.isManualOnlyReaderFile() }
+                .mapTo(mutableSetOf()) { it.bookId }
             val bookIds = crossRefs.map { it.bookId }
+                .filterNot { it in manualOnlyBookIds }
 
             val shelfMetadata = ShelfMetadata(
                 name = shelf.name,
@@ -4992,6 +5005,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     .associateBy { it.name }
 
                                 for (item in managedBooks) {
+                                    if (item.isManualOnlyReaderFile()) {
+                                        cleanupBookDataLocally(item.bookId)
+                                        recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
+                                        continue
+                                    }
+
                                     recentFilesRepository.markAsDeleted(listOf(item.bookId))
                                     cleanupBookDataLocally(item.bookId)
 
@@ -5510,4 +5529,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "text/x-csharp", "text/x-ruby", "text/x-go", "text/x-log"
         )
     }
+}
+
+private fun RecentFileItem.isManualOnlyReaderFile(): Boolean {
+    return isManualOnlyReaderFileName(displayName)
+}
+
+private fun BookMetadata.isManualOnlyReaderFile(): Boolean {
+    return isManualOnlyReaderFileName(displayName)
 }

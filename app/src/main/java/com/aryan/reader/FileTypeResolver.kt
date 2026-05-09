@@ -17,6 +17,26 @@ private val codeOrDataExtensions = setOf(
     "go"
 )
 
+private val manualOnlyReaderMimeTypes = setOf(
+    "text/csv",
+    "text/comma-separated-values",
+    "text/tab-separated-values",
+    "application/json",
+    "application/xml",
+    "text/xml",
+    "text/x-java-source",
+    "text/x-python",
+    "text/x-kotlin",
+    "text/javascript",
+    "application/javascript",
+    "text/x-c",
+    "text/x-c++",
+    "text/x-csharp",
+    "text/x-ruby",
+    "text/x-go",
+    "text/x-log"
+)
+
 internal fun resolveFileTypeFromName(fileName: String?): FileType? {
     val lowerName = fileName?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
     val effectiveName = lowerName.withTransparentTextSuffix()
@@ -42,6 +62,22 @@ internal fun resolveFileTypeFromName(fileName: String?): FileType? {
 
 internal fun isCodeOrDataFileName(fileName: String): Boolean {
     return fileName.lowercase().withTransparentTextSuffix().extensionAfterLastDot() in codeOrDataExtensions
+}
+
+internal fun isManualOnlyReaderFileName(fileName: String?): Boolean {
+    val lowerName = fileName?.lowercase()?.takeIf { it.isNotBlank() } ?: return false
+    return lowerName.withTransparentTextSuffix().extensionAfterLastDot() in codeOrDataExtensions
+}
+
+internal fun isManualOnlyReaderMimeType(mimeType: String?): Boolean {
+    val normalized = mimeType?.lowercase() ?: return false
+    return normalized in manualOnlyReaderMimeTypes
+}
+
+internal fun isLocalFolderSyncEligibleFile(name: String, mimeType: String?): Boolean {
+    if (isManualOnlyReaderFileName(name)) return false
+    if (resolveFileTypeFromName(name) != null) return true
+    return !isManualOnlyReaderMimeType(mimeType)
 }
 
 internal fun resolveFileExtensionSuffixFromName(fileName: String?): String? {
