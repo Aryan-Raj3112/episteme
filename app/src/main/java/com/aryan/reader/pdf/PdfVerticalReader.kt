@@ -251,6 +251,7 @@ internal fun PdfVerticalReader(
     onNoteRequested: (String?) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
     activeToolThickness: Float = 0f,
+    eraserToolThickness: Float = 0f,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: () -> Unit = {},
     lockedState: Triple<Float, Float, Float>? = null,
@@ -1744,6 +1745,7 @@ internal fun PdfVerticalReader(
                                     onNoteRequested = onNoteRequested,
                                     onTts = onTts,
                                     activeToolThickness = activeToolThickness,
+                                    eraserToolThickness = eraserToolThickness,
                                     customHighlightColors = customHighlightColors,
                                     onPaletteClick = onPaletteClick,
                                     onTextBoxDragStart = { box, localTopLeft, touchOffset ->
@@ -2151,8 +2153,13 @@ internal fun PdfVerticalReader(
         if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && globalEraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val pos = globalEraserPosition!!
-                val radiusPx = if (activeToolThickness > 0f) {
-                    activeToolThickness * screenWidth * zoomAnimatable.value
+                val eraserStrokeWidth = resolveEraserStrokeWidth(
+                    isStylusEraserOverride,
+                    activeToolThickness,
+                    eraserToolThickness
+                )
+                val radiusPx = if (eraserStrokeWidth > 0f) {
+                    eraserStrokeWidth * screenWidth * zoomAnimatable.value
                 } else {
                     8.dp.toPx()
                 }

@@ -28,6 +28,28 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `resolveEraserStrokeWidth uses eraser size only for stylus override`() {
+        assertEquals(
+            0.08f,
+            resolveEraserStrokeWidth(
+                isEraserOverride = true,
+                activeToolThickness = 0.005f,
+                eraserToolThickness = 0.08f
+            ),
+            0.0001f
+        )
+        assertEquals(
+            0.005f,
+            resolveEraserStrokeWidth(
+                isEraserOverride = false,
+                activeToolThickness = 0.005f,
+                eraserToolThickness = 0.08f
+            ),
+            0.0001f
+        )
+    }
+
+    @Test
     fun `getSuggestedFilename sanitizes truncates and marks annotated copies`() {
         val filename = getSuggestedFilename(
             originalName = "A very long odd @name with spaces and symbols that should be truncated eventually.pdf",

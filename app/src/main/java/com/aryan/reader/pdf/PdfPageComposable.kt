@@ -549,6 +549,7 @@ internal fun PdfPageComposable(
     onNoteRequested: (String?) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
     activeToolThickness: Float = 0f,
+    eraserToolThickness: Float = 0f,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: (() -> Unit)? = null,
     lockedState: Triple<Float, Float, Float>? = null,
@@ -4270,6 +4271,7 @@ internal fun PdfPageComposable(
                         eraserPosition = eraserPosition,
                         isStylusEraserOverride = isStylusEraserOverride,
                         activeToolThickness = activeToolThickness,
+                        eraserToolThickness = eraserToolThickness,
                         richTextController = richTextController,
                         textBoxes = textBoxes,
                         selectedTextBoxId = selectedTextBoxId,
@@ -5106,6 +5108,7 @@ private fun PdfPageRenderer(
     onHighlightDelete: (String) -> Unit,
     onTts: (Int, Int) -> Unit,
     activeToolThickness: Float,
+    eraserToolThickness: Float,
     onNote: (String?) -> Unit,
     isBubbleZoomModeActive: Boolean = false,
     isActivePage: Boolean = true,
@@ -5323,8 +5326,13 @@ private fun PdfPageRenderer(
 
         if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && eraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val radiusPx = if (activeToolThickness > 0f && staticData.targetWidth > 0) {
-                    activeToolThickness * staticData.targetWidth * scale // Calculate dynamic size based on tool settings scale
+                val eraserStrokeWidth = resolveEraserStrokeWidth(
+                    isStylusEraserOverride,
+                    activeToolThickness,
+                    eraserToolThickness
+                )
+                val radiusPx = if (eraserStrokeWidth > 0f && staticData.targetWidth > 0) {
+                    eraserStrokeWidth * staticData.targetWidth * scale
                 } else {
                     8.dp.toPx()
                 }

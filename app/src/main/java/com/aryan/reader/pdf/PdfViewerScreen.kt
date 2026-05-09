@@ -282,6 +282,12 @@ import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isForwardPressed
 
+internal fun resolveEraserStrokeWidth(
+    isEraserOverride: Boolean,
+    activeToolThickness: Float,
+    eraserToolThickness: Float
+): Float = if (isEraserOverride) eraserToolThickness else activeToolThickness
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
@@ -816,6 +822,7 @@ fun PdfViewerScreen(
 
     val activeToolColor = toolSettings.getToolColor(selectedTool)
     val activeToolThickness = toolSettings.getToolThickness(selectedTool)
+    val eraserToolThickness = toolSettings.getToolThickness(InkType.ERASER)
 
     val fountainPenColor = toolSettings.getToolColor(InkType.FOUNTAIN_PEN)
     val markerColor = toolSettings.getToolColor(InkType.PEN)
@@ -835,6 +842,7 @@ fun PdfViewerScreen(
 
     val currentStrokeColor by remember(activeToolColor) { derivedStateOf { activeToolColor } }
     val currentStrokeWidth by remember(activeToolThickness) { derivedStateOf { activeToolThickness } }
+    val currentEraserStrokeWidth by remember(eraserToolThickness) { derivedStateOf { eraserToolThickness } }
 
     val pdfTextRepository = remember(context) { PdfTextRepository(context) }
     val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
@@ -3767,6 +3775,9 @@ fun PdfViewerScreen(
                                             val currentStrokeWidthState by rememberUpdatedState(
                                                 currentStrokeWidth
                                             )
+                                            val currentEraserStrokeWidthState by rememberUpdatedState(
+                                                currentEraserStrokeWidth
+                                            )
 
                                             @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
                                                 remember(pageIndex) {
@@ -3774,10 +3785,15 @@ fun PdfViewerScreen(
                                                         val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
                                                         if (effectiveTool == InkType.TEXT) {
                                                         } else if (effectiveTool == InkType.ERASER) {
+                                                            val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                                                isEraserOverride,
+                                                                currentStrokeWidthState,
+                                                                currentEraserStrokeWidthState
+                                                            )
                                                             val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                             val existing = allAnnotations[pageIndex] ?: emptyList()
                                                             val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
+                                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
                                                             }
                                                             lastEraserPoint = point
                                                             if (toRemove.isNotEmpty()) {
@@ -3817,10 +3833,15 @@ fun PdfViewerScreen(
                                                             } else if (effectiveTool == InkType.ERASER) {
                                                                 lastEraserPoint = point
                                                                 erasedAnnotationsFromStroke.clear()
+                                                                val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                                                    isEraserOverride,
+                                                                    currentStrokeWidthState,
+                                                                    currentEraserStrokeWidthState
+                                                                )
                                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                                 val toRemove = existing.filter {
-                                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
+                                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
                                                                 }
                                                                 if (toRemove.isNotEmpty()) {
                                                                     val batch =
@@ -3947,6 +3968,7 @@ fun PdfViewerScreen(
                                                 onNoteRequested = onNoteRequested,
                                                 onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                                 activeToolThickness = currentStrokeWidthState,
+                                                eraserToolThickness = currentEraserStrokeWidthState,
                                                 lockedState = lockedState,
                                                 onZoomAndPanChanged = { newScale, newOffset ->
                                                     if (pagerState.currentPage == pageIndex) {
@@ -4207,6 +4229,9 @@ fun PdfViewerScreen(
                                     val currentStrokeWidthState by rememberUpdatedState(
                                         currentStrokeWidth
                                     )
+                                    val currentEraserStrokeWidthState by rememberUpdatedState(
+                                        currentEraserStrokeWidth
+                                    )
 
                                     @Suppress("ControlFlowWithEmptyBody") val onDrawStartStable =
                                         remember {
@@ -4219,11 +4244,16 @@ fun PdfViewerScreen(
                                                     } else if (effectiveTool == InkType.ERASER) {
                                                         lastEraserPoint = point
                                                         erasedAnnotationsFromStroke.clear()
+                                                        val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                                            isEraserOverride,
+                                                            currentStrokeWidthState,
+                                                            currentEraserStrokeWidthState
+                                                        )
 
                                                         val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                         val existing = allAnnotations[pageIndex] ?: emptyList()
                                                         val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
+                                                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
                                                         }
                                                         if (toRemove.isNotEmpty()) {
                                                             val batch =
@@ -4259,10 +4289,15 @@ fun PdfViewerScreen(
                                         { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
                                             val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
                                             if (effectiveTool == InkType.ERASER) {
+                                                val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                                    isEraserOverride,
+                                                    currentStrokeWidthState,
+                                                    currentEraserStrokeWidthState
+                                                )
                                                 val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
                                                 val existing = allAnnotations[pageIndex] ?: emptyList()
                                                 val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, currentStrokeWidthState)
+                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
                                                 }
                                                 lastEraserPoint = point
                                                 if (toRemove.isNotEmpty()) {
@@ -4336,6 +4371,7 @@ fun PdfViewerScreen(
                                             onNoteRequested = onNoteRequested,
                                             onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                             activeToolThickness = currentStrokeWidthState,
+                                            eraserToolThickness = currentEraserStrokeWidthState,
                                             onLinkClicked = onLinkClickedStable,
                                             onInternalLinkClicked = onInternalLinkNavStable,
                                             bookmarks = bookmarksHolder,
