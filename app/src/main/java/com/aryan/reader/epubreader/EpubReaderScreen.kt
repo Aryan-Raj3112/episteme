@@ -206,6 +206,7 @@ import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -905,6 +906,8 @@ fun EpubReaderHost(
     var currentRenderMode by remember(renderMode) { mutableStateOf(renderMode) }
     var chapterToLoadOnSwitch by remember { mutableStateOf<Int?>(null) }
     var lastKnownLocator by remember(initialLocator) { mutableStateOf(initialLocator) }
+    var paginatedReconfigurationAnchor by remember { mutableStateOf<Locator?>(null) }
+    var isPaginatedReconfigurationRestoring by remember { mutableStateOf(false) }
 
     val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val roundedCornerBottomPadding = rememberBottomRoundedCornerPadding(view)
@@ -1355,7 +1358,7 @@ fun EpubReaderHost(
         }
 
         Timber.tag("TTS_LOCATE")
-            .d("Saving locator from TTS. chapter=${locator.chapterIndex}, block=${locator.blockIndex}, progress=$progress")
+            .d("Saving resolved locator position. chapter=${locator.chapterIndex}, block=${locator.blockIndex}, progress=$progress")
         onSavePosition(locator, cfiForWebView, progress)
     }
 
@@ -2056,8 +2059,26 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(paginatedPagerState.currentPage, paginator) {
-        if (currentRenderMode == RenderMode.PAGINATED && paginator != null && isPagerInitialized) {
+    LaunchedEffect(paginatedPagerState, paginator, currentRenderMode, isPagerInitialized, isPaginatedReconfigurationRestoring) {
+        if (currentRenderMode != RenderMode.PAGINATED || paginator == null || !isPagerInitialized) {
+            return@LaunchedEffect
+        }
+        snapshotFlow { paginatedPagerState.currentPage }
+            .collectLatest { page ->
+                if (!isPaginatedReconfigurationRestoring) {
+                    (paginator as? BookPaginator)?.getLocatorForPage(page)?.let { locator ->
+                        lastKnownLocator = locator
+                    }
+                }
+            }
+    }
+
+    LaunchedEffect(paginatedPagerState.currentPage, paginator, isPaginatedReconfigurationRestoring) {
+        if (currentRenderMode == RenderMode.PAGINATED &&
+            paginator != null &&
+            isPagerInitialized &&
+            !isPaginatedReconfigurationRestoring
+        ) {
             delay(1500L)
             val pageToSave = paginatedPagerState.currentPage
 
@@ -2175,12 +2196,21 @@ fun EpubReaderHost(
                 RenderMode.PAGINATED -> {
                     scope.launch {
                         val pageToSave = paginatedPagerState.currentPage
-                        val locator = (paginator as? BookPaginator)?.getLocatorForPage(pageToSave)
+                        val pageLocator = if (isPaginatedReconfigurationRestoring) {
+                            null
+                        } else {
+                            (paginator as? BookPaginator)?.getLocatorForPage(pageToSave)
+                        }
+                        val locator = pageLocator ?: paginatedReconfigurationAnchor ?: lastKnownLocator
                         val chapterIndex = paginator?.findChapterIndexForPage(pageToSave)
 
-                        if (locator != null && chapterIndex != null) {
+                        if (locator != null) {
                             val bookPaginator = paginator as? BookPaginator
-                            val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
+                            val progress = if (pageLocator == null || chapterIndex == null) {
+                                saveResolvedLocatorPosition(locator, null)
+                                onNavigateBack()
+                                return@launch
+                            } else if (totalBookLengthChars > 0 && bookPaginator != null) {
                                 val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextContent.length.toLong() }
                                 val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
@@ -2197,7 +2227,7 @@ fun EpubReaderHost(
                             )
                             onSavePosition(locator, null, progress)
                         } else {
-                            Timber.w("Final save for paginated view failed. Locator or chapter index is null."
+                            Timber.w("Final save for paginated view failed. Locator is null."
                             )
                         }
                         onNavigateBack()
@@ -3922,7 +3952,18 @@ fun EpubReaderHost(
                                 activeTextureId = activeTextureId,
                                 activeTextureAlpha = activeTextureAlpha,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
-                                modifier = Modifier.alpha(if (isPagerInitialized) 1f else 0f),
+                                fallbackLocatorForReconfiguration = paginatedReconfigurationAnchor ?: lastKnownLocator,
+                                onReconfigurationAnchorCaptured = { locator ->
+                                    paginatedReconfigurationAnchor = locator
+                                    lastKnownLocator = locator
+                                },
+                                onReconfigurationRestoreActiveChanged = { isActive ->
+                                    isPaginatedReconfigurationRestoring = isActive
+                                    if (!isActive) {
+                                        paginatedReconfigurationAnchor = null
+                                    }
+                                },
+                                modifier = Modifier.alpha(if (isPagerInitialized && !isPaginatedReconfigurationRestoring) 1f else 0f),
                                 onPaginatorReady = { newPaginator ->
                                     paginator = newPaginator
                                 },

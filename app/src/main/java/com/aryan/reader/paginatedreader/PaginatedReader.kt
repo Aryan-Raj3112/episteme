@@ -740,6 +740,9 @@ fun PaginatedReaderScreen(
     textAlign: ReaderTextAlign,
     ttsHighlightInfo: TtsHighlightInfo?,
     initialChapterIndexInBook: Int?,
+    fallbackLocatorForReconfiguration: Locator? = null,
+    onReconfigurationAnchorCaptured: (Locator) -> Unit = {},
+    onReconfigurationRestoreActiveChanged: (Boolean) -> Unit = {},
     onPaginatorReady: (IPaginator) -> Unit,
     onTap: (Offset?) -> Unit,
     isProUser: Boolean,
@@ -797,6 +800,7 @@ fun PaginatedReaderScreen(
 
         var anchorLocatorForReconfig by remember { mutableStateOf<Locator?>(null) }
         val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
+        val latestFallbackLocatorForReconfiguration by rememberUpdatedState(fallbackLocatorForReconfiguration)
 
         var previousConstraints by remember {
             mutableStateOf(this.constraints)
@@ -804,18 +808,19 @@ fun PaginatedReaderScreen(
 
         if (previousConstraints != this.constraints) {
             val activePaginator = currentPaginatorRef.value
-            if (activePaginator is BookPaginator) {
-                val currentPage = pagerState.currentPage
-                val locator = activePaginator.getLocatorForPage(currentPage)
-                anchorLocatorForReconfig = locator
+            val currentPage = pagerState.currentPage
+            val locator = resolvePaginatedReconfigurationAnchor(
+                currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(currentPage),
+                fallbackLocator = fallbackLocatorForReconfiguration
+            )
+            anchorLocatorForReconfig = locator
 
-                Timber.tag("ThemeReconfig").d("""
+            Timber.tag("ThemeReconfig").d("""
             RECONFIG DETECTED
             - Reason: Constraints
             - Current Page: $currentPage
             - Saved Locator: $locator
         """.trimIndent())
-            }
             previousConstraints = this.constraints
         }
 
@@ -872,12 +877,13 @@ fun PaginatedReaderScreen(
                 delay(400L)
 
                 val activePaginator = currentPaginatorRef.value
-                if (activePaginator is BookPaginator) {
-                    val currentPage = pagerState.currentPage
-                    val locator = activePaginator.getLocatorForPage(currentPage)
-                    if (locator != null) {
-                        anchorLocatorForReconfig = locator
-                    }
+                val currentPage = pagerState.currentPage
+                val locator = resolvePaginatedReconfigurationAnchor(
+                    currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(currentPage),
+                    fallbackLocator = fallbackLocatorForReconfiguration
+                )
+                if (locator != null) {
+                    anchorLocatorForReconfig = locator
                 }
 
                 debouncedFontSizeMult = fontSizeMultiplier
@@ -952,6 +958,14 @@ fun PaginatedReaderScreen(
             remember(initialChapterIndexInBook, anchorLocatorForReconfig) {
                 anchorLocatorForReconfig?.chapterIndex ?: initialChapterIndexInBook ?: 0
             }
+
+        LaunchedEffect(anchorLocatorForReconfig) {
+            anchorLocatorForReconfig?.let { locator ->
+                onReconfigurationAnchorCaptured(locator)
+                onReconfigurationRestoreActiveChanged(true)
+            }
+        }
+
         val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedVerticalMarginMult) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
@@ -1031,25 +1045,32 @@ fun PaginatedReaderScreen(
             if (anchorLocatorForReconfig != null) {
                 Timber.tag("POS_DIAG").d("Restoration Triggered. Anchor Locator: $anchorLocatorForReconfig")
 
-                snapshotFlow { paginator.isLoading }.filter { !it }.first()
+                try {
+                    onReconfigurationRestoreActiveChanged(true)
+                    snapshotFlow { paginator.isLoading }.filter { !it }.first()
 
-                val targetLocator = anchorLocatorForReconfig
-                if (targetLocator != null) {
-                    val page = paginator.findPageForLocator(targetLocator)
+                    val targetLocator = anchorLocatorForReconfig
+                    if (targetLocator != null) {
+                        val page = paginator.findPageForLocator(targetLocator)
 
-                    Timber.tag("POS_DIAG").d("Restoration Result: Paginator resolved locator to page: $page")
+                        Timber.tag("POS_DIAG").d("Restoration Result: Paginator resolved locator to page: $page")
 
-                    if (page != null) {
-                        pagerState.scrollToPage(page)
-                        Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $page")
-                    } else {
-                        val startPage = paginator.chapterStartPageIndices[targetLocator.chapterIndex]
-                        if (startPage != null) {
-                            Timber.tag("POS_DIAG").w("Restoration: Precise page not found, falling back to chapter start: $startPage")
-                            pagerState.scrollToPage(startPage)
+                        if (page != null) {
+                            pagerState.scrollToPage(page)
+                            paginator.onUserScrolledTo(page)
+                            Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $page")
+                        } else {
+                            val startPage = paginator.chapterStartPageIndices[targetLocator.chapterIndex]
+                            if (startPage != null) {
+                                Timber.tag("POS_DIAG").w("Restoration: Precise page not found, falling back to chapter start: $startPage")
+                                pagerState.scrollToPage(startPage)
+                                paginator.onUserScrolledTo(startPage)
+                            }
                         }
+                        anchorLocatorForReconfig = null
                     }
-                    anchorLocatorForReconfig = null
+                } finally {
+                    onReconfigurationRestoreActiveChanged(false)
                 }
             }
         }
@@ -1077,13 +1098,31 @@ fun PaginatedReaderScreen(
 
         LaunchedEffect(pagerState, paginator) {
             snapshotFlow { pagerState.currentPage }.debounce(500)
-                .collectLatest { page -> paginator.onUserScrolledTo(page) }
+                .collectLatest { page ->
+                    if (anchorLocatorForReconfig == null) {
+                        paginator.onUserScrolledTo(page)
+                    }
+                }
         }
 
         LaunchedEffect(paginator, pagerState) {
             paginator.pageShiftRequest.collect { shiftAmount ->
-                val newPage = pagerState.currentPage + shiftAmount
-                pagerState.scrollToPage(newPage)
+                val anchor = resolvePaginatedReconfigurationAnchor(
+                    currentPageLocator = anchorLocatorForReconfig,
+                    fallbackLocator = latestFallbackLocatorForReconfiguration
+                )
+                val resolvedPage = anchor?.let { locator ->
+                    (paginator as? BookPaginator)?.findPageForLocator(locator)
+                }
+
+                if (resolvedPage != null) {
+                    pagerState.scrollToPage(resolvedPage)
+                    paginator.onUserScrolledTo(resolvedPage)
+                } else {
+                    val newPage = pagerState.currentPage + shiftAmount
+                    pagerState.scrollToPage(newPage)
+                    paginator.onUserScrolledTo(newPage)
+                }
             }
         }
 
