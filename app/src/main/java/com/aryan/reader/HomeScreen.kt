@@ -26,6 +26,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -108,6 +109,7 @@ import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableLongStateOf
@@ -165,6 +167,7 @@ fun HomeScreen(
         ReaderPerfLog.d("HomeScreen initial composition ${System.currentTimeMillis() - compStart}ms")
     }
     val context = LocalContext.current
+    val activity = context as? Activity
     val customTabUriHandler = remember { CustomTabUriHandler(context) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
     var showAppThemePanel by remember { mutableStateOf(false) }
@@ -239,6 +242,22 @@ fun HomeScreen(
                 viewModel.errorMessageShown()
             }
         }
+
+        LaunchedEffect(uiState.screenProtectEnabled) {
+            activity?.window?.let { window ->
+                if (uiState.screenProtectEnabled) {
+                    window.setFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE,
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                }
+            }
+        }
+
 
         BackHandler(enabled = isContextualModeActive) {
             Timber.d("System back pressed during contextual mode.")
@@ -359,6 +378,9 @@ fun HomeScreen(
                                 onExportLogsClick = { viewModel.exportLogsToFile(context) },
                                 onToggleHideReaderAi = {
                                     saveHideReaderAiFeatures(context, !loadHideReaderAiFeatures(context))
+                                },
+                                onScreenProtectToggled = {
+                                    viewModel.screenProtectToggle()
                                 }
                             )
                         } else {
@@ -1019,7 +1041,8 @@ fun DefaultTopAppBar(
     onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
     onExportLogsClick: () -> Unit,
-    onToggleHideReaderAi: () -> Unit
+    onToggleHideReaderAi: () -> Unit,
+    onScreenProtectToggled: () -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -1067,6 +1090,7 @@ fun DefaultTopAppBar(
             }
         }
 
+
         // Options Menu (MoreVert)
         Box {
             IconButton(onClick = { showOptionsMenu = true }) {
@@ -1086,6 +1110,15 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 }, trailingIcon = {
                     if (uiState.isTabsEnabled) {
+                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                    }
+                })
+
+                DropdownMenuItem(text = { Text(stringResource(R.string.protect_screencapture)) }, onClick = {
+                    showOptionsMenu = false
+                    onScreenProtectToggled()
+                }, trailingIcon = {
+                    if (uiState.screenProtectEnabled) {
                         Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
                     }
                 })

@@ -471,8 +471,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var backgroundTtsBookId: String? = null
     private var backgroundTtsCoverPath: String? = null
 
+    private val securityPreferences by lazy {
+        SecurityPreferences(
+            application.getSharedPreferences(
+                "app_security",
+                Context.MODE_PRIVATE
+            )
+        )
+    }
+
     private val _internalState = MutableStateFlow(
         ReaderScreenState(
+            screenProtectEnabled =
+                securityPreferences.screenCaptureProtectionEnabled,
             renderMode = try {
                 val savedRenderModeName = prefs.getString(
                     KEY_RENDER_MODE, RenderMode.VERTICAL_SCROLL.name
@@ -1842,6 +1853,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 state.copy(pinnedLibraryBookIds = newPins, contextualActionItems = emptySet())
             }
         }
+    }
+
+
+    private val _screenProtectEnabled = MutableStateFlow(
+        securityPreferences.screenCaptureProtectionEnabled
+    )
+
+    val screenProtectEnabled: StateFlow<Boolean> =
+        _screenProtectEnabled
+
+    fun screenProtectToggle() {
+        securityPreferences.toggleScreenCaptureProtection()
+        val isEnabled = securityPreferences.screenCaptureProtectionEnabled
+
+        _internalState.update { it.copy(screenProtectEnabled = isEnabled) }
     }
 
     fun updateLibraryFilters(filters: LibraryFilters) {
@@ -5445,6 +5471,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_TEXT_DIM_FACTOR_LIGHT = "app_text_dim_factor_light"
         private const val KEY_APP_TEXT_DIM_FACTOR_DARK = "app_text_dim_factor_dark"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
+        private const val PROTECT_SCREEN_CAPTURE = "protect_screen_capture"
 
         val SUPPORTED_MIME_TYPES = arrayOf(
             "application/pdf", "application/epub+zip", "application/x-mobipocket-ebook",

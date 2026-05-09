@@ -1302,4 +1302,5 @@
     <string name="action_exit_smart_zoom">Exit Smart Zoom</string>
     <string name="action_smart_comic_zoom">Smart Comic Zoom</string>
     <string name="desc_toggle_smart_comic_zoom">Toggle Smart Comic Zoom</string>
+    <string name="protect_screencapture">Protect Screen Capture</string>
 </resources>
