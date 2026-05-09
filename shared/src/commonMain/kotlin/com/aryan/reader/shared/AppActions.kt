@@ -76,4 +76,7 @@ sealed interface AppAction {
     data class ReaderToolPlacementChanged(val tool: ReaderTool, val bottom: Boolean) : AppAction
     data class ReaderToolOrderChanged(val toolOrder: List<ReaderTool>) : AppAction
     data class ReaderHighlightPaletteChanged(val palette: ReaderHighlightPalette) : AppAction
+    data class ReaderTtsReplacementPreferencesChanged(
+        val preferences: ReaderTtsReplacementPreferences,
+    ) : AppAction
 }

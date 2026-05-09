@@ -32,7 +32,8 @@ enum class ReaderTool(
     KEEP_SCREEN_ON("keep_screen_on", "Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
     AUTO_SCROLL("auto_scroll", "Auto Scroll", "Overflow Menu", supportsDesktopQuickAction = true),
-    TTS_SETTINGS("tts_settings", "TTS Voice Settings", "Overflow Menu");
+    TTS_SETTINGS("tts_settings", "TTS Voice Settings", "Overflow Menu"),
+    TTS_REPLACEMENTS("tts_replacements", "TTS Word Replacements", "Overflow Menu");
 
     companion object {
         fun fromId(id: String): ReaderTool? {

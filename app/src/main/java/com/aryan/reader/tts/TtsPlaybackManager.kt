@@ -61,6 +61,7 @@ val SET_PLAYBACK_PARAMS_COMMAND = SessionCommand("com.aryan.reader.tts.SET_PLAYB
 const val TTS_NOTIFICATION_DIAG_TAG = "TTS_NOTIFICATION_DIAG"
 
 const val KEY_TEXT_CHUNKS = "KEY_TEXT_CHUNKS"
+const val KEY_SPOKEN_TEXT_CHUNKS = "KEY_SPOKEN_TEXT_CHUNKS"
 const val KEY_SOURCE_CFIS = "KEY_SOURCE_CFIS"
 const val KEY_START_OFFSETS = "KEY_START_OFFSETS"
 const val KEY_SPEAKER_ID = "KEY_SPEAKER_ID"
@@ -205,6 +206,7 @@ class TtsPlaybackManager(
                 )
                 val cfis = args.getStringArrayList(KEY_SOURCE_CFIS)
                 val offsets = args.getIntegerArrayList(KEY_START_OFFSETS)
+                val spokenTexts = args.getStringArrayList(KEY_SPOKEN_TEXT_CHUNKS)
                 val speakerId = args.getString(KEY_SPEAKER_ID, DEFAULT_SPEAKER_ID)
                 val bookTitle = args.getString(KEY_BOOK_TITLE)
                 val chapterTitle = args.getString(KEY_CHAPTER_TITLE)
@@ -218,10 +220,23 @@ class TtsPlaybackManager(
                 val richChunks = if (cfis != null && offsets != null && chunks.size == cfis.size && chunks.size == offsets.size) {
                     chunks.mapIndexed { index, text ->
                         val safeOffset = offsets.getOrNull(index) ?: -1
-                        TtsChunk(text, cfis[index], safeOffset)
+                        val spokenText = spokenTexts?.getOrNull(index)?.ifBlank { text } ?: text
+                        TtsChunk(
+                            text = text,
+                            sourceCfi = cfis[index],
+                            startOffsetInSource = safeOffset,
+                            spokenText = spokenText,
+                        )
                     }
                 } else {
-                    chunks.map { TtsChunk(it, "", -1) }
+                    chunks.mapIndexed { index, text ->
+                        TtsChunk(
+                            text = text,
+                            sourceCfi = "",
+                            startOffsetInSource = -1,
+                            spokenText = spokenTexts?.getOrNull(index)?.ifBlank { text } ?: text,
+                        )
+                    }
                 }
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
@@ -337,7 +352,11 @@ class TtsPlaybackManager(
             }
 
             val slicedText = currentChunk.text.substring(relativeOffset)
-            val newChunk = currentChunk.copy(text = slicedText, startOffsetInSource = offset)
+            val newChunk = currentChunk.copy(
+                text = slicedText,
+                startOffsetInSource = offset,
+                spokenText = slicedText,
+            )
 
             val mutableChunks = textChunks.toMutableList()
             mutableChunks[currentIdx] = newChunk
@@ -540,7 +559,8 @@ class TtsPlaybackManager(
             "Preparing first chunk. startAtIndex=$startAtIndex, playWhenReady=$playWhenReady"
         )
 
-        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, textChunks.size, firstChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+        val spokenText = firstChunk.spokenText.ifBlank { firstChunk.text }
+        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
         Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
@@ -572,7 +592,7 @@ class TtsPlaybackManager(
                 if (id != null) chunkStreamIds[startAtIndex] = id
             }
             val pathToUse = streamUri ?: audioFile!!.absolutePath
-            val mediaItem = createMediaItem(serverText, pathToUse, startAtIndex, updatedChunk)
+            val mediaItem = createMediaItem(updatedChunk.text, pathToUse, startAtIndex, updatedChunk)
 
             withContext(Dispatchers.Main) {
                 val prepStartTime = System.currentTimeMillis()
@@ -589,7 +609,7 @@ class TtsPlaybackManager(
                 _ttsState.value = _ttsState.value.copy(
                     isLoading = false,
                     isPlaying = playWhenReady,
-                    currentText = serverText,
+                    currentText = updatedChunk.text,
                     chapterTitle = chapterTitle,
                     chapterIndex = chapterIndex,
                     totalChapters = totalChapters,
@@ -617,6 +637,9 @@ class TtsPlaybackManager(
     ): TtsChunk {
         if (wordTimings.isNullOrEmpty()) {
             return originalChunk
+        }
+        if (originalChunk.spokenText != originalChunk.text) {
+            return originalChunk.copy(timedWords = emptyList())
         }
 
         val timedWords = mutableListOf<TimedWord>()
@@ -823,7 +846,8 @@ class TtsPlaybackManager(
                         val prefetchStartTime = System.currentTimeMillis()
                         Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
 
-                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, textChunks.size, nextChunk.text, currentSpeakerId, currentTtsMode, currentAuthToken)
+                        val spokenText = nextChunk.spokenText.ifBlank { nextChunk.text }
+                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
 
                         Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 
@@ -842,7 +866,7 @@ class TtsPlaybackManager(
                         if ((audioFile != null || streamUri != null) && serverText != null) {
                             val updatedChunk = processWordTimings(nextChunk, serverText, ttsAudioData.wordTimings)
                             val pathToUse = streamUri ?: audioFile!!.absolutePath
-                            val nextMediaItem = createMediaItem(serverText, pathToUse, targetIndex, updatedChunk)
+                            val nextMediaItem = createMediaItem(updatedChunk.text, pathToUse, targetIndex, updatedChunk)
 
                             withContext(Dispatchers.Main) {
                                 if (audioFile != null) {

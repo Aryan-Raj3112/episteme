@@ -120,5 +120,6 @@ data class SharedReaderScreenState(
     val allTags: List<Tag> = emptyList(),
     val showTagSelectionDialogFor: Set<String> = emptySet(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
-    val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
+    val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
 )

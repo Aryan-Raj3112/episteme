@@ -157,6 +157,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderTtsReadScope
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFolderPathResolver
@@ -177,6 +178,7 @@ import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.maskedReaderAiKey
+import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfNormalizedPoint
@@ -260,6 +262,7 @@ import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
+import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
@@ -437,7 +440,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             appSeedColor = initialLibrarySnapshot.appSeedColor,
             customAppThemes = initialLibrarySnapshot.customAppThemes,
             readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
-            readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette
+            readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette,
+            readerTtsReplacementPreferences = initialLibrarySnapshot.readerTtsReplacementPreferences
         )
         mutableStateOf(
             libraryProjector.project(
@@ -533,7 +537,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         appSeedColor = projected.appSeedColor,
                         customAppThemes = projected.customAppThemes,
                         readerToolbarPreferences = projected.readerToolbarPreferences,
-                        readerHighlightPalette = projected.readerHighlightPalette
+                        readerHighlightPalette = projected.readerHighlightPalette,
+                        readerTtsReplacementPreferences = projected.readerTtsReplacementPreferences
                     )
                 )
             }
@@ -742,7 +747,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun startReaderCloudTts(readScope: ReaderTtsReadScope, chunks: List<ReaderTtsChunk>) {
-        val ttsChunks = chunks.filter { it.text.isNotBlank() }
+        val replacementBookId = activeReaderBookId ?: readerSession.reader.book.title
+        val ttsChunks = chunks
+            .filter { it.text.isNotBlank() }
+            .withTtsReplacements(state.readerTtsReplacementPreferences, replacementBookId)
         val settings = aiByokSettings.sanitized()
         logDesktopTts(
             "reader_sequence_toggle scope=${readScope.name} chunks=${ttsChunks.size} " +
@@ -1709,6 +1717,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     highlightPalette = state.readerHighlightPalette,
                                     onHighlightPaletteChange = { palette ->
                                         updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))
+                                    },
+                                    ttsReplacementPreferences = state.readerTtsReplacementPreferences,
+                                    ttsReplacementBookId = activeReaderBookId ?: readerSession.reader.book.title,
+                                    onTtsReplacementPreferencesChange = { preferences ->
+                                        updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
                                     },
                                     onPickCustomFont = {
                                         importCustomFont(chooseFontFile())?.path
@@ -3413,7 +3426,9 @@ private fun PdfReaderScreen(
             var completedChunkCount = 0
             runCatching {
                 val ttsChunks = withContext(Dispatchers.IO) {
-                    pdfTtsChunksForScope(readScope, startPageIndex).filter { it.text.isNotBlank() }
+                    pdfTtsChunksForScope(readScope, startPageIndex)
+                        .filter { it.text.isNotBlank() }
+                        .withTtsReplacements(state.readerTtsReplacementPreferences, document.path)
                 }
                 if (ttsChunks.isEmpty()) {
                     logDesktopTts("pdf_sequence_ignored reason=blank_text scope=${readScope.name}")
@@ -3507,7 +3522,7 @@ private fun PdfReaderScreen(
             pageIndex = pageIndex,
             chapterIndex = 0,
             chapterTitle = "Page ${pageIndex + 1}"
-        )
+        ).withTtsReplacements(state.readerTtsReplacementPreferences, document.path)
         if (selectionChunks.isEmpty()) {
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = pdfExtrasState.cloudTts.copy(
@@ -4405,7 +4420,12 @@ private fun PdfReaderScreen(
                             onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
                             onCloudTtsStop = ::stopPdfCloudTts,
                             onCloudTtsClearCache = ::clearPdfCloudTtsCache,
-                            onAutoScrollChange = ::updatePdfAutoScroll
+                            onAutoScrollChange = ::updatePdfAutoScroll,
+                            ttsReplacementPreferences = state.readerTtsReplacementPreferences,
+                            ttsReplacementBookId = document.path,
+                            onTtsReplacementPreferencesChange = { preferences ->
+                                updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
+                            }
                         )
                     }
                     item {
@@ -5301,7 +5321,10 @@ private fun DesktopPdfExtrasPanel(
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
     val settings = aiByokSettings.sanitized()
     val autoScroll = extrasState.autoScroll.sanitized()
@@ -5400,6 +5423,11 @@ private fun DesktopPdfExtrasPanel(
                 }
             }
         }
+        SharedReaderTtsReplacementControls(
+            preferences = ttsReplacementPreferences,
+            bookId = ttsReplacementBookId,
+            onPreferencesChange = onTtsReplacementPreferencesChange
+        )
         if (settings.areReaderAiFeaturesAvailable) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 TextButton(
@@ -6740,6 +6768,9 @@ private fun ReaderScreen(
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String?,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     onPickCustomFont: () -> String?,
     customFonts: List<CustomFontItem>,
     readerExtrasState: ReaderExtrasState,
@@ -6775,6 +6806,9 @@ private fun ReaderScreen(
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         highlightPalette = highlightPalette,
         onHighlightPaletteChange = onHighlightPaletteChange,
+        ttsReplacementPreferences = ttsReplacementPreferences,
+        ttsReplacementBookId = ttsReplacementBookId,
+        onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
         onPickCustomFont = onPickCustomFont,
         customFonts = customFonts,
         readerExtrasState = readerExtrasState,

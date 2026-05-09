@@ -41,11 +41,12 @@ data class SharedLibrarySnapshot(
     val appSeedColor: Color? = null,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
-    val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette()
+    val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 9
+    private const val SCHEMA_VERSION = 10
 
     private val json = Json {
         prettyPrint = true
@@ -96,7 +97,11 @@ object SharedLibrarySnapshotJson {
             readerHighlightPalette = root["readerHighlightPalette"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderHighlightPaletteOrNull()
-                ?: ReaderHighlightPalette()
+                ?: ReaderHighlightPalette(),
+            readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
+                ?.takeUnless { it is JsonNull }
+                ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
+                ?: ReaderTtsReplacementPreferences()
         )
     }
 
@@ -124,7 +129,10 @@ object SharedLibrarySnapshotJson {
                 "appSeedColor" to snapshot.appSeedColor.asJson(),
                 "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
-                "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject()
+                "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
+                "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
+                    snapshot.readerTtsReplacementPreferences,
+                )
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)

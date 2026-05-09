@@ -167,7 +167,8 @@ enum class ReaderTool(val title: String, val category: String) {
     KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
-    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu")
+    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
+    TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu")
 }
 
 enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
@@ -282,6 +283,7 @@ fun EpubReaderTopBar(
     onTogglePageTurnAnimation: (Boolean) -> Unit,
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
+    onOpenTtsReplacements: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
     onOpenVisualOptions: () -> Unit,
@@ -669,6 +671,23 @@ fun EpubReaderTopBar(
                                     onClick = {
                                         showMoreMenu = false
                                         onOpenTtsSettings()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.GraphicEq,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                )
+                                HorizontalDivider()
+                            }
+                            if (!hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onOpenTtsReplacements()
                                     },
                                     leadingIcon = {
                                         Icon(

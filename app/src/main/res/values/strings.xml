@@ -707,6 +707,8 @@
     <string name="menu_auto_scroll">Auto Scroll</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_voice_settings">TTS Voice Settings</string>
+    <!-- TTS = Text-to-Speech. -->
+    <string name="menu_tts_word_replacements">TTS Word Replacements</string>
     <!-- TTS = Text-to-Speech. Debug-only menu item. -->
     <string name="menu_tts_settings_debug">TTS Settings (Debug)</string>
     <string name="content_desc_navigate_slider">Navigate with slider</string>

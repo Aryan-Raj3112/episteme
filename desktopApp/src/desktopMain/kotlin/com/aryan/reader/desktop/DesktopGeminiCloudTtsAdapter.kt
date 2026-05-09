@@ -103,7 +103,7 @@ class DesktopGeminiCloudTtsAdapter(
         val sequenceChunks = chunks
             .map { chunk ->
                 DesktopTtsSequenceChunk(
-                    text = chunk.text.trim().take(5_000),
+                    text = chunk.spokenText.trim().ifBlank { chunk.text.trim() }.take(5_000),
                     chapterTitle = chunk.chapterTitle.ifBlank { readScope.label }
                 )
             }

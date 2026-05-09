@@ -237,7 +237,8 @@ data class ReaderTtsChunk(
     val text: String,
     val startOffset: Int,
     val endOffset: Int,
-    val sourceCfi: String? = null
+    val sourceCfi: String? = null,
+    val spokenText: String = text
 ) {
     fun toLocator(): ReaderLocator {
         val boundedEnd = endOffset.coerceAtLeast(startOffset)

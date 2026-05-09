@@ -130,6 +130,29 @@ class SharedLibrarySnapshotJsonTest {
             ).sanitized(),
             readerHighlightPalette = ReaderHighlightPalette(
                 colors = listOf(HighlightColor.YELLOW, HighlightColor.CYAN)
+            ),
+            readerTtsReplacementPreferences = ReaderTtsReplacementPreferences(
+                globalRules = listOf(
+                    ReaderTtsReplacementRule(
+                        id = "dr",
+                        from = "Dr.",
+                        to = "Doctor",
+                        wholeWord = false
+                    )
+                ),
+                bookRules = mapOf(
+                    "book" to listOf(
+                        ReaderTtsReplacementRule(
+                            id = "st",
+                            from = "St.",
+                            to = "Saint",
+                            wholeWord = false
+                        )
+                    )
+                ),
+                bookSettings = mapOf(
+                    "book" to ReaderTtsReplacementBookSettings(disabledGlobalRuleIds = setOf("dr"))
+                )
             )
         )
 

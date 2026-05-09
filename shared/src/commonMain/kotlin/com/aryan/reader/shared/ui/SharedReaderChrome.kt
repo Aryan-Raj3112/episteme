@@ -86,6 +86,11 @@ import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsReadScope
+import com.aryan.reader.shared.ReaderTtsReplacementBookSettings
+import com.aryan.reader.shared.ReaderTtsReplacementEngine
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTtsReplacementRule
+import com.aryan.reader.shared.ReaderTtsReplacementSuggestions
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.reduce
@@ -148,6 +153,9 @@ fun SharedReaderScreen(
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    ttsReplacementBookId: String? = null,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
     onPickCustomFont: (() -> String?)? = null,
     customFonts: List<CustomFontItem> = emptyList(),
     readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
@@ -323,6 +331,9 @@ fun SharedReaderScreen(
                 onCloudTtsStop = onCloudTtsStop,
                 onCloudTtsClearCache = onCloudTtsClearCache,
                 onAutoScrollChange = onAutoScrollChange,
+                ttsReplacementPreferences = ttsReplacementPreferences,
+                ttsReplacementBookId = ttsReplacementBookId ?: session.reader.book.title,
+                onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
                 readerCustomTextureIds = readerCustomTextureIds,
                 onImportReaderTexture = onImportReaderTexture,
                 onReaderAction = { action -> dispatch(action) }
@@ -589,6 +600,9 @@ private fun SharedReaderControlPanel(
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderAction: (ReaderAction) -> Unit
@@ -655,13 +669,17 @@ private fun SharedReaderControlPanel(
                         session = session,
                         extrasState = extrasState,
                         aiByokSettings = aiByokSettings,
+                        toolbarPreferences = toolbarPreferences,
                         onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
                         onCloudTtsStart = onCloudTtsStart,
                         onCloudTtsPauseResume = onCloudTtsPauseResume,
                         onCloudTtsStop = onCloudTtsStop,
                         onCloudTtsClearCache = onCloudTtsClearCache,
-                        onAutoScrollChange = onAutoScrollChange
+                        onAutoScrollChange = onAutoScrollChange,
+                        ttsReplacementPreferences = ttsReplacementPreferences,
+                        ttsReplacementBookId = ttsReplacementBookId,
+                        onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
                     )
 
                     ReaderControlSection.TOOLBAR -> SharedReaderToolbarControls(
@@ -692,6 +710,7 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(): List<Read
             isVisible(ReaderTool.AI_FEATURES) ||
             isVisible(ReaderTool.TTS_CONTROLS) ||
             isVisible(ReaderTool.TTS_SETTINGS) ||
+            isVisible(ReaderTool.TTS_REPLACEMENTS) ||
             isVisible(ReaderTool.AUTO_SCROLL)
         ) {
             add(ReaderControlSection.EXTRAS)
@@ -1097,13 +1116,17 @@ private fun SharedReaderExtrasControls(
     session: ReaderSessionState,
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
+    toolbarPreferences: ReaderToolbarPreferences,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit
+    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
     val settings = aiByokSettings.sanitized()
     val currentPageText = ReaderContextExtractor.currentPageText(session)
@@ -1245,6 +1268,14 @@ private fun SharedReaderExtrasControls(
             }
         }
 
+        if (toolbarPreferences.isVisible(ReaderTool.TTS_REPLACEMENTS)) {
+            SharedReaderTtsReplacementControls(
+                preferences = ttsReplacementPreferences,
+                bookId = ttsReplacementBookId,
+                onPreferencesChange = onTtsReplacementPreferencesChange
+            )
+        }
+
         if (settings.areReaderAiFeaturesAvailable) {
             SharedReaderPanelSection("AI") {
                 Row(
@@ -1290,6 +1321,415 @@ private fun SharedReaderExtrasControls(
             }
         }
     }
+}
+
+private enum class SharedTtsReplacementScope {
+    GLOBAL,
+    BOOK
+}
+
+@Composable
+fun SharedReaderTtsReplacementControls(
+    preferences: ReaderTtsReplacementPreferences,
+    bookId: String,
+    onPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
+) {
+    var selectedScope by remember(bookId) { mutableStateOf(SharedTtsReplacementScope.GLOBAL) }
+    var editingRuleId by remember(bookId, selectedScope) { mutableStateOf<String?>(null) }
+    var isAddingRule by remember(bookId, selectedScope) { mutableStateOf(false) }
+    val bookSettings = preferences.settingsForBook(bookId)
+    val bookRules = preferences.rulesForBook(bookId)
+
+    SharedReaderPanelSection("TTS Word Replacements") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Replace only what is spoken", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Reader text, highlights, and locations stay unchanged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = preferences.isEnabled,
+                onCheckedChange = { onPreferencesChange(preferences.copy(isEnabled = it)) }
+            )
+        }
+
+        SharedReaderChoiceRow {
+            FilterChip(
+                selected = selectedScope == SharedTtsReplacementScope.GLOBAL,
+                onClick = {
+                    selectedScope = SharedTtsReplacementScope.GLOBAL
+                    editingRuleId = null
+                    isAddingRule = false
+                },
+                label = { Text("Global") }
+            )
+            FilterChip(
+                selected = selectedScope == SharedTtsReplacementScope.BOOK,
+                onClick = {
+                    selectedScope = SharedTtsReplacementScope.BOOK
+                    editingRuleId = null
+                    isAddingRule = false
+                },
+                label = { Text("This book") }
+            )
+        }
+
+        when (selectedScope) {
+            SharedTtsReplacementScope.GLOBAL -> {
+                SharedTtsReplacementSuggestionsRow { suggestion ->
+                    onPreferencesChange(
+                        preferences.copy(
+                            globalRules = preferences.globalRules + suggestion.asDesktopEditableRule(
+                                prefix = "global",
+                                existingRules = preferences.globalRules
+                            )
+                        )
+                    )
+                }
+                TextButton(onClick = { isAddingRule = true; editingRuleId = null }) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add rule")
+                }
+                val editingRule = editingRuleId?.let { id -> preferences.globalRules.firstOrNull { it.id == id } }
+                if (isAddingRule || editingRule != null) {
+                    SharedTtsReplacementRuleEditor(
+                        seedRule = editingRule,
+                        newRuleId = newSharedReplacementRuleId("global", preferences.globalRules),
+                        onCancel = { isAddingRule = false; editingRuleId = null },
+                        onSave = { rule ->
+                            val updated = if (editingRule == null) {
+                                preferences.globalRules + rule
+                            } else {
+                                preferences.globalRules.map { if (it.id == editingRule.id) rule else it }
+                            }
+                            onPreferencesChange(preferences.copy(globalRules = updated))
+                            isAddingRule = false
+                            editingRuleId = null
+                        }
+                    )
+                }
+                SharedTtsReplacementRuleList(
+                    rules = preferences.globalRules,
+                    emptyText = "No global rules yet.",
+                    onToggle = { rule, enabled ->
+                        onPreferencesChange(
+                            preferences.copy(
+                                globalRules = preferences.globalRules.map {
+                                    if (it.id == rule.id) it.copy(enabled = enabled) else it
+                                }
+                            )
+                        )
+                    },
+                    onEdit = { rule -> editingRuleId = rule.id; isAddingRule = false },
+                    onDelete = { rule ->
+                        onPreferencesChange(preferences.copy(globalRules = preferences.globalRules.filterNot { it.id == rule.id }))
+                    }
+                )
+            }
+
+            SharedTtsReplacementScope.BOOK -> {
+                SharedTtsBookReplacementSettings(
+                    settings = bookSettings,
+                    onSettingsChange = { onPreferencesChange(preferences.withBookSettings(bookId, it)) }
+                )
+                SharedTtsInheritedGlobalRules(
+                    globalRules = preferences.globalRules,
+                    settings = bookSettings,
+                    onSettingsChange = { onPreferencesChange(preferences.withBookSettings(bookId, it)) }
+                )
+                SharedTtsReplacementSuggestionsRow { suggestion ->
+                    onPreferencesChange(
+                        preferences.withBookRules(
+                            bookId,
+                            bookRules + suggestion.asDesktopEditableRule(
+                                prefix = "book",
+                                existingRules = bookRules
+                            )
+                        )
+                    )
+                }
+                TextButton(onClick = { isAddingRule = true; editingRuleId = null }) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add book rule")
+                }
+                val editingRule = editingRuleId?.let { id -> bookRules.firstOrNull { it.id == id } }
+                if (isAddingRule || editingRule != null) {
+                    SharedTtsReplacementRuleEditor(
+                        seedRule = editingRule,
+                        newRuleId = newSharedReplacementRuleId("book", bookRules),
+                        onCancel = { isAddingRule = false; editingRuleId = null },
+                        onSave = { rule ->
+                            val updated = if (editingRule == null) {
+                                bookRules + rule
+                            } else {
+                                bookRules.map { if (it.id == editingRule.id) rule else it }
+                            }
+                            onPreferencesChange(preferences.withBookRules(bookId, updated))
+                            isAddingRule = false
+                            editingRuleId = null
+                        }
+                    )
+                }
+                SharedTtsReplacementRuleList(
+                    rules = bookRules,
+                    emptyText = "No book rules yet.",
+                    onToggle = { rule, enabled ->
+                        onPreferencesChange(
+                            preferences.withBookRules(
+                                bookId,
+                                bookRules.map { if (it.id == rule.id) it.copy(enabled = enabled) else it }
+                            )
+                        )
+                    },
+                    onEdit = { rule -> editingRuleId = rule.id; isAddingRule = false },
+                    onDelete = { rule ->
+                        onPreferencesChange(preferences.withBookRules(bookId, bookRules.filterNot { it.id == rule.id }))
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTtsReplacementSuggestionsRow(
+    onSuggestionClick: (ReaderTtsReplacementRule) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Suggestions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            ReaderTtsReplacementSuggestions.presets.forEach { suggestion ->
+                FilterChip(
+                    selected = false,
+                    onClick = { onSuggestionClick(suggestion) },
+                    label = { Text(suggestion.desktopSummary(), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTtsBookReplacementSettings(
+    settings: ReaderTtsReplacementBookSettings,
+    onSettingsChange: (ReaderTtsReplacementBookSettings) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Use global rules here", modifier = Modifier.weight(1f))
+            Switch(
+                checked = settings.globalRulesEnabled,
+                onCheckedChange = { onSettingsChange(settings.copy(globalRulesEnabled = it)) }
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Enable book rules", modifier = Modifier.weight(1f))
+            Switch(
+                checked = settings.localRulesEnabled,
+                onCheckedChange = { onSettingsChange(settings.copy(localRulesEnabled = it)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedTtsInheritedGlobalRules(
+    globalRules: List<ReaderTtsReplacementRule>,
+    settings: ReaderTtsReplacementBookSettings,
+    onSettingsChange: (ReaderTtsReplacementBookSettings) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Inherited global rules", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (globalRules.isEmpty()) {
+            Text("No global rules to inherit.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            globalRules.forEach { rule ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(rule.desktopSummary(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (rule.id in settings.disabledGlobalRuleIds) "Disabled for this book" else "Enabled for this book",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rule.id !in settings.disabledGlobalRuleIds,
+                        onCheckedChange = { enabled ->
+                            val disabledIds = if (enabled) {
+                                settings.disabledGlobalRuleIds - rule.id
+                            } else {
+                                settings.disabledGlobalRuleIds + rule.id
+                            }
+                            onSettingsChange(settings.copy(disabledGlobalRuleIds = disabledIds))
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTtsReplacementRuleEditor(
+    seedRule: ReaderTtsReplacementRule?,
+    newRuleId: String,
+    onCancel: () -> Unit,
+    onSave: (ReaderTtsReplacementRule) -> Unit
+) {
+    val seedId = seedRule?.id ?: newRuleId
+    var from by remember(seedId) { mutableStateOf(seedRule?.from.orEmpty()) }
+    var to by remember(seedId) { mutableStateOf(seedRule?.to.orEmpty()) }
+    var enabled by remember(seedId) { mutableStateOf(seedRule?.enabled ?: true) }
+    var isRegex by remember(seedId) { mutableStateOf(seedRule?.isRegex ?: false) }
+    var wholeWord by remember(seedId) { mutableStateOf(seedRule?.wholeWord ?: true) }
+    var matchCase by remember(seedId) { mutableStateOf(seedRule?.matchCase ?: false) }
+    var previewText by remember(seedId) { mutableStateOf(seedRule?.from?.takeIf { it.isNotBlank() } ?: "Dr. Smith met NASA.") }
+    val draft = ReaderTtsReplacementRule(
+        id = seedId,
+        from = from,
+        to = to,
+        enabled = enabled,
+        isRegex = isRegex,
+        matchCase = matchCase,
+        wholeWord = wholeWord
+    )
+    val validation = ReaderTtsReplacementEngine.validate(draft)
+    val previewOutput = if (validation.isValid) {
+        ReaderTtsReplacementEngine.apply(
+            text = previewText,
+            preferences = ReaderTtsReplacementPreferences(globalRules = listOf(draft.copy(enabled = true)))
+        ).text
+    } else {
+        previewText
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(if (seedRule == null) "New rule" else "Edit rule", fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = from,
+                onValueChange = { from = it },
+                label = { Text("Replace") },
+                modifier = Modifier.fillMaxWidth(),
+                isError = !validation.isValid
+            )
+            if (!validation.isValid && validation.message != null) {
+                Text(validation.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            OutlinedTextField(
+                value = to,
+                onValueChange = { to = it },
+                label = { Text("Speak as") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            SharedReaderChoiceRow {
+                FilterChip(selected = enabled, onClick = { enabled = !enabled }, label = { Text("Enabled") })
+                FilterChip(selected = isRegex, onClick = { isRegex = !isRegex }, label = { Text("Regex") })
+                FilterChip(selected = wholeWord, onClick = { wholeWord = !wholeWord }, label = { Text("Whole word") })
+                FilterChip(selected = matchCase, onClick = { matchCase = !matchCase }, label = { Text("Match case") })
+            }
+            OutlinedTextField(
+                value = previewText,
+                onValueChange = { previewText = it },
+                label = { Text("Preview") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(previewOutput, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) { Text("Save") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedTtsReplacementRuleList(
+    rules: List<ReaderTtsReplacementRule>,
+    emptyText: String,
+    onToggle: (ReaderTtsReplacementRule, Boolean) -> Unit,
+    onEdit: (ReaderTtsReplacementRule) -> Unit,
+    onDelete: (ReaderTtsReplacementRule) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (rules.isEmpty()) {
+            Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            rules.forEach { rule ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(rule.desktopSummary(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(rule.desktopOptions(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = rule.enabled, onCheckedChange = { onToggle(rule, it) })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onEdit(rule) }) { Text("Edit") }
+                        TextButton(onClick = { onDelete(rule) }) { Text("Delete") }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+private fun ReaderTtsReplacementRule.asDesktopEditableRule(
+    prefix: String,
+    existingRules: List<ReaderTtsReplacementRule>
+): ReaderTtsReplacementRule {
+    return copy(
+        id = newSharedReplacementRuleId(prefix, existingRules + this),
+        enabled = true
+    )
+}
+
+private fun ReaderTtsReplacementRule.desktopSummary(): String {
+    val replacement = to.ifBlank { "silence" }
+    return "$from -> $replacement"
+}
+
+private fun ReaderTtsReplacementRule.desktopOptions(): String {
+    val options = buildList {
+        add(if (isRegex) "Regex" else "Plain text")
+        if (wholeWord) add("whole word")
+        if (matchCase) add("case-sensitive")
+    }
+    return options.joinToString(" - ")
+}
+
+private fun newSharedReplacementRuleId(
+    prefix: String,
+    existingRules: List<ReaderTtsReplacementRule>
+): String {
+    val stableSuffix = existingRules.joinToString("|") { it.id }.hashCode().toString().replace("-", "n")
+    return "${prefix}_${existingRules.size + 1}_$stableSuffix"
 }
 
 @Composable

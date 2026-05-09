@@ -37,9 +37,11 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.IPaginator
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import com.aryan.reader.withTtsReplacements
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,7 +117,9 @@ fun TtsSessionObserver(
     currentTtsMode: TtsMode,
     getAuthToken: suspend () -> String?,
     locatorConverter: com.aryan.reader.paginatedreader.LocatorConverter, // NEW
-    epubBook: com.aryan.reader.epub.EpubBook // NEW
+    epubBook: com.aryan.reader.epub.EpubBook, // NEW
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String?
 ) {
     val currentRenderModeState = rememberUpdatedState(currentRenderMode)
     val loadedChunkCountState = rememberUpdatedState(loadedChunkCount)
@@ -131,6 +135,8 @@ fun TtsSessionObserver(
     val onTtsChapterIndexChangeState = rememberUpdatedState(onTtsChapterIndexChange)
     val locatorConverterState = rememberUpdatedState(locatorConverter) // NEW
     val epubBookState = rememberUpdatedState(epubBook) // NEW
+    val ttsReplacementPreferencesState = rememberUpdatedState(ttsReplacementPreferences)
+    val ttsReplacementBookIdState = rememberUpdatedState(ttsReplacementBookId)
 
     DisposableEffect(ttsController) {
         val job = scope.launch {
@@ -168,7 +174,9 @@ fun TtsSessionObserver(
                                 ttsController = ttsController,
                                 scope = this,
                                 locatorConverter = locatorConverterState.value,
-                                epubBook = epubBookState.value
+                                epubBook = epubBookState.value,
+                                ttsReplacementPreferences = ttsReplacementPreferencesState.value,
+                                ttsReplacementBookId = ttsReplacementBookIdState.value
                             )
                         } else if (currentRenderModeState.value == RenderMode.PAGINATED) {
                             handlePaginatedAutoAdvance(
@@ -182,7 +190,9 @@ fun TtsSessionObserver(
                                 onUpdateTtsChapter = onTtsChapterIndexChangeState.value,
                                 scope = this,
                                 ttsMode = currentTtsMode,
-                                getAuthToken = getAuthToken
+                                getAuthToken = getAuthToken,
+                                ttsReplacementPreferences = ttsReplacementPreferencesState.value,
+                                ttsReplacementBookId = ttsReplacementBookIdState.value
                             )
                         }
                     } else if (wasPlaying && !isPlaying && !sessionFinished) {
@@ -303,7 +313,9 @@ private fun handleVerticalAutoAdvance(
     ttsController: TtsController,
     scope: CoroutineScope,
     locatorConverter: com.aryan.reader.paginatedreader.LocatorConverter,
-    epubBook: com.aryan.reader.epub.EpubBook
+    epubBook: com.aryan.reader.epub.EpubBook,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String?
 ) {
     if (currentTtsChapterIndex == null) return
 
@@ -323,7 +335,7 @@ private fun handleVerticalAutoAdvance(
                     val remainingChunks = nativeChunks.subList(resumeIdx + 1, nativeChunks.size)
                     val token = getAuthToken()
                     ttsController.start(
-                        chunks = remainingChunks,
+                        chunks = remainingChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),
                         bookTitle = epubBookTitle,
                         chapterTitle = chapters.getOrNull(currentTtsChapterIndex)?.title,
                         coverImageUri = coverImagePath?.let { android.net.Uri.fromFile(File(it)).toString() },
@@ -355,7 +367,7 @@ private fun handleVerticalAutoAdvance(
                 onUpdateTtsChapter(nextIdx)
 
                 ttsController.start(
-                    chunks = nativeChunks,
+                    chunks = nativeChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),
                     bookTitle = epubBookTitle,
                     chapterTitle = chapters.getOrNull(nextIdx)?.title,
                     coverImageUri = coverImagePath?.let { Uri.fromFile(File(it)).toString() },
@@ -399,7 +411,9 @@ private fun handlePaginatedAutoAdvance(
     onUpdateTtsChapter: (Int?) -> Unit,
     scope: CoroutineScope,
     ttsMode: TtsMode,
-    getAuthToken: suspend () -> String?
+    getAuthToken: suspend () -> String?,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    ttsReplacementBookId: String?
 ) {
     if (currentTtsChapterIndex != null && currentTtsChapterIndex < chapters.size - 1) {
         Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: Searching for next TTS content...")
@@ -432,7 +446,7 @@ private fun handlePaginatedAutoAdvance(
                     val token = getAuthToken()
 
                     ttsController.start(
-                        chunks = nextChapterChunks,
+                        chunks = nextChapterChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),
                         bookTitle = epubBookTitle,
                         chapterTitle = chapterTitle,
                         coverImageUri = coverUriString,

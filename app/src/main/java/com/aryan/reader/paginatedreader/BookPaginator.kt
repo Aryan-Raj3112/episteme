@@ -80,7 +80,8 @@ data class TtsChunk(
     val text: String,
     val sourceCfi: String,
     val startOffsetInSource: Int,
-    val timedWords: List<TimedWord> = emptyList()
+    val timedWords: List<TimedWord> = emptyList(),
+    val spokenText: String = text
 )
 
 private data class PaginationRequest(val chapterIndex: Int, val priority: Int) : Comparable<PaginationRequest> {

@@ -186,11 +186,13 @@ class TtsController(context: Context) : Player.Listener {
         )
 
         val textList = ArrayList(chunks.map { it.text })
+        val spokenTextList = ArrayList(chunks.map { it.spokenText.ifBlank { it.text } })
         val cfiList = ArrayList(chunks.map { it.sourceCfi })
         val offsetList = ArrayList(chunks.map { it.startOffsetInSource })
 
         val args = Bundle().apply {
             putStringArrayList(KEY_TEXT_CHUNKS, textList)
+            putStringArrayList(KEY_SPOKEN_TEXT_CHUNKS, spokenTextList)
             putStringArrayList(KEY_SOURCE_CFIS, cfiList)
             putIntegerArrayList(KEY_START_OFFSETS, offsetList)
             putString(KEY_SPEAKER_ID, _ttsState.value.speakerId)

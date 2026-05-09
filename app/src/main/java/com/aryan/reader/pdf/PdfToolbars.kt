@@ -117,6 +117,7 @@ internal fun PdfTopBar(
     onToggleKeepScreenOn: () -> Unit,
     onStartAutoScroll: () -> Unit,
     onShowTtsSettings: () -> Unit,
+    onShowTtsReplacements: () -> Unit,
     onToggleBookmark: () -> Unit,
     onInsertPage: () -> Unit,
     onDeletePage: () -> Unit,
@@ -423,6 +424,15 @@ internal fun PdfTopBar(
                                         text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
                                         enabled = !isTtsSessionActive,
                                         onClick = { showMoreMenu = false; onShowTtsSettings() },
+                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                    )
+                                    HorizontalDivider()
+                                }
+
+                                if (!hiddenTools.contains(PdfReaderTool.TTS_REPLACEMENTS.name)) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                        onClick = { showMoreMenu = false; onShowTtsReplacements() },
                                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
                                     )
                                 }

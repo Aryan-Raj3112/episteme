@@ -64,6 +64,7 @@ enum class PdfReaderTool(val title: String, val category: String) {
     KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
     TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
+    TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu"),
     BOOKMARK("Bookmark", "Overflow Menu"),
     PAGE_MANAGEMENT("Page Management", "Overflow Menu"),
     REFLOW("Text View (Reflow)", "Overflow Menu"),

@@ -210,6 +210,7 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -224,6 +225,7 @@ import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -238,11 +240,14 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
+import com.aryan.reader.withTtsReplacements
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -441,6 +446,12 @@ fun PdfViewerScreen(
         )
     }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showTtsReplacementsSheet by remember { mutableStateOf(false) }
+    var ttsReplacementPreferences by remember { mutableStateOf(loadTtsReplacementPreferences(context)) }
+    val updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit = { next ->
+        ttsReplacementPreferences = next
+        saveTtsReplacementPreferences(context, next)
+    }
 
     DisposableEffect(isKeepScreenOn) {
         view.keepScreenOn = isKeepScreenOn
@@ -2661,7 +2672,7 @@ fun PdfViewerScreen(
                 val ttsChunks = chunks.mapIndexed { index, text -> TtsChunk(text, "", index) }
 
                 ttsController.start(
-                    chunks = ttsChunks,
+                    chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                     bookTitle = bookTitle,
                     chapterTitle = pageTitle,
                     coverImageUri = null,
@@ -3477,6 +3488,7 @@ fun PdfViewerScreen(
             }
 
             showTtsSettingsSheet -> showTtsSettingsSheet = false
+            showTtsReplacementsSheet -> showTtsReplacementsSheet = false
             showThemePanel -> showThemePanel = false
 
             else -> {
@@ -5062,6 +5074,7 @@ fun PdfViewerScreen(
                         showBars = !isMusicianMode
                     },
                     onShowTtsSettings = { showTtsSettingsSheet = true },
+                    onShowTtsReplacements = { showTtsReplacementsSheet = true },
                     onToggleBookmark = onBookmarkClick,
                     onInsertPage = onInsertPage,
                     onDeletePage = onDeletePage,
@@ -6553,6 +6566,15 @@ fun PdfViewerScreen(
             bookTitle = bookTitle
         )
     }
+
+    TtsWordReplacementsSheet(
+        isVisible = showTtsReplacementsSheet,
+        bookId = bookId,
+        bookTitle = documentMetadataTitle ?: originalFileName,
+        preferences = ttsReplacementPreferences,
+        onPreferencesChange = updateTtsReplacementPreferences,
+        onDismiss = { showTtsReplacementsSheet = false },
+    )
 
     if (showDictionarySettingsSheet) {
         DictionarySettingsDialog(

@@ -166,6 +166,7 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
+import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.countWords
 import com.aryan.reader.isByokCloudTtsAvailable
@@ -177,6 +178,7 @@ import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderThemeId
 import com.aryan.reader.loadReaderTextureBitmap
+import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.CfiUtils
 import com.aryan.reader.paginatedreader.HeaderBlock
@@ -195,10 +197,13 @@ import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderThemeId
+import com.aryan.reader.saveTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.splitTextIntoChunks
+import com.aryan.reader.withTtsReplacements
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
@@ -1198,9 +1203,15 @@ fun EpubReaderHost(
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showTtsReplacementsSheet by remember { mutableStateOf(false) }
     var showTtsControlsSheet by remember { mutableStateOf(false) }
     var showThemePanel by remember { mutableStateOf(false) }
     var showPaletteManager by remember { mutableStateOf(false) }
+    var ttsReplacementPreferences by remember { mutableStateOf(loadTtsReplacementPreferences(context)) }
+    val updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit = { next ->
+        ttsReplacementPreferences = next
+        saveTtsReplacementPreferences(context, next)
+    }
 
     var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
@@ -1524,7 +1535,7 @@ fun EpubReaderHost(
                             val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
                             ttsChapterIndex = chapterIndex
                             ttsController.start(
-                                chunks = ttsChunks,
+                                chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                                 bookTitle = epubBook.title,
                                 chapterTitle = chapterTitle,
                                 coverImageUri = coverUriString,
@@ -1577,7 +1588,11 @@ fun EpubReaderHost(
                     val relativeOffset = startOffset - target.startOffsetInSource
                     val safeRelativeOffset = relativeOffset.coerceIn(0, target.text.length)
                     val slicedText = target.text.substring(safeRelativeOffset)
-                    val newChunk = target.copy(text = slicedText, startOffsetInSource = startOffset)
+                    val newChunk = target.copy(
+                        text = slicedText,
+                        startOffsetInSource = startOffset,
+                        spokenText = slicedText,
+                    )
 
                     val remainingChunks = mutableListOf(newChunk)
                     remainingChunks.addAll(chunks.subList(foundIdx + 1, chunks.size))
@@ -1588,7 +1603,7 @@ fun EpubReaderHost(
                         val chapterTitle = chapters.getOrNull(chapterIndex)?.title
                         val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
                         ttsController.start(
-                            chunks = remainingChunks,
+                            chunks = remainingChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                             bookTitle = epubBook.title,
                             chapterTitle = chapterTitle,
                             coverImageUri = coverUriString,
@@ -1651,7 +1666,9 @@ fun EpubReaderHost(
         currentTtsMode = currentTtsMode,
         getAuthToken = { viewModel.getAuthToken() },
         locatorConverter = locatorConverter,
-        epubBook = epubBook
+        epubBook = epubBook,
+        ttsReplacementPreferences = ttsReplacementPreferences,
+        ttsReplacementBookId = bookId
     )
 
     TtsHighlightHandler(
@@ -3559,7 +3576,7 @@ fun EpubReaderHost(
                                                         ttsChapterIndex = targetChapterIndex
 
                                                         ttsController.start(
-                                                            chunks = ttsChunks,
+                                                            chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                                                             bookTitle = epubBook.title,
                                                             chapterTitle = chapterTitle,
                                                             coverImageUri = coverUriString,
@@ -4613,6 +4630,7 @@ fun EpubReaderHost(
                     searchFocusRequester = searchFocusRequester,
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
+                    onOpenTtsReplacements = { showTtsReplacementsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
                     onOpenVisualOptions = { showVisualOptionsSheet = true },
@@ -5247,6 +5265,15 @@ fun EpubReaderHost(
                 bookTitle = epubBook.title
             )
         }
+
+        TtsWordReplacementsSheet(
+            isVisible = showTtsReplacementsSheet,
+            bookId = bookId,
+            bookTitle = epubBook.title,
+            preferences = ttsReplacementPreferences,
+            onPreferencesChange = updateTtsReplacementPreferences,
+            onDismiss = { showTtsReplacementsSheet = false },
+        )
 
         if (showCustomizeToolsSheet) {
             CustomizeToolsSheet(
