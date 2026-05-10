@@ -19,7 +19,9 @@ import com.aryan.reader.shared.ReadStatusFilter as SharedReadStatusFilter
 import com.aryan.reader.shared.RenderMode as SharedRenderMode
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.ShelfType as SharedShelfType
 import com.aryan.reader.shared.SortOrder as SharedSortOrder
 import com.aryan.reader.shared.SyncedFolder as SharedSyncedFolder
 import com.aryan.reader.shared.Tag as SharedTag
@@ -41,9 +43,41 @@ fun RecentFileItem.toSharedBookItem(): SharedBookItem {
         folderTextMetadataParsed = folderTextMetadataParsed,
         seriesName = seriesName,
         seriesIndex = seriesIndex,
+        lastPageIndex = lastPage,
         tags = tags.map { it.toSharedTag() },
         readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
     )
+}
+
+fun RecentFileItem.toSharedProjectionBookItem(): SharedBookItem {
+    return toSharedBookItem().copy(displayName = displayName)
+}
+
+fun SharedBookItem.toRecentFileItem(
+    androidBooksById: Map<String, RecentFileItem> = emptyMap(),
+    tagEntitiesById: Map<String, TagEntity> = emptyMap()
+): RecentFileItem {
+    val resolvedTags = tags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
+    return androidBooksById[id]?.copy(tags = resolvedTags)
+        ?: RecentFileItem(
+            bookId = id,
+            uriString = path,
+            type = type.toAndroidFileType(),
+            displayName = displayName,
+            timestamp = timestamp,
+            coverImagePath = coverImagePath,
+            title = title,
+            author = author,
+            lastPage = lastPageIndex,
+            progressPercentage = progressPercentage,
+            isRecent = isRecent,
+            sourceFolderUri = sourceFolder,
+            fileSize = fileSize,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            folderTextMetadataParsed = folderTextMetadataParsed,
+            tags = resolvedTags
+        )
 }
 
 fun TagEntity.toSharedTag(): SharedTag {
@@ -160,13 +194,7 @@ fun ReaderScreenState.toSharedLibraryProjectionInput(
     dbTags: List<TagEntity>,
     tagRefs: List<BookTagCrossRef>
 ): SharedLibraryProjectionInput {
-    val tagsById = dbTags.associateBy { it.id }
-    val bookTagsMap = tagRefs.groupBy { it.bookId }.mapValues { entry ->
-        entry.value.mapNotNull { tagsById[it.tagId] }
-    }
-    val taggedBooks = recentFilesFromDb.map { item ->
-        item.copy(tags = bookTagsMap[item.bookId].orEmpty())
-    }
+    val taggedBooks = recentFilesFromDb.withResolvedTags(dbTags, tagRefs)
     return SharedLibraryProjectionInput(
         state = toSharedReaderScreenState(
             rawBooks = taggedBooks,
@@ -174,10 +202,67 @@ fun ReaderScreenState.toSharedLibraryProjectionInput(
         ),
         booksFromStore = taggedBooks
             .filterNot { it.bookId.endsWith("_reflow") }
-            .map { it.toSharedBookItem() },
+            .map { it.toSharedProjectionBookItem() },
         shelfRecords = dbShelves.map { it.toSharedShelfRecord() },
         shelfRefs = shelfRefs.map { it.toSharedBookShelfRef() },
         tags = dbTags.map { it.toSharedTag() }
+    )
+}
+
+fun List<RecentFileItem>.withResolvedTags(
+    dbTags: List<TagEntity>,
+    tagRefs: List<BookTagCrossRef>
+): List<RecentFileItem> {
+    val tagsById = dbTags.associateBy { it.id }
+    val bookTagsMap = tagRefs.groupBy { it.bookId }.mapValues { entry ->
+        entry.value.mapNotNull { tagsById[it.tagId] }
+    }
+    return map { item -> item.copy(tags = bookTagsMap[item.bookId].orEmpty()) }
+}
+
+fun SharedReaderScreenState.toAndroidReaderScreenState(
+    base: ReaderScreenState,
+    androidBooksById: Map<String, RecentFileItem>,
+    tagEntitiesById: Map<String, TagEntity> = emptyMap()
+): ReaderScreenState {
+    val fallbackBooksById = rawLibraryBooks.associateBy { it.id }
+    fun SharedBookItem.toAndroidBook(): RecentFileItem {
+        return toRecentFileItem(androidBooksById, tagEntitiesById)
+    }
+    fun bookById(bookId: String): RecentFileItem? {
+        return androidBooksById[bookId] ?: fallbackBooksById[bookId]?.toAndroidBook()
+    }
+    return base.copy(
+        recentFiles = recentBooks.map { it.toAndroidBook() },
+        allRecentFiles = libraryBooks.map { it.toAndroidBook() },
+        rawLibraryFiles = rawLibraryBooks.map { it.toAndroidBook() },
+        viewingShelfId = viewingShelfId,
+        isAddingBooksToShelf = isAddingBooksToShelf,
+        contextualActionShelfIds = selectedShelfIds,
+        contextualActionItems = selectedBookIds.mapNotNullTo(mutableSetOf()) { bookById(it) },
+        shelves = shelves.map { it.toAndroidShelf(androidBooksById, tagEntitiesById) },
+        openTabs = openTabs.map { it.toAndroidBook() },
+        openTabIds = openTabIds,
+        activeTabBookId = activeTabBookId,
+        booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },
+        allTags = allTags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
+    )
+}
+
+fun SharedShelf.toAndroidShelf(
+    androidBooksById: Map<String, RecentFileItem> = emptyMap(),
+    tagEntitiesById: Map<String, TagEntity> = emptyMap()
+): Shelf {
+    return Shelf(
+        id = id,
+        name = name,
+        type = type.toAndroidShelfType(),
+        books = books.map { it.toRecentFileItem(androidBooksById, tagEntitiesById) },
+        directBooks = directBooks.map { it.toRecentFileItem(androidBooksById, tagEntitiesById) },
+        parentShelfId = parentShelfId,
+        childShelfIds = childShelfIds,
+        depth = depth,
+        sortKey = sortKey
     )
 }
 
@@ -185,23 +270,43 @@ fun FileType.toSharedFileType(): SharedFileType {
     return runCatching { SharedFileType.valueOf(name) }.getOrDefault(SharedFileType.UNKNOWN)
 }
 
-private fun RenderMode.toSharedRenderMode(): SharedRenderMode {
+fun SharedFileType.toAndroidFileType(): FileType {
+    return runCatching { FileType.valueOf(name) }.getOrDefault(FileType.EPUB)
+}
+
+fun RenderMode.toSharedRenderMode(): SharedRenderMode {
     return SharedRenderMode.valueOf(name)
 }
 
-private fun AddBooksSource.toSharedAddBooksSource(): SharedAddBooksSource {
+fun SharedRenderMode.toAndroidRenderMode(): RenderMode {
+    return RenderMode.valueOf(name)
+}
+
+fun AddBooksSource.toSharedAddBooksSource(): SharedAddBooksSource {
     return SharedAddBooksSource.valueOf(name)
 }
 
-private fun SortOrder.toSharedSortOrder(): SharedSortOrder {
+fun SharedAddBooksSource.toAndroidAddBooksSource(): AddBooksSource {
+    return AddBooksSource.valueOf(name)
+}
+
+fun SortOrder.toSharedSortOrder(): SharedSortOrder {
     return SharedSortOrder.valueOf(name)
 }
 
-private fun ReadStatusFilter.toSharedReadStatusFilter(): SharedReadStatusFilter {
+fun SharedSortOrder.toAndroidSortOrder(): SortOrder {
+    return SortOrder.valueOf(name)
+}
+
+fun ReadStatusFilter.toSharedReadStatusFilter(): SharedReadStatusFilter {
     return SharedReadStatusFilter.valueOf(name)
 }
 
-private fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters {
+fun SharedReadStatusFilter.toAndroidReadStatusFilter(): ReadStatusFilter {
+    return ReadStatusFilter.valueOf(name)
+}
+
+fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters {
     return SharedLibraryFilters(
         fileTypes = fileTypes.mapTo(mutableSetOf()) { it.toSharedFileType() },
         sourceFolders = sourceFolders,
@@ -210,7 +315,18 @@ private fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters {
     )
 }
 
-private fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder {
+fun SharedLibraryFilters.toAndroidLibraryFilters(): LibraryFilters {
+    return LibraryFilters(
+        fileTypes = fileTypes.mapNotNullTo(mutableSetOf()) { type ->
+            runCatching { FileType.valueOf(type.name) }.getOrNull()
+        },
+        sourceFolders = sourceFolders,
+        readStatus = readStatus.toAndroidReadStatusFilter(),
+        tagIds = tagIds
+    )
+}
+
+fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder {
     return SharedSyncedFolder(
         uriString = uriString,
         name = name,
@@ -219,7 +335,22 @@ private fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder {
     )
 }
 
-private fun BannerMessage.toSharedBannerMessage(): SharedBannerMessage {
+fun SharedSyncedFolder.toAndroidSyncedFolder(): SyncedFolder {
+    return SyncedFolder(
+        uriString = uriString,
+        name = name,
+        lastScanTime = lastScanTime,
+        allowedFileTypes = allowedFileTypes.mapNotNullTo(mutableSetOf()) { type ->
+            runCatching { FileType.valueOf(type.name) }.getOrNull()
+        }
+    )
+}
+
+private fun SharedShelfType.toAndroidShelfType(): ShelfType {
+    return ShelfType.valueOf(name)
+}
+
+fun BannerMessage.toSharedBannerMessage(): SharedBannerMessage {
     return SharedBannerMessage(
         message = message,
         isError = isError,
@@ -227,16 +358,32 @@ private fun BannerMessage.toSharedBannerMessage(): SharedBannerMessage {
     )
 }
 
-private fun AppThemeMode.toSharedAppThemeMode(): SharedAppThemeMode {
+fun AppThemeMode.toSharedAppThemeMode(): SharedAppThemeMode {
     return SharedAppThemeMode.valueOf(name)
 }
 
-private fun AppContrastOption.toSharedAppContrastOption(): SharedAppContrastOption {
+fun SharedAppThemeMode.toAndroidAppThemeMode(): AppThemeMode {
+    return AppThemeMode.valueOf(name)
+}
+
+fun AppContrastOption.toSharedAppContrastOption(): SharedAppContrastOption {
     return SharedAppContrastOption.valueOf(name)
 }
 
-private fun CustomAppTheme.toSharedCustomAppTheme(): SharedCustomAppTheme {
+fun SharedAppContrastOption.toAndroidAppContrastOption(): AppContrastOption {
+    return AppContrastOption.valueOf(name)
+}
+
+fun CustomAppTheme.toSharedCustomAppTheme(): SharedCustomAppTheme {
     return SharedCustomAppTheme(
+        id = id,
+        name = name,
+        seedColor = seedColor
+    )
+}
+
+fun SharedCustomAppTheme.toAndroidCustomAppTheme(): CustomAppTheme {
+    return CustomAppTheme(
         id = id,
         name = name,
         seedColor = seedColor

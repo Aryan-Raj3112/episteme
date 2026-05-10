@@ -1,7 +1,6 @@
 package com.aryan.reader.shared
 
 import java.nio.file.Files
-import kotlin.io.path.toFile
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

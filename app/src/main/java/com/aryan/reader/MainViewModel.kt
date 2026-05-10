@@ -96,8 +96,11 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.SharedLibraryEditor
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.shared.AppAction as SharedAppAction
+import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -634,6 +637,39 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = _internalState.value
     )
 
+    private fun ReaderScreenState.withSharedLibraryAction(action: SharedLibraryAction): ReaderScreenState {
+        val projectedState = uiState.value
+        val rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles }
+        val tags = projectedState.allTags.ifEmpty { allTags }
+        val androidBooksById = (rawBooks + contextualActionItems).associateBy { it.bookId }
+        val reduced = toSharedReaderScreenState(rawBooks = rawBooks, dbTags = tags).reduce(action)
+        return copy(
+            searchQuery = reduced.searchQuery,
+            sortOrder = reduced.sortOrder.toAndroidSortOrder(),
+            libraryFilters = reduced.libraryFilters.toAndroidLibraryFilters(),
+            contextualActionItems = reduced.selectedBookIds.mapNotNullTo(mutableSetOf()) { androidBooksById[it] },
+            contextualActionShelfIds = reduced.selectedShelfIds,
+            libraryScreenStartPage = reduced.libraryScreenStartPage,
+            recentFilesLimit = reduced.recentFilesLimit
+        )
+    }
+
+    private fun ReaderScreenState.withSharedAppAction(action: SharedAppAction): ReaderScreenState {
+        val projectedState = uiState.value
+        val reduced = toSharedReaderScreenState(
+            rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles },
+            dbTags = projectedState.allTags.ifEmpty { allTags }
+        ).reduce(action)
+        return copy(
+            appThemeMode = reduced.appThemeMode.toAndroidAppThemeMode(),
+            appContrastOption = reduced.appContrastOption.toAndroidAppContrastOption(),
+            appTextDimFactorLight = reduced.appTextDimFactorLight,
+            appTextDimFactorDark = reduced.appTextDimFactorDark,
+            appSeedColor = reduced.appSeedColor,
+            customAppThemes = reduced.customAppThemes.map { it.toAndroidCustomAppTheme() }
+        )
+    }
+
     fun setTabsEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }
         _internalState.update { it.copy(isTabsEnabled = enabled) }
@@ -870,7 +906,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun onSearchQueryChange(newQuery: String) {
         _internalState.update {
             if (it.isSearchActive) {
-                it.copy(searchQuery = newQuery)
+                it.withSharedLibraryAction(SharedLibraryAction.SearchChanged(newQuery))
             } else {
                 it
             }
@@ -1847,7 +1883,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateLibraryFilters(filters: LibraryFilters) {
-        _internalState.update { it.copy(libraryFilters = filters) }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.FiltersChanged(filters.toSharedLibraryFilters())) }
 
         prefs.edit {
             putStringSet(KEY_FILTER_FILE_TYPES, filters.fileTypes.map { it.name }.toSet())
@@ -3465,12 +3501,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setRecentFilesLimit(limit: Int) {
-        _internalState.update { it.copy(recentFilesLimit = limit) }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.RecentLimitChanged(limit)) }
         prefs.edit { putInt(KEY_RECENT_FILES_LIMIT, limit) }
     }
 
     fun setSortOrder(sortOrder: SortOrder) {
-        _internalState.update { it.copy(sortOrder = sortOrder) }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.SortChanged(sortOrder.toSharedSortOrder())) }
         prefs.edit { putString(KEY_SORT_ORDER, sortOrder.name) }
     }
 
@@ -4499,13 +4535,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val currentSelection = _internalState.value.contextualActionItems
         if (currentSelection.isNotEmpty()) {
             Timber.d("Toggling selection for: ${item.displayName}")
-            val newSelection = if (currentSelection.any { it.bookId == item.bookId }) {
-                currentSelection.filterNot { it.bookId == item.bookId }.toSet()
-            } else {
-                currentSelection + item
-            }
-            _internalState.update { it.copy(contextualActionItems = newSelection) }
-            Timber.d("New selection size: ${newSelection.size}")
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.BookSelectionToggled(item.bookId)) }
+            Timber.d("New selection size: ${_internalState.value.contextualActionItems.size}")
         } else {
             if (item.sourceFolderUri != null && item.uriString != null) {
                 viewModelScope.launch {
@@ -4598,7 +4629,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "Long press on: ${item.displayName}. Current selection size: ${currentSelection.size}"
         )
         if (currentSelection.none { it.bookId == item.bookId }) {
-            _internalState.update { it.copy(contextualActionItems = currentSelection + item) }
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.BookSelectionToggled(item.bookId)) }
         }
         Timber.d("New selection size: ${_internalState.value.contextualActionItems.size}")
     }
@@ -4628,7 +4659,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearContextualAction() {
         Timber.d("Clearing contextual action mode.")
         if (_internalState.value.contextualActionItems.isNotEmpty()) {
-            _internalState.update { it.copy(contextualActionItems = emptySet()) }
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.SelectionCleared) }
         }
     }
 
@@ -4784,30 +4815,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private fun toggleShelfSelection(shelf: Shelf) {
         if (shelf.type != ShelfType.MANUAL) return
 
-        _internalState.update { state ->
-            val currentSelection = state.contextualActionShelfIds
-            val newSelection = if (shelf.id in currentSelection) {
-                currentSelection - shelf.id
-            } else {
-                currentSelection + shelf.id
-            }
-            state.copy(contextualActionShelfIds = newSelection)
-        }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.ShelfSelectionToggled(shelf.id)) }
     }
 
     fun onShelfLongPress(shelf: Shelf) {
         if (shelf.type != ShelfType.MANUAL || shelf.id == "unshelved") return
         val currentSelection = _internalState.value.contextualActionShelfIds
         if (shelf.id !in currentSelection) {
-            _internalState.update {
-                it.copy(contextualActionShelfIds = currentSelection + shelf.id)
-            }
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.ShelfSelectionToggled(shelf.id)) }
         }
     }
 
     fun clearShelfContextualAction() {
         if (_internalState.value.contextualActionShelfIds.isNotEmpty()) {
-            _internalState.update { it.copy(contextualActionShelfIds = emptySet()) }
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.ShelfSelectionCleared) }
         }
     }
 
@@ -5255,27 +5276,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setAppThemeMode(mode: AppThemeMode) {
-        _internalState.update { it.copy(appThemeMode = mode) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppThemeChanged(mode.toSharedAppThemeMode())) }
         prefs.edit { putString(KEY_APP_THEME_MODE, mode.name) }
     }
 
     fun setAppContrastOption(option: AppContrastOption) {
-        _internalState.update { it.copy(appContrastOption = option) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppContrastChanged(option.toSharedAppContrastOption())) }
         prefs.edit { putString(KEY_APP_CONTRAST_OPTION, option.name) }
     }
 
     fun setAppTextDimFactorLight(factor: Float) {
-        _internalState.update { it.copy(appTextDimFactorLight = factor) }
-        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_LIGHT, factor) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppTextDimFactorLightChanged(factor)) }
+        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_LIGHT, _internalState.value.appTextDimFactorLight) }
     }
 
     fun setAppTextDimFactorDark(factor: Float) {
-        _internalState.update { it.copy(appTextDimFactorDark = factor) }
-        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_DARK, factor) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppTextDimFactorDarkChanged(factor)) }
+        prefs.edit { putFloat(KEY_APP_TEXT_DIM_FACTOR_DARK, _internalState.value.appTextDimFactorDark) }
     }
 
     fun setAppSeedColor(color: androidx.compose.ui.graphics.Color?) {
-        _internalState.update { it.copy(appSeedColor = color) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppSeedColorChanged(color)) }
         prefs.edit {
             if (color == null) {
                 remove(KEY_APP_SEED_COLOR)
@@ -5286,18 +5307,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun addCustomAppTheme(theme: CustomAppTheme) {
-        val current = _internalState.value.customAppThemes.filter { it.id != theme.id } + theme
-        _internalState.update { it.copy(customAppThemes = current) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.CustomAppThemeAdded(theme.toSharedCustomAppTheme())) }
+        val current = _internalState.value.customAppThemes
         saveCustomAppThemes(current)
-        setAppSeedColor(theme.seedColor)
+        prefs.edit { putInt(KEY_APP_SEED_COLOR, theme.seedColor.toArgb()) }
     }
 
     fun deleteCustomAppTheme(themeId: String) {
-        val current = _internalState.value.customAppThemes.filter { it.id != themeId }
-        _internalState.update { it.copy(customAppThemes = current) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.CustomAppThemeDeleted(themeId)) }
+        val current = _internalState.value.customAppThemes
         saveCustomAppThemes(current)
-        if (_internalState.value.appSeedColor != null && !current.any { it.seedColor == _internalState.value.appSeedColor }) {
-            setAppSeedColor(null)
+        prefs.edit {
+            val seed = _internalState.value.appSeedColor
+            if (seed == null) {
+                remove(KEY_APP_SEED_COLOR)
+            } else {
+                putInt(KEY_APP_SEED_COLOR, seed.toArgb())
+            }
         }
     }
 

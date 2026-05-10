@@ -33,6 +33,13 @@ class LibraryStateProjectorTest {
     }
 
     @Test
+    fun `filterBySearch preserves android display-name matching when a custom name exists`() {
+        val file = recentFile("custom", displayName = "Original File.pdf", customName = "Renamed")
+
+        assertEquals(listOf("custom"), filterBySearch(listOf(file), "original").ids())
+    }
+
+    @Test
     fun `applyLibraryFilters requires all active filters to match`() {
         val activeTag = tag("active", "Active")
         val files = listOf(
@@ -188,6 +195,7 @@ class LibraryStateProjectorTest {
             sortOrder = SortOrder.TITLE_ASC,
             recentFilesLimit = 1,
             openTabIds = listOf("beta", "missing"),
+            activeTabBookId = "missing",
             contextualActionItems = setOf(recentFile("beta"), recentFile("missing")),
             viewingShelfId = "manual",
             contextualActionShelfIds = setOf("manual", "missing")
@@ -208,6 +216,8 @@ class LibraryStateProjectorTest {
         assertEquals(listOf("alpha", "beta", "gamma"), result.rawLibraryFiles.ids())
         assertEquals(listOf("beta"), result.recentFiles.ids())
         assertEquals(listOf("beta"), result.openTabs.ids())
+        assertEquals(listOf("beta"), result.openTabIds)
+        assertNull(result.activeTabBookId)
         assertEquals(setOf("beta"), result.contextualActionItems.mapTo(mutableSetOf()) { it.bookId })
         assertEquals(listOf(tag), result.contextualActionItems.first().tags)
         assertEquals("manual", result.viewingShelfId)
@@ -264,6 +274,30 @@ class LibraryStateProjectorTest {
         assertEquals(listOf("match"), result.allRecentFiles.ids())
         assertEquals(listOf("search_miss", "filter_miss", "match"), result.rawLibraryFiles.ids())
         assertEquals(listOf(tag), result.allTags)
+    }
+
+    @Test
+    fun `project keeps pinned home and library books first using shared projector`() {
+        val older = recentFile("older", title = "Zulu", timestamp = 1L)
+        val newer = recentFile("newer", title = "Alpha", timestamp = 2L)
+
+        val result = LibraryStateProjector().project(
+            LibraryProjectionInput(
+                state = ReaderScreenState(
+                    sortOrder = SortOrder.TITLE_ASC,
+                    pinnedHomeBookIds = setOf("older"),
+                    pinnedLibraryBookIds = setOf("older")
+                ),
+                recentFilesFromDb = listOf(older, newer),
+                dbShelves = emptyList(),
+                shelfRefs = emptyList(),
+                dbTags = emptyList(),
+                tagRefs = emptyList()
+            )
+        )
+
+        assertEquals(listOf("older", "newer"), result.recentFiles.ids())
+        assertEquals(listOf("older", "newer"), result.allRecentFiles.ids())
     }
 
     @Test
@@ -479,7 +513,8 @@ class LibraryStateProjectorTest {
         tags: List<TagEntity> = emptyList(),
         fileSize: Long = 0L,
         seriesName: String? = null,
-        seriesIndex: Double? = null
+        seriesIndex: Double? = null,
+        customName: String? = null
     ) = RecentFileItem(
         bookId = id,
         uriString = uriString,
@@ -494,7 +529,8 @@ class LibraryStateProjectorTest {
         tags = tags,
         fileSize = fileSize,
         seriesName = seriesName,
-        seriesIndex = seriesIndex
+        seriesIndex = seriesIndex,
+        customName = customName
     )
 
     private fun tag(id: String, name: String) = TagEntity(
