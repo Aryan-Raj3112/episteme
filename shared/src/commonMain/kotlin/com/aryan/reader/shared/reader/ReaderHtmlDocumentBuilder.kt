@@ -35,6 +35,7 @@ object ReaderHtmlDocumentBuilder {
         pages: List<ReaderPage> = emptyList(),
         readerAiFeaturesEnabled: Boolean = true,
         cloudTtsEnabled: Boolean = true,
+        externalLookupEnabled: Boolean = true,
         textureDataUri: String? = null
     ): String {
         val body = book.chapters.mapIndexed { index, chapter ->
@@ -66,6 +67,7 @@ object ReaderHtmlDocumentBuilder {
             pageAnchors = pages,
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
             cloudTtsEnabled = cloudTtsEnabled,
+            externalLookupEnabled = externalLookupEnabled,
             textureDataUri = textureDataUri
         )
     }
@@ -81,6 +83,7 @@ object ReaderHtmlDocumentBuilder {
         navigationLocator: ReaderLocator? = null,
         readerAiFeaturesEnabled: Boolean = true,
         cloudTtsEnabled: Boolean = true,
+        externalLookupEnabled: Boolean = true,
         textureDataUri: String? = null
     ): String {
         val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
@@ -128,6 +131,7 @@ object ReaderHtmlDocumentBuilder {
             pageAnchors = emptyList(),
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
             cloudTtsEnabled = cloudTtsEnabled,
+            externalLookupEnabled = externalLookupEnabled,
             textureDataUri = textureDataUri
         )
     }
@@ -144,6 +148,7 @@ object ReaderHtmlDocumentBuilder {
         pageAnchors: List<ReaderPage>,
         readerAiFeaturesEnabled: Boolean,
         cloudTtsEnabled: Boolean,
+        externalLookupEnabled: Boolean,
         textureDataUri: String?
     ): String {
         val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
@@ -184,6 +189,16 @@ object ReaderHtmlDocumentBuilder {
             """<button type="button" data-action="speak">Speak</button>"""
         } else {
             ""
+        }
+        val externalLookupButtons = if (externalLookupEnabled) {
+            """
+                <button type="button" data-action="dictionary">Dict</button>
+                <button type="button" data-action="find">Find</button>
+                <button type="button" data-action="web-search">Web</button>
+                <button type="button" data-action="translate">Translate</button>
+            """.trimIndent()
+        } else {
+            """<button type="button" data-action="find">Find</button>"""
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         val pageAnchorJson = pageAnchors.toPageAnchorJson()
@@ -319,10 +334,7 @@ object ReaderHtmlDocumentBuilder {
                 $highlightButtons
                 $defineButton
                 $speakButton
-                <button type="button" data-action="dictionary">Dict</button>
-                <button type="button" data-action="find">Find</button>
-                <button type="button" data-action="web-search">Web</button>
-                <button type="button" data-action="translate">Translate</button>
+                $externalLookupButtons
                 <button type="button" data-action="clear">Clear</button>
               </div>
               <script>

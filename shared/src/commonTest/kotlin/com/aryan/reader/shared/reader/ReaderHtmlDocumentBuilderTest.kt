@@ -115,6 +115,28 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `selection menu omits external lookup actions when offline`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta",
+                startOffset = 0,
+                endOffset = 10
+            ),
+            settings = ReaderSettings(),
+            externalLookupEnabled = false
+        )
+
+        assertFalse(html.contains("""data-action="dictionary""""))
+        assertFalse(html.contains("""data-action="web-search""""))
+        assertFalse(html.contains("""data-action="translate""""))
+        assertTrue(html.contains("""data-action="find""""))
+    }
+
+    @Test
     fun `page document uses supplied texture data uri`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),

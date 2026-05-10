@@ -65,7 +65,9 @@ fun epubReaderWorkspaceModel(
     session: ReaderSessionState,
     toolbarPreferences: ReaderToolbarPreferences,
     extrasState: ReaderExtrasState,
-    aiAvailable: Boolean
+    aiAvailable: Boolean,
+    cloudTtsAvailable: Boolean = true,
+    externalLookupAvailable: Boolean = true
 ): ReaderWorkspaceModel {
     val preferences = toolbarPreferences.sanitized()
     val leftSections = buildList {
@@ -82,9 +84,9 @@ fun epubReaderWorkspaceModel(
             add(ReaderWorkspaceInspectorSection.TOOLS)
         }
         if (
-            preferences.isVisible(ReaderTool.DICTIONARY) ||
-            preferences.isVisible(ReaderTool.AI_FEATURES) ||
-            preferences.isVisible(ReaderTool.TTS_CONTROLS) ||
+            (externalLookupAvailable && preferences.isVisible(ReaderTool.DICTIONARY)) ||
+            (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) ||
+            (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) ||
             preferences.isVisible(ReaderTool.AUTO_SCROLL)
         ) {
             add(ReaderWorkspaceInspectorSection.AI_TTS)
@@ -96,7 +98,7 @@ fun epubReaderWorkspaceModel(
         if (preferences.isVisible(ReaderTool.SEARCH)) add(ReaderWorkspaceTopAction.SEARCH)
         if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceTopAction.BOOKMARK)
         if (ReaderWorkspaceInspectorSection.APPEARANCE in inspectorSections) add(ReaderWorkspaceTopAction.APPEARANCE)
-        if (preferences.isVisible(ReaderTool.TTS_CONTROLS)) add(ReaderWorkspaceTopAction.READ_ALOUD)
+        if (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) add(ReaderWorkspaceTopAction.AI)
         if (preferences.isVisible(ReaderTool.AUTO_SCROLL)) add(ReaderWorkspaceTopAction.AUTO_SCROLL)
         if (inspectorSections.isNotEmpty()) add(ReaderWorkspaceTopAction.TOOLS)
@@ -130,14 +132,18 @@ fun epubReaderWorkspaceModel(
 fun readerWorkspaceQuickActionTools(
     toolbarPreferences: ReaderToolbarPreferences,
     bottom: Boolean,
-    aiAvailable: Boolean
+    aiAvailable: Boolean,
+    cloudTtsAvailable: Boolean = true,
+    externalLookupAvailable: Boolean = true
 ): List<ReaderTool> {
     val preferences = toolbarPreferences.sanitized()
     return preferences.orderedVisibleTools()
         .filter { tool ->
             tool.supportsDesktopQuickAction &&
                 preferences.isBottom(tool) == bottom &&
-                (tool != ReaderTool.AI_FEATURES || aiAvailable)
+                (tool != ReaderTool.AI_FEATURES || aiAvailable) &&
+                (tool != ReaderTool.TTS_CONTROLS || cloudTtsAvailable) &&
+                (tool != ReaderTool.DICTIONARY || externalLookupAvailable)
         }
 }
 
@@ -154,7 +160,9 @@ fun pdfReaderWorkspaceModel(
     loading: Boolean,
     errorMessage: String?,
     extrasState: ReaderExtrasState,
-    aiAvailable: Boolean
+    aiAvailable: Boolean,
+    cloudTtsAvailable: Boolean = true,
+    externalLookupAvailable: Boolean = true
 ): ReaderWorkspaceModel {
     val leftSections = buildList {
         add(ReaderWorkspaceLeftSection.CONTENTS)
@@ -173,7 +181,7 @@ fun pdfReaderWorkspaceModel(
         add(ReaderWorkspaceTopAction.SEARCH)
         add(ReaderWorkspaceTopAction.BOOKMARK)
         add(ReaderWorkspaceTopAction.APPEARANCE)
-        add(ReaderWorkspaceTopAction.READ_ALOUD)
+        if (cloudTtsAvailable) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable) add(ReaderWorkspaceTopAction.AI)
         add(ReaderWorkspaceTopAction.AUTO_SCROLL)
         add(ReaderWorkspaceTopAction.TOOLS)

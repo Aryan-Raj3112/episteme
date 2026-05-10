@@ -1,10 +1,54 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
+}
+
+abstract class CheckBundledWebViewRuntimeTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val bundleDir: DirectoryProperty
+
+    @TaskAction
+    fun checkRuntime() {
+        val bundleRoot = bundleDir.get().asFile
+        val missingFiles = listOf("jcef.dll", "libcef.dll")
+            .filterNot { bundleRoot.resolve(it).isFile }
+        if (missingFiles.isNotEmpty()) {
+            throw GradleException(
+                "Missing bundled KCEF runtime at ${bundleRoot.absolutePath}. " +
+                    "Expected ${missingFiles.joinToString()} for both standard and oss-offline desktop packages."
+            )
+        }
+    }
+}
+
+val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard").get().lowercase()
+val isOssOfflineDesktop = desktopFlavor == "oss-offline"
+val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
+val bundledWebViewDir = layout.projectDirectory.dir("kcef-bundle")
+
+val checkBundledWebViewRuntime by tasks.registering(CheckBundledWebViewRuntimeTask::class) {
+    bundleDir.set(bundledWebViewDir)
+}
+
+val prepareBundledDesktopResources by tasks.registering(Sync::class) {
+    dependsOn(checkBundledWebViewRuntime)
+    from(bundledWebViewDir) {
+        into("kcef-bundle")
+    }
+    into(generatedDesktopResourcesDir)
 }
 
 kotlin {
@@ -40,24 +84,41 @@ compose.desktop {
 
         jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
+        jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
 
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
-            packageName = "Episteme"
+            packageName = if (isOssOfflineDesktop) "Episteme OSS Offline" else "Episteme"
             packageVersion = "1.0.0"
-            description = "Episteme desktop shell"
+            description = if (isOssOfflineDesktop) {
+                "Episteme desktop offline shell"
+            } else {
+                "Episteme desktop shell"
+            }
             vendor = "Aryan Reader"
+            appResourcesRootDir.set(generatedDesktopResourcesDir)
         }
     }
 }
 
-afterEvaluate {
-    tasks.withType<JavaExec>().configureEach {
-        jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
-        jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
-        if (System.getProperty("os.name").contains("Mac")) {
-            jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
-            jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
-        }
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
+    jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
+    jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
+    if (System.getProperty("os.name").contains("Mac")) {
+        jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
+        jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
     }
+}
+
+tasks.matching {
+    it.name in setOf(
+        "createDistributable",
+        "prepareAppResources",
+        "packageDistributionForCurrentOS",
+        "packageExe",
+        "packageMsi"
+    )
+}.configureEach {
+    dependsOn(prepareBundledDesktopResources)
 }

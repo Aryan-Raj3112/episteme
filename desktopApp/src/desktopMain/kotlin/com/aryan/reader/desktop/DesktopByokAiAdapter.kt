@@ -27,10 +27,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class DesktopByokAiAdapter(
-    private val settingsProvider: () -> ReaderAiByokSettings
+    private val settingsProvider: () -> ReaderAiByokSettings,
+    private val networkAccess: () -> Boolean = { true }
 ) : AiAdapter {
     override val isAvailable: Boolean
-        get() = settingsProvider().sanitized().areReaderAiFeaturesAvailable
+        get() = networkAccess() && settingsProvider().sanitized().areReaderAiFeaturesAvailable
 
     override suspend fun define(text: String, context: String?): AiDefinitionResult {
         val result = callTextAi(ReaderAiFeature.DEFINE, text, context)
@@ -52,6 +53,7 @@ class DesktopByokAiAdapter(
         text: String,
         context: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
+        if (!networkAccess()) return@withContext Result.failure(IllegalStateException("AI features are unavailable in this desktop build."))
         if (text.isBlank()) return@withContext Result.failure(IllegalArgumentException("There is no text to send."))
         when (val requestResult = ReaderByokTextRequests.build(settingsProvider(), feature, text, context)) {
             ReaderByokTextRequestResult.Hidden -> Result.failure(IllegalStateException("Reader AI features are hidden."))

@@ -435,8 +435,8 @@ fun SharedSupportProjectScreen(
 fun SharedAboutScreen(
     versionName: String,
     buildLabel: String,
-    onOpenSource: () -> Unit,
-    onOpenIssues: () -> Unit,
+    onOpenSource: (() -> Unit)? = null,
+    onOpenIssues: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     SharedScreenScaffold(
@@ -471,18 +471,22 @@ fun SharedAboutScreen(
                 }
             }
         }
-        SharedUtilityOptionCard(
-            title = "Source Code",
-            body = "Browse the project source on GitHub.",
-            icon = { Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(28.dp)) },
-            onClick = onOpenSource
-        )
-        SharedUtilityOptionCard(
-            title = "Issues",
-            body = "Open the issue tracker for bugs and feature requests.",
-            icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(28.dp)) },
-            onClick = onOpenIssues
-        )
+        if (onOpenSource != null) {
+            SharedUtilityOptionCard(
+                title = "Source Code",
+                body = "Browse the project source on GitHub.",
+                icon = { Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                onClick = onOpenSource
+            )
+        }
+        if (onOpenIssues != null) {
+            SharedUtilityOptionCard(
+                title = "Issues",
+                body = "Open the issue tracker for bugs and feature requests.",
+                icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                onClick = onOpenIssues
+            )
+        }
     }
 }
 

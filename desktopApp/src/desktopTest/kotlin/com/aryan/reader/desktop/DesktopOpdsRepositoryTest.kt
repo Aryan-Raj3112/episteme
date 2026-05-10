@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DesktopOpdsRepositoryTest {
@@ -25,6 +26,15 @@ class DesktopOpdsRepositoryTest {
         assertEquals("https://example.org/opds", custom.url)
         assertEquals("user", custom.username)
         assertEquals("pass", custom.password)
+    }
+
+    @Test
+    fun `desktop opds http blocks before network in offline flavor`() {
+        withSystemProperty(DesktopFlavorProperty, DesktopFlavorOssOffline) {
+            assertFailsWith<IllegalStateException> {
+                DesktopOpdsHttp.fetchString("https://example.org/opds", null, null)
+            }
+        }
     }
 
     private fun DesktopOpdsRepository.addCatalogForTest(
@@ -51,6 +61,28 @@ class DesktopOpdsRepositoryTest {
             block(dir)
         } finally {
             dir.deleteRecursively()
+        }
+    }
+
+    private fun withSystemProperty(
+        key: String,
+        value: String?,
+        block: () -> Unit
+    ) {
+        val previous = System.getProperty(key)
+        try {
+            if (value == null) {
+                System.clearProperty(key)
+            } else {
+                System.setProperty(key, value)
+            }
+            block()
+        } finally {
+            if (previous == null) {
+                System.clearProperty(key)
+            } else {
+                System.setProperty(key, previous)
+            }
         }
     }
 }

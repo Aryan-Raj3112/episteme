@@ -76,6 +76,21 @@ class DesktopCustomFontStoreTest {
         assertEquals(listOf("Inter", "Literata"), googleFontsFromJson("""["Inter", "", " Literata "]"""))
     }
 
+    @Test
+    fun `download google font fails before network when downloads are disabled`() {
+        val tempRoot = Files.createTempDirectory("episteme-font-store-test").toFile()
+        try {
+            val store = DesktopCustomFontStore(
+                fontsDir = File(tempRoot, "store"),
+                googleFontsDownloadAvailable = { false }
+            )
+
+            assertTrue(store.downloadGoogleFont("Inter").isFailure)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
     private fun File.toFontItem(): CustomFontItem {
         return CustomFontItem(
             id = nameWithoutExtension,

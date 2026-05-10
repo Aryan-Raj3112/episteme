@@ -4,6 +4,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
@@ -142,6 +143,23 @@ class NonReaderLayoutModelsTest {
         val withoutAi = sharedAppShellModel(SharedAppTab.SHELVES, aiSettingsAvailable = false)
         assertEquals(SharedAppTab.LIBRARY, withoutAi.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in withoutAi.toolActions)
+    }
+
+    @Test
+    fun `offline shell model hides network backed navigation and tools`() {
+        val model = sharedAppShellModel(
+            selectedTab = SharedAppTab.CATALOGS,
+            aiSettingsAvailable = true,
+            featurePolicy = SharedFeaturePolicy.OssOffline
+        )
+
+        assertEquals(listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY, SharedAppTab.READER), model.primaryTabs)
+        assertEquals(SharedAppTab.HOME, model.selectedPrimaryTab)
+        assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
+        assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
+        assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)
+        assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
+        assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
     }
 
     private fun book(

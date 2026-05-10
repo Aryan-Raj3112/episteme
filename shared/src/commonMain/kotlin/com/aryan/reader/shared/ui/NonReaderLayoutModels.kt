@@ -4,6 +4,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.isOpdsStream
@@ -31,14 +32,15 @@ data class SharedAppShellModel(
 
 fun sharedAppShellModel(
     selectedTab: SharedAppTab,
-    aiSettingsAvailable: Boolean
+    aiSettingsAvailable: Boolean,
+    featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
 ): SharedAppShellModel {
-    val primaryTabs = listOf(
-        SharedAppTab.HOME,
-        SharedAppTab.LIBRARY,
-        SharedAppTab.CATALOGS,
-        SharedAppTab.READER
-    )
+    val primaryTabs = buildList {
+        add(SharedAppTab.HOME)
+        add(SharedAppTab.LIBRARY)
+        if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
+        add(SharedAppTab.READER)
+    }
     val selectedPrimaryTab = when (selectedTab) {
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
         SharedAppTab.CUSTOM_FONTS,
@@ -46,16 +48,18 @@ fun sharedAppShellModel(
         SharedAppTab.FEEDBACK,
         SharedAppTab.ABOUT -> SharedAppTab.HOME
         else -> selectedTab
-    }
+    }.takeIf { it in primaryTabs } ?: SharedAppTab.HOME
     val toolActions = buildList {
         add(SharedAppToolAction.IMPORT_FILES)
         add(SharedAppToolAction.IMPORT_FOLDER)
         add(SharedAppToolAction.SYNC)
         add(SharedAppToolAction.APP_THEME)
-        if (aiSettingsAvailable) add(SharedAppToolAction.AI_SETTINGS)
+        if (aiSettingsAvailable && featurePolicy.aiAndCloud) add(SharedAppToolAction.AI_SETTINGS)
         add(SharedAppToolAction.CUSTOM_FONTS)
-        add(SharedAppToolAction.HELP_FEEDBACK)
-        add(SharedAppToolAction.SUPPORT)
+        if (featurePolicy.projectLinks) {
+            add(SharedAppToolAction.HELP_FEEDBACK)
+            add(SharedAppToolAction.SUPPORT)
+        }
         add(SharedAppToolAction.ABOUT)
         add(SharedAppToolAction.TABS_TOGGLE)
     }

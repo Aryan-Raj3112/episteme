@@ -53,6 +53,7 @@ private data class DesktopTtsSequenceChunk(
 
 class DesktopGeminiCloudTtsAdapter(
     private val settingsProvider: () -> ReaderAiByokSettings,
+    private val networkAccess: () -> Boolean = { true },
     private val httpClient: HttpClient = HttpClient.newHttpClient(),
     private val cacheManager: ReaderTtsFileCacheManager = ReaderTtsFileCacheManager(defaultDesktopTtsCacheRoot())
 ) : TtsAdapter {
@@ -66,7 +67,7 @@ class DesktopGeminiCloudTtsAdapter(
     private var activePlayer: DesktopStreamingPcmPlayer? = null
 
     override val isAvailable: Boolean
-        get() = settingsProvider().sanitized().isCloudTtsAvailable
+        get() = networkAccess() && settingsProvider().sanitized().isCloudTtsAvailable
 
     override suspend fun speak(text: String) {
         val trimmed = text.trim()
@@ -171,6 +172,10 @@ class DesktopGeminiCloudTtsAdapter(
                 "ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" speaker=\"${settings.ttsSpeakerId.desktopTtsPreview()}\" " +
                 "available=${settings.isCloudTtsAvailable}"
         )
+        if (!networkAccess()) {
+            logDesktopTts("stream_blocked reason=network_disabled")
+            throw IllegalStateException("Cloud TTS is unavailable in this desktop build.")
+        }
         if (!settings.isCloudTtsAvailable) {
             logDesktopTts("stream_blocked reason=not_available")
             throw IllegalStateException("Cloud TTS needs a saved Gemini key and the Gemini cloud TTS model selected.")

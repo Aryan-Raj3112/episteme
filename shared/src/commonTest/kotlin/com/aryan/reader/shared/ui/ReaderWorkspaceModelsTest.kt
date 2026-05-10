@@ -105,6 +105,34 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `toolbar quick actions hide online tools when unavailable`() {
+        val preferences = ReaderToolbarPreferences(
+            toolOrder = listOf(
+                ReaderTool.DICTIONARY,
+                ReaderTool.SEARCH,
+                ReaderTool.AI_FEATURES,
+                ReaderTool.TTS_CONTROLS
+            ) + ReaderTool.entries,
+            bottomToolIds = setOf(
+                ReaderTool.DICTIONARY.id,
+                ReaderTool.SEARCH.id,
+                ReaderTool.AI_FEATURES.id,
+                ReaderTool.TTS_CONTROLS.id
+            )
+        )
+
+        val tools = readerWorkspaceQuickActionTools(
+            toolbarPreferences = preferences,
+            bottom = true,
+            aiAvailable = false,
+            cloudTtsAvailable = false,
+            externalLookupAvailable = false
+        )
+
+        assertEquals(listOf(ReaderTool.SEARCH), tools)
+    }
+
+    @Test
     fun `pdf workspace defaults to reading first while keeping annotation tools in inspector`() {
         val model = pdfReaderWorkspaceModel(
             state = SharedPdfReaderState.initial(pageCount = 4),

@@ -160,6 +160,7 @@ import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
@@ -360,10 +361,16 @@ private data class DesktopWebViewRuntimeState(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EpistemeDesktopApp(window: Component? = null) {
+    val desktopBuildProfile = remember { currentDesktopBuildProfile() }
+    val featurePolicy = desktopBuildProfile.featurePolicy
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
-    val customFontStore = remember { DesktopCustomFontStore() }
+    val customFontStore = remember {
+        DesktopCustomFontStore(
+            googleFontsDownloadAvailable = { featurePolicy.googleFontsDownload }
+        )
+    }
     val opdsRepository = remember { DesktopOpdsRepository() }
     val opdsController = remember {
         SharedOpdsController(
@@ -372,23 +379,38 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
     }
     val aiByokStore = remember { DesktopAiByokStore() }
-    var aiByokSettings by remember { mutableStateOf(aiByokStore.load()) }
+    var aiByokSettings by remember {
+        mutableStateOf(aiByokStore.load().withDesktopFeaturePolicy(featurePolicy))
+    }
     val desktopAiAdapter = remember {
-        DesktopByokAiAdapter { aiByokSettings }
+        DesktopByokAiAdapter(
+            settingsProvider = { aiByokSettings.withDesktopFeaturePolicy(featurePolicy) },
+            networkAccess = { featurePolicy.networkAccess }
+        )
     }
     val desktopTtsAdapter = remember {
-        DesktopGeminiCloudTtsAdapter(settingsProvider = { aiByokSettings })
+        DesktopGeminiCloudTtsAdapter(
+            settingsProvider = { aiByokSettings.withDesktopFeaturePolicy(featurePolicy) },
+            networkAccess = { featurePolicy.networkAccess }
+        )
     }
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
     var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
+    val webViewBundleDir = remember { bundledDesktopWebViewDir() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(webViewBundleDir) {
+        if (!isBundledDesktopWebViewPresent(webViewBundleDir)) {
+            webViewRuntimeState = webViewRuntimeState.copy(
+                errorMessage = "Bundled embedded webview is missing from ${webViewBundleDir.absolutePath}."
+            )
+            return@LaunchedEffect
+        }
         withContext(Dispatchers.IO) {
             KCEF.init(
                 builder = {
-                    installDir(File("kcef-bundle"))
+                    installDir(webViewBundleDir)
                     progress {
                         onDownloading {
                             webViewRuntimeState = webViewRuntimeState.copy(downloadProgress = max(it, 0f))
@@ -564,6 +586,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
+        if (!featurePolicy.aiAndCloud) return
         val sanitized = next.sanitized()
         logDesktopTts(
             "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
@@ -602,6 +625,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     )
 
     fun openReaderExternalLookup(action: ReaderExternalLookupAction, text: String) {
+        if (!featurePolicy.externalLookup) return
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
         openExternalUrl(externalLookupUrl(action, normalizedText.take(1800)))
@@ -834,12 +858,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             }.onFailure { error ->
                 logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
                 if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
-                if (error is kotlinx.coroutines.CancellationException) {
-                    readerExtrasState = readerExtrasState.copy(
+                readerExtrasState = if (error is kotlinx.coroutines.CancellationException) {
+                    readerExtrasState.copy(
                         cloudTts = readerCloudTtsStoppedState(statusMessage = "Stopped")
                     )
                 } else {
-                    readerExtrasState = readerExtrasState.copy(
+                    readerExtrasState.copy(
                         cloudTts = readerCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
                     )
                 }
@@ -1051,6 +1075,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+        if (!featurePolicy.googleFontsDownload) {
+            updateState(state.withBanner("Google Fonts download is unavailable in this desktop build.", isError = true))
+            onComplete()
+            return
+        }
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 customFontStore.downloadGoogleFont(fontName)
@@ -1159,6 +1188,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             }
             val streamReference = SharedOpdsStreamUri.parse(path)
             if (streamReference != null) {
+                if (!featurePolicy.opdsCatalogs) {
+                    updateState(state.withBanner("OPDS streams are unavailable in this desktop build.", isError = true))
+                    return
+                }
                 if (activePdfDocument?.path == path) {
                     activeReaderBookId = book.id
                     recordBookOpened(book.id)
@@ -1372,12 +1405,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun openOpdsCatalog(catalog: OpdsCatalog) {
+        if (!featurePolicy.opdsCatalogs) return
         scope.launch {
             opdsController.openCatalog(catalog, ::emitOpds)
         }
     }
 
     fun openOpdsFeedUrl(url: String) {
+        if (!featurePolicy.opdsCatalogs) return
         scope.launch {
             opdsController.openFeedUrl(url, ::emitOpds)
         }
@@ -1390,12 +1425,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun searchOpds(query: String) {
+        if (!featurePolicy.opdsCatalogs) return
         scope.launch {
             opdsController.search(query, ::emitOpds)
         }
     }
 
     fun loadNextOpdsPage() {
+        if (!featurePolicy.opdsCatalogs) return
         scope.launch {
             opdsController.loadNextPage(::emitOpds)
         }
@@ -1425,6 +1462,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun downloadOpdsBook(entry: OpdsEntry, acquisition: OpdsAcquisition) {
+        if (!featurePolicy.opdsCatalogs) {
+            updateState(state.withBanner("OPDS downloads are unavailable in this desktop build.", isError = true))
+            return
+        }
         val catalog = opdsState.currentCatalog
         scope.launch {
             emitOpds(opdsController.updateDownloadState(entry.id, SharedOpdsDownloadState(true, 0f)))
@@ -1453,6 +1494,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun streamOpdsBook(entry: OpdsEntry, catalog: OpdsCatalog?) {
+        if (!featurePolicy.opdsCatalogs) {
+            updateState(state.withBanner("OPDS streams are unavailable in this desktop build.", isError = true))
+            return
+        }
         val pageCount = entry.pseCount
         val urlTemplate = entry.pseUrlTemplate
         if (pageCount == null || pageCount <= 0 || urlTemplate.isNullOrBlank()) {
@@ -1540,7 +1585,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 appSeedColor = state.appSeedColor,
                 customAppThemes = state.customAppThemes,
                 isTabsEnabled = state.isTabsEnabled,
-                onTabSelected = { selectedTab = it },
+                featurePolicy = featurePolicy,
+                onTabSelected = { tab ->
+                    selectedTab = if (tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs) {
+                        SharedAppTab.HOME
+                    } else {
+                        tab
+                    }
+                },
                 onImportFiles = { importFiles(chooseFiles()) },
                 onImportFolder = { chooseFolder()?.let(::importFolder) },
                 onSyncRequested = {
@@ -1554,7 +1606,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 onCustomAppThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
                 onCustomAppThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
                 onTabsEnabledChange = { enabled -> updateState(state.reduce(AppAction.TabsEnabledChanged(enabled))) },
-                onAiSettingsRequested = { showAiByokSettingsDialog = true }
+                onAiSettingsRequested = if (featurePolicy.aiAndCloud) {
+                    { showAiByokSettingsDialog = true }
+                } else {
+                    null
+                }
             ) { tab ->
                 when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
@@ -1619,32 +1675,38 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onRemoveFolder = { folderToRemove = it }
                         )
 
-                        SharedAppTab.CATALOGS -> SharedOpdsScreen(
-                            state = opdsState,
-                            localLibraryBooks = state.rawLibraryBooks,
-                            onOpenCatalog = ::openOpdsCatalog,
-                            onOpenFeedUrl = ::openOpdsFeedUrl,
-                            onNavigateBack = ::navigateOpdsBack,
-                            onSearch = ::searchOpds,
-                            onLoadNextPage = ::loadNextOpdsPage,
-                            onAddCatalog = { title, url, username, password ->
-                                emitOpds(opdsController.addCatalog(title, url, username, password))
-                            },
-                            onUpdateCatalog = { id, title, url, username, password ->
-                                emitOpds(opdsController.updateCatalog(id, title, url, username, password))
-                            },
-                            onRemoveCatalog = ::removeOpdsCatalog,
-                            onDownloadBook = ::downloadOpdsBook,
-                            onReadBook = ::openReader,
-                            onStreamBook = ::streamOpdsBook,
-                            onClearError = { emitOpds(opdsController.clearError()) }
-                        )
+                        SharedAppTab.CATALOGS -> {
+                            if (featurePolicy.opdsCatalogs) {
+                                SharedOpdsScreen(
+                                    state = opdsState,
+                                    localLibraryBooks = state.rawLibraryBooks,
+                                    onOpenCatalog = ::openOpdsCatalog,
+                                    onOpenFeedUrl = ::openOpdsFeedUrl,
+                                    onNavigateBack = ::navigateOpdsBack,
+                                    onSearch = ::searchOpds,
+                                    onLoadNextPage = ::loadNextOpdsPage,
+                                    onAddCatalog = { title, url, username, password ->
+                                        emitOpds(opdsController.addCatalog(title, url, username, password))
+                                    },
+                                    onUpdateCatalog = { id, title, url, username, password ->
+                                        emitOpds(opdsController.updateCatalog(id, title, url, username, password))
+                                    },
+                                    onRemoveCatalog = ::removeOpdsCatalog,
+                                    onDownloadBook = ::downloadOpdsBook,
+                                    onReadBook = ::openReader,
+                                    onStreamBook = ::streamOpdsBook,
+                                    onClearError = { emitOpds(opdsController.clearError()) }
+                                )
+                            } else {
+                                Box(Modifier.fillMaxSize())
+                            }
+                        }
 
                         SharedAppTab.CUSTOM_FONTS -> SharedCustomFontsScreen(
                             fonts = customFonts,
                             onImportFont = { importCustomFont(chooseFontFile()) },
                             onDeleteFont = ::deleteCustomFont,
-                            googleFontsAvailable = true,
+                            googleFontsAvailable = featurePolicy.googleFontsDownload,
                             getGoogleFonts = { customFontStore.loadGoogleFontsList() },
                             onDownloadGoogleFont = ::downloadGoogleFont,
                             fontFamilyForPreview = { font -> font.toDesktopPreviewFontFamily() }
@@ -1664,9 +1726,17 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
                         SharedAppTab.ABOUT -> SharedAboutScreen(
                             versionName = desktopAppVersionName(),
-                            buildLabel = "Desktop build",
-                            onOpenSource = { openExternalUrl(EpistemeSourceUrl) },
-                            onOpenIssues = { openExternalUrl(EpistemeIssuesUrl) }
+                            buildLabel = if (desktopBuildProfile.isOssOffline) "Desktop oss-offline build" else "Desktop build",
+                            onOpenSource = if (featurePolicy.projectLinks) {
+                                { openExternalUrl(EpistemeSourceUrl) }
+                            } else {
+                                null
+                            },
+                            onOpenIssues = if (featurePolicy.projectLinks) {
+                                { openExternalUrl(EpistemeIssuesUrl) }
+                            } else {
+                                null
+                            }
                         )
 
                         SharedAppTab.READER -> {
@@ -1694,7 +1764,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     },
                                     aiByokSettings = aiByokSettings,
                                     aiAdapter = desktopAiAdapter,
-                                    ttsAdapter = desktopTtsAdapter
+                                    ttsAdapter = desktopTtsAdapter,
+                                    ttsReplacementPreferences = state.readerTtsReplacementPreferences,
+                                    onTtsReplacementPreferencesChange = { preferences ->
+                                        updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
+                                    },
+                                    featurePolicy = featurePolicy
                                 )
                             } else {
                                 ReaderScreen(
@@ -1729,6 +1804,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     customFonts = customFonts,
                                     readerExtrasState = readerExtrasState,
                                     aiByokSettings = aiByokSettings,
+                                    externalLookupAvailable = featurePolicy.externalLookup,
+                                    cloudTtsControlsAvailable = featurePolicy.aiAndCloud,
                                     onExternalLookup = ::openReaderExternalLookup,
                                     onAiAction = ::runReaderAiAction,
                                     onCloudTtsToggle = ::toggleReaderCloudTts,
@@ -1740,7 +1817,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     readerTextureDataUri = DesktopReaderTextures::dataUriFor,
                                     readerCustomTextureIds = readerCustomTextureIds,
                                     onImportReaderTexture = ::importDesktopReaderTexture,
-                                    webViewRuntimeState = webViewRuntimeState
+                                    webViewRuntimeState = webViewRuntimeState,
+                                    webViewNetworkAccessEnabled = featurePolicy.networkAccess
                                 )
                             }
                         }
@@ -2677,7 +2755,10 @@ private fun PdfReaderScreen(
     onLocalSidecarsChanged: () -> Unit = {},
     aiByokSettings: ReaderAiByokSettings,
     aiAdapter: DesktopByokAiAdapter,
-    ttsAdapter: DesktopGeminiCloudTtsAdapter
+    ttsAdapter: DesktopGeminiCloudTtsAdapter,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
+    featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
 ) {
     val zoomSpec = remember { PdfZoomSpec() }
     var pdfReaderSettings by remember(document.path) {
@@ -3159,7 +3240,9 @@ private fun PdfReaderScreen(
                 val url = it.normalizedExternalUrl()
                 logPdfLink("activate_external fromPage=${pageIndex + 1} url=\"${url.logPreview()}\"")
                 clearPdfInteractionState()
-                externalLinkDialogUrl = url
+                if (featurePolicy.externalLookup) {
+                    externalLinkDialogUrl = url
+                }
                 return
             }
         logPdfLink(
@@ -3255,10 +3338,12 @@ private fun PdfReaderScreen(
     }
 
     fun translateSelection(selection: DesktopPdfTextSelection) {
+        if (!featurePolicy.externalLookup) return
         openExternalUrl(externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, selection.text))
     }
 
     fun openPdfExternalLookup(action: ReaderExternalLookupAction, text: String) {
+        if (!featurePolicy.externalLookup) return
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
         openExternalUrl(externalLookupUrl(action, normalizedText.take(1800)))
@@ -3390,9 +3475,8 @@ private fun PdfReaderScreen(
 
     fun startPdfCloudTts(readScope: ReaderTtsReadScope) {
         val settings = aiByokSettings.sanitized()
-        val startPageIndex = pageIndex
         logDesktopTts(
-            "pdf_sequence_toggle scope=${readScope.name} startPage=${startPageIndex + 1} " +
+            "pdf_sequence_toggle scope=${readScope.name} startPage=${pageIndex + 1} " +
                 "isPlaying=${pdfExtrasState.cloudTts.isPlaying} isLoading=${pdfExtrasState.cloudTts.isLoading} " +
                 "keyPresent=${settings.geminiKey.isNotBlank()} ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" " +
                 "available=${ttsAdapter.isAvailable}"
@@ -3426,9 +3510,9 @@ private fun PdfReaderScreen(
             var completedChunkCount = 0
             runCatching {
                 val ttsChunks = withContext(Dispatchers.IO) {
-                    pdfTtsChunksForScope(readScope, startPageIndex)
+                    pdfTtsChunksForScope(readScope, pageIndex)
                         .filter { it.text.isNotBlank() }
-                        .withTtsReplacements(state.readerTtsReplacementPreferences, document.path)
+                        .withTtsReplacements(ttsReplacementPreferences, document.path)
                 }
                 if (ttsChunks.isEmpty()) {
                     logDesktopTts("pdf_sequence_ignored reason=blank_text scope=${readScope.name}")
@@ -3466,12 +3550,12 @@ private fun PdfReaderScreen(
             }.onFailure { error ->
                 logDesktopTts("pdf_sequence_failed error=\"${error.desktopTtsSummary()}\"")
                 if (error !is kotlinx.coroutines.CancellationException && error.message != noTextMessage) error.printStackTrace()
-                if (error is kotlinx.coroutines.CancellationException) {
-                    pdfExtrasState = pdfExtrasState.copy(
+                pdfExtrasState = if (error is kotlinx.coroutines.CancellationException) {
+                    pdfExtrasState.copy(
                         cloudTts = pdfCloudTtsStoppedState(statusMessage = "Stopped")
                     )
                 } else {
-                    pdfExtrasState = pdfExtrasState.copy(
+                    pdfExtrasState.copy(
                         cloudTts = pdfCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
                     )
                 }
@@ -3522,7 +3606,7 @@ private fun PdfReaderScreen(
             pageIndex = pageIndex,
             chapterIndex = 0,
             chapterTitle = "Page ${pageIndex + 1}"
-        ).withTtsReplacements(state.readerTtsReplacementPreferences, document.path)
+        ).withTtsReplacements(ttsReplacementPreferences, document.path)
         if (selectionChunks.isEmpty()) {
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = pdfExtrasState.cloudTts.copy(
@@ -3740,7 +3824,9 @@ private fun PdfReaderScreen(
         loading = isRendering || isSearchIndexing,
         errorMessage = renderError,
         extrasState = pdfExtrasState,
-        aiAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable
+        aiAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
+        cloudTtsAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().isCloudTtsAvailable,
+        externalLookupAvailable = featurePolicy.externalLookup
     )
 
     fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
@@ -4414,6 +4500,8 @@ private fun PdfReaderScreen(
                             recapText = pdfTextBeforeCurrentPage(),
                             extrasState = pdfExtrasState,
                             aiByokSettings = aiByokSettings,
+                            externalLookupAvailable = featurePolicy.externalLookup,
+                            cloudTtsFeatureAvailable = featurePolicy.aiAndCloud,
                             onExternalLookup = ::openPdfExternalLookup,
                             onAiAction = ::runPdfAiAction,
                             onCloudTtsStart = ::startPdfCloudTts,
@@ -4421,11 +4509,9 @@ private fun PdfReaderScreen(
                             onCloudTtsStop = ::stopPdfCloudTts,
                             onCloudTtsClearCache = ::clearPdfCloudTtsCache,
                             onAutoScrollChange = ::updatePdfAutoScroll,
-                            ttsReplacementPreferences = state.readerTtsReplacementPreferences,
+                            ttsReplacementPreferences = ttsReplacementPreferences,
                             ttsReplacementBookId = document.path,
-                            onTtsReplacementPreferencesChange = { preferences ->
-                                updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
-                            }
+                            onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
                         )
                     }
                     item {
@@ -4553,6 +4639,7 @@ private fun PdfReaderScreen(
                                 isRichTextMode = isRichTextMode,
                                 readerAiFeaturesAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
                                 cloudTtsAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                externalLookupAvailable = featurePolicy.externalLookup,
                                 themeStyle = pdfThemeStyle,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
                                 onSelectPage = {
@@ -5061,6 +5148,7 @@ private fun PdfReaderScreen(
                                 },
                                 showDefine = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
                                 showSpeak = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                showExternalLookup = featurePolicy.externalLookup,
                                 onClear = ::clearSelection
                             )
                         }
@@ -5315,6 +5403,8 @@ private fun DesktopPdfExtrasPanel(
     recapText: String,
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
+    externalLookupAvailable: Boolean,
+    cloudTtsFeatureAvailable: Boolean,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
@@ -5332,14 +5422,16 @@ private fun DesktopPdfExtrasPanel(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
         Text("Extras", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            ReaderExternalLookupAction.entries.forEach { action ->
-                FilterChip(
-                    selected = false,
-                    enabled = pageText.isNotBlank(),
-                    onClick = { onExternalLookup(action, pageText) },
-                    label = { Text(action.title) }
-                )
+        if (externalLookupAvailable) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                ReaderExternalLookupAction.entries.forEach { action ->
+                    FilterChip(
+                        selected = false,
+                        enabled = pageText.isNotBlank(),
+                        onClick = { onExternalLookup(action, pageText) },
+                        label = { Text(action.title) }
+                    )
+                }
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -5355,71 +5447,73 @@ private fun DesktopPdfExtrasPanel(
             valueRange = 12f..160f
         )
         val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    when {
-                        extrasState.cloudTts.isLoading -> "Preparing audio"
-                        extrasState.cloudTts.isPaused -> "Paused"
-                        extrasState.cloudTts.isPlaying -> "Reading"
-                        settings.isCloudTtsAvailable -> "Cloud TTS ready"
-                        else -> "Cloud TTS needs Gemini"
-                    },
-                    fontWeight = FontWeight.SemiBold
-                )
-                extrasState.cloudTts.errorMessage?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-                val statusMessage = extrasState.cloudTts.progress.currentPositionLabel
-                    ?: extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
-                statusMessage?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            TextButton(
-                enabled = settings.isCloudTtsAvailable || ttsBusy,
-                onClick = {
-                    if (ttsBusy) {
-                        onCloudTtsStop()
-                    } else {
-                        onCloudTtsStart(ReaderTtsReadScope.BOOK)
+        if (cloudTtsFeatureAvailable) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            extrasState.cloudTts.isLoading -> "Preparing audio"
+                            extrasState.cloudTts.isPaused -> "Paused"
+                            extrasState.cloudTts.isPlaying -> "Reading"
+                            settings.isCloudTtsAvailable -> "Cloud TTS ready"
+                            else -> "Cloud TTS needs Gemini"
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    extrasState.cloudTts.errorMessage?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    val statusMessage = extrasState.cloudTts.progress.currentPositionLabel
+                        ?: extrasState.cloudTts.statusMessage?.takeIf { it.isNotBlank() }
+                    statusMessage?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            ) {
-                Text(if (ttsBusy) "Stop" else "Read")
-            }
-        }
-        if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                TextButton(onClick = onCloudTtsPauseResume) {
-                    Text(if (extrasState.cloudTts.isPaused) "Resume" else "Pause")
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable || ttsBusy,
+                    onClick = {
+                        if (ttsBusy) {
+                            onCloudTtsStop()
+                        } else {
+                            onCloudTtsStart(ReaderTtsReadScope.BOOK)
+                        }
+                    }
+                ) {
+                    Text(if (ttsBusy) "Stop" else "Read")
                 }
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            TextButton(
-                enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
-                onClick = { onCloudTtsStart(ReaderTtsReadScope.PAGE) }
-            ) {
-                Text("Page")
+            if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    TextButton(onClick = onCloudTtsPauseResume) {
+                        Text(if (extrasState.cloudTts.isPaused) "Resume" else "Pause")
+                    }
+                }
             }
-            TextButton(
-                enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
-                onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
-            ) {
-                Text("From here")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
+                    onClick = { onCloudTtsStart(ReaderTtsReadScope.PAGE) }
+                ) {
+                    Text("Page")
+                }
+                TextButton(
+                    enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
+                    onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
+                ) {
+                    Text("From here")
+                }
             }
-        }
-        val cacheSummary = extrasState.cloudTts.cacheSummary
-        if (cacheSummary.hasCachedAudio) {
-            Text(
-                "Cache: ${cacheSummary.currentVoiceLabel}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (cacheSummary.hasCurrentVoiceCachedAudio) {
-                TextButton(onClick = onCloudTtsClearCache) {
-                    Text("Clear voice cache")
+            val cacheSummary = extrasState.cloudTts.cacheSummary
+            if (cacheSummary.hasCachedAudio) {
+                Text(
+                    "Cache: ${cacheSummary.currentVoiceLabel}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (cacheSummary.hasCurrentVoiceCachedAudio) {
+                    TextButton(onClick = onCloudTtsClearCache) {
+                        Text("Clear voice cache")
+                    }
                 }
             }
         }
@@ -5587,6 +5681,7 @@ private fun DesktopVerticalPdfPage(
     isRichTextMode: Boolean,
     readerAiFeaturesAvailable: Boolean,
     cloudTtsAvailable: Boolean,
+    externalLookupAvailable: Boolean,
     themeStyle: DesktopPdfThemeStyle,
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
@@ -6004,7 +6099,7 @@ private fun DesktopVerticalPdfPage(
                     ) {
                         val queryLength = searchQuery.trim().length
                         if (queryLength <= 0 || pageCanvasSize.width <= 0 || pageCanvasSize.height <= 0) {
-                            emptyList<PdfPageBounds>()
+                            emptyList()
                         } else {
                             SharedPdfSearchEngine.highlightsForPage(
                                 results = searchResults,
@@ -6171,6 +6266,7 @@ private fun DesktopVerticalPdfPage(
                         },
                         showDefine = readerAiFeaturesAvailable,
                         showSpeak = cloudTtsAvailable,
+                        showExternalLookup = externalLookupAvailable,
                         onClear = ::clearSelection
                     )
                 }
@@ -6459,6 +6555,7 @@ private fun PdfSelectionMenu(
     onTranslate: () -> Unit,
     showDefine: Boolean,
     showSpeak: Boolean,
+    showExternalLookup: Boolean,
     onClear: () -> Unit
 ) {
     selection ?: return
@@ -6490,10 +6587,10 @@ private fun PdfSelectionMenu(
             TextButton(onClick = onHighlight) { Text("Highlight") }
             if (showDefine) TextButton(onClick = onDefine) { Text("Define") }
             if (showSpeak) TextButton(onClick = onSpeak) { Text("Speak") }
-            TextButton(onClick = onDictionary) { Text("Dict") }
+            if (showExternalLookup) TextButton(onClick = onDictionary) { Text("Dict") }
             TextButton(onClick = onSearch) { Text("Find") }
-            TextButton(onClick = onWebSearch) { Text("Web") }
-            TextButton(onClick = onTranslate) { Text("Translate") }
+            if (showExternalLookup) TextButton(onClick = onWebSearch) { Text("Web") }
+            if (showExternalLookup) TextButton(onClick = onTranslate) { Text("Translate") }
             TextButton(onClick = onClear) { Text("Clear") }
         }
     }
@@ -6775,6 +6872,8 @@ private fun ReaderScreen(
     customFonts: List<CustomFontItem>,
     readerExtrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
+    externalLookupAvailable: Boolean,
+    cloudTtsControlsAvailable: Boolean,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsToggle: (String) -> Unit,
@@ -6786,7 +6885,8 @@ private fun ReaderScreen(
     readerTextureDataUri: (String) -> String?,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
-    webViewRuntimeState: DesktopWebViewRuntimeState
+    webViewRuntimeState: DesktopWebViewRuntimeState,
+    webViewNetworkAccessEnabled: Boolean
 ) {
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
@@ -6813,6 +6913,8 @@ private fun ReaderScreen(
         customFonts = customFonts,
         readerExtrasState = readerExtrasState,
         aiByokSettings = aiByokSettings,
+        externalLookupAvailable = externalLookupAvailable,
+        cloudTtsControlsAvailable = cloudTtsControlsAvailable,
         onExternalLookup = onExternalLookup,
         onAiAction = onAiAction,
         onCloudTtsStart = onCloudTtsStart,
@@ -6871,7 +6973,9 @@ private fun ReaderScreen(
                             when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
                                 is ReaderLinkTarget.External -> {
                                     logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
-                                    externalLinkDialogUrl = target.url
+                                    if (externalLookupAvailable) {
+                                        externalLinkDialogUrl = target.url
+                                    }
                                 }
                                 is ReaderLinkTarget.Internal -> {
                                     logEpubLink(
@@ -6887,6 +6991,7 @@ private fun ReaderScreen(
                         }
                     },
                     onVisiblePageChanged = onVisiblePageChanged,
+                    networkAccessEnabled = webViewNetworkAccessEnabled,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -6908,6 +7013,7 @@ private fun DesktopEpubWebView(
     onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+    networkAccessEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
@@ -6915,12 +7021,16 @@ private fun DesktopEpubWebView(
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
     val scope = rememberCoroutineScope()
-    val linkRequestInterceptor = remember(scope) {
+    val linkRequestInterceptor = remember(scope, networkAccessEnabled) {
         object : RequestInterceptor {
             override fun onInterceptUrlRequest(
                 request: WebRequest,
                 navigator: WebViewNavigator
             ): WebRequestInterceptResult {
+                if (!networkAccessEnabled && request.url.isRemoteNetworkUrl()) {
+                    logEpubLink("request_blocked_offline url=\"${request.url.logPreview()}\"")
+                    return WebRequestInterceptResult.Reject
+                }
                 if (!request.isForMainFrame) return WebRequestInterceptResult.Allow
                 val link = request.url.readerLinkClickFromIntercept() ?: return WebRequestInterceptResult.Allow
                 logEpubLink(
@@ -7321,7 +7431,7 @@ private fun DesktopWebViewRuntimeIndicator(
     val message = when {
         state.errorMessage != null -> "Embedded webview could not start: ${state.errorMessage}"
         state.restartRequired -> "Embedded webview installed. Restart Episteme to finish setup."
-        state.downloadProgress >= 0f -> "Downloading embedded webview ${state.downloadProgress.toInt()}%"
+        state.downloadProgress >= 0f -> "Preparing bundled embedded webview ${state.downloadProgress.toInt()}%"
         else -> "Preparing embedded webview..."
     }
 
@@ -7379,7 +7489,7 @@ private fun SemanticBlockView(
     searchHighlight: Color,
     fallbackTextAlign: TextAlign,
     fallbackFontFamily: FontFamily,
-    settings: com.aryan.reader.shared.reader.ReaderSettings
+    settings: ReaderSettings
 ) {
     val modifier = Modifier
         .fillMaxWidth()
@@ -7507,7 +7617,7 @@ private fun SemanticTextView(
     searchHighlight: Color,
     fallbackTextAlign: TextAlign,
     fallbackFontFamily: FontFamily,
-    settings: com.aryan.reader.shared.reader.ReaderSettings
+    settings: ReaderSettings
 ) {
     Text(
         text = block.toAnnotatedString(searchQuery, searchHighlight),
@@ -7926,7 +8036,7 @@ private fun showNativeExternalLinkDialog(url: String): DesktopExternalLinkAction
             options,
             options[1]
         )
-        val dialog = pane.createDialog(null as java.awt.Component?, "External Link")
+        val dialog = pane.createDialog(null as Component?, "External Link")
         dialog.isModal = true
         dialog.isAlwaysOnTop = true
         dialog.isVisible = true
@@ -7948,6 +8058,10 @@ private fun showNativeExternalLinkDialog(url: String): DesktopExternalLinkAction
 }
 
 private fun openExternalUrl(url: String) {
+    if (!currentDesktopBuildProfile().featurePolicy.projectLinks) {
+        logExternalLink("open_blocked_offline url=\"${url.logPreview()}\"")
+        return
+    }
     val normalizedUrl = url.normalizedExternalUrl()
     runCatching {
         if (Desktop.isDesktopSupported()) {
@@ -7973,6 +8087,14 @@ private fun String.normalizedExternalUrl(): String {
     } else {
         trimmed
     }
+}
+
+private fun String.isRemoteNetworkUrl(): Boolean {
+    val trimmed = trim()
+    return trimmed.startsWith("http://", ignoreCase = true) ||
+        trimmed.startsWith("https://", ignoreCase = true) ||
+        trimmed.startsWith("ws://", ignoreCase = true) ||
+        trimmed.startsWith("wss://", ignoreCase = true)
 }
 
 private fun String.urlEncode(): String {

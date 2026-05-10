@@ -144,18 +144,21 @@ internal data class DesktopOpdsStreamResponse(
 
 internal object DesktopOpdsHttp {
     fun fetchString(url: String, username: String?, password: String?): DesktopOpdsTextResponse {
+        ensureNetworkAccess()
         val request = request(url).build()
         val response = client(username, password).send(request, HttpResponse.BodyHandlers.ofString())
         return DesktopOpdsTextResponse(response.statusCode(), response.body().orEmpty())
     }
 
     fun fetchStream(url: String, username: String?, password: String?): DesktopOpdsStreamResponse {
+        ensureNetworkAccess()
         val request = request(url).build()
         val response = client(username, password).send(request, HttpResponse.BodyHandlers.ofInputStream())
         return DesktopOpdsStreamResponse(response.statusCode(), response.headers(), response.body())
     }
 
     fun fetchBytes(url: String, catalog: OpdsCatalog?): ByteArray {
+        ensureNetworkAccess()
         val request = request(url).build()
         val response = client(catalog?.username, catalog?.password).send(request, HttpResponse.BodyHandlers.ofByteArray())
         if (response.statusCode() !in 200..299) {
@@ -186,5 +189,11 @@ internal object DesktopOpdsHttp {
         }
 
         return builder.build()
+    }
+
+    private fun ensureNetworkAccess() {
+        check(currentDesktopBuildProfile().featurePolicy.networkAccess) {
+            "Network access is disabled in this desktop build."
+        }
     }
 }

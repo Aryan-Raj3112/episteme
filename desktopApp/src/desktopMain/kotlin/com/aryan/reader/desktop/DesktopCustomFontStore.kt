@@ -11,7 +11,8 @@ import java.net.URL
 import java.util.UUID
 
 class DesktopCustomFontStore(
-    private val fontsDir: File = defaultFontsDir()
+    private val fontsDir: File = defaultFontsDir(),
+    private val googleFontsDownloadAvailable: () -> Boolean = { true }
 ) {
     private var googleFontsCache: List<String>? = null
 
@@ -67,6 +68,9 @@ class DesktopCustomFontStore(
     }
 
     fun downloadGoogleFont(fontName: String): Result<CustomFontItem> {
+        if (!googleFontsDownloadAvailable()) {
+            return Result.failure(IllegalStateException("Google Fonts download is unavailable in this desktop build."))
+        }
         val normalizedFontName = fontName.trim()
         if (normalizedFontName.isBlank()) {
             return Result.failure(IllegalArgumentException("Choose a Google Font."))
