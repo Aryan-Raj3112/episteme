@@ -254,6 +254,7 @@ private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
 
 private const val TAG_LINK_NAV = "LINK_NAV"
+private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 
 private fun View.bottomRoundedCornerRadiusPx(): Int {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
@@ -1022,6 +1023,8 @@ fun EpubReaderHost(
         (paginator as? BookPaginator)?.totalPageCount ?: 0
     })
     var isPagerInitialized by remember(initialLocator) { mutableStateOf(initialLocator == null) }
+    var paginatedExplicitNavigationEpoch by remember(epubBook) { mutableLongStateOf(0L) }
+    var paginatedExplicitNavigationAnchor by remember(epubBook) { mutableStateOf<Locator?>(null) }
 
     val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsState()
@@ -1511,9 +1514,8 @@ fun EpubReaderHost(
                     return false
                 }
                 val pageIndex =
-                    sourceOffset?.let { bookPaginator.findPageForCfiAndOffset(chapterIndex, sourceCfi, it) }
-                        ?: bookPaginator.findPageForLocator(locator)
-                        ?: bookPaginator.chapterStartPageIndices[chapterIndex] ?: run {
+                    bookPaginator.findStablePageForLocator(locator)
+                        ?: bookPaginator.findStableChapterStartPage(chapterIndex) ?: run {
                             logTtsChapterDiag("Paginated locate aborted: page lookup failed. reason=$reason chapter=$chapterIndex")
                             return false
                         }
@@ -2394,8 +2396,17 @@ fun EpubReaderHost(
         if (resolvedLocator != null) {
             lastKnownLocator = resolvedLocator
         }
+        val navigationEpoch = System.currentTimeMillis()
+        paginatedExplicitNavigationEpoch = navigationEpoch
+        paginatedExplicitNavigationAnchor = resolvedLocator
+        Timber.tag(TAG_STABLE_PAGE_NAV).d(
+            "external_scroll_request requestedPage=$pageIndex targetPage=$targetPageIndex anchor=$resolvedLocator fallbackToChapterStart=$fallbackToChapterStart pageCount=${paginatedPagerState.pageCount} epoch=$navigationEpoch"
+        )
         bookPaginator?.onUserScrolledTo(targetPageIndex)
         paginatedPagerState.scrollToPage(targetPageIndex)
+        Timber.tag(TAG_STABLE_PAGE_NAV).d(
+            "external_scroll_complete targetPage=$targetPageIndex currentPage=${paginatedPagerState.currentPage} anchor=$resolvedLocator epoch=$navigationEpoch"
+        )
     }
 
     fun SharedReaderLocator.epubJumpLabel(): String {
@@ -2600,38 +2611,43 @@ fun EpubReaderHost(
                 RenderMode.PAGINATED -> {
                     val bookPaginator = paginator as? BookPaginator
                     val directPage = locator.pageIndex?.takeIf { it in 0 until paginatedPagerState.pageCount }
-                    when {
-                        cfi.startsWith("android-locator:") && bookPaginator != null -> {
-                            val androidLocator = locator.toAndroidLocatorOrNull()
-                            val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
-                            if (targetPage != null) {
-                                scrollPaginatedToJumpPage(targetPage, androidLocator)
-                            } else if (directPage != null) {
-                                scrollPaginatedToJumpPage(directPage)
+                    isNavigatingToPosition = true
+                    try {
+                        when {
+                            cfi.startsWith("android-locator:") && bookPaginator != null -> {
+                                val androidLocator = locator.toAndroidLocatorOrNull()
+                                val targetPage = androidLocator?.let { bookPaginator.findStablePageForLocator(it) }
+                                if (targetPage != null) {
+                                    scrollPaginatedToJumpPage(targetPage, androidLocator)
+                                } else if (directPage != null) {
+                                    scrollPaginatedToJumpPage(directPage)
+                                }
                             }
-                        }
-                        cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null && bookPaginator != null -> {
-                            val androidLocator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
-                            val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
-                            if (targetPage != null) {
-                                scrollPaginatedToJumpPage(targetPage, androidLocator)
-                            } else if (directPage != null) {
-                                scrollPaginatedToJumpPage(directPage)
-                            } else {
-                                bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
+                            cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null && bookPaginator != null -> {
+                                val androidLocator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
+                                val targetPage = androidLocator?.let { bookPaginator.findStablePageForLocator(it) }
+                                if (targetPage != null) {
+                                    scrollPaginatedToJumpPage(targetPage, androidLocator)
+                                } else if (directPage != null) {
+                                    scrollPaginatedToJumpPage(directPage)
+                                } else {
+                                    bookPaginator.findStableChapterStartPage(chapterIndex)?.let {
+                                        scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0), fallbackToChapterStart = true)
+                                    }
+                                }
+                            }
+                            cfi.startsWith("android-fragment:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                            cfi.startsWith("android-search:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                            cfi.startsWith("android-page:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                            directPage != null -> scrollPaginatedToJumpPage(directPage)
+                            chapterIndex != null && bookPaginator != null -> {
+                                bookPaginator.findStableChapterStartPage(chapterIndex)?.let {
                                     scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0), fallbackToChapterStart = true)
                                 }
                             }
                         }
-                        cfi.startsWith("android-fragment:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
-                        cfi.startsWith("android-search:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
-                        cfi.startsWith("android-page:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
-                        directPage != null -> scrollPaginatedToJumpPage(directPage)
-                        chapterIndex != null && bookPaginator != null -> {
-                            bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
-                                scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0), fallbackToChapterStart = true)
-                            }
-                        }
+                    } finally {
+                        isNavigatingToPosition = false
                     }
                 }
             }
@@ -2662,6 +2678,25 @@ fun EpubReaderHost(
                     textQuote = targetResult.snippet.text
                 )
             )
+        }
+        if (targetResult != null && currentRenderMode == RenderMode.PAGINATED) {
+            scope.launch {
+                searchState.currentSearchResultIndex = index
+                isNavigatingToPosition = true
+                try {
+                    val bookPaginator = paginator as? BookPaginator ?: return@launch
+                    val pageIdx = bookPaginator.findStablePageForSearchResult(targetResult) ?: return@launch
+                    Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
+                    val targetLocator = bookPaginator.getLocatorForPage(pageIdx)
+                    paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                        ?.copy(textQuote = targetResult.snippet.text)
+                        ?.let { recordEpubJump(it) }
+                    scrollPaginatedToJumpPage(pageIdx, targetLocator)
+                } finally {
+                    isNavigatingToPosition = false
+                }
+            }
+            return
         }
         performSearchResultNavigation(
             index = index,
@@ -2854,9 +2889,9 @@ fun EpubReaderHost(
                                     Timber.tag("TOC_NAV_DEBUG").d("TOC Entry Clicked: ${entry.label}, targetChapter: $targetChapterIndex, anchor: ${entry.fragmentId}")
 
                                     isNavigatingByToc = true
-
-                                    bookPaginator.findPageForAnchor(targetChapterIndex, entry.fragmentId) { targetPage ->
-                                        scope.launch {
+                                    try {
+                                        val targetPage = bookPaginator.findStablePageForAnchor(targetChapterIndex, entry.fragmentId)
+                                        if (targetPage != null) {
                                             recordEpubJump(
                                                 fragmentJumpLocator(targetChapterIndex, entry.fragmentId, entry.absolutePath)
                                                     .copy(pageIndex = targetPage)
@@ -2871,8 +2906,9 @@ fun EpubReaderHost(
                                                 targetLocator,
                                                 fallbackToChapterStart = entry.fragmentId == null
                                             )
-                                            isNavigatingByToc = false
                                         }
+                                    } finally {
+                                        isNavigatingByToc = false
                                     }
                                 } else {
                                     Timber.tag("TOC_NAV_DEBUG").w("Paginator not ready for TOC navigation.")
@@ -2910,13 +2946,18 @@ fun EpubReaderHost(
                                 if (bookPaginator != null) {
                                     val currentFromPager = bookPaginator.findChapterIndexForPage(paginatedPagerState.currentPage)
                                     if (index != currentFromPager) {
-                                        val targetPage = bookPaginator.chapterStartPageIndices[index]
-                                        if (targetPage != null) {
-                                            recordEpubJump(chapterStartJumpLocator(index).copy(pageIndex = targetPage))
-                                            Timber.tag(TAG_LINK_NAV)
-                                                .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER_PAGINATED, from=$currentFromPager, to=$index, page=$targetPage")
-                                            scrollPaginatedToJumpPage(targetPage, Locator(index, 0, 0), fallbackToChapterStart = true)
-                                            if (showBars) showBars = false
+                                        isNavigatingByToc = true
+                                        try {
+                                            val targetPage = bookPaginator.findStableChapterStartPage(index)
+                                            if (targetPage != null) {
+                                                recordEpubJump(chapterStartJumpLocator(index).copy(pageIndex = targetPage))
+                                                Timber.tag(TAG_LINK_NAV)
+                                                    .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER_PAGINATED, from=$currentFromPager, to=$index, page=$targetPage")
+                                                scrollPaginatedToJumpPage(targetPage, Locator(index, 0, 0), fallbackToChapterStart = true)
+                                                if (showBars) showBars = false
+                                            }
+                                        } finally {
+                                            isNavigatingByToc = false
                                         }
                                     }
                                 }
@@ -3004,34 +3045,36 @@ fun EpubReaderHost(
                                 recordEpubJump(cfiJumpLocator(bookmark.chapterIndex, bookmark.cfi, bookmark.snippet))
                                 Timber.d("P-Mode Click: Navigating to bookmark. Chapter: ${bookmark.chapterIndex}, CFI: '${bookmark.cfi}'")
                                 isNavigatingToPosition = true
-                                val locator = locatorConverter.getLocatorFromCfi(
-                                    book = epubBook,
-                                    chapterIndex = bookmark.chapterIndex,
-                                    cfi = bookmark.cfi
-                                )
+                                try {
+                                    val bookPaginator = paginator as? BookPaginator
+                                    val locator = locatorConverter.getLocatorFromCfi(
+                                        book = epubBook,
+                                        chapterIndex = bookmark.chapterIndex,
+                                        cfi = bookmark.cfi
+                                    )
 
-                                if (locator != null) {
-                                    Timber.d("P-Mode Click: Successfully converted CFI to Locator: $locator")
-                                    val pageIndex = (paginator as? BookPaginator)?.findPageForLocator(locator)
-                                    if (pageIndex != null) {
-                                        Timber.d("P-Mode Click: Paginator found page $pageIndex for locator. Scrolling.")
-                                        scrollPaginatedToJumpPage(pageIndex, locator)
+                                    if (locator != null && bookPaginator != null) {
+                                        Timber.d("P-Mode Click: Successfully converted CFI to Locator: $locator")
+                                        val pageIndex = bookPaginator.findStablePageForLocator(locator)
+                                        if (pageIndex != null) {
+                                            Timber.d("P-Mode Click: Paginator found page $pageIndex for locator. Scrolling.")
+                                            scrollPaginatedToJumpPage(pageIndex, locator)
+                                        } else {
+                                            Timber.w("P-Mode Click: Paginator could not find a page for the locator. Falling back to chapter start.")
+                                            val chapterStartPage = bookPaginator.findStableChapterStartPage(bookmark.chapterIndex)
+                                            if (chapterStartPage != null) {
+                                                scrollPaginatedToJumpPage(chapterStartPage, Locator(bookmark.chapterIndex, 0, 0), fallbackToChapterStart = true)
+                                            }
+                                        }
                                     } else {
-                                        Timber.w("P-Mode Click: Paginator could not find a page for the locator. Falling back to chapter start.")
-                                        val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(bookmark.chapterIndex)
-                                        if (chapterStartPage != null) {
-                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(bookmark.chapterIndex, 0, 0), fallbackToChapterStart = true)
+                                        Timber.w("P-Mode Click: Failed to convert CFI to Locator. Falling back to stable chapter start.")
+                                        val fallbackPage = bookPaginator?.findStableChapterStartPage(bookmark.chapterIndex)
+                                        if (fallbackPage != null) {
+                                            scrollPaginatedToJumpPage(fallbackPage, Locator(bookmark.chapterIndex, 0, 0), fallbackToChapterStart = true)
                                         }
                                     }
+                                } finally {
                                     isNavigatingToPosition = false
-                                } else {
-                                    Timber.w("P-Mode Click: Failed to convert CFI to Locator. Using old findPageForCfi as a fallback.")
-                                    paginator?.findPageForCfi(bookmark.chapterIndex, bookmark.cfi) { pageIndex ->
-                                        scope.launch {
-                                            scrollPaginatedToJumpPage(pageIndex)
-                                            isNavigatingToPosition = false
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -3108,25 +3151,27 @@ fun EpubReaderHost(
                             RenderMode.PAGINATED -> {
                                 recordEpubJump(cfiJumpLocator(highlight.chapterIndex, highlight.cfi, highlight.text))
                                 isNavigatingToPosition = true
-                                val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
-                                if (locator != null) {
-                                    val pageIndex = (paginator as? BookPaginator)?.findPageForLocator(locator)
-                                    if (pageIndex != null) {
-                                        scrollPaginatedToJumpPage(pageIndex, locator)
+                                try {
+                                    val bookPaginator = paginator as? BookPaginator
+                                    val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
+                                    if (locator != null && bookPaginator != null) {
+                                        val pageIndex = bookPaginator.findStablePageForLocator(locator)
+                                        if (pageIndex != null) {
+                                            scrollPaginatedToJumpPage(pageIndex, locator)
+                                        } else {
+                                            val chapterStartPage = bookPaginator.findStableChapterStartPage(highlight.chapterIndex)
+                                            if (chapterStartPage != null) {
+                                                scrollPaginatedToJumpPage(chapterStartPage, Locator(highlight.chapterIndex, 0, 0), fallbackToChapterStart = true)
+                                            }
+                                        }
                                     } else {
-                                        val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(highlight.chapterIndex)
-                                        if (chapterStartPage != null) {
-                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(highlight.chapterIndex, 0, 0), fallbackToChapterStart = true)
+                                        val fallbackPage = bookPaginator?.findStableChapterStartPage(highlight.chapterIndex)
+                                        if (fallbackPage != null) {
+                                            scrollPaginatedToJumpPage(fallbackPage, Locator(highlight.chapterIndex, 0, 0), fallbackToChapterStart = true)
                                         }
                                     }
+                                } finally {
                                     isNavigatingToPosition = false
-                                } else {
-                                    paginator?.findPageForCfi(highlight.chapterIndex, highlight.cfi) { pageIndex ->
-                                        scope.launch {
-                                            scrollPaginatedToJumpPage(pageIndex)
-                                            isNavigatingToPosition = false
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -4419,6 +4464,9 @@ fun EpubReaderHost(
                                 activeTextureAlpha = activeTextureAlpha,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
                                 fallbackLocatorForReconfiguration = paginatedReconfigurationAnchor ?: lastKnownLocator,
+                                explicitNavigationAnchor = paginatedExplicitNavigationAnchor,
+                                explicitNavigationEpoch = paginatedExplicitNavigationEpoch,
+                                isExternalNavigationInProgress = isNavigatingToPosition || isNavigatingByToc,
                                 onReconfigurationAnchorCaptured = { locator ->
                                     paginatedReconfigurationAnchor = locator
                                     lastKnownLocator = locator
@@ -4547,6 +4595,12 @@ fun EpubReaderHost(
                                     val bookPaginator = paginator as? BookPaginator
                                     val targetChapter = bookPaginator?.findChapterIndexForPage(targetPageIndex)
                                     val targetLocator = bookPaginator?.getLocatorForPage(targetPageIndex)
+                                    val navigationEpoch = System.currentTimeMillis()
+                                    paginatedExplicitNavigationEpoch = navigationEpoch
+                                    paginatedExplicitNavigationAnchor = targetLocator
+                                    Timber.tag(TAG_STABLE_PAGE_NAV).d(
+                                        "internal_link_target targetPage=$targetPageIndex targetChapter=$targetChapter anchor=$targetLocator epoch=$navigationEpoch"
+                                    )
                                     if (targetLocator != null) {
                                         lastKnownLocator = targetLocator
                                     }
