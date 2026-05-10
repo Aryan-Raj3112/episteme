@@ -320,6 +320,25 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `screen capture protection persists and updates state`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.setScreenCaptureProtectionEnabled(true)
+
+        val enabledState = viewModel.uiState.first { it.isScreenCaptureProtectionEnabled }
+        assertTrue(enabledState.isScreenCaptureProtectionEnabled)
+        verify { mockEditor.putBoolean("screen_capture_protection_enabled", true) }
+
+        viewModel.setScreenCaptureProtectionEnabled(false)
+
+        val disabledState = viewModel.uiState.first { !it.isScreenCaptureProtectionEnabled }
+        assertFalse(disabledState.isScreenCaptureProtectionEnabled)
+        verify { mockEditor.putBoolean("screen_capture_protection_enabled", false) }
+    }
+
+    @Test
     fun `setSortOrder persists preference and reorders visible home and library lists`() = runTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}

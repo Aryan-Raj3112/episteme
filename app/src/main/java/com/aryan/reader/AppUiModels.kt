@@ -124,4 +124,5 @@ data class ReaderScreenState(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val allTags: List<TagEntity> = emptyList(),
     val showTagSelectionDialogFor: Set<String> = emptySet(),
+    val isScreenCaptureProtectionEnabled: Boolean = false,
 )

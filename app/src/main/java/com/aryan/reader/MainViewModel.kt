@@ -544,6 +544,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             activeTabBookId = prefs.getString(KEY_ACTIVE_TAB, null),
             externalFileBehavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK",
             useStrictFileFilter = prefs.getBoolean(KEY_USE_STRICT_FILE_FILTER, false),
+            isScreenCaptureProtectionEnabled = prefs.getBoolean(KEY_SCREEN_CAPTURE_PROTECTION, false),
             appThemeMode = try {
                 AppThemeMode.valueOf(prefs.getString(KEY_APP_THEME_MODE, AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name)
             } catch (_: Exception) { AppThemeMode.SYSTEM },
@@ -5227,6 +5228,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(useStrictFileFilter = enabled) }
     }
 
+    fun setScreenCaptureProtectionEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_SCREEN_CAPTURE_PROTECTION, enabled) }
+        _internalState.update { it.copy(isScreenCaptureProtectionEnabled = enabled) }
+    }
+
     private fun loadCustomAppThemes(prefs: SharedPreferences): List<CustomAppTheme> {
         val jsonString = prefs.getString(KEY_CUSTOM_APP_THEMES, "[]") ?: "[]"
         val themes = mutableListOf<CustomAppTheme>()
@@ -5506,6 +5512,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
+        private const val KEY_SCREEN_CAPTURE_PROTECTION = "screen_capture_protection_enabled"
         private const val KEY_APP_THEME_MODE = "app_theme_mode"
         private const val KEY_APP_CONTRAST_OPTION = "app_contrast_option"
         private const val KEY_APP_SEED_COLOR = "app_seed_color"

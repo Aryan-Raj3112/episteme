@@ -359,6 +359,15 @@ fun HomeScreen(
                                 onExportLogsClick = { viewModel.exportLogsToFile(context) },
                                 onToggleHideReaderAi = {
                                     saveHideReaderAiFeatures(context, !loadHideReaderAiFeatures(context))
+                                },
+                                onScreenCaptureProtectionChange = { enabled ->
+                                    viewModel.setScreenCaptureProtectionEnabled(enabled)
+                                    val messageRes = if (enabled) {
+                                        R.string.banner_screen_capture_protection_on
+                                    } else {
+                                        R.string.banner_screen_capture_protection_off
+                                    }
+                                    viewModel.showBanner(context.getString(messageRes))
                                 }
                             )
                         } else {
@@ -1019,7 +1028,8 @@ fun DefaultTopAppBar(
     onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
     onExportLogsClick: () -> Unit,
-    onToggleHideReaderAi: () -> Unit
+    onToggleHideReaderAi: () -> Unit,
+    onScreenCaptureProtectionChange: (Boolean) -> Unit
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showLimitMenu by remember { mutableStateOf(false) }
@@ -1089,6 +1099,19 @@ fun DefaultTopAppBar(
                         Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
                     }
                 })
+
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.options_screen_capture_protection)) },
+                    onClick = {
+                        onScreenCaptureProtectionChange(!uiState.isScreenCaptureProtectionEnabled)
+                        showOptionsMenu = false
+                    },
+                    trailingIcon = {
+                        if (uiState.isScreenCaptureProtectionEnabled) {
+                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                        }
+                    }
+                )
 
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_external_file_behavior)) }, onClick = {
                     onExternalFileBehaviorClick()

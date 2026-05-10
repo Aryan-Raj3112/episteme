@@ -22,6 +22,7 @@ package com.aryan.reader
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
@@ -34,6 +35,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
@@ -87,6 +90,8 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+            ScreenCaptureProtectionEffect(enabled = uiState.isScreenCaptureProtectionEnabled)
+
             val darkTheme = when (uiState.appThemeMode) {
                 AppThemeMode.LIGHT -> false
                 AppThemeMode.DARK -> true
@@ -129,6 +134,23 @@ class MainActivity : AppCompatActivity() {
             Timber.d("Received VIEW intent with URI: ${intent.data}")
             val uri = intent.data!!
             viewModel.onFileSelected(uri, isFromRecent = false, isExternalIntent = true)
+        }
+    }
+}
+
+@Composable
+private fun MainActivity.ScreenCaptureProtectionEffect(enabled: Boolean) {
+    DisposableEffect(enabled) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+
+        onDispose {
+            if (enabled) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
         }
     }
 }
