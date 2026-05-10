@@ -2307,12 +2307,11 @@ fun EpubReaderHost(
             RenderMode.PAGINATED -> {
                 val pageIndex = paginatedPagerState.currentPage.takeIf { it >= 0 }
                 val locator = (paginator as? BookPaginator)?.getLocatorForPage(paginatedPagerState.currentPage)
+                val fallbackLocator = lastKnownLocator?.takeIf {
+                    currentChapterInPaginatedMode != null && it.chapterIndex == currentChapterInPaginatedMode
+                }
                 locator?.toEpubJumpLocator(pageIndex = pageIndex)
-                    ?: SharedReaderLocator(
-                        chapterIndex = currentChapterInPaginatedMode,
-                        pageIndex = pageIndex,
-                        cfi = pageIndex?.let { "android-page:$it" }
-                    )
+                    ?: fallbackLocator?.toEpubJumpLocator(pageIndex = pageIndex)
             }
         }
     }
@@ -2349,15 +2348,48 @@ fun EpubReaderHost(
         )
     }
 
-    suspend fun scrollPaginatedToJumpPage(pageIndex: Int, targetLocator: Locator? = null) {
+    fun paginatedJumpLocatorForPage(
+        pageIndex: Int,
+        targetLocator: Locator? = null,
+        fallbackChapterIndex: Int? = null,
+        allowPageFallback: Boolean = false
+    ): SharedReaderLocator? {
+        val safePageIndex = when {
+            pageIndex < 0 -> return null
+            paginatedPagerState.pageCount > 0 -> pageIndex.coerceIn(0, paginatedPagerState.pageCount - 1)
+            else -> pageIndex
+        }
+        val bookPaginator = paginator as? BookPaginator
+        val resolvedLocator = targetLocator ?: bookPaginator?.getLocatorForPage(safePageIndex)
+        if (resolvedLocator != null) {
+            return resolvedLocator.toEpubJumpLocator(pageIndex = safePageIndex)
+        }
+        if (!allowPageFallback) return null
+        val chapterIndex = fallbackChapterIndex ?: bookPaginator?.findChapterIndexForPage(safePageIndex)
+        return SharedReaderLocator(
+            chapterIndex = chapterIndex,
+            pageIndex = safePageIndex,
+            cfi = "android-page:$safePageIndex"
+        )
+    }
+
+    suspend fun scrollPaginatedToJumpPage(
+        pageIndex: Int,
+        targetLocator: Locator? = null,
+        fallbackToChapterStart: Boolean = false
+    ) {
         if (paginatedPagerState.pageCount <= 0) return
         val targetPageIndex = pageIndex.coerceIn(0, paginatedPagerState.pageCount - 1)
         val bookPaginator = paginator as? BookPaginator
         val resolvedLocator = targetLocator
             ?: bookPaginator?.getLocatorForPage(targetPageIndex)
-            ?: bookPaginator
-                ?.findChapterIndexForPage(targetPageIndex)
-                ?.let { Locator(chapterIndex = it, blockIndex = 0, charOffset = 0) }
+            ?: if (fallbackToChapterStart) {
+                bookPaginator
+                    ?.findChapterIndexForPage(targetPageIndex)
+                    ?.let { Locator(chapterIndex = it, blockIndex = 0, charOffset = 0) }
+            } else {
+                null
+            }
 
         if (resolvedLocator != null) {
             lastKnownLocator = resolvedLocator
@@ -2368,7 +2400,8 @@ fun EpubReaderHost(
 
     fun SharedReaderLocator.epubJumpLabel(): String {
         val targetPageIndex = pageIndex
-        if (targetPageIndex != null && cfi?.startsWith("android-scroll:") != true) {
+        val targetCfi = cfi.orEmpty()
+        if (targetPageIndex != null && (targetCfi.isBlank() || targetCfi.startsWith("android-page:"))) {
             return "Page ${targetPageIndex + 1}"
         }
         val chapter = chapterIndex
@@ -2568,26 +2601,35 @@ fun EpubReaderHost(
                     val bookPaginator = paginator as? BookPaginator
                     val directPage = locator.pageIndex?.takeIf { it in 0 until paginatedPagerState.pageCount }
                     when {
-                        directPage != null -> scrollPaginatedToJumpPage(directPage, locator.toAndroidLocatorOrNull())
                         cfi.startsWith("android-locator:") && bookPaginator != null -> {
                             val androidLocator = locator.toAndroidLocatorOrNull()
                             val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
-                            if (targetPage != null) scrollPaginatedToJumpPage(targetPage, androidLocator)
+                            if (targetPage != null) {
+                                scrollPaginatedToJumpPage(targetPage, androidLocator)
+                            } else if (directPage != null) {
+                                scrollPaginatedToJumpPage(directPage)
+                            }
                         }
                         cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null && bookPaginator != null -> {
                             val androidLocator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
                             val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
                             if (targetPage != null) {
                                 scrollPaginatedToJumpPage(targetPage, androidLocator)
+                            } else if (directPage != null) {
+                                scrollPaginatedToJumpPage(directPage)
                             } else {
                                 bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
-                                    scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0))
+                                    scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0), fallbackToChapterStart = true)
                                 }
                             }
                         }
+                        cfi.startsWith("android-fragment:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                        cfi.startsWith("android-search:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                        cfi.startsWith("android-page:") && directPage != null -> scrollPaginatedToJumpPage(directPage)
+                        directPage != null -> scrollPaginatedToJumpPage(directPage)
                         chapterIndex != null && bookPaginator != null -> {
                             bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
-                                scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0))
+                                scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0), fallbackToChapterStart = true)
                             }
                         }
                     }
@@ -2662,13 +2704,9 @@ fun EpubReaderHost(
             onPaginatedScrollToPage = { pageIdx ->
                 Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                 val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(pageIdx)
-                recordEpubJump(
-                    SharedReaderLocator(
-                        chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(pageIdx),
-                        pageIndex = pageIdx,
-                        cfi = "android-page:$pageIdx"
-                    )
-                )
+                paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                    ?.copy(textQuote = searchState.searchResults.getOrNull(index)?.snippet?.text)
+                    ?.let { recordEpubJump(it) }
                 scrollPaginatedToJumpPage(pageIdx, targetLocator)
             }
         )
@@ -2826,7 +2864,13 @@ fun EpubReaderHost(
                                             Timber.tag(TAG_LINK_NAV)
                                                 .d("[CHAPTER-NAV] source=TOC_ENTRY_PAGINATED, from=$currentChapterIndex, to=$targetChapterIndex, page=$targetPage, anchor='${entry.fragmentId}', label='${entry.label}'")
                                             Timber.tag("TOC_NAV_DEBUG").d("Scrolling Pager to page: $targetPage")
-                                            scrollPaginatedToJumpPage(targetPage, bookPaginator.getLocatorForPage(targetPage) ?: Locator(targetChapterIndex, 0, 0))
+                                            val targetLocator = bookPaginator.getLocatorForPage(targetPage)
+                                                ?: if (entry.fragmentId == null) Locator(targetChapterIndex, 0, 0) else null
+                                            scrollPaginatedToJumpPage(
+                                                targetPage,
+                                                targetLocator,
+                                                fallbackToChapterStart = entry.fragmentId == null
+                                            )
                                             isNavigatingByToc = false
                                         }
                                     }
@@ -2871,7 +2915,7 @@ fun EpubReaderHost(
                                             recordEpubJump(chapterStartJumpLocator(index).copy(pageIndex = targetPage))
                                             Timber.tag(TAG_LINK_NAV)
                                                 .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER_PAGINATED, from=$currentFromPager, to=$index, page=$targetPage")
-                                            scrollPaginatedToJumpPage(targetPage, Locator(index, 0, 0))
+                                            scrollPaginatedToJumpPage(targetPage, Locator(index, 0, 0), fallbackToChapterStart = true)
                                             if (showBars) showBars = false
                                         }
                                     }
@@ -2976,7 +3020,7 @@ fun EpubReaderHost(
                                         Timber.w("P-Mode Click: Paginator could not find a page for the locator. Falling back to chapter start.")
                                         val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(bookmark.chapterIndex)
                                         if (chapterStartPage != null) {
-                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(bookmark.chapterIndex, 0, 0))
+                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(bookmark.chapterIndex, 0, 0), fallbackToChapterStart = true)
                                         }
                                     }
                                     isNavigatingToPosition = false
@@ -2984,7 +3028,7 @@ fun EpubReaderHost(
                                     Timber.w("P-Mode Click: Failed to convert CFI to Locator. Using old findPageForCfi as a fallback.")
                                     paginator?.findPageForCfi(bookmark.chapterIndex, bookmark.cfi) { pageIndex ->
                                         scope.launch {
-                                            scrollPaginatedToJumpPage(pageIndex, Locator(bookmark.chapterIndex, 0, 0))
+                                            scrollPaginatedToJumpPage(pageIndex)
                                             isNavigatingToPosition = false
                                         }
                                     }
@@ -3072,14 +3116,14 @@ fun EpubReaderHost(
                                     } else {
                                         val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(highlight.chapterIndex)
                                         if (chapterStartPage != null) {
-                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(highlight.chapterIndex, 0, 0))
+                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(highlight.chapterIndex, 0, 0), fallbackToChapterStart = true)
                                         }
                                     }
                                     isNavigatingToPosition = false
                                 } else {
                                     paginator?.findPageForCfi(highlight.chapterIndex, highlight.cfi) { pageIndex ->
                                         scope.launch {
-                                            scrollPaginatedToJumpPage(pageIndex, Locator(highlight.chapterIndex, 0, 0))
+                                            scrollPaginatedToJumpPage(pageIndex)
                                             isNavigatingToPosition = false
                                         }
                                     }
@@ -4503,18 +4547,15 @@ fun EpubReaderHost(
                                     val bookPaginator = paginator as? BookPaginator
                                     val targetChapter = bookPaginator?.findChapterIndexForPage(targetPageIndex)
                                     val targetLocator = bookPaginator?.getLocatorForPage(targetPageIndex)
-                                        ?: targetChapter?.let { Locator(it, 0, 0) }
                                     if (targetLocator != null) {
                                         lastKnownLocator = targetLocator
                                     }
                                     bookPaginator?.onUserScrolledTo(targetPageIndex)
-                                    recordEpubJump(
-                                        SharedReaderLocator(
-                                            chapterIndex = targetChapter,
-                                            pageIndex = targetPageIndex,
-                                            cfi = "android-page:$targetPageIndex"
-                                        )
-                                    )
+                                    paginatedJumpLocatorForPage(
+                                        pageIndex = targetPageIndex,
+                                        targetLocator = targetLocator,
+                                        fallbackChapterIndex = targetChapter
+                                    )?.let { recordEpubJump(it) }
                                 },
                                 onHighlightDeleted = { cfi ->
                                     val toRemove = userHighlights.find { it.cfi == cfi }
@@ -5756,13 +5797,11 @@ fun EpubReaderHost(
                     } else {
                         sliderCurrentPage = page.toFloat()
                         val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(page - 1)
-                        recordEpubJump(
-                            SharedReaderLocator(
-                                chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(page - 1),
-                                pageIndex = page - 1,
-                                cfi = "android-page:${page - 1}"
-                            )
-                        )
+                        paginatedJumpLocatorForPage(
+                            pageIndex = page - 1,
+                            targetLocator = targetLocator,
+                            allowPageFallback = true
+                        )?.let { recordEpubJump(it) }
                         scrollPaginatedToJumpPage(page - 1, targetLocator)
                     }
                 }

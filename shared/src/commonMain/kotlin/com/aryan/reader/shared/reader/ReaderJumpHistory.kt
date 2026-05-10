@@ -102,6 +102,17 @@ private fun ReaderLocator.isValidJumpLocator(chapterCount: Int): Boolean {
 }
 
 private fun ReaderLocator.jumpLocationKey(): String {
+    val stableCfi = cfi?.takeIf { it.isNotBlank() }
+    if (stableCfi != null) {
+        return listOf(
+            chapterIndex?.toString().orEmpty(),
+            chapterId.orEmpty(),
+            href.orEmpty(),
+            startOffset?.toString().orEmpty(),
+            endOffset?.toString().orEmpty(),
+            stableCfi
+        ).joinToString("|")
+    }
     return listOf(
         chapterIndex?.toString().orEmpty(),
         chapterId.orEmpty(),

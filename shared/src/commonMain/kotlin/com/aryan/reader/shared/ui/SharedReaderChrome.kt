@@ -2404,7 +2404,11 @@ private fun SharedReaderJumpHistoryBar(
 }
 
 private fun ReaderLocator.jumpLabel(session: ReaderSessionState): String {
-    pageIndex?.let { return "Page ${it + 1}" }
+    val targetPageIndex = pageIndex
+    val targetCfi = cfi.orEmpty()
+    if (targetPageIndex != null && targetCfi.isBlank()) {
+        return "Page ${targetPageIndex + 1}"
+    }
     val chapter = chapterIndex
     return if (chapter != null) {
         session.reader.book.chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: "Chapter ${chapter + 1}"

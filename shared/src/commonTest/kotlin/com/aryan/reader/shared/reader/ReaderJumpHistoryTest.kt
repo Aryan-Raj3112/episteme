@@ -56,6 +56,10 @@ class ReaderJumpHistoryTest {
         }
 
         assertTrue(unchanged.locators.isEmpty())
+        assertTrue(
+            locator(chapter = 0, cfi = "stable").copy(pageIndex = 12)
+                .hasSameJumpLocation(locator(chapter = 0, cfi = "stable").copy(pageIndex = 48))
+        )
         assertEquals(listOf(locator(chapter = 0, cfi = "start"), locator(chapter = 1, cfi = "keep")), pruned.locators)
         assertEquals(1, pruned.cursor)
         assertEquals((36..40).map { locator(chapter = 0, cfi = "spot-$it") }, capped.locators)
