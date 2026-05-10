@@ -50,6 +50,40 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `locked orientation reset camera returns base fit zoom and target page pan`() {
+        val camera = calculateLockedOrientationResetCamera(
+            pageTopY = 1_000f,
+            totalDocHeight = 3_000f,
+            screenWidth = 800f,
+            screenHeight = 1_200f,
+            headerHeightPx = 40f,
+            footerHeightPx = 60f,
+            fitZoom = 1f
+        )
+
+        assertEquals(1f, camera.zoom, 0.0001f)
+        assertEquals(0f, camera.panX, 0.0001f)
+        assertEquals(-960f, camera.panY, 0.0001f)
+    }
+
+    @Test
+    fun `locked orientation reset camera centers narrow fit zoom and clamps short documents`() {
+        val camera = calculateLockedOrientationResetCamera(
+            pageTopY = 120f,
+            totalDocHeight = 500f,
+            screenWidth = 1_000f,
+            screenHeight = 900f,
+            headerHeightPx = 40f,
+            footerHeightPx = 60f,
+            fitZoom = 0.5f
+        )
+
+        assertEquals(0.5f, camera.zoom, 0.0001f)
+        assertEquals(250f, camera.panX, 0.0001f)
+        assertEquals(40f, camera.panY, 0.0001f)
+    }
+
+    @Test
     fun `getSuggestedFilename sanitizes truncates and marks annotated copies`() {
         val filename = getSuggestedFilename(
             originalName = "A very long odd @name with spaces and symbols that should be truncated eventually.pdf",

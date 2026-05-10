@@ -2774,7 +2774,8 @@ internal fun PdfPageComposable(
                 selectedTool,
                 isStylusOnlyMode,
                 userHighlightScreenRects,
-                bubbleTapSlopPx
+                bubbleTapSlopPx,
+                isScrollLocked
             ) {
                 val isTapDetectionAllowed = !isEditMode ||
                         selectedTool == InkType.TEXT ||
@@ -3040,7 +3041,7 @@ internal fun PdfPageComposable(
                                 onScaleChanged(scale)
                             }
                         }
-                    } else if (isVerticalScroll && currentOnDoubleTap != null) {
+                    } else if (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null) {
                         currentOnDoubleTap!!(tapOffset)
                     }
                 })
@@ -3543,13 +3544,31 @@ internal fun PdfPageComposable(
             }
         }
 
+        var previousLockedViewportSize by remember { mutableStateOf<Pair<Dp, Dp>?>(null) }
+
         LaunchedEffect(
             pageIndex, this@BoxWithConstraints.maxWidth, this@BoxWithConstraints.maxHeight,
             isScrollLocked, lockedState
         ) {
-            if (isScrollLocked && !isVerticalScroll && lockedState != null) {
-                scale = lockedState.first
-                offset = Offset(lockedState.second, lockedState.third)
+            val currentViewportSize = this@BoxWithConstraints.maxWidth to this@BoxWithConstraints.maxHeight
+            val previousViewportSize = previousLockedViewportSize
+            val orientationChanged = previousViewportSize != null &&
+                (previousViewportSize.first > previousViewportSize.second) !=
+                (currentViewportSize.first > currentViewportSize.second)
+            previousLockedViewportSize = currentViewportSize
+
+            if (isScrollLocked && !isVerticalScroll) {
+                if (orientationChanged) {
+                    scale = 1f
+                    offset = Offset.Zero
+                    onZoomAndPanChanged?.invoke(1f, Offset.Zero)
+                    Timber.tag("PdfLockDiagnostic").i(
+                        "Orientation changed while locked; reset paginated zoom to fit on page $pageIndex"
+                    )
+                } else if (lockedState != null) {
+                    scale = lockedState.first
+                    offset = Offset(lockedState.second, lockedState.third)
+                }
                 onScaleChanged(scale)
             } else if (!isScrollLocked && !isVerticalScroll) {
                 scale = 1f

@@ -184,6 +184,44 @@ private data class PdfPageLayout(
 
 private data class DividerLayout(val y: Float, val width: Float, val height: Float)
 
+internal data class PdfLockedOrientationResetCamera(
+    val zoom: Float,
+    val panX: Float,
+    val panY: Float
+)
+
+internal fun calculateLockedOrientationResetCamera(
+    pageTopY: Float,
+    totalDocHeight: Float,
+    screenWidth: Float,
+    screenHeight: Float,
+    headerHeightPx: Float,
+    footerHeightPx: Float,
+    fitZoom: Float
+): PdfLockedOrientationResetCamera {
+    val targetPanY = headerHeightPx - (pageTopY * fitZoom)
+    val zoomedDocHeight = totalDocHeight * fitZoom
+    val minPanY = if (zoomedDocHeight < (screenHeight - headerHeightPx - footerHeightPx)) {
+        headerHeightPx
+    } else {
+        (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+    }
+    val finalPanY = targetPanY.coerceIn(minPanY, headerHeightPx)
+
+    val zoomedDocWidth = screenWidth * fitZoom
+    val targetPanX = if (zoomedDocWidth < screenWidth) {
+        (screenWidth - zoomedDocWidth) / 2f
+    } else {
+        0f
+    }
+
+    return PdfLockedOrientationResetCamera(
+        zoom = fitZoom,
+        panX = targetPanX,
+        panY = finalPanY
+    )
+}
+
 @Suppress("UnusedVariable")
 @SuppressLint("UnusedBoxWithConstraintsScope", "BinaryOperationInTimber")
 @OptIn(FlowPreview::class)
@@ -375,11 +413,17 @@ internal fun PdfVerticalReader(
         var isResizing by remember { mutableStateOf(false) }
         var previousScreenWidth by remember { mutableFloatStateOf(0f) }
         var previousScreenHeight by remember { mutableFloatStateOf(0f) }
+        var lockedOrientationChangedDuringResize by remember { mutableStateOf(false) }
         val targetPageDuringResize = remember { mutableIntStateOf(-1) }
 
         if (previousScreenWidth != screenWidth || previousScreenHeight != screenHeight) {
             if (previousScreenWidth > 0f) {
+                val previousWasLandscape = previousScreenWidth > previousScreenHeight
+                val currentIsLandscape = screenWidth > screenHeight
                 isResizing = true
+                if (isScrollLocked && previousWasLandscape != currentIsLandscape) {
+                    lockedOrientationChangedDuringResize = true
+                }
                 if (targetPageDuringResize.intValue == -1) {
                     targetPageDuringResize.intValue = state.currentPage
                 }
@@ -424,7 +468,45 @@ internal fun PdfVerticalReader(
         }
 
         LaunchedEffect(layoutState.pages) {
-            if (!isInitialLayout && !isScrollLocked) {
+            if (!isInitialLayout && isScrollLocked && lockedOrientationChangedDuringResize) {
+                val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
+                    targetPageDuringResize.intValue
+                } else {
+                    state.currentPage
+                }
+
+                val newLayout = layoutState.pages
+                val pageLayout = newLayout.getOrNull(targetPageIdx)
+
+                if (pageLayout != null) {
+                    val resetCamera = calculateLockedOrientationResetCamera(
+                        pageTopY = pageLayout.y,
+                        totalDocHeight = layoutState.totalHeight,
+                        screenWidth = screenWidth,
+                        screenHeight = screenHeight,
+                        headerHeightPx = headerHeightPx,
+                        footerHeightPx = footerHeightPx,
+                        fitZoom = fitZoom
+                    )
+
+                    panXAnimatable.updateBounds(null, null)
+                    panYAnimatable.updateBounds(null, null)
+
+                    coroutineScope {
+                        launch { zoomAnimatable.snapTo(resetCamera.zoom) }
+                        launch { panXAnimatable.snapTo(resetCamera.panX) }
+                        launch { panYAnimatable.snapTo(resetCamera.panY) }
+                    }
+
+                    state.currentPage = targetPageIdx
+                    hasRestoredLockedState = true
+                    onZoomChange(resetCamera.zoom)
+                    onZoomAndPanChanged?.invoke(resetCamera.zoom, Offset(resetCamera.panX, resetCamera.panY))
+                    Timber.tag("PdfLockDiagnostic").i(
+                        "Orientation changed while locked; reset zoom to fit and kept page $targetPageIdx"
+                    )
+                }
+            } else if (!isInitialLayout && !isScrollLocked) {
                 val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
                     targetPageDuringResize.intValue
                 } else {
@@ -466,6 +548,7 @@ internal fun PdfVerticalReader(
             if (!isInitialLayout) {
                 delay(50)
                 isResizing = false
+                lockedOrientationChangedDuringResize = false
                 targetPageDuringResize.intValue = -1
             }
             isInitialLayout = false
@@ -1081,7 +1164,7 @@ internal fun PdfVerticalReader(
             modifier = Modifier
                 .fillMaxSize()
                 .then(globalDrawingModifier)
-                .pointerInput(isEditMode, selectedTool, isStylusOnlyMode) {
+                .pointerInput(isEditMode, selectedTool, isStylusOnlyMode, isScrollLocked) {
                     Timber.tag("PdfTouchDebug").v(
                         "VerticalReader: TapPointerInput init. isEditMode=$isEditMode"
                     )
@@ -1101,8 +1184,10 @@ internal fun PdfVerticalReader(
                             onPageClick()
                         }
                     }, onDoubleTap = { offset ->
-                        Timber.tag("PdfTouchDebug").d("VerticalReader: DoubleTap detected")
-                        onDoubleTapToZoom(offset)
+                        if (!isScrollLocked) {
+                            Timber.tag("PdfTouchDebug").d("VerticalReader: DoubleTap detected")
+                            onDoubleTapToZoom(offset)
+                        }
                     })
                 }
                 .pointerInput(
@@ -1579,6 +1664,7 @@ internal fun PdfVerticalReader(
                                 { text: String -> onSearchText(text) }
                             }
 
+                            val currentOnDoubleTapToZoom by rememberUpdatedState(onDoubleTapToZoom)
                             val onDoubleTapLambda = remember(page, screenWidth, screenHeight) {
                                 { localOffset: Offset ->
                                     Timber.tag("PdfZoomDebug").d(
@@ -1592,7 +1678,7 @@ internal fun PdfVerticalReader(
                                     val screenX = contentX * currentZ + panX
                                     val screenY = contentY * currentZ + panY
                                     Timber.tag("PdfZoomDebug").d("Mapped to Screen: ($screenX, $screenY)") // Added log
-                                    onDoubleTapToZoom(Offset(screenX, screenY))
+                                    currentOnDoubleTapToZoom(Offset(screenX, screenY))
                                 }
                             }
 
@@ -1716,6 +1802,7 @@ internal fun PdfVerticalReader(
                                     isZoomEnabled = false,
                                     isScrolling = isDragging || (isFlinging && isFastFlinging),
                                     isVerticalScroll = true,
+                                    isScrollLocked = isScrollLocked,
                                     visualScaleProvider = currentScaleProvider,
                                     onDoubleTap = onDoubleTapLambda,
                                     clearSelectionTrigger = selectionClearTrigger,
