@@ -28,35 +28,16 @@ class LibraryProjector {
 
     fun withImportedFiles(state: LibraryState, files: List<ImportedFile>): LibraryState {
         if (files.isEmpty()) return state
-        val now = currentTimestamp()
-        val existingIds = state.books.mapTo(mutableSetOf()) { it.id }
-        val imported = files.mapIndexedNotNull { index, file ->
-            val id = file.path ?: file.name
-            val type = file.name.toFileType()
-            if (type == FileType.UNKNOWN) {
-                null
-            } else if (!existingIds.add(id)) {
-                null
-            } else {
-                BookItem(
-                    id = id,
-                    path = file.path,
-                    type = type,
-                    displayName = file.name,
-                    timestamp = now + index,
-                    title = file.name.substringBeforeLast('.'),
-                    fileSize = file.size,
-                    sourceFolder = file.sourceFolder ?: file.path?.parentPath(),
-                    isRecent = false
-                )
-            }
-        }
-        val hasUnsupportedFiles = files.any { it.name.toFileType() == FileType.UNKNOWN }
+        val plan = SharedImportPlanner.plan(
+            files = files.map { it.toImportedBookFile() },
+            existingBookIds = state.books.mapTo(mutableSetOf()) { it.id },
+            platform = ReaderPlatform.DESKTOP
+        )
         return state.copy(
-            books = imported + state.books,
+            books = plan.importedBooks + state.books,
             message = when {
-                imported.isNotEmpty() -> "Imported ${imported.size} file(s). Reader support comes later."
-                hasUnsupportedFiles -> "No supported files were imported."
+                plan.importedCount > 0 -> "Imported ${plan.importedCount} file(s). Reader support comes later."
+                plan.unsupportedCount > 0 -> "No supported files were imported."
                 else -> "Those files are already in the desktop library."
             }
         )
@@ -144,12 +125,6 @@ class LibraryProjector {
     }
 }
 
-private fun String.parentPath(): String? {
-    val normalized = replace('\\', '/')
-    val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
-    return parent.ifBlank { null }
-}
-
 private fun String.folderDisplayName(): String {
     return replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
 }
@@ -160,6 +135,16 @@ data class ImportedFile(
     val size: Long,
     val sourceFolder: String? = null
 )
+
+private fun ImportedFile.toImportedBookFile(): ImportedBookFile {
+    return ImportedBookFile(
+        name = name,
+        uriString = null,
+        localPath = path,
+        size = size,
+        sourceFolder = sourceFolder
+    )
+}
 
 expect fun currentTimestamp(): Long
 

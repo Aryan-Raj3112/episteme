@@ -96,6 +96,8 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.SharedLibraryEditor
+import com.aryan.reader.shared.SharedImportOutcomeCounts
+import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.AppAction as SharedAppAction
@@ -3648,7 +3650,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             var importedCount = 0
+            var duplicateCount = 0
             var unsupportedCount = 0
+            var failedCount = 0
 
             withContext(Dispatchers.IO) {
                 for (externalUri in uris) {
@@ -3672,30 +3676,39 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             appContext.contentResolver.openInputStream(externalUri)
                         }
                         if (hash != null && recentFilesRepository.getFileByBookId(hash) != null) {
-                            importedCount++
+                            duplicateCount++
                         } else if (getFileTypeFromUri(externalUri, appContext) == null) {
                             unsupportedCount++
+                        } else {
+                            failedCount++
                         }
                     }
                 }
             }
 
             _internalState.update {
-                val message = when {
-                    importedCount > 0 -> "Imported $importedCount books. You can find them in the Library tab."
-                    unsupportedCount > 0 -> appContext.getString(R.string.error_unsupported_file_type)
-                    else -> appContext.getString(R.string.error_import_file_failed)
-                }
+                val feedback = SharedImportPlanner.feedbackForCounts(
+                    counts = SharedImportOutcomeCounts(
+                        addedCount = importedCount,
+                        duplicateCount = duplicateCount,
+                        unsupportedCount = unsupportedCount,
+                        failedCount = failedCount
+                    ),
+                    importedMessage = "Imported $importedCount books. You can find them in the Library tab.",
+                    duplicateMessage = "Those files are already in the library.",
+                    unsupportedMessage = appContext.getString(R.string.error_unsupported_file_type),
+                    failedMessage = appContext.getString(R.string.error_import_file_failed)
+                )
                 it.copy(
                     bannerMessage = BannerMessage(
-                        message = message,
-                        isError = importedCount == 0,
+                        message = feedback.message,
+                        isError = feedback.isError,
                         isPersistent = false
                     )
                 )
             }
 
-            Timber.tag("BulkImport").i("Bulk import complete. $importedCount files processed.")
+            Timber.tag("BulkImport").i("Bulk import complete. $importedCount new files, $duplicateCount duplicates, $unsupportedCount unsupported, $failedCount failed.")
         }
     }
 

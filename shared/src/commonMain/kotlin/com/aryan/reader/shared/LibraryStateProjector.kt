@@ -303,45 +303,22 @@ fun SharedReaderScreenState.withImportedFiles(
     now: Long = currentTimestamp()
 ): SharedReaderScreenState {
     if (files.isEmpty()) return this
-    val existingIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
-    val imported = files.mapIndexedNotNull { index, file ->
-        val id = file.localPath ?: file.uriString ?: file.name
-        val type = file.name.toFileType()
-        if (type == FileType.UNKNOWN) {
-            null
-        } else if (!existingIds.add(id)) {
-            null
-        } else {
-            BookItem(
-                id = id,
-                path = file.localPath ?: file.uriString,
-                type = type,
-                displayName = file.name,
-                timestamp = now + index,
-                title = file.name.substringBeforeLast('.'),
-                fileSize = file.size,
-                sourceFolder = file.sourceFolder ?: file.localPath?.parentPath(),
-                isRecent = false
-            )
-        }
-    }
-    val hasUnsupportedFiles = files.any { it.name.toFileType() == FileType.UNKNOWN }
+    val plan = SharedImportPlanner.plan(
+        files = files,
+        existingBookIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
+        platform = ReaderPlatform.DESKTOP,
+        nowMillis = now
+    )
     return copy(
-        rawLibraryBooks = imported + rawLibraryBooks,
+        rawLibraryBooks = plan.importedBooks + rawLibraryBooks,
         bannerMessage = BannerMessage(
             when {
-                imported.isNotEmpty() -> "Imported ${imported.size} file(s)."
-                hasUnsupportedFiles -> "No supported files were imported."
+                plan.importedCount > 0 -> "Imported ${plan.importedCount} file(s)."
+                plan.unsupportedCount > 0 -> "No supported files were imported."
                 else -> "Those files are already in the library."
             }
         )
     )
-}
-
-private fun String.parentPath(): String? {
-    val normalized = replace('\\', '/')
-    val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
-    return parent.ifBlank { null }
 }
 
 private fun List<BookItem>.withPinnedFirst(pinnedBookIds: Set<String>): List<BookItem> {

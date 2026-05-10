@@ -162,6 +162,7 @@ import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFolderPathResolver
+import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibrarySnapshot
@@ -278,7 +279,6 @@ import com.aryan.reader.shared.ui.pdfReaderWorkspaceModel
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
-import com.aryan.reader.shared.withImportedFiles
 import com.multiplatform.webview.jsbridge.IJsMessageHandler
 import com.multiplatform.webview.jsbridge.JsMessage
 import com.multiplatform.webview.jsbridge.rememberWebViewJsBridge
@@ -942,8 +942,15 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun importFiles(files: List<ImportedBookFile>) {
-        val importableFiles = files.filter { it.desktopFileType() in DesktopReadableFileTypes }
-        if (importableFiles.isEmpty() && files.isNotEmpty()) {
+        val importStart = System.currentTimeMillis()
+        val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+        val importPlan = SharedImportPlanner.plan(
+            files = files,
+            existingBookIds = existingIds,
+            platform = ReaderPlatform.DESKTOP,
+            nowMillis = importStart
+        )
+        if (importPlan.supportedFiles.isEmpty() && files.isNotEmpty()) {
             updateState(
                 state.withBanner(
                     "No supported desktop reader files were selected. " +
@@ -953,21 +960,23 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             )
             return
         }
-        val skipped = files.size - importableFiles.size
-        val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
-        val importablePaths = importableFiles
+        val importablePaths = importPlan.supportedFiles
             .mapNotNull { it.localPath ?: it.uriString }
             .toSet()
         val syncedFolders = mergeSyncedFolders(
             existing = state.syncedFolders,
-            folderRoots = importableFiles.mapNotNull { it.sourceFolder }.distinct(),
-            nowMillis = System.currentTimeMillis()
+            folderRoots = importPlan.supportedFiles.mapNotNull { it.sourceFolder }.distinct(),
+            nowMillis = importStart
         )
-        val next = state.withImportedFiles(importableFiles)
+        val next = state.copy(rawLibraryBooks = importPlan.importedBooks + state.rawLibraryBooks)
             .copy(syncedFolders = syncedFolders)
             .let {
                 when {
-                    skipped > 0 -> it.withBanner("Imported supported files. Skipped $skipped unsupported file(s).")
+                    importPlan.importedCount > 0 && importPlan.unsupportedCount > 0 -> {
+                        it.withBanner("Imported supported files. Skipped ${importPlan.unsupportedCount} unsupported file(s).")
+                    }
+                    importPlan.importedCount > 0 -> it.withBanner("Imported ${importPlan.importedCount} file(s).")
+                    importPlan.duplicateCount > 0 -> it.withBanner("Those files are already in the library.")
                     else -> it
                 }
             }
