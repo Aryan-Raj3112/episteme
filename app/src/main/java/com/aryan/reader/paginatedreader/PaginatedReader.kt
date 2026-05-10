@@ -729,6 +729,7 @@ fun PaginatedReaderScreen(
     effectiveText: Color,
     pagerState: PagerState,
     isPageTurnAnimationEnabled: Boolean,
+    isRightToLeftPagination: Boolean = false,
     searchQuery: String,
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
@@ -1134,6 +1135,7 @@ fun PaginatedReaderScreen(
             uiState = uiState,
             pagerState = pagerState,
             isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
+            isRightToLeftPagination = isRightToLeftPagination,
             effectiveBg = effectiveBg,
             searchQuery = searchQuery,
             ttsHighlightInfo = ttsHighlightInfo,
@@ -2073,6 +2075,7 @@ internal fun PaginatedReaderContent(
     uiState: PaginatedReaderUiState,
     pagerState: PagerState,
     isPageTurnAnimationEnabled: Boolean,
+    isRightToLeftPagination: Boolean = false,
     effectiveBg: Color,
     effectiveText: Color,
     searchQuery: String,
@@ -2231,7 +2234,8 @@ internal fun PaginatedReaderContent(
                                 }
                             }
                         },
-                        beyondViewportPageCount = 1
+                        beyondViewportPageCount = 1,
+                        reverseLayout = isRightToLeftPagination
                     ) { pageIndex ->
                         val pageOffset =
                             (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction

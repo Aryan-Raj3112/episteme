@@ -82,6 +82,7 @@ internal fun PdfTopBar(
     isScrollLocked: Boolean,
     isEditMode: Boolean,
     displayMode: DisplayMode,
+    isRightToLeftPagination: Boolean,
     isKeepScreenOn: Boolean,
     isTtsSessionActive: Boolean,
     isBookmarked: Boolean,
@@ -116,6 +117,7 @@ internal fun PdfTopBar(
     tapToNavigateEnabled: Boolean,
     onToggleTapToNavigate: () -> Unit,
     onChangeDisplayMode: (DisplayMode) -> Unit,
+    onToggleRightToLeftPagination: () -> Unit,
     onToggleKeepScreenOn: () -> Unit,
     onStartAutoScroll: () -> Unit,
     onShowTtsSettings: () -> Unit,
@@ -290,11 +292,17 @@ internal fun PdfTopBar(
                         Box {
                             var showMoreMenu by remember { mutableStateOf(false) }
                             var showHiddenToolsExpanded by remember { mutableStateOf(false) }
+                            var showReadingModeExpanded by remember { mutableStateOf(false) }
+                            var showTtsSettingsExpanded by remember { mutableStateOf(false) }
+                            var showFileActionsExpanded by remember { mutableStateOf(false) }
                             TooltipIconButton(
                                 text = stringResource(R.string.tooltip_more_options),
                                 description = stringResource(R.string.tooltip_more_options_desc),
                                 onClick = {
                                     showHiddenToolsExpanded = false
+                                    showReadingModeExpanded = false
+                                    showTtsSettingsExpanded = false
+                                    showFileActionsExpanded = false
                                     showMoreMenu = true
                                 }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.tooltip_more_options))
@@ -304,6 +312,9 @@ internal fun PdfTopBar(
                                 expanded = showMoreMenu,
                                 onDismissRequest = {
                                     showHiddenToolsExpanded = false
+                                    showReadingModeExpanded = false
+                                    showTtsSettingsExpanded = false
+                                    showFileActionsExpanded = false
                                     showMoreMenu = false
                                 }
                             ) {
@@ -376,18 +387,39 @@ internal fun PdfTopBar(
 
                                 if (!hiddenTools.contains(PdfReaderTool.READING_MODE.name)) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
-                                        enabled = !isTtsSessionActive,
-                                        onClick = { onChangeDisplayMode(DisplayMode.VERTICAL_SCROLL); showMoreMenu = false },
-                                        trailingIcon = { if (displayMode == DisplayMode.VERTICAL_SCROLL) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
+                                        text = { Text(stringResource(R.string.menu_change_reading_mode)) },
+                                        onClick = { showReadingModeExpanded = !showReadingModeExpanded },
+                                        trailingIcon = {
+                                            Icon(
+                                                Icons.Default.ArrowDropDown,
+                                                contentDescription = null,
+                                                modifier = Modifier.rotate(if (showReadingModeExpanded) 180f else 0f)
+                                            )
+                                        }
                                     )
-                                    HorizontalDivider()
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
-                                        enabled = !isTtsSessionActive,
-                                        onClick = { onChangeDisplayMode(DisplayMode.PAGINATION); showMoreMenu = false },
-                                        trailingIcon = { if (displayMode == DisplayMode.PAGINATION) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
-                                    )
+                                    if (showReadingModeExpanded) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
+                                            enabled = !isTtsSessionActive,
+                                            onClick = { onChangeDisplayMode(DisplayMode.VERTICAL_SCROLL); showMoreMenu = false },
+                                            trailingIcon = { if (displayMode == DisplayMode.VERTICAL_SCROLL) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
+                                            enabled = !isTtsSessionActive,
+                                            onClick = { onChangeDisplayMode(DisplayMode.PAGINATION); showMoreMenu = false },
+                                            trailingIcon = { if (displayMode == DisplayMode.PAGINATION) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
+                                            onClick = { onToggleRightToLeftPagination() },
+                                            trailingIcon = {
+                                                if (isRightToLeftPagination) {
+                                                    Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                                                }
+                                            }
+                                        )
+                                    }
                                     HorizontalDivider()
                                 }
 
@@ -429,22 +461,39 @@ internal fun PdfTopBar(
                                     HorizontalDivider()
                                 }
 
-                                if (!hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)) {
+                                val showTtsVoiceSettings = !hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)
+                                val showTtsReplacements = !hiddenTools.contains(PdfReaderTool.TTS_REPLACEMENTS.name)
+                                if (showTtsVoiceSettings || showTtsReplacements) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
-                                        enabled = !isTtsSessionActive,
-                                        onClick = { showMoreMenu = false; onShowTtsSettings() },
-                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                        text = { Text(stringResource(R.string.menu_tts_settings)) },
+                                        onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
+                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                        trailingIcon = {
+                                            Icon(
+                                                Icons.Default.ArrowDropDown,
+                                                contentDescription = null,
+                                                modifier = Modifier.rotate(if (showTtsSettingsExpanded) 180f else 0f)
+                                            )
+                                        }
                                     )
+                                    if (showTtsSettingsExpanded) {
+                                        if (showTtsVoiceSettings) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                                enabled = !isTtsSessionActive,
+                                                onClick = { showMoreMenu = false; onShowTtsSettings() },
+                                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                            )
+                                        }
+                                        if (showTtsReplacements) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                                onClick = { showMoreMenu = false; onShowTtsReplacements() },
+                                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                            )
+                                        }
+                                    }
                                     HorizontalDivider()
-                                }
-
-                                if (!hiddenTools.contains(PdfReaderTool.TTS_REPLACEMENTS.name)) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
-                                        onClick = { showMoreMenu = false; onShowTtsReplacements() },
-                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(20.dp)) }
-                                    )
                                 }
 
                                 if (!hiddenTools.contains(PdfReaderTool.BOOKMARK.name)) {
@@ -480,28 +529,45 @@ internal fun PdfTopBar(
                                     HorizontalDivider()
                                 }
 
-                                if (!hiddenTools.contains(PdfReaderTool.SHARE.name)) {
+                                val showShareAction = !hiddenTools.contains(PdfReaderTool.SHARE.name)
+                                val showSaveCopyAction = effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)
+                                val showPrintAction = effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name)
+                                if (showShareAction || showSaveCopyAction || showPrintAction) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_share)) },
-                                        onClick = { showMoreMenu = false; onShare() },
-                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                        text = { Text(stringResource(R.string.menu_share_save_print)) },
+                                        onClick = { showFileActionsExpanded = !showFileActionsExpanded },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                        trailingIcon = {
+                                            Icon(
+                                                Icons.Default.ArrowDropDown,
+                                                contentDescription = null,
+                                                modifier = Modifier.rotate(if (showFileActionsExpanded) 180f else 0f)
+                                            )
+                                        }
                                     )
-                                }
-
-                                if (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_save_copy_to_device)) },
-                                        onClick = { showMoreMenu = false; onSaveCopy() },
-                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
-                                    )
-                                }
-
-                                if (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name)) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_print)) },
-                                        onClick = { showMoreMenu = false; onPrint() },
-                                        leadingIcon = { Icon(painterResource(id = R.drawable.print), contentDescription = null, modifier = Modifier.size(20.dp)) }
-                                    )
+                                    if (showFileActionsExpanded) {
+                                        if (showShareAction) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.action_share)) },
+                                                onClick = { showMoreMenu = false; onShare() },
+                                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                            )
+                                        }
+                                        if (showSaveCopyAction) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.action_save_copy_to_device)) },
+                                                onClick = { showMoreMenu = false; onSaveCopy() },
+                                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                            )
+                                        }
+                                        if (showPrintAction) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.action_print)) },
+                                                onClick = { showMoreMenu = false; onPrint() },
+                                                leadingIcon = { Icon(painterResource(id = R.drawable.print), contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -780,6 +846,7 @@ fun PdfBottomBar(
     onToggleEditMode: () -> Unit,
     onToggleTts: () -> Unit,
     onShowScreenOrientation: () -> Unit,
+    showBubbleZoom: Boolean,
     isBubbleZoomModeActive: Boolean,
     onToggleBubbleZoom: () -> Unit
 ) {
@@ -893,7 +960,7 @@ fun PdfBottomBar(
                         }
                     }
 
-                if (BuildConfig.FLAVOR != "oss") {
+                if (BuildConfig.FLAVOR != "oss" && showBubbleZoom) {
                     TooltipIconButton(
                         text = if (isBubbleZoomModeActive) stringResource(R.string.action_exit_smart_zoom) else stringResource(R.string.action_smart_comic_zoom),
                         description = stringResource(R.string.desc_toggle_smart_comic_zoom),

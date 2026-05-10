@@ -169,7 +169,7 @@ enum class ReaderTool(val title: String, val category: String) {
     VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
     SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
-    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
+    TTS_SETTINGS("TTS Settings", "Overflow Menu"),
     TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu")
 }
 
@@ -275,6 +275,7 @@ fun EpubReaderTopBar(
     tapToNavigateEnabled: Boolean,
     volumeScrollEnabled: Boolean,
     isPageTurnAnimationEnabled: Boolean,
+    isRightToLeftPagination: Boolean,
     onNavigateBack: () -> Unit,
     isKeepScreenOn: Boolean,
     onToggleKeepScreenOn: (Boolean) -> Unit,
@@ -284,6 +285,7 @@ fun EpubReaderTopBar(
     onToggleTapToNavigate: (Boolean) -> Unit,
     onToggleVolumeScroll: (Boolean) -> Unit,
     onTogglePageTurnAnimation: (Boolean) -> Unit,
+    onToggleRightToLeftPagination: () -> Unit,
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onOpenTtsReplacements: () -> Unit,
@@ -435,11 +437,15 @@ fun EpubReaderTopBar(
                     Box {
                         var showMoreMenu by remember { mutableStateOf(false) }
                         var showHiddenToolsExpanded by remember { mutableStateOf(false) }
+                        var showReadingModeExpanded by remember { mutableStateOf(false) }
+                        var showTtsSettingsExpanded by remember { mutableStateOf(false) }
                         TooltipIconButton(
                             text = stringResource(R.string.tooltip_more_options),
                             description = stringResource(R.string.tooltip_more_options_desc),
                             onClick = {
                                 showHiddenToolsExpanded = false
+                                showReadingModeExpanded = false
+                                showTtsSettingsExpanded = false
                                 showMoreMenu = true
                             }
                         ) {
@@ -450,6 +456,8 @@ fun EpubReaderTopBar(
                             expanded = showMoreMenu,
                             onDismissRequest = {
                                 showHiddenToolsExpanded = false
+                                showReadingModeExpanded = false
+                                showTtsSettingsExpanded = false
                                 showMoreMenu = false
                             }
                         ) {
@@ -544,31 +552,53 @@ fun EpubReaderTopBar(
 
                             if (!hiddenTools.contains(ReaderTool.READING_MODE.name)) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
-                                    enabled = !isTtsActive,
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
-                                    },
+                                    text = { Text(stringResource(R.string.menu_change_reading_mode)) },
+                                    onClick = { showReadingModeExpanded = !showReadingModeExpanded },
                                     trailingIcon = {
-                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_selected)
+                                        Icon(
+                                            Icons.Default.ArrowDropDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.rotate(if (showReadingModeExpanded) 180f else 0f)
                                         )
-                                    })
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
-                                    enabled = !isTtsActive,
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onChangeRenderMode(RenderMode.PAGINATED)
-                                    },
-                                    trailingIcon = {
-                                        if (currentRenderMode == RenderMode.PAGINATED) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_selected)
-                                        )
-                                    })
+                                    }
+                                )
+                                if (showReadingModeExpanded) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
+                                        enabled = !isTtsActive,
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
+                                        },
+                                        trailingIcon = {
+                                            if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = stringResource(R.string.content_desc_selected)
+                                            )
+                                        })
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
+                                        enabled = !isTtsActive,
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onChangeRenderMode(RenderMode.PAGINATED)
+                                        },
+                                        trailingIcon = {
+                                            if (currentRenderMode == RenderMode.PAGINATED) Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = stringResource(R.string.content_desc_selected)
+                                            )
+                                        })
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
+                                        onClick = { onToggleRightToLeftPagination() },
+                                        trailingIcon = {
+                                            if (isRightToLeftPagination) Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = stringResource(R.string.content_desc_enabled)
+                                            )
+                                        })
+                                }
                                 HorizontalDivider()
                             }
                             if (!hiddenTools.contains(ReaderTool.BOOKMARK.name)) {
@@ -680,39 +710,62 @@ fun EpubReaderTopBar(
                                     })
                                 HorizontalDivider()
                             }
-                            if (!hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)) {
+                            val showTtsVoiceSettings = !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)
+                            val showTtsReplacements = !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
+                            if (showTtsVoiceSettings || showTtsReplacements) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
-                                    enabled = !isTtsActive,
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onOpenTtsSettings()
-                                    },
+                                    text = { Text(stringResource(R.string.menu_tts_settings)) },
+                                    onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
                                     leadingIcon = {
                                         Icon(
                                             Icons.Default.GraphicEq,
                                             contentDescription = null,
                                             modifier = Modifier.size(20.dp)
                                         )
-                                    }
-                                )
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onOpenTtsReplacements()
                                     },
-                                    leadingIcon = {
+                                    trailingIcon = {
                                         Icon(
-                                            Icons.Default.GraphicEq,
+                                            Icons.Default.ArrowDropDown,
                                             contentDescription = null,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.rotate(if (showTtsSettingsExpanded) 180f else 0f)
                                         )
                                     }
                                 )
+                                if (showTtsSettingsExpanded) {
+                                    if (showTtsVoiceSettings) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                            enabled = !isTtsActive,
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onOpenTtsSettings()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.GraphicEq,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
+                                    }
+                                    if (showTtsReplacements) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onOpenTtsReplacements()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.GraphicEq,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

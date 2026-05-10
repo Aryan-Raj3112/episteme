@@ -706,11 +706,16 @@
     <string name="menu_keep_screen_on">Keep Screen On</string>
     <string name="menu_visual_options">Visual Options</string>
     <string name="menu_screen_orientation">Screen Orientation</string>
+    <string name="menu_change_reading_mode">Change Reading Mode</string>
+    <string name="menu_right_to_left_pagination">Right-to-left Pagination</string>
     <string name="menu_auto_scroll">Auto Scroll</string>
+    <!-- TTS = Text-to-Speech. -->
+    <string name="menu_tts_settings">TTS Settings</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_voice_settings">TTS Voice Settings</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_word_replacements">TTS Word Replacements</string>
+    <string name="menu_share_save_print">Share, Save or Print</string>
     <!-- TTS = Text-to-Speech. Debug-only menu item. -->
     <string name="menu_tts_settings_debug">TTS Settings (Debug)</string>
     <string name="content_desc_navigate_slider">Navigate with slider</string>

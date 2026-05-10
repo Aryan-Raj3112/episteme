@@ -228,6 +228,7 @@ import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderScreenOrientationMode
+import com.aryan.reader.loadReaderRightToLeftPagination
 import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -244,6 +245,7 @@ import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderScreenOrientationMode
+import com.aryan.reader.saveReaderRightToLeftPagination
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.summarizationUrl
@@ -344,6 +346,7 @@ fun PdfViewerScreen(
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
+    var rightToLeftPagination by remember { mutableStateOf(loadReaderRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
@@ -404,6 +407,7 @@ fun PdfViewerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
     val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
+    val isComicFile = effectiveFileType == FileType.CBZ || effectiveFileType == FileType.CBR || effectiveFileType == FileType.CB7
 
     var showNewTabSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
@@ -644,6 +648,13 @@ fun PdfViewerScreen(
     var isBubbleZoomModeActive by remember { mutableStateOf(false) }
     var showBubbleZoomDownloadDialog by remember { mutableStateOf(false) }
     val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsState()
+
+    LaunchedEffect(isComicFile) {
+        if (!isComicFile) {
+            isBubbleZoomModeActive = false
+            showBubbleZoomDownloadDialog = false
+        }
+    }
 
     var dockLocation by remember { mutableStateOf(initialDockLocation) }
     var dockOffset by remember { mutableStateOf(initialDockOffset) }
@@ -3671,7 +3682,11 @@ fun PdfViewerScreen(
                                                 tapOffset.x < oneQuarterWidthPx -> {
                                                     coroutineScope.launch {
                                                         val targetPage =
-                                                            (pagerState.currentPage - 1).coerceAtLeast(0)
+                                                            if (rightToLeftPagination) {
+                                                                (pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)
+                                                            } else {
+                                                                (pagerState.currentPage - 1).coerceAtLeast(0)
+                                                            }
                                                         if (targetPage != pagerState.currentPage) {
                                                             pagerState.scrollToPage(targetPage)
                                                         }
@@ -3682,9 +3697,13 @@ fun PdfViewerScreen(
                                                 tapOffset.x > (boxMaxWidthFloat - oneQuarterWidthPx) -> {
                                                     coroutineScope.launch {
                                                         val targetPage =
-                                                            (pagerState.currentPage + 1).coerceAtMost(
-                                                                pagerState.pageCount - 1
-                                                            )
+                                                            if (rightToLeftPagination) {
+                                                                (pagerState.currentPage - 1).coerceAtLeast(0)
+                                                            } else {
+                                                                (pagerState.currentPage + 1).coerceAtMost(
+                                                                    pagerState.pageCount - 1
+                                                                )
+                                                            }
                                                         if (targetPage != pagerState.currentPage) {
                                                             pagerState.scrollToPage(targetPage)
                                                         }
@@ -3703,6 +3722,7 @@ fun PdfViewerScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             key = { it },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
+                                            reverseLayout = rightToLeftPagination,
                                             userScrollEnabled = run {
                                                 val enabled = (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
                                                 SideEffect {
@@ -5037,6 +5057,7 @@ fun PdfViewerScreen(
                     isScrollLocked = isScrollLocked,
                     isEditMode = isEditMode,
                     displayMode = displayMode,
+                    isRightToLeftPagination = rightToLeftPagination,
                     isKeepScreenOn = isKeepScreenOn,
                     isTtsSessionActive = isTtsSessionActive,
                     isBookmarked = isBookmarked,
@@ -5108,6 +5129,11 @@ fun PdfViewerScreen(
                         saveTapToNavigateSetting(context, tapToNavigateEnabled)
                     },
                     onChangeDisplayMode = { displayMode = it },
+                    onToggleRightToLeftPagination = {
+                        val enabled = !rightToLeftPagination
+                        rightToLeftPagination = enabled
+                        saveReaderRightToLeftPagination(context, enabled)
+                    },
                     onToggleKeepScreenOn = {
                         isKeepScreenOn = !isKeepScreenOn
                         saveKeepScreenOn(context, isKeepScreenOn)
@@ -5436,6 +5462,7 @@ fun PdfViewerScreen(
                     onToggleEditMode = togglePdfEditMode,
                     onToggleTts = togglePdfTts,
                     onShowScreenOrientation = { showScreenOrientationSheet = true },
+                    showBubbleZoom = isComicFile,
                     isBubbleZoomModeActive = isBubbleZoomModeActive,
                     onToggleBubbleZoom = {
                         if (isOss) {

@@ -179,6 +179,7 @@ import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderScreenOrientationMode
+import com.aryan.reader.loadReaderRightToLeftPagination
 import com.aryan.reader.loadReaderThemeId
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.loadTtsReplacementPreferences
@@ -200,6 +201,7 @@ import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderScreenOrientationMode
+import com.aryan.reader.saveReaderRightToLeftPagination
 import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
@@ -672,6 +674,7 @@ fun EpubReaderHost(
     var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
     var pageInfoPosition by remember { mutableStateOf(loadPageInfoPosition(context)) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
+    var rightToLeftPagination by remember { mutableStateOf(loadReaderRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
@@ -3954,6 +3957,7 @@ fun EpubReaderHost(
                                 effectiveBg = effectiveBg,
                                 effectiveText = effectiveText,
                                 pagerState = paginatedPagerState,
+                                isRightToLeftPagination = rightToLeftPagination,
                                 searchQuery = searchState.searchQuery,
                                 fontSizeMultiplier = currentFontSizeEm,
                                 lineHeightMultiplier = currentLineHeight,
@@ -4011,7 +4015,11 @@ fun EpubReaderHost(
                                         when {
                                             tapOffset.x < oneQuarterWidthPx -> {
                                                 scope.launch {
-                                                    val targetPage = (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
+                                                    val targetPage = if (rightToLeftPagination) {
+                                                        (paginatedPagerState.currentPage + 1).coerceAtMost(paginatedPagerState.pageCount - 1)
+                                                    } else {
+                                                        (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
+                                                    }
                                                     if (targetPage != paginatedPagerState.currentPage) {
                                                         if (isPageTurnAnimationEnabled) {
                                                             paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
@@ -4023,7 +4031,11 @@ fun EpubReaderHost(
                                                 scope.launch {
                                                     val pageCount = paginatedPagerState.pageCount
                                                     if (pageCount > 0) {
-                                                        val targetPage = (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
+                                                        val targetPage = if (rightToLeftPagination) {
+                                                            (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
+                                                        } else {
+                                                            (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
+                                                        }
                                                         if (targetPage != paginatedPagerState.currentPage) {
                                                             if (isPageTurnAnimationEnabled) {
                                                                 paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
@@ -4619,6 +4631,7 @@ fun EpubReaderHost(
                     tapToNavigateEnabled = tapToNavigateEnabled,
                     volumeScrollEnabled = volumeScrollEnabled,
                     isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
+                    isRightToLeftPagination = rightToLeftPagination,
                     hiddenTools = hiddenTools,
                     toolOrder = toolOrder,
                     bottomTools = bottomTools,
@@ -4686,6 +4699,11 @@ fun EpubReaderHost(
                     onTogglePageTurnAnimation = { enabled ->
                         isPageTurnAnimationEnabled = enabled
                         savePageTurnAnimationSetting(context, enabled)
+                    },
+                    onToggleRightToLeftPagination = {
+                        val enabled = !rightToLeftPagination
+                        rightToLeftPagination = enabled
+                        saveReaderRightToLeftPagination(context, enabled)
                     },
                     onToggleVolumeScroll = { enabled ->
                         volumeScrollEnabled = enabled

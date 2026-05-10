@@ -45,9 +45,23 @@ class ReaderScreenOrientationTest {
         )
     }
 
+    @Test
+    fun `right to left pagination defaults to false and round trips`() {
+        val context = contextWithPrefs(InMemorySharedPreferences())
+
+        assertEquals(false, loadReaderRightToLeftPagination(context))
+
+        saveReaderRightToLeftPagination(context, true)
+        assertEquals(true, loadReaderRightToLeftPagination(context))
+
+        saveReaderRightToLeftPagination(context, false)
+        assertEquals(false, loadReaderRightToLeftPagination(context))
+    }
+
     private fun contextWithPrefs(prefs: SharedPreferences): Context {
         val context = mockk<Context>()
         every { context.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE) } returns prefs
+        every { context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE) } returns prefs
         return context
     }
 

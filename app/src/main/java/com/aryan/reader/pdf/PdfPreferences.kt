@@ -45,7 +45,7 @@ internal const val PDF_BOTTOM_TOOLS_KEY = "pdf_bottom_tools"
 internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
-private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 1
+private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 2
 
 enum class PdfReaderTool(val title: String, val category: String) {
     DICTIONARY("External Apps", "Top Bar"),
@@ -66,7 +66,7 @@ enum class PdfReaderTool(val title: String, val category: String) {
     KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
     SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
-    TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
+    TTS_SETTINGS("TTS Settings", "Overflow Menu"),
     TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu"),
     BOOKMARK("Bookmark", "Overflow Menu"),
     PAGE_MANAGEMENT("Page Management", "Overflow Menu"),
@@ -97,7 +97,10 @@ internal fun loadPdfHiddenTools(context: Context): Set<String> {
     val savedHiddenTools = prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
     val defaultsVersion = prefs.getInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < PDF_HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + PdfReaderTool.SCREEN_ORIENTATION.name
+        val migratedHiddenTools = savedHiddenTools + setOf(
+            PdfReaderTool.SCREEN_ORIENTATION.name,
+            PdfReaderTool.HIGHLIGHT_ALL.name
+        )
         prefs.edit {
             putStringSet(PDF_HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
