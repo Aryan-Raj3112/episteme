@@ -17,7 +17,6 @@ import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.LibraryFilters as SharedLibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter as SharedReadStatusFilter
 import com.aryan.reader.shared.RenderMode as SharedRenderMode
-import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
@@ -184,28 +183,6 @@ fun ReaderScreenState.toSharedReaderScreenState(
         customAppThemes = customAppThemes.map { it.toSharedCustomAppTheme() },
         allTags = dbTags.map { it.toSharedTag() },
         showTagSelectionDialogFor = showTagSelectionDialogFor
-    )
-}
-
-fun ReaderScreenState.toSharedLibraryProjectionInput(
-    recentFilesFromDb: List<RecentFileItem>,
-    dbShelves: List<ShelfEntity>,
-    shelfRefs: List<BookShelfCrossRef>,
-    dbTags: List<TagEntity>,
-    tagRefs: List<BookTagCrossRef>
-): SharedLibraryProjectionInput {
-    val taggedBooks = recentFilesFromDb.withResolvedTags(dbTags, tagRefs)
-    return SharedLibraryProjectionInput(
-        state = toSharedReaderScreenState(
-            rawBooks = taggedBooks,
-            dbTags = dbTags
-        ),
-        booksFromStore = taggedBooks
-            .filterNot { it.bookId.endsWith("_reflow") }
-            .map { it.toSharedProjectionBookItem() },
-        shelfRecords = dbShelves.map { it.toSharedShelfRecord() },
-        shelfRefs = shelfRefs.map { it.toSharedBookShelfRef() },
-        tags = dbTags.map { it.toSharedTag() }
     )
 }
 

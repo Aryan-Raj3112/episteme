@@ -96,7 +96,6 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.SharedLibraryEditor
-import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.AppAction as SharedAppAction
@@ -638,35 +637,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private fun ReaderScreenState.withSharedLibraryAction(action: SharedLibraryAction): ReaderScreenState {
-        val projectedState = uiState.value
-        val rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles }
-        val tags = projectedState.allTags.ifEmpty { allTags }
-        val androidBooksById = (rawBooks + contextualActionItems).associateBy { it.bookId }
-        val reduced = toSharedReaderScreenState(rawBooks = rawBooks, dbTags = tags).reduce(action)
-        return copy(
-            searchQuery = reduced.searchQuery,
-            sortOrder = reduced.sortOrder.toAndroidSortOrder(),
-            libraryFilters = reduced.libraryFilters.toAndroidLibraryFilters(),
-            contextualActionItems = reduced.selectedBookIds.mapNotNullTo(mutableSetOf()) { androidBooksById[it] },
-            contextualActionShelfIds = reduced.selectedShelfIds,
-            libraryScreenStartPage = reduced.libraryScreenStartPage,
-            recentFilesLimit = reduced.recentFilesLimit
+        return AndroidSharedStateBridge.reduceLibraryAction(
+            current = this,
+            projectedState = uiState.value,
+            action = action
         )
     }
 
     private fun ReaderScreenState.withSharedAppAction(action: SharedAppAction): ReaderScreenState {
-        val projectedState = uiState.value
-        val reduced = toSharedReaderScreenState(
-            rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles },
-            dbTags = projectedState.allTags.ifEmpty { allTags }
-        ).reduce(action)
-        return copy(
-            appThemeMode = reduced.appThemeMode.toAndroidAppThemeMode(),
-            appContrastOption = reduced.appContrastOption.toAndroidAppContrastOption(),
-            appTextDimFactorLight = reduced.appTextDimFactorLight,
-            appTextDimFactorDark = reduced.appTextDimFactorDark,
-            appSeedColor = reduced.appSeedColor,
-            customAppThemes = reduced.customAppThemes.map { it.toAndroidCustomAppTheme() }
+        return AndroidSharedStateBridge.reduceAppAction(
+            current = this,
+            projectedState = uiState.value,
+            action = action
         )
     }
 
