@@ -72,6 +72,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -105,6 +106,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -779,6 +781,89 @@ fun EpubReaderTopBar(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EpubJumpHistoryBar(
+    modifier: Modifier = Modifier,
+    showStandardBars: Boolean,
+    searchStateActive: Boolean,
+    backLabel: String?,
+    forwardLabel: String?,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onClear: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = showStandardBars && !searchStateActive && (backLabel != null || forwardLabel != null),
+        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        modifier = modifier
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 3.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(
+                    onClick = onBack,
+                    enabled = backLabel != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.content_desc_jump_back),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = backLabel.orEmpty(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                TextButton(
+                    onClick = onClear,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.action_clear),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.action_clear), maxLines = 1)
+                }
+
+                TextButton(
+                    onClick = onForward,
+                    enabled = forwardLabel != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = forwardLabel.orEmpty(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = stringResource(R.string.content_desc_jump_forward),
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
         }

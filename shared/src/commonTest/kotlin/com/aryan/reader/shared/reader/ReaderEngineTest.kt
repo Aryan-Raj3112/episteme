@@ -172,6 +172,24 @@ class ReaderEngineTest {
         assertEquals(7, target.locator.startOffset)
     }
 
+    @Test
+    fun `jump navigation records locator history and can step back and forward`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(multiChapterBook())
+
+        val second = engine.jumpToChapter(session, 1)
+        val third = engine.jumpToChapter(second, 2)
+        val back = engine.jumpBack(third)
+        val forward = engine.jumpForward(back)
+
+        assertEquals(1, third.jumpHistory.backLocator?.chapterIndex)
+        assertEquals(1, back.reader.currentPage?.chapterIndex)
+        assertEquals(0, back.jumpHistory.backLocator?.chapterIndex)
+        assertEquals(2, back.jumpHistory.forwardLocator?.chapterIndex)
+        assertEquals(2, forward.reader.currentPage?.chapterIndex)
+        assertTrue(engine.clearJumpHistory(forward).jumpHistory.locators.isEmpty())
+    }
+
     private fun longBook(): SharedEpubBook {
         return SharedEpubBook(
             id = "long",
@@ -184,6 +202,19 @@ class ReaderEngineTest {
                     plainText = List(280) { "This paragraph gives the paginator enough text to create several pages." }
                         .joinToString("\n\n")
                 )
+            )
+        )
+    }
+
+    private fun multiChapterBook(): SharedEpubBook {
+        return SharedEpubBook(
+            id = "multi",
+            fileName = "multi.epub",
+            title = "Multi",
+            chapters = listOf(
+                SharedEpubChapter(id = "one", title = "One", plainText = "First chapter text."),
+                SharedEpubChapter(id = "two", title = "Two", plainText = "Second chapter text."),
+                SharedEpubChapter(id = "three", title = "Three", plainText = "Third chapter text.")
             )
         )
     }

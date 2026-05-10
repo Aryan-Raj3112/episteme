@@ -239,17 +239,17 @@ fun SharedReaderScreen(
                     }
 
                     event.key == Key.MoveHome -> {
-                        dispatch(ReaderAction.GoToPage(0))
+                        dispatch(ReaderAction.JumpToPage(0))
                         true
                     }
 
                     event.key == Key.MoveEnd -> {
-                        dispatch(ReaderAction.GoToPage(readerState.pages.lastIndex))
+                        dispatch(ReaderAction.JumpToPage(readerState.pages.lastIndex))
                         true
                     }
 
                     event.isCtrlPressed && event.key == Key.G -> {
-                        dispatch(ReaderAction.NextSearchResult)
+                        dispatch(ReaderAction.JumpToNextSearchResult)
                         true
                     }
 
@@ -298,19 +298,19 @@ fun SharedReaderScreen(
             SharedReaderSidebar(
                 session = session,
                 onSearchChange = { dispatch(ReaderAction.SearchChanged(it)) },
-                onPreviousSearchResult = { dispatch(ReaderAction.PreviousSearchResult) },
-                onNextSearchResult = { dispatch(ReaderAction.NextSearchResult) },
+                onPreviousSearchResult = { dispatch(ReaderAction.JumpToPreviousSearchResult) },
+                onNextSearchResult = { dispatch(ReaderAction.JumpToNextSearchResult) },
                 onOpenSearch = { dispatch(ReaderAction.SearchOpened) },
                 onCloseSearch = { dispatch(ReaderAction.SearchClosed) },
                 onToggleSearchResultsPanel = { dispatch(ReaderAction.SearchResultsPanelToggled) },
                 onSearchOptionsChange = { dispatch(ReaderAction.SearchOptionsChanged(it)) },
-                onGoToChapter = { dispatch(ReaderAction.GoToChapter(it)) },
-                onGoToBookmark = { dispatch(ReaderAction.GoToLocator(it.locator)) },
-                onGoToSearchResult = { dispatch(ReaderAction.GoToSearchResult(it)) },
+                onGoToChapter = { dispatch(ReaderAction.JumpToChapter(it)) },
+                onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
+                onGoToSearchResult = { dispatch(ReaderAction.JumpToSearchResult(it)) },
                 toolbarPreferences = toolbarPreferences,
                 highlightPalette = highlightPalette,
                 onHighlightPaletteChange = onHighlightPaletteChange,
-                onGoToHighlight = { dispatch(ReaderAction.GoToLocator(it.locator)) },
+                onGoToHighlight = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
                 onHighlightColorChange = { highlight, color ->
                     dispatch(ReaderAction.HighlightUpdated(highlight.id, color = color))
                 },
@@ -356,6 +356,12 @@ fun SharedReaderScreen(
                 tonalElevation = 2.dp
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SharedReaderJumpHistoryBar(
+                        session = session,
+                        onBack = { dispatch(ReaderAction.JumpBack) },
+                        onForward = { dispatch(ReaderAction.JumpForward) },
+                        onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
+                    )
                     if (toolbarPreferences.isVisible(ReaderTool.SLIDER)) {
                         SharedReaderPageSlider(
                             session = session,
@@ -2344,6 +2350,67 @@ private fun ReaderToolbarPreferences.moveTool(tool: ReaderTool, delta: Int): Rea
     val moved = order.removeAt(index)
     order.add(target, moved)
     return withToolOrder(order)
+}
+
+@Composable
+private fun SharedReaderJumpHistoryBar(
+    session: ReaderSessionState,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onClear: () -> Unit
+) {
+    val history = session.jumpHistory
+    val back = history.backLocator
+    val forward = history.forwardLocator
+    if (back == null && forward == null) return
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        TextButton(
+            onClick = onBack,
+            enabled = back != null,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Jump back")
+            Text(
+                back?.jumpLabel(session).orEmpty(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        TextButton(
+            onClick = onClear,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "Clear jump history")
+            Text("Clear", maxLines = 1)
+        }
+        TextButton(
+            onClick = onForward,
+            enabled = forward != null,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                forward?.jumpLabel(session).orEmpty(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Jump forward")
+        }
+    }
+}
+
+private fun ReaderLocator.jumpLabel(session: ReaderSessionState): String {
+    pageIndex?.let { return "Page ${it + 1}" }
+    val chapter = chapterIndex
+    return if (chapter != null) {
+        session.reader.book.chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: "Chapter ${chapter + 1}"
+    } else {
+        "Location"
+    }
 }
 
 private fun Long.toComposeColor(): Color {

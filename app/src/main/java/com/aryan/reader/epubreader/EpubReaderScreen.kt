@@ -205,11 +205,13 @@ import com.aryan.reader.saveEpubRightToLeftPagination
 import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
+import com.aryan.reader.shared.reader.ReaderJumpHistory
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -929,6 +931,7 @@ fun EpubReaderHost(
     var showRecapPopup by remember { mutableStateOf(false) }
 
     var currentRenderMode by remember(renderMode) { mutableStateOf(renderMode) }
+    var epubJumpHistory by remember(readerCacheBookId) { mutableStateOf(ReaderJumpHistory()) }
     var chapterToLoadOnSwitch by remember { mutableStateOf<Int?>(null) }
     var lastKnownLocator by remember(initialLocator) { mutableStateOf(initialLocator) }
     var paginatedReconfigurationAnchor by remember { mutableStateOf<Locator?>(null) }
@@ -1008,6 +1011,10 @@ fun EpubReaderHost(
         mutableIntStateOf(
             initialLocator?.chapterIndex?.coerceIn(0, max(0, chapters.size - 1)) ?: 0
         )
+    }
+
+    LaunchedEffect(chapters.size) {
+        epubJumpHistory = epubJumpHistory.pruned(chapters.size)
     }
 
     var paginator by remember { mutableStateOf<IPaginator?>(null) }
@@ -2271,8 +2278,349 @@ fun EpubReaderHost(
         }
     }
 
+    fun Locator.toEpubJumpLocator(pageIndex: Int? = null, cfiOverride: String? = null): SharedReaderLocator {
+        return SharedReaderLocator(
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            cfi = cfiOverride ?: "android-locator:$chapterIndex:$blockIndex:$charOffset"
+        )
+    }
+
+    fun SharedReaderLocator.toAndroidLocatorOrNull(): Locator? {
+        val parts = cfi
+            ?.takeIf { it.startsWith("android-locator:") }
+            ?.split(':')
+            ?: return null
+        return Locator(
+            chapterIndex = parts.getOrNull(1)?.toIntOrNull() ?: return null,
+            blockIndex = parts.getOrNull(2)?.toIntOrNull() ?: return null,
+            charOffset = parts.getOrNull(3)?.toIntOrNull() ?: return null
+        )
+    }
+
+    fun currentEpubJumpLocator(): SharedReaderLocator? {
+        return when (currentRenderMode) {
+            RenderMode.VERTICAL_SCROLL -> SharedReaderLocator(
+                chapterIndex = currentChapterIndex,
+                cfi = "android-scroll:$currentScrollYPosition"
+            )
+            RenderMode.PAGINATED -> {
+                val pageIndex = paginatedPagerState.currentPage.takeIf { it >= 0 }
+                val locator = (paginator as? BookPaginator)?.getLocatorForPage(paginatedPagerState.currentPage)
+                locator?.toEpubJumpLocator(pageIndex = pageIndex)
+                    ?: SharedReaderLocator(
+                        chapterIndex = currentChapterInPaginatedMode,
+                        pageIndex = pageIndex,
+                        cfi = pageIndex?.let { "android-page:$it" }
+                    )
+            }
+        }
+    }
+
+    fun chapterStartJumpLocator(chapterIndex: Int): SharedReaderLocator {
+        return SharedReaderLocator(
+            chapterIndex = chapterIndex,
+            href = chapters.getOrNull(chapterIndex)?.absPath,
+            cfi = "android-scroll:0"
+        )
+    }
+
+    fun fragmentJumpLocator(chapterIndex: Int, fragment: String?, href: String? = null): SharedReaderLocator {
+        return SharedReaderLocator(
+            chapterIndex = chapterIndex,
+            href = href ?: chapters.getOrNull(chapterIndex)?.absPath,
+            cfi = fragment?.let { "android-fragment:$it" } ?: "android-scroll:0"
+        )
+    }
+
+    fun cfiJumpLocator(chapterIndex: Int, cfi: String, textQuote: String? = null): SharedReaderLocator {
+        return SharedReaderLocator(
+            chapterIndex = chapterIndex,
+            cfi = cfi,
+            textQuote = textQuote
+        )
+    }
+
+    fun recordEpubJump(target: SharedReaderLocator?) {
+        epubJumpHistory = epubJumpHistory.record(
+            currentLocator = currentEpubJumpLocator(),
+            targetLocator = target,
+            chapterCount = chapters.size
+        )
+    }
+
+    suspend fun scrollPaginatedToJumpPage(pageIndex: Int, targetLocator: Locator? = null) {
+        if (paginatedPagerState.pageCount <= 0) return
+        val targetPageIndex = pageIndex.coerceIn(0, paginatedPagerState.pageCount - 1)
+        val bookPaginator = paginator as? BookPaginator
+        val resolvedLocator = targetLocator
+            ?: bookPaginator?.getLocatorForPage(targetPageIndex)
+            ?: bookPaginator
+                ?.findChapterIndexForPage(targetPageIndex)
+                ?.let { Locator(chapterIndex = it, blockIndex = 0, charOffset = 0) }
+
+        if (resolvedLocator != null) {
+            lastKnownLocator = resolvedLocator
+        }
+        bookPaginator?.onUserScrolledTo(targetPageIndex)
+        paginatedPagerState.scrollToPage(targetPageIndex)
+    }
+
+    fun SharedReaderLocator.epubJumpLabel(): String {
+        val targetPageIndex = pageIndex
+        if (targetPageIndex != null && cfi?.startsWith("android-scroll:") != true) {
+            return "Page ${targetPageIndex + 1}"
+        }
+        val chapter = chapterIndex
+        return if (chapter != null) {
+            chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: "Chapter ${chapter + 1}"
+        } else {
+            "Location"
+        }
+    }
+
+    fun injectVerticalChunksThrough(targetChunk: Int) {
+        if (targetChunk < loadedChunkCount) return
+        (loadedChunkCount..targetChunk).forEach { idx ->
+            val content = chapterChunks.getOrNull(idx)
+            if (content != null) {
+                val escaped = escapeJsString(content)
+                webViewRefForTts?.evaluateJavascript(
+                    "javascript:window.virtualization.appendChunk($idx, '$escaped');",
+                    null
+                )
+            }
+        }
+        loadUpToChunkIndex = targetChunk
+        loadedChunkCount = max(loadedChunkCount, targetChunk + 1)
+    }
+
+    fun scrollCurrentVerticalChapterToFragment(fragment: String) {
+        val escapedFragment = escapeJsString(fragment)
+        val js = """
+            (function() {
+                var targetId = '$escapedFragment';
+                var el = document.getElementById(targetId) || document.querySelector('[name="' + targetId + '"]');
+                if (el) {
+                    var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                    return -2;
+                }
+                if (window.virtualization && window.virtualization.chunksData) {
+                    for (var i = 0; i < window.virtualization.chunksData.length; i++) {
+                        var chunkHtml = window.virtualization.chunksData[i];
+                        if (chunkHtml && (chunkHtml.indexOf('id="' + targetId + '"') !== -1 || chunkHtml.indexOf('name="' + targetId + '"') !== -1 || chunkHtml.indexOf("id='" + targetId + "'") !== -1 || chunkHtml.indexOf("name='" + targetId + "'") !== -1)) {
+                            return i;
+                        }
+                    }
+                }
+                return -1;
+            })()
+        """.trimIndent()
+        webViewRefForTts?.evaluateJavascript(js) { result ->
+            val chunkIdx = result?.toIntOrNull() ?: -1
+            if (chunkIdx >= 0) {
+                injectVerticalChunksThrough(chunkIdx)
+                val scrollJs = """
+                    (function() {
+                        var chunkIndex = $chunkIdx;
+                        var fragmentId = '$escapedFragment';
+                        var chunkDiv = document.querySelector('.chunk-container[data-chunk-index="' + chunkIndex + '"]');
+                        if (chunkDiv) {
+                            if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+                                chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+                                chunkDiv.style.height = "";
+                            }
+                            setTimeout(function() {
+                                var el = document.getElementById(fragmentId) || document.querySelector('[name="' + fragmentId + '"]');
+                                if (el) {
+                                    var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
+                                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                } else {
+                                    var targetScrollY = window.scrollY + chunkDiv.getBoundingClientRect().top - window.VIEWPORT_PADDING_TOP;
+                                    window.scrollTo({ top: targetScrollY, behavior: 'auto' });
+                                }
+                            }, 150);
+                        }
+                    })()
+                """.trimIndent()
+                webViewRefForTts?.evaluateJavascript(scrollJs, null)
+            } else if (chunkIdx == -1) {
+                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+            }
+        }
+    }
+
+    fun navigateVerticalToCfi(chapterIndex: Int, cfi: String) {
+        scope.launch {
+            val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
+            val targetChunk = locator?.let { it.blockIndex / 20 }
+            cfiToLoad = cfi
+            initialScrollTargetForChapter = null
+            if (chapterIndex != currentChapterIndex) {
+                chunkTargetOverride = targetChunk?.coerceAtLeast(0) ?: 0
+                currentScrollYPosition = 0
+                currentScrollHeightValue = 0
+                currentChapterIndex = chapterIndex
+            } else {
+                if (targetChunk != null && targetChunk >= 0) {
+                    injectVerticalChunksThrough(targetChunk)
+                }
+                webViewRefForTts?.evaluateJavascript(
+                    "javascript:window.scrollToCfi('${escapeJsString(cfi)}');",
+                    null
+                )
+            }
+        }
+    }
+
+    fun navigateToEpubJumpLocator(locator: SharedReaderLocator) {
+        scope.launch {
+            val chapterIndex = locator.chapterIndex?.coerceIn(0, max(0, chapters.lastIndex))
+            val cfi = locator.cfi.orEmpty()
+            when (currentRenderMode) {
+                RenderMode.VERTICAL_SCROLL -> {
+                    clearPendingTtsRelocationState("epub_jump_history")
+                    when {
+                        cfi.startsWith("android-scroll:") -> {
+                            val scrollY = cfi.substringAfter("android-scroll:").toIntOrNull() ?: 0
+                            initialScrollTargetForChapter = null
+                            if (chapterIndex != null && chapterIndex != currentChapterIndex) {
+                                currentScrollYPosition = scrollY
+                                currentScrollHeightValue = 0
+                                currentChapterIndex = chapterIndex
+                            } else {
+                                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0, $scrollY);", null)
+                            }
+                        }
+                        cfi.startsWith("android-fragment:") -> {
+                            val fragment = cfi.substringAfter("android-fragment:")
+                            initialScrollTargetForChapter = null
+                            fragmentToLoad = fragment
+                            if (chapterIndex != null && chapterIndex != currentChapterIndex) {
+                                currentScrollYPosition = 0
+                                currentScrollHeightValue = 0
+                                currentChapterIndex = chapterIndex
+                            } else {
+                                scrollCurrentVerticalChapterToFragment(fragment)
+                            }
+                        }
+                        cfi.startsWith("android-search:") -> {
+                            val parts = cfi.split(':')
+                            val targetChunk = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                            val occurrence = parts.getOrNull(2)?.toIntOrNull() ?: 0
+                            initialScrollTargetForChapter = null
+                            if (chapterIndex != null && chapterIndex != currentChapterIndex) {
+                                chunkTargetOverride = targetChunk.coerceAtLeast(0)
+                                searchHighlightTarget = searchState.searchResults.firstOrNull {
+                                    it.locationInSource == chapterIndex &&
+                                        it.chunkIndex == targetChunk &&
+                                        it.occurrenceIndexInLocation == occurrence
+                                }
+                                currentScrollYPosition = 0
+                                currentScrollHeightValue = 0
+                                currentChapterIndex = chapterIndex
+                            } else {
+                                injectVerticalChunksThrough(targetChunk)
+                                webViewRefForTts?.evaluateJavascript(
+                                    "javascript:window.scrollToOccurrence($occurrence);",
+                                    null
+                                )
+                            }
+                        }
+                        cfi.startsWith("android-locator:") -> {
+                            val androidLocator = locator.toAndroidLocatorOrNull()
+                            val targetCfi = androidLocator?.let { locatorConverter.getCfiFromLocator(epubBook, it) }
+                            if (androidLocator != null && targetCfi != null) {
+                                navigateVerticalToCfi(androidLocator.chapterIndex, targetCfi)
+                            } else if (chapterIndex != null) {
+                                initialScrollTargetForChapter = ChapterScrollPosition.START
+                                currentScrollYPosition = 0
+                                currentScrollHeightValue = 0
+                                currentChapterIndex = chapterIndex
+                            }
+                        }
+                        cfi.startsWith("android-page:") && chapterIndex != null -> {
+                            initialScrollTargetForChapter = ChapterScrollPosition.START
+                            currentScrollYPosition = 0
+                            currentScrollHeightValue = 0
+                            if (chapterIndex != currentChapterIndex) {
+                                currentChapterIndex = chapterIndex
+                            } else {
+                                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+                            }
+                        }
+                        cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null -> navigateVerticalToCfi(chapterIndex, cfi)
+                        chapterIndex != null -> {
+                            initialScrollTargetForChapter = ChapterScrollPosition.START
+                            currentScrollYPosition = 0
+                            currentScrollHeightValue = 0
+                            if (chapterIndex != currentChapterIndex) {
+                                currentChapterIndex = chapterIndex
+                            } else {
+                                webViewRefForTts?.evaluateJavascript("javascript:window.scrollTo(0,0);", null)
+                            }
+                        }
+                    }
+                }
+
+                RenderMode.PAGINATED -> {
+                    val bookPaginator = paginator as? BookPaginator
+                    val directPage = locator.pageIndex?.takeIf { it in 0 until paginatedPagerState.pageCount }
+                    when {
+                        directPage != null -> scrollPaginatedToJumpPage(directPage, locator.toAndroidLocatorOrNull())
+                        cfi.startsWith("android-locator:") && bookPaginator != null -> {
+                            val androidLocator = locator.toAndroidLocatorOrNull()
+                            val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
+                            if (targetPage != null) scrollPaginatedToJumpPage(targetPage, androidLocator)
+                        }
+                        cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null && bookPaginator != null -> {
+                            val androidLocator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
+                            val targetPage = androidLocator?.let { bookPaginator.findPageForLocator(it) }
+                            if (targetPage != null) {
+                                scrollPaginatedToJumpPage(targetPage, androidLocator)
+                            } else {
+                                bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
+                                    scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0))
+                                }
+                            }
+                        }
+                        chapterIndex != null && bookPaginator != null -> {
+                            bookPaginator.chapterStartPageIndices[chapterIndex]?.let {
+                                scrollPaginatedToJumpPage(it, Locator(chapterIndex, 0, 0))
+                            }
+                        }
+                    }
+                }
+            }
+            if (showBars) showBars = false
+        }
+    }
+
+    fun goBackInEpubJumpHistory() {
+        val target = epubJumpHistory.backLocator ?: return
+        epubJumpHistory = epubJumpHistory.stepBack()
+        navigateToEpubJumpLocator(target)
+    }
+
+    fun goForwardInEpubJumpHistory() {
+        val target = epubJumpHistory.forwardLocator ?: return
+        epubJumpHistory = epubJumpHistory.stepForward()
+        navigateToEpubJumpLocator(target)
+    }
+
     fun navigateToSearchResult(index: Int) {
         Timber.tag("NavDiag").d("navigateToSearchResult index: $index")
+        val targetResult = searchState.searchResults.getOrNull(index)
+        if (targetResult != null && currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+            recordEpubJump(
+                SharedReaderLocator(
+                    chapterIndex = targetResult.locationInSource,
+                    cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
+                    textQuote = targetResult.snippet.text
+                )
+            )
+        }
         performSearchResultNavigation(
             index = index,
             searchState = searchState,
@@ -2313,7 +2661,15 @@ fun EpubReaderHost(
             },
             onPaginatedScrollToPage = { pageIdx ->
                 Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
-                paginatedPagerState.scrollToPage(pageIdx)
+                val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(pageIdx)
+                recordEpubJump(
+                    SharedReaderLocator(
+                        chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(pageIdx),
+                        pageIndex = pageIdx,
+                        cfi = "android-page:$pageIdx"
+                    )
+                )
+                scrollPaginatedToJumpPage(pageIdx, targetLocator)
             }
         )
     }
@@ -2371,6 +2727,7 @@ fun EpubReaderHost(
 
                         if (targetChapterIndex != -1) {
                             if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                                recordEpubJump(fragmentJumpLocator(targetChapterIndex, entry.fragmentId, entry.absolutePath))
                                 clearPendingTtsRelocationState("toc_entry_vertical")
                                 fragmentToLoad = entry.fragmentId
                                 if (targetChapterIndex != currentChapterIndex) {
@@ -2462,10 +2819,14 @@ fun EpubReaderHost(
 
                                     bookPaginator.findPageForAnchor(targetChapterIndex, entry.fragmentId) { targetPage ->
                                         scope.launch {
+                                            recordEpubJump(
+                                                fragmentJumpLocator(targetChapterIndex, entry.fragmentId, entry.absolutePath)
+                                                    .copy(pageIndex = targetPage)
+                                            )
                                             Timber.tag(TAG_LINK_NAV)
                                                 .d("[CHAPTER-NAV] source=TOC_ENTRY_PAGINATED, from=$currentChapterIndex, to=$targetChapterIndex, page=$targetPage, anchor='${entry.fragmentId}', label='${entry.label}'")
                                             Timber.tag("TOC_NAV_DEBUG").d("Scrolling Pager to page: $targetPage")
-                                            paginatedPagerState.scrollToPage(targetPage)
+                                            scrollPaginatedToJumpPage(targetPage, bookPaginator.getLocatorForPage(targetPage) ?: Locator(targetChapterIndex, 0, 0))
                                             isNavigatingByToc = false
                                         }
                                     }
@@ -2486,6 +2847,7 @@ fun EpubReaderHost(
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
                                 if (index != currentChapterIndex) {
+                                    recordEpubJump(chapterStartJumpLocator(index))
                                     clearPendingTtsRelocationState("sidebar_chapter_vertical")
                                     Timber.tag(TAG_LINK_NAV)
                                         .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER, from=$currentChapterIndex, to=$index")
@@ -2506,9 +2868,10 @@ fun EpubReaderHost(
                                     if (index != currentFromPager) {
                                         val targetPage = bookPaginator.chapterStartPageIndices[index]
                                         if (targetPage != null) {
+                                            recordEpubJump(chapterStartJumpLocator(index).copy(pageIndex = targetPage))
                                             Timber.tag(TAG_LINK_NAV)
                                                 .d("[CHAPTER-NAV] source=SIDEBAR_CHAPTER_PAGINATED, from=$currentFromPager, to=$index, page=$targetPage")
-                                            paginatedPagerState.scrollToPage(targetPage)
+                                            scrollPaginatedToJumpPage(targetPage, Locator(index, 0, 0))
                                             if (showBars) showBars = false
                                         }
                                     }
@@ -2523,6 +2886,7 @@ fun EpubReaderHost(
 
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
+                                recordEpubJump(cfiJumpLocator(bookmark.chapterIndex, bookmark.cfi, bookmark.snippet))
                                 Timber.tag("BookmarkDiagnosis").d("Navigating to ${bookmark.cfi}")
                                 cfiToLoad = bookmark.cfi
 
@@ -2593,6 +2957,7 @@ fun EpubReaderHost(
                                 }
                             }
                             RenderMode.PAGINATED -> {
+                                recordEpubJump(cfiJumpLocator(bookmark.chapterIndex, bookmark.cfi, bookmark.snippet))
                                 Timber.d("P-Mode Click: Navigating to bookmark. Chapter: ${bookmark.chapterIndex}, CFI: '${bookmark.cfi}'")
                                 isNavigatingToPosition = true
                                 val locator = locatorConverter.getLocatorFromCfi(
@@ -2606,12 +2971,12 @@ fun EpubReaderHost(
                                     val pageIndex = (paginator as? BookPaginator)?.findPageForLocator(locator)
                                     if (pageIndex != null) {
                                         Timber.d("P-Mode Click: Paginator found page $pageIndex for locator. Scrolling.")
-                                        paginatedPagerState.scrollToPage(pageIndex)
+                                        scrollPaginatedToJumpPage(pageIndex, locator)
                                     } else {
                                         Timber.w("P-Mode Click: Paginator could not find a page for the locator. Falling back to chapter start.")
                                         val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(bookmark.chapterIndex)
                                         if (chapterStartPage != null) {
-                                            paginatedPagerState.scrollToPage(chapterStartPage)
+                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(bookmark.chapterIndex, 0, 0))
                                         }
                                     }
                                     isNavigatingToPosition = false
@@ -2619,7 +2984,7 @@ fun EpubReaderHost(
                                     Timber.w("P-Mode Click: Failed to convert CFI to Locator. Using old findPageForCfi as a fallback.")
                                     paginator?.findPageForCfi(bookmark.chapterIndex, bookmark.cfi) { pageIndex ->
                                         scope.launch {
-                                            paginatedPagerState.scrollToPage(pageIndex)
+                                            scrollPaginatedToJumpPage(pageIndex, Locator(bookmark.chapterIndex, 0, 0))
                                             isNavigatingToPosition = false
                                         }
                                     }
@@ -2636,6 +3001,7 @@ fun EpubReaderHost(
                         drawerState.close()
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
+                                recordEpubJump(cfiJumpLocator(highlight.chapterIndex, highlight.cfi, highlight.text))
                                 cfiToLoad = highlight.cfi
                                 val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
                                 val targetChunk = locator?.let { it.blockIndex / 20 }
@@ -2696,23 +3062,24 @@ fun EpubReaderHost(
                                 }
                             }
                             RenderMode.PAGINATED -> {
+                                recordEpubJump(cfiJumpLocator(highlight.chapterIndex, highlight.cfi, highlight.text))
                                 isNavigatingToPosition = true
                                 val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
                                 if (locator != null) {
                                     val pageIndex = (paginator as? BookPaginator)?.findPageForLocator(locator)
                                     if (pageIndex != null) {
-                                        paginatedPagerState.scrollToPage(pageIndex)
+                                        scrollPaginatedToJumpPage(pageIndex, locator)
                                     } else {
                                         val chapterStartPage = (paginator as? BookPaginator)?.chapterStartPageIndices?.get(highlight.chapterIndex)
                                         if (chapterStartPage != null) {
-                                            paginatedPagerState.scrollToPage(chapterStartPage)
+                                            scrollPaginatedToJumpPage(chapterStartPage, Locator(highlight.chapterIndex, 0, 0))
                                         }
                                     }
                                     isNavigatingToPosition = false
                                 } else {
                                     paginator?.findPageForCfi(highlight.chapterIndex, highlight.cfi) { pageIndex ->
                                         scope.launch {
-                                            paginatedPagerState.scrollToPage(pageIndex)
+                                            scrollPaginatedToJumpPage(pageIndex, Locator(highlight.chapterIndex, 0, 0))
                                             isNavigatingToPosition = false
                                         }
                                     }
@@ -3463,12 +3830,39 @@ fun EpubReaderHost(
                                             onInternalLinkClick = { url ->
                                                 scope.launch {
                                                     val basePath = "file://${epubBook.extractionBasePath}/"
-                                                    val relativeUrl = url.removePrefix(basePath)
+                                                    val rawRelativeUrl = url.removePrefix(basePath)
+                                                    val relativeUrl = if (rawRelativeUrl != url) {
+                                                        rawRelativeUrl
+                                                    } else {
+                                                        val decodedUrl = try {
+                                                            java.net.URLDecoder.decode(url, "UTF-8")
+                                                        } catch (_: Exception) {
+                                                            url
+                                                        }
+                                                        decodedUrl.removePrefix(basePath)
+                                                    }
                                                     val pathPart = relativeUrl.substringBefore('#')
                                                     val fragmentPart = relativeUrl.substringAfter('#', "").takeIf { it.isNotEmpty() }
 
                                                     val decodedPath = try { java.net.URLDecoder.decode(pathPart, "UTF-8") } catch(e: Exception) { pathPart }
-                                                    val targetChapterIndex = chapters.indexOfFirst { it.absPath == decodedPath }
+                                                    val renderedChapter = chapters.getOrNull(targetChapterIndex)
+                                                    val renderedChapterDirectory = renderedChapter
+                                                        ?.htmlFilePath
+                                                        ?.substringBeforeLast('/', "")
+                                                        .orEmpty()
+                                                        .trim('/')
+                                                    val decodedPathDirectory = decodedPath.trim('/')
+                                                    val resolvedTargetChapterIndex = when {
+                                                        pathPart.isBlank() -> targetChapterIndex
+                                                        decodedPath.isBlank() -> targetChapterIndex
+                                                        renderedChapterDirectory.isNotBlank() && decodedPathDirectory == renderedChapterDirectory -> targetChapterIndex
+                                                        else -> chapters.indexOfFirst {
+                                                            it.absPath == decodedPath ||
+                                                                it.htmlFilePath == decodedPath ||
+                                                                it.absPath.trim('/') == decodedPathDirectory ||
+                                                                it.htmlFilePath.trim('/') == decodedPathDirectory
+                                                        }
+                                                    }
 
                                                     Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> url: $url")
                                                     Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> basePath: $basePath")
@@ -3476,22 +3870,24 @@ fun EpubReaderHost(
                                                     Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> pathPart: $pathPart")
                                                     Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> decodedPath: $decodedPath")
                                                     Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> fragmentPart: $fragmentPart")
-                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> targetChapterIndex: $targetChapterIndex (current is $currentChapterIndex)")
+                                                    Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> targetChapterIndex: $resolvedTargetChapterIndex (current is $currentChapterIndex)")
 
-                                                    if (targetChapterIndex != -1) {
-                                                        if (targetChapterIndex != currentChapterIndex) {
-                                                            Timber.tag(TAG_LINK_NAV).d("[CHAPTER-NAV] source=INTERNAL_LINK, from=$currentChapterIndex, to=$targetChapterIndex, fragment='$fragmentPart'")
+                                                    if (resolvedTargetChapterIndex != -1) {
+                                                        recordEpubJump(fragmentJumpLocator(resolvedTargetChapterIndex, fragmentPart, chapters.getOrNull(resolvedTargetChapterIndex)?.absPath ?: decodedPath))
+                                                        if (resolvedTargetChapterIndex != currentChapterIndex) {
+                                                            Timber.tag(TAG_LINK_NAV).d("[CHAPTER-NAV] source=INTERNAL_LINK, from=$currentChapterIndex, to=$resolvedTargetChapterIndex, fragment='$fragmentPart'")
                                                             initialScrollTargetForChapter = null
                                                             fragmentToLoad = fragmentPart
                                                             currentScrollYPosition = 0
                                                             currentScrollHeightValue = 0
-                                                            currentChapterIndex = targetChapterIndex
+                                                            currentChapterIndex = resolvedTargetChapterIndex
                                                         } else {
                                                             Timber.tag(TAG_LINK_NAV).d("InternalLinkClick -> Target is current chapter. Evaluating JS for fragment.")
                                                             if (fragmentPart != null) {
+                                                                val escapedFragment = escapeJsString(fragmentPart)
                                                                 val js = """
                                                                     (function() {
-                                                                        var targetId = '$fragmentPart';
+                                                                        var targetId = '$escapedFragment';
                                                                         var el = document.getElementById(targetId) || document.querySelector('[name="' + targetId + '"]');
                                                                         if (el) {
                                                                             var targetScrollY = window.scrollY + el.getBoundingClientRect().top - (window.VIEWPORT_PADDING_TOP + 10);
@@ -3530,7 +3926,7 @@ fun EpubReaderHost(
                                                                         val scrollJs = """
                                                                             (function() {
                                                                                 var chunkIndex = $chunkIdx;
-                                                                                var fragmentId = '$fragmentPart';
+                                                                                var fragmentId = '$escapedFragment';
                                                                                 var chunkDiv = document.querySelector('.chunk-container[data-chunk-index="' + chunkIndex + '"]');
                                                                                 if (chunkDiv) {
                                                                                     if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
@@ -4102,6 +4498,23 @@ fun EpubReaderHost(
                                 },
                                 onFootnoteRequested = { html ->
                                     activeFootnoteHtml = html
+                                },
+                                onInternalLinkNavigated = { targetPageIndex ->
+                                    val bookPaginator = paginator as? BookPaginator
+                                    val targetChapter = bookPaginator?.findChapterIndexForPage(targetPageIndex)
+                                    val targetLocator = bookPaginator?.getLocatorForPage(targetPageIndex)
+                                        ?: targetChapter?.let { Locator(it, 0, 0) }
+                                    if (targetLocator != null) {
+                                        lastKnownLocator = targetLocator
+                                    }
+                                    bookPaginator?.onUserScrolledTo(targetPageIndex)
+                                    recordEpubJump(
+                                        SharedReaderLocator(
+                                            chapterIndex = targetChapter,
+                                            pageIndex = targetPageIndex,
+                                            cfi = "android-page:$targetPageIndex"
+                                        )
+                                    )
                                 },
                                 onHighlightDeleted = { cfi ->
                                     val toRemove = userHighlights.find { it.cfi == cfi }
@@ -4943,6 +5356,19 @@ fun EpubReaderHost(
                     )
                 }
 
+                EpubJumpHistoryBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = bottomPadding + 45.dp),
+                    showStandardBars = showBars,
+                    searchStateActive = searchState.isSearchActive,
+                    backLabel = epubJumpHistory.backLocator?.epubJumpLabel(),
+                    forwardLabel = epubJumpHistory.forwardLocator?.epubJumpLabel(),
+                    onBack = ::goBackInEpubJumpHistory,
+                    onForward = ::goForwardInEpubJumpHistory,
+                    onClear = { epubJumpHistory = epubJumpHistory.clear() }
+                )
+
                 // Animated Bottom Bar
                 EpubReaderBottomBar(
                     isVisible = showBars,
@@ -5320,10 +5746,24 @@ fun EpubReaderHost(
                     if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                         sliderCurrentPage = page.toFloat()
                         val scrollY = (page - 1) * currentClientHeightValue
+                        recordEpubJump(
+                            SharedReaderLocator(
+                                chapterIndex = currentChapterIndex,
+                                cfi = "android-scroll:$scrollY"
+                            )
+                        )
                         webViewRefForTts?.evaluateJavascript("window.scrollTo(0, $scrollY);", null)
                     } else {
                         sliderCurrentPage = page.toFloat()
-                        paginatedPagerState.scrollToPage(page - 1)
+                        val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(page - 1)
+                        recordEpubJump(
+                            SharedReaderLocator(
+                                chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(page - 1),
+                                pageIndex = page - 1,
+                                cfi = "android-page:${page - 1}"
+                            )
+                        )
+                        scrollPaginatedToJumpPage(page - 1, targetLocator)
                     }
                 }
             }

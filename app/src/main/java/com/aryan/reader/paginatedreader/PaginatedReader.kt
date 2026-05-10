@@ -755,6 +755,7 @@ fun PaginatedReaderScreen(
     onStartTtsFromSelection: (String, Int) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onFootnoteRequested: (String) -> Unit,
+    onInternalLinkNavigated: (Int) -> Unit = {},
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -1108,8 +1109,10 @@ fun PaginatedReaderScreen(
 
         LaunchedEffect(paginator, pagerState) {
             paginator.pageShiftRequest.collect { shiftAmount ->
+                val currentPageLocator = anchorLocatorForReconfig
+                    ?: (paginator as? BookPaginator)?.getLocatorForPage(pagerState.currentPage)
                 val anchor = resolvePaginatedReconfigurationAnchor(
-                    currentPageLocator = anchorLocatorForReconfig,
+                    currentPageLocator = currentPageLocator,
                     fallbackLocator = latestFallbackLocatorForReconfiguration
                 )
                 val resolvedPage = anchor?.let { locator ->
@@ -1165,6 +1168,7 @@ fun PaginatedReaderScreen(
                     }
                 }
             },
+            onInternalLinkNavigated = onInternalLinkNavigated,
             onLinkClick = { currentChapterPath, href, onNavComplete ->
                 coroutineScope.launch(Dispatchers.IO) {
                     isNavigatingByLink = true
@@ -1187,17 +1191,18 @@ fun PaginatedReaderScreen(
                             val safeHref = href.replace("\"", "\\\"")
                             val aTag = doc.select("a[href=\"$safeHref\"]").first()
 
-                            if (aTag?.attr("epub:type") == "noteref" || href.startsWith("#")) {
+                            val linkType = aTag?.attr("epub:type").orEmpty()
+                            val linkRole = aTag?.attr("role").orEmpty()
+                            if (
+                                linkType.contains("noteref", ignoreCase = true) ||
+                                linkRole.contains("doc-noteref", ignoreCase = true)
+                            ) {
                                 isFootnote = true
                             }
-                        } else if (href.startsWith("#")) {
-                            isFootnote = true
                         }
-                    } else if (href.startsWith("#")) {
-                        isFootnote = true
                     }
 
-                    if (isFootnote) {
+                    run {
                         val decodedHref = try {
                             URLDecoder.decode(href, "UTF-8")
                         } catch (_: Exception) {
@@ -1241,7 +1246,16 @@ fun PaginatedReaderScreen(
                                         val doc = Jsoup.parse(targetHtml)
                                         val noteEl = doc.getElementById(anchor)
                                         if (noteEl != null) {
-                                            footnoteHtml = noteEl.html()
+                                            val targetType = noteEl.attr("epub:type")
+                                            val targetRole = noteEl.attr("role")
+                                            val targetClass = noteEl.className()
+                                            val targetLooksLikeFootnote =
+                                                targetType.contains("footnote", ignoreCase = true) ||
+                                                    targetRole.contains("doc-footnote", ignoreCase = true) ||
+                                                    targetClass.contains("footnote", ignoreCase = true)
+                                            if (isFootnote || targetLooksLikeFootnote) {
+                                                footnoteHtml = noteEl.html()
+                                            }
                                         }
                                     }
                                 }
@@ -1255,6 +1269,7 @@ fun PaginatedReaderScreen(
                             isNavigatingByLink = false
                         } else {
                             paginator.navigateToHref(currentChapterPath, href) {
+                                paginator.onUserScrolledTo(it)
                                 onNavComplete(it)
                                 isNavigatingByLink = false
                             }
@@ -2087,6 +2102,7 @@ internal fun PaginatedReaderContent(
     onGetPage: (Int) -> Page?,
     onGetChapterPath: (Int) -> String?,
     onLinkClick: (currentChapterPath: String, href: String, onNavComplete: (Int) -> Unit) -> Unit,
+    onInternalLinkNavigated: (Int) -> Unit,
     onTap: (Offset?) -> Unit,
     isProUser: Boolean,
     isOss: Boolean,
@@ -2436,6 +2452,7 @@ internal fun PaginatedReaderContent(
                                             } else {
                                                 currentChapterPath?.let { path ->
                                                     onLinkClick(path, href) { targetPageIndex ->
+                                                        onInternalLinkNavigated(targetPageIndex)
                                                         coroutineScope.launch {
                                                             pagerState.scrollToPage(targetPageIndex)
                                                         }

@@ -7116,7 +7116,7 @@ private fun ReaderScreen(
                                         "resolved_internal chapter=${target.locator.chapterIndex} " +
                                             "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
                                     )
-                                    onSessionChange(readerEngine.goToLocator(session, target.locator))
+                                    onSessionChange(readerEngine.jumpToLocator(session, target.locator))
                                 }
                                 ReaderLinkTarget.Ignored -> {
                                     logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")

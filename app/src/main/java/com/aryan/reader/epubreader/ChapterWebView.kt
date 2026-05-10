@@ -314,12 +314,14 @@ class FootnoteJsBridge(
 
 @Suppress("unused")
 class LinkNavJsBridge(
-    private val currentChapterTitle: String
+    private val currentChapterTitle: String,
+    private val onInternalLinkClick: (String) -> Unit
 ) {
     @JavascriptInterface
     fun onLinkClicked(href: String, epubType: String, linkText: String) {
         Timber.tag(TAG_LINK_NAV)
             .d("[JS-CLICK] href='$href', epub:type='$epubType', label='$linkText' | currentChapter='$currentChapterTitle'")
+        onInternalLinkClick(href)
     }
 }
 
@@ -668,7 +670,9 @@ fun ChapterWebView(
                     )
 
                     addJavascriptInterface(
-                        LinkNavJsBridge(chapterTitle), "LinkNavBridge"
+                        LinkNavJsBridge(chapterTitle) { href ->
+                            this.post { onInternalLinkClick(href) }
+                        }, "LinkNavBridge"
                     )
 
                     webViewClient = object : WebViewClient() {
@@ -741,6 +745,37 @@ fun ChapterWebView(
 
                             view?.evaluateJavascript(
                                 "javascript:setTimeout(window.auditTocFragments, 500);",
+                                null
+                            )
+
+                            view?.evaluateJavascript(
+                                """
+                                    javascript:(function() {
+                                        if (window.__readerInternalLinkBridgeInstalled) return;
+                                        window.__readerInternalLinkBridgeInstalled = true;
+                                        document.addEventListener('click', function(event) {
+                                            var target = event.target;
+                                            var anchor = target && target.closest ? target.closest('a[href]') : null;
+                                            if (!anchor && target && target.parentElement && target.parentElement.closest) {
+                                                anchor = target.parentElement.closest('a[href]');
+                                            }
+                                            if (!anchor) return;
+                                            var rawHref = anchor.getAttribute('href') || '';
+                                            if (!rawHref) return;
+                                            if (/^(https?:|mailto:|tel:|javascript:)/i.test(rawHref)) return;
+                                            if (/^\/\//.test(rawHref)) return;
+                                            event.preventDefault();
+                                            var resolvedHref = anchor.href || rawHref;
+                                            if (window.LinkNavBridge && window.LinkNavBridge.onLinkClicked) {
+                                                window.LinkNavBridge.onLinkClicked(
+                                                    resolvedHref,
+                                                    anchor.getAttribute('epub:type') || '',
+                                                    anchor.textContent || ''
+                                                );
+                                            }
+                                        }, true);
+                                    })();
+                                """.trimIndent(),
                                 null
                             )
 

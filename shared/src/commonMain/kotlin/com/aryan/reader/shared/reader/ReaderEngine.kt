@@ -53,7 +53,8 @@ data class ReaderSessionState(
     val searchResults: List<ReaderSearchResult> = emptyList(),
     val activeSearchResultIndex: Int = -1,
     val navigationLocator: ReaderLocator? = null,
-    val navigationRequestId: Long = 0L
+    val navigationRequestId: Long = 0L,
+    val jumpHistory: ReaderJumpHistory = ReaderJumpHistory()
 ) {
     val currentBookmark: ReaderBookmark?
         get() = navigationLocator
@@ -182,6 +183,52 @@ class ReaderEngine(
             navigationLocator = normalizedLocator,
             navigationRequestId = state.navigationRequestId + 1
         )
+    }
+
+    fun jumpToPage(state: ReaderSessionState, pageIndex: Int): ReaderSessionState {
+        return goToPage(state, pageIndex).withRecordedJumpFrom(state)
+    }
+
+    fun jumpToPageNumber(state: ReaderSessionState, pageNumber: Int): ReaderSessionState {
+        return jumpToPage(state, pageNumber - 1)
+    }
+
+    fun jumpToChapter(state: ReaderSessionState, chapterIndex: Int): ReaderSessionState {
+        return goToChapter(state, chapterIndex).withRecordedJumpFrom(state)
+    }
+
+    fun jumpToLocator(state: ReaderSessionState, locator: ReaderLocator): ReaderSessionState {
+        return goToLocator(state, locator).withRecordedJumpFrom(state, requestedTarget = locator)
+    }
+
+    fun jumpToSearchResult(state: ReaderSessionState, resultIndex: Int): ReaderSessionState {
+        return goToSearchResult(state, resultIndex).withRecordedJumpFrom(state)
+    }
+
+    fun jumpToNextSearchResult(state: ReaderSessionState): ReaderSessionState {
+        return nextSearchResult(state).withRecordedJumpFrom(state)
+    }
+
+    fun jumpToPreviousSearchResult(state: ReaderSessionState): ReaderSessionState {
+        return previousSearchResult(state).withRecordedJumpFrom(state)
+    }
+
+    fun jumpBack(state: ReaderSessionState): ReaderSessionState {
+        val history = state.jumpHistory.pruned(state.reader.book.chapters.size)
+        val target = history.backLocator ?: return state.copy(jumpHistory = history)
+        return goToLocator(state.copy(jumpHistory = history), target)
+            .copy(jumpHistory = history.stepBack())
+    }
+
+    fun jumpForward(state: ReaderSessionState): ReaderSessionState {
+        val history = state.jumpHistory.pruned(state.reader.book.chapters.size)
+        val target = history.forwardLocator ?: return state.copy(jumpHistory = history)
+        return goToLocator(state.copy(jumpHistory = history), target)
+            .copy(jumpHistory = history.stepForward())
+    }
+
+    fun clearJumpHistory(state: ReaderSessionState): ReaderSessionState {
+        return state.copy(jumpHistory = state.jumpHistory.clear())
     }
 
     fun resolveLink(
@@ -547,6 +594,25 @@ class ReaderEngine(
             navigationRequestId = state.navigationRequestId + 1
         )
     }
+}
+
+private fun ReaderSessionState.withRecordedJumpFrom(
+    previous: ReaderSessionState,
+    requestedTarget: ReaderLocator? = null
+): ReaderSessionState {
+    val current = previous.currentJumpLocator()
+    val target = navigationLocator ?: requestedTarget ?: currentJumpLocator()
+    return copy(
+        jumpHistory = previous.jumpHistory.record(
+            currentLocator = current,
+            targetLocator = target,
+            chapterCount = reader.book.chapters.size
+        )
+    )
+}
+
+private fun ReaderSessionState.currentJumpLocator(): ReaderLocator? {
+    return navigationLocator ?: reader.currentPage?.toLocator(reader.book)
 }
 
 private fun ReaderPage.contains(locator: ReaderLocator): Boolean {

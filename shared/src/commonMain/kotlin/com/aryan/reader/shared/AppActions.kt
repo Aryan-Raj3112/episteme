@@ -25,8 +25,18 @@ sealed interface ReaderAction {
     data class GoToProgress(val progress: Float) : ReaderAction
     data class GoToChapter(val chapterIndex: Int) : ReaderAction
     data class GoToLocator(val locator: ReaderLocator) : ReaderAction
+    data class JumpToPage(val pageIndex: Int) : ReaderAction
+    data class JumpToPageNumber(val pageNumber: Int) : ReaderAction
+    data class JumpToChapter(val chapterIndex: Int) : ReaderAction
+    data class JumpToLocator(val locator: ReaderLocator) : ReaderAction
     data class VisiblePageChanged(val pageIndex: Int, val locator: ReaderLocator? = null) : ReaderAction
     data class GoToSearchResult(val resultIndex: Int) : ReaderAction
+    data class JumpToSearchResult(val resultIndex: Int) : ReaderAction
+    data object JumpToNextSearchResult : ReaderAction
+    data object JumpToPreviousSearchResult : ReaderAction
+    data object JumpBack : ReaderAction
+    data object JumpForward : ReaderAction
+    data object JumpHistoryCleared : ReaderAction
     data class SearchChanged(val query: String) : ReaderAction
     data object SearchOpened : ReaderAction
     data object SearchClosed : ReaderAction
