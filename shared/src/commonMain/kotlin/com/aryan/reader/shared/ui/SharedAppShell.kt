@@ -74,6 +74,7 @@ enum class SharedAppTab {
     SHELVES,
     CATALOGS,
     READER,
+    SETTINGS,
     CUSTOM_FONTS,
     SUPPORT,
     FEEDBACK,
@@ -135,14 +136,14 @@ fun SharedAppShell(
                         selectedTab = shellModel.selectedPrimaryTab,
                         primaryTabs = shellModel.primaryTabs,
                         onTabSelected = onTabSelected,
-                        onToolsClick = { showToolsPanel = true }
+                        onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
                     )
                 } else {
                     SharedAppCompactRail(
                         selectedTab = shellModel.selectedPrimaryTab,
                         primaryTabs = shellModel.primaryTabs,
                         onTabSelected = onTabSelected,
-                        onToolsClick = { showToolsPanel = true }
+                        onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
                     )
                 }
 
@@ -255,7 +256,7 @@ private fun SharedAppSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider()
             SharedSidebarButton(
-                label = "Tools",
+                label = "Settings",
                 icon = Icons.Default.Settings,
                 onClick = onToolsClick
             )
@@ -281,7 +282,7 @@ private fun SharedAppCompactRail(
         }
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onToolsClick) {
-            Icon(Icons.Default.Settings, contentDescription = "Tools")
+            Icon(Icons.Default.Settings, contentDescription = "Settings")
         }
     }
 }
@@ -516,6 +517,7 @@ private val SharedAppTab.label: String
         SharedAppTab.SHELVES -> "Shelves"
         SharedAppTab.CATALOGS -> "OPDS"
         SharedAppTab.READER -> "Reader"
+        SharedAppTab.SETTINGS -> "Settings"
         SharedAppTab.CUSTOM_FONTS -> "Custom fonts"
         SharedAppTab.SUPPORT -> "Support"
         SharedAppTab.FEEDBACK -> "Feedback"
@@ -529,6 +531,7 @@ private val SharedAppTab.icon: ImageVector
         SharedAppTab.SHELVES -> Icons.Default.Folder
         SharedAppTab.CATALOGS -> Icons.Default.Cloud
         SharedAppTab.READER -> Icons.AutoMirrored.Filled.MenuBook
+        SharedAppTab.SETTINGS -> Icons.Default.Settings
         SharedAppTab.CUSTOM_FONTS -> Icons.Default.TextFields
         SharedAppTab.SUPPORT -> Icons.Default.Favorite
         SharedAppTab.FEEDBACK -> Icons.Default.Feedback

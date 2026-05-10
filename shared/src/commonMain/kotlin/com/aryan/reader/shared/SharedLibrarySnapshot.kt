@@ -40,13 +40,14 @@ data class SharedLibrarySnapshot(
     val appTextDimFactorDark: Float = 1.0f,
     val appSeedColor: Color? = null,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
+    val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 10
+    private const val SCHEMA_VERSION = 11
 
     private val json = Json {
         prettyPrint = true
@@ -90,6 +91,10 @@ object SharedLibrarySnapshotJson {
                 ?: 1.0f,
             appSeedColor = root.int("appSeedColor")?.let { Color(it) },
             customAppThemes = root.array("customAppThemes").mapNotNull { it.asCustomAppThemeOrNull() },
+            readerDefaultSettings = root["readerDefaultSettings"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderSettingsOrNull()
+                ?: ReaderSettings(),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderToolbarPreferencesOrNull()
@@ -128,6 +133,7 @@ object SharedLibrarySnapshotJson {
                 "appTextDimFactorDark" to JsonPrimitive(snapshot.appTextDimFactorDark),
                 "appSeedColor" to snapshot.appSeedColor.asJson(),
                 "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
+                "readerDefaultSettings" to snapshot.readerDefaultSettings.asJson(),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(

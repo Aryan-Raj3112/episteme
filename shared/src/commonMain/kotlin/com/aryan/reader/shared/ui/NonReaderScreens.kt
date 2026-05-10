@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -135,6 +136,7 @@ fun SharedHomeScreen(
     onCloseAllTabs: () -> Unit = {},
     onRecentLimitChange: (Int) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val model = state.toNonReaderHomeLayoutModel()
@@ -144,6 +146,11 @@ fun SharedHomeScreen(
         modifier = modifier,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onOpenSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Settings")
+                }
                 RecentLimitMenu(
                     currentLimit = state.recentFilesLimit,
                     onRecentLimitChange = onRecentLimitChange

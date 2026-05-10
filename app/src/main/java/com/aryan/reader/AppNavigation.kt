@@ -65,6 +65,7 @@ object AppDestinations {
     const val SUPPORT_PROJECT_SCREEN_ROUTE = "support_project_screen_route"
     const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
     const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
+    const val SETTINGS_SCREEN_ROUTE = "settings_screen_route"
 }
 
 private fun NavHostController.isReadyForBackStackChange(): Boolean {
@@ -358,6 +359,14 @@ fun AppNavigation(
 
         composable(route = AppDestinations.AI_SETTINGS_SCREEN_ROUTE) {
             AiSettingsScreen(
+                onBackClick = { navController.popBackStackIfReady() }
+            )
+        }
+
+        composable(route = AppDestinations.SETTINGS_SCREEN_ROUTE) {
+            SettingsScreen(
+                viewModel = viewModel,
+                navController = navController,
                 onBackClick = { navController.popBackStackIfReady() }
             )
         }

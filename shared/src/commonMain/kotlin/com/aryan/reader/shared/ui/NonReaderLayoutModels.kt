@@ -43,6 +43,7 @@ fun sharedAppShellModel(
     }
     val selectedPrimaryTab = when (selectedTab) {
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
+        SharedAppTab.SETTINGS,
         SharedAppTab.CUSTOM_FONTS,
         SharedAppTab.SUPPORT,
         SharedAppTab.FEEDBACK,

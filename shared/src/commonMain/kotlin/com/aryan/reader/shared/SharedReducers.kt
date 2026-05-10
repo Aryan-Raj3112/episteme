@@ -115,6 +115,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
                 pinnedLibraryBookIds + action.bookId
             }
         )
+        is AppAction.ReaderDefaultSettingsChanged -> copy(
+            readerDefaultSettings = action.settings
+        )
         is AppAction.ReaderToolbarPreferencesChanged -> copy(
             readerToolbarPreferences = action.preferences.sanitized()
         )

@@ -745,7 +745,7 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(): List<Read
 }
 
 @Composable
-private fun SharedReaderFormatControls(
+fun SharedReaderFormatControls(
     settings: ReaderSettings,
     toolbarPreferences: ReaderToolbarPreferences,
     onPickCustomFont: (() -> String?)?,
@@ -1071,7 +1071,7 @@ fun SharedReaderThemeControls(
 }
 
 @Composable
-private fun SharedReaderVisualOptionsControls(
+fun SharedReaderVisualOptionsControls(
     settings: ReaderSettings,
     onReaderAction: (ReaderAction) -> Unit
 ) {
@@ -1363,11 +1363,13 @@ private enum class SharedTtsReplacementScope {
 fun SharedReaderTtsReplacementControls(
     preferences: ReaderTtsReplacementPreferences,
     bookId: String,
-    onPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
+    onPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
+    allowBookScope: Boolean = true
 ) {
-    var selectedScope by remember(bookId) { mutableStateOf(SharedTtsReplacementScope.GLOBAL) }
-    var editingRuleId by remember(bookId, selectedScope) { mutableStateOf<String?>(null) }
-    var isAddingRule by remember(bookId, selectedScope) { mutableStateOf(false) }
+    var selectedScope by remember(bookId, allowBookScope) { mutableStateOf(SharedTtsReplacementScope.GLOBAL) }
+    val effectiveScope = if (allowBookScope) selectedScope else SharedTtsReplacementScope.GLOBAL
+    var editingRuleId by remember(bookId, effectiveScope) { mutableStateOf<String?>(null) }
+    var isAddingRule by remember(bookId, effectiveScope) { mutableStateOf(false) }
     val bookSettings = preferences.settingsForBook(bookId)
     val bookRules = preferences.rulesForBook(bookId)
 
@@ -1391,28 +1393,30 @@ fun SharedReaderTtsReplacementControls(
             )
         }
 
-        SharedReaderChoiceRow {
-            FilterChip(
-                selected = selectedScope == SharedTtsReplacementScope.GLOBAL,
-                onClick = {
-                    selectedScope = SharedTtsReplacementScope.GLOBAL
-                    editingRuleId = null
-                    isAddingRule = false
-                },
-                label = { Text("Global") }
-            )
-            FilterChip(
-                selected = selectedScope == SharedTtsReplacementScope.BOOK,
-                onClick = {
-                    selectedScope = SharedTtsReplacementScope.BOOK
-                    editingRuleId = null
-                    isAddingRule = false
-                },
-                label = { Text("This book") }
-            )
+        if (allowBookScope) {
+            SharedReaderChoiceRow {
+                FilterChip(
+                    selected = selectedScope == SharedTtsReplacementScope.GLOBAL,
+                    onClick = {
+                        selectedScope = SharedTtsReplacementScope.GLOBAL
+                        editingRuleId = null
+                        isAddingRule = false
+                    },
+                    label = { Text("Global") }
+                )
+                FilterChip(
+                    selected = selectedScope == SharedTtsReplacementScope.BOOK,
+                    onClick = {
+                        selectedScope = SharedTtsReplacementScope.BOOK
+                        editingRuleId = null
+                        isAddingRule = false
+                    },
+                    label = { Text("This book") }
+                )
+            }
         }
 
-        when (selectedScope) {
+        when (effectiveScope) {
             SharedTtsReplacementScope.GLOBAL -> {
                 SharedTtsReplacementSuggestionsRow { suggestion ->
                     onPreferencesChange(
@@ -1764,7 +1768,7 @@ private fun newSharedReplacementRuleId(
 }
 
 @Composable
-private fun SharedReaderToolbarControls(
+fun SharedReaderToolbarControls(
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit
 ) {

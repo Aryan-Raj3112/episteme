@@ -71,6 +71,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -319,6 +320,12 @@ fun HomeScreen(
                                 navController.navigate(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
                             }
                         },
+                        onSettingsClick = {
+                            scope.launch {
+                                drawerState.close()
+                                navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                            }
+                        },
                         navController = navController,
                         onFolderSyncToggle = viewModel::setFolderSyncEnabled
                     )
@@ -353,6 +360,9 @@ fun HomeScreen(
                                     }
                                 },
                                 onAppThemeClick = { showAppThemePanel = true },
+                                onSettingsClick = {
+                                    navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                                },
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
                                 onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
                                 onLanguageClick = { showLanguageDialog = true },
@@ -1024,6 +1034,7 @@ fun DefaultTopAppBar(
     onExternalFileBehaviorClick: () -> Unit,
     onStrictFilterToggleClick: () -> Unit,
     onAppThemeClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     onTestPanelDetectionClick: () -> Unit,
     onTestSpeechBubbleDetectionClick: () -> Unit,
     onLanguageClick: () -> Unit,
@@ -1048,6 +1059,9 @@ fun DefaultTopAppBar(
             }
         }
     }, actions = {
+        IconButton(onClick = onSettingsClick) {
+            Icon(Icons.Default.Settings, contentDescription = "Settings")
+        }
         Box {
             IconButton(onClick = onAppThemeClick) {
                 Icon(painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.content_desc_app_theme))
@@ -1084,6 +1098,11 @@ fun DefaultTopAppBar(
             }
             DropdownMenu(
                 expanded = showOptionsMenu, onDismissRequest = { showOptionsMenu = false }) {
+                DropdownMenuItem(text = { Text("Settings") }, onClick = {
+                    onSettingsClick()
+                    showOptionsMenu = false
+                })
+
                 DropdownMenuItem(text = { Text(stringResource(R.string.about_title)) }, onClick = {
                     onAboutClick()
                     showOptionsMenu = false
@@ -1204,6 +1223,7 @@ private fun AppDrawerContent(
     onSyncUpsellClick: () -> Unit,
     onFontsClick: () -> Unit,
     onAiSettingsClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     navController: NavHostController,
     onFolderSyncToggle: (Boolean) -> Unit
 ) {
@@ -1365,6 +1385,14 @@ private fun AppDrawerContent(
                 }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
+
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                label = { Text("Settings") },
+                selected = false,
+                onClick = onSettingsClick,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
 
             NavigationDrawerItem(
                 icon = { Icon(painterResource(id = R.drawable.fonts), contentDescription = null) },

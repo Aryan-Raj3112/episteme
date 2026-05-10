@@ -167,6 +167,9 @@ import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsHubInput
+import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
@@ -179,6 +182,7 @@ import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.maskedReaderAiKey
+import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -241,6 +245,7 @@ import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
 import com.aryan.reader.shared.ui.SharedAppTheme
+import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedAboutScreen
 import com.aryan.reader.shared.ui.SharedBookEditDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
@@ -251,6 +256,7 @@ import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedMarkdownText
 import com.aryan.reader.shared.ui.SharedOpdsScreen
+import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
@@ -461,6 +467,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             appTextDimFactorDark = initialLibrarySnapshot.appTextDimFactorDark,
             appSeedColor = initialLibrarySnapshot.appSeedColor,
             customAppThemes = initialLibrarySnapshot.customAppThemes,
+            readerDefaultSettings = initialLibrarySnapshot.readerDefaultSettings,
             readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
             readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette,
             readerTtsReplacementPreferences = initialLibrarySnapshot.readerTtsReplacementPreferences
@@ -506,6 +513,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     var showAddToShelfDialog by remember { mutableStateOf(false) }
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
+    var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
+    var settingsQuery by remember { mutableStateOf("") }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
     var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -558,6 +567,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         appTextDimFactorDark = projected.appTextDimFactorDark,
                         appSeedColor = projected.appSeedColor,
                         customAppThemes = projected.customAppThemes,
+                        readerDefaultSettings = projected.readerDefaultSettings,
                         readerToolbarPreferences = projected.readerToolbarPreferences,
                         readerHighlightPalette = projected.readerHighlightPalette,
                         readerTtsReplacementPreferences = projected.readerTtsReplacementPreferences
@@ -1285,7 +1295,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
         activePdfDocument?.close()
         activePdfDocument = null
-        val restoredSettings = book.readerSettings ?: readerSession.reader.settings
+        val restoredSettings = resolvedDesktopReaderSettings(book, state.readerDefaultSettings)
         val restoredSession = readerEngine.createSession(
             book = loadedBook,
             settings = restoredSettings,
@@ -1631,7 +1641,79 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onCloseTab = ::closeReaderTab,
                             onCloseAllTabs = ::closeAllReaderTabs,
                             onRecentLimitChange = { limit -> updateState(state.reduce(LibraryAction.RecentLimitChanged(limit))) },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.HomePinToggled(book.id))) }
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.HomePinToggled(book.id))) },
+                            onOpenSettings = { selectedTab = SharedAppTab.SETTINGS }
+                        )
+
+                        SharedAppTab.SETTINGS -> SharedSettingsHub(
+                            model = sharedSettingsHubModel(
+                                SharedSettingsHubInput(
+                                    platform = SharedSettingsPlatform.DESKTOP,
+                                    featurePolicy = featurePolicy,
+                                    isDebugBuild = false,
+                                    isSignedIn = false,
+                                    isProUser = true,
+                                    syncAvailable = false,
+                                    folderSyncAvailable = true,
+                                    aiSettingsAvailable = featurePolicy.aiAndCloud,
+                                    includeLanguage = false,
+                                    includeScreenCaptureProtection = false,
+                                    includeExternalFileBehavior = false,
+                                    includeStrictFileFilter = false,
+                                    isTabsEnabled = state.isTabsEnabled,
+                                    isFolderSyncEnabled = state.isFolderSyncEnabled
+                                )
+                            ),
+                            query = settingsQuery,
+                            onQueryChange = { settingsQuery = it },
+                            readerDefaultSettings = state.readerDefaultSettings,
+                            onReaderDefaultSettingsChange = { settings ->
+                                updateState(state.reduce(AppAction.ReaderDefaultSettingsChanged(settings)))
+                            },
+                            readerToolbarPreferences = state.readerToolbarPreferences,
+                            onReaderToolbarPreferencesChange = { preferences ->
+                                updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
+                            },
+                            ttsReplacementPreferences = state.readerTtsReplacementPreferences,
+                            onTtsReplacementPreferencesChange = { preferences ->
+                                updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
+                            },
+                            customFonts = customFonts,
+                            onPickCustomFont = { importCustomFont(chooseFontFile())?.path },
+                            readerCustomTextureIds = readerCustomTextureIds,
+                            onImportReaderTexture = ::importDesktopReaderTexture,
+                            onAction = { action ->
+                                when (action) {
+                                    SharedSettingsAction.APP_THEME -> showDesktopAppThemeSettingsDialog = true
+                                    SharedSettingsAction.TABS_TOGGLE -> updateState(state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled)))
+                                    SharedSettingsAction.FOLDER_SYNC -> updateState(state.reduce(AppAction.FolderSyncEnabledChanged(!state.isFolderSyncEnabled)))
+                                    SharedSettingsAction.AI_SETTINGS -> showAiByokSettingsDialog = true
+                                    SharedSettingsAction.CUSTOM_FONTS -> selectedTab = SharedAppTab.CUSTOM_FONTS
+                                    SharedSettingsAction.HELP_FEEDBACK -> selectedTab = SharedAppTab.FEEDBACK
+                                    SharedSettingsAction.SUPPORT -> selectedTab = SharedAppTab.SUPPORT
+                                    SharedSettingsAction.ABOUT -> selectedTab = SharedAppTab.ABOUT
+                                    SharedSettingsAction.PDF_READER_DEFAULTS -> updateState(state.withBanner("PDF-specific settings are still available inside the PDF reader."))
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE,
+                                    SharedSettingsAction.CLEAR_REFLOW_CACHE,
+                                    SharedSettingsAction.EXPORT_LOGS,
+                                    SharedSettingsAction.DEBUG_ACTIONS,
+                                    SharedSettingsAction.DEVICE_MANAGEMENT,
+                                    SharedSettingsAction.SIGN_IN,
+                                    SharedSettingsAction.SIGN_OUT,
+                                    SharedSettingsAction.CLOUD_SYNC,
+                                    SharedSettingsAction.LANGUAGE,
+                                    SharedSettingsAction.RECENT_LIMIT,
+                                    SharedSettingsAction.STRICT_FILE_FILTER,
+                                    SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
+                                    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
+                                    SharedSettingsAction.HIDE_READER_AI,
+                                    SharedSettingsAction.TTS_SETTINGS,
+                                    SharedSettingsAction.TEXT_READER_DEFAULTS,
+                                    SharedSettingsAction.READER_TOOLBAR,
+                                    SharedSettingsAction.TTS_REPLACEMENTS,
+                                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                                }
+                            }
                         )
 
                         SharedAppTab.LIBRARY -> LibraryScreen(
@@ -1748,7 +1830,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
                                         ?: 0,
                                     initialReaderSettings = activeReaderBookId
-                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.readerSettings },
+                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
+                                        ?.let { book -> resolvedDesktopReaderSettings(book, state.readerDefaultSettings) }
+                                        ?: state.readerDefaultSettings,
                                     onOpenPdf = ::importAndOpenPdf,
                                     onOpenBook = ::importAndOpenBook,
                                     onPageStateChange = { page, progress ->
@@ -1833,6 +1917,25 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 secureStorageAvailable = aiByokStore.isSecureStorageAvailable,
                 onSettingsChange = ::updateAiByokSettings,
                 onDismiss = { showAiByokSettingsDialog = false }
+            )
+        }
+
+        if (showDesktopAppThemeSettingsDialog) {
+            SharedAppThemeSettingsDialog(
+                appThemeMode = state.appThemeMode,
+                appContrastOption = state.appContrastOption,
+                appTextDimFactorLight = state.appTextDimFactorLight,
+                appTextDimFactorDark = state.appTextDimFactorDark,
+                appSeedColor = state.appSeedColor,
+                customAppThemes = state.customAppThemes,
+                onThemeModeChanged = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
+                onContrastOptionChanged = { option -> updateState(state.reduce(AppAction.AppContrastChanged(option))) },
+                onTextDimFactorLightChanged = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorLightChanged(factor))) },
+                onTextDimFactorDarkChanged = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorDarkChanged(factor))) },
+                onSeedColorChanged = { color -> updateState(state.reduce(AppAction.AppSeedColorChanged(color))) },
+                onCustomThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
+                onCustomThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
+                onDismiss = { showDesktopAppThemeSettingsDialog = false }
             )
         }
 
@@ -2171,6 +2274,13 @@ private fun BookItem.withDesktopImportMetadata(
     )
 }
 
+internal fun resolvedDesktopReaderSettings(
+    book: BookItem,
+    readerDefaultSettings: ReaderSettings
+): ReaderSettings {
+    return book.readerSettings ?: readerDefaultSettings
+}
+
 @Composable
 private fun HomeScreen(
     state: SharedReaderScreenState,
@@ -2188,7 +2298,8 @@ private fun HomeScreen(
     onCloseTab: (BookItem) -> Unit,
     onCloseAllTabs: () -> Unit,
     onRecentLimitChange: (Int) -> Unit,
-    onTogglePinned: (BookItem) -> Unit
+    onTogglePinned: (BookItem) -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     SharedHomeScreen(
         state = state,
@@ -2206,7 +2317,8 @@ private fun HomeScreen(
         onCloseTab = onCloseTab,
         onCloseAllTabs = onCloseAllTabs,
         onRecentLimitChange = onRecentLimitChange,
-        onTogglePinned = onTogglePinned
+        onTogglePinned = onTogglePinned,
+        onOpenSettings = onOpenSettings
     )
 }
 
