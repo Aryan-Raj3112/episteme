@@ -285,7 +285,7 @@ fun EpubReaderTopBar(
     onToggleTapToNavigate: (Boolean) -> Unit,
     onToggleVolumeScroll: (Boolean) -> Unit,
     onTogglePageTurnAnimation: (Boolean) -> Unit,
-    onToggleRightToLeftPagination: () -> Unit,
+    onSetRightToLeftPagination: (Boolean) -> Unit,
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onOpenTtsReplacements: () -> Unit,
@@ -580,23 +580,33 @@ fun EpubReaderTopBar(
                                         text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
                                         enabled = !isTtsActive,
                                         onClick = {
+                                            onSetRightToLeftPagination(false)
                                             showMoreMenu = false
                                             onChangeRenderMode(RenderMode.PAGINATED)
                                         },
                                         trailingIcon = {
-                                            if (currentRenderMode == RenderMode.PAGINATED) Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = stringResource(R.string.content_desc_selected)
-                                            )
+                                            if (currentRenderMode == RenderMode.PAGINATED && !isRightToLeftPagination) {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_selected)
+                                                )
+                                            }
                                         })
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
-                                        onClick = { onToggleRightToLeftPagination() },
+                                        enabled = !isTtsActive,
+                                        onClick = {
+                                            onSetRightToLeftPagination(true)
+                                            showMoreMenu = false
+                                            onChangeRenderMode(RenderMode.PAGINATED)
+                                        },
                                         trailingIcon = {
-                                            if (isRightToLeftPagination) Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = stringResource(R.string.content_desc_enabled)
-                                            )
+                                            if (currentRenderMode == RenderMode.PAGINATED && isRightToLeftPagination) {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_selected)
+                                                )
+                                            }
                                         })
                                 }
                                 HorizontalDivider()

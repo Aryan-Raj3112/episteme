@@ -228,7 +228,7 @@ import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderScreenOrientationMode
-import com.aryan.reader.loadReaderRightToLeftPagination
+import com.aryan.reader.loadPdfRightToLeftPagination
 import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -245,7 +245,7 @@ import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderScreenOrientationMode
-import com.aryan.reader.saveReaderRightToLeftPagination
+import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.summarizationUrl
@@ -346,7 +346,7 @@ fun PdfViewerScreen(
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
-    var rightToLeftPagination by remember { mutableStateOf(loadReaderRightToLeftPagination(context)) }
+    var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
@@ -5129,10 +5129,9 @@ fun PdfViewerScreen(
                         saveTapToNavigateSetting(context, tapToNavigateEnabled)
                     },
                     onChangeDisplayMode = { displayMode = it },
-                    onToggleRightToLeftPagination = {
-                        val enabled = !rightToLeftPagination
+                    onSetRightToLeftPagination = { enabled ->
                         rightToLeftPagination = enabled
-                        saveReaderRightToLeftPagination(context, enabled)
+                        savePdfRightToLeftPagination(context, enabled)
                     },
                     onToggleKeepScreenOn = {
                         isKeepScreenOn = !isKeepScreenOn

@@ -117,7 +117,7 @@ internal fun PdfTopBar(
     tapToNavigateEnabled: Boolean,
     onToggleTapToNavigate: () -> Unit,
     onChangeDisplayMode: (DisplayMode) -> Unit,
-    onToggleRightToLeftPagination: () -> Unit,
+    onSetRightToLeftPagination: (Boolean) -> Unit,
     onToggleKeepScreenOn: () -> Unit,
     onStartAutoScroll: () -> Unit,
     onShowTtsSettings: () -> Unit,
@@ -407,15 +407,28 @@ internal fun PdfTopBar(
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
                                             enabled = !isTtsSessionActive,
-                                            onClick = { onChangeDisplayMode(DisplayMode.PAGINATION); showMoreMenu = false },
-                                            trailingIcon = { if (displayMode == DisplayMode.PAGINATION) Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
+                                            onClick = {
+                                                onSetRightToLeftPagination(false)
+                                                onChangeDisplayMode(DisplayMode.PAGINATION)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (displayMode == DisplayMode.PAGINATION && !isRightToLeftPagination) {
+                                                    Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected))
+                                                }
+                                            }
                                         )
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
-                                            onClick = { onToggleRightToLeftPagination() },
+                                            enabled = !isTtsSessionActive,
+                                            onClick = {
+                                                onSetRightToLeftPagination(true)
+                                                onChangeDisplayMode(DisplayMode.PAGINATION)
+                                                showMoreMenu = false
+                                            },
                                             trailingIcon = {
-                                                if (isRightToLeftPagination) {
-                                                    Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                                                if (displayMode == DisplayMode.PAGINATION && isRightToLeftPagination) {
+                                                    Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.content_desc_selected))
                                                 }
                                             }
                                         )

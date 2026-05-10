@@ -46,16 +46,23 @@ class ReaderScreenOrientationTest {
     }
 
     @Test
-    fun `right to left pagination defaults to false and round trips`() {
+    fun `right to left pagination is separate for pdf and epub`() {
         val context = contextWithPrefs(InMemorySharedPreferences())
 
-        assertEquals(false, loadReaderRightToLeftPagination(context))
+        assertEquals(false, loadPdfRightToLeftPagination(context))
+        assertEquals(false, loadEpubRightToLeftPagination(context))
 
-        saveReaderRightToLeftPagination(context, true)
-        assertEquals(true, loadReaderRightToLeftPagination(context))
+        savePdfRightToLeftPagination(context, true)
+        assertEquals(true, loadPdfRightToLeftPagination(context))
+        assertEquals(false, loadEpubRightToLeftPagination(context))
 
-        saveReaderRightToLeftPagination(context, false)
-        assertEquals(false, loadReaderRightToLeftPagination(context))
+        saveEpubRightToLeftPagination(context, true)
+        assertEquals(true, loadPdfRightToLeftPagination(context))
+        assertEquals(true, loadEpubRightToLeftPagination(context))
+
+        savePdfRightToLeftPagination(context, false)
+        assertEquals(false, loadPdfRightToLeftPagination(context))
+        assertEquals(true, loadEpubRightToLeftPagination(context))
     }
 
     private fun contextWithPrefs(prefs: SharedPreferences): Context {

@@ -691,10 +691,10 @@
     <string name="menu_view_original_pdf">View Original PDF</string>
     <!-- "Text View" is the name of the PDF reflow feature in this app — keep consistent. -->
     <string name="menu_delete_text_view">Delete Text View</string>
-    <!-- Menu item to switch reading mode. The colon-separated format "Reading Mode: Vertical" is intentional — do not omit the colon. -->
-    <string name="menu_reading_mode_vertical">Reading Mode: Vertical</string>
-    <!-- Menu item to switch reading mode. The colon-separated format "Reading Mode: Paginated" is intentional — do not omit the colon. -->
-    <string name="menu_reading_mode_paginated">Reading Mode: Paginated</string>
+    <!-- Menu item inside the reading mode submenu. -->
+    <string name="menu_reading_mode_vertical">Vertical</string>
+    <!-- Menu item inside the reading mode submenu. -->
+    <string name="menu_reading_mode_paginated">Paginated (left-to-right)</string>
     <!-- Accessibility label for a menu item that is currently active/checked. -->
     <string name="content_desc_enabled">Enabled</string>
     <string name="menu_remove_bookmark">Remove bookmark</string>
@@ -707,7 +707,7 @@
     <string name="menu_visual_options">Visual Options</string>
     <string name="menu_screen_orientation">Screen Orientation</string>
     <string name="menu_change_reading_mode">Change Reading Mode</string>
-    <string name="menu_right_to_left_pagination">Right-to-left Pagination</string>
+    <string name="menu_right_to_left_pagination">Paginated (right-to-left)</string>
     <string name="menu_auto_scroll">Auto Scroll</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_settings">TTS Settings</string>
