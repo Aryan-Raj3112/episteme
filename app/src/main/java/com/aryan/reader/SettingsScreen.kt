@@ -1,8 +1,17 @@
 package com.aryan.reader
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import android.content.Context
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,7 +51,9 @@ import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.PageInfoMode as SharedPageInfoMode
 import com.aryan.reader.shared.PageInfoPosition as SharedPageInfoPosition
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsDestination
 import com.aryan.reader.shared.SystemUiMode as SharedSystemUiMode
+import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -73,6 +84,7 @@ fun SettingsScreen(
     val ttsState by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
+    var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var showBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterDialog by remember { mutableStateOf(false) }
@@ -101,92 +113,129 @@ fun SettingsScreen(
         customFonts.toSharedCustomFontItems()
     }
 
-    SharedSettingsHub(
-        model = sharedSettingsHubModel(
-            androidSettingsHubInput(
-                uiState = uiState,
-                hideReaderAi = hideReaderAi
-            )
-        ),
-        query = query,
-        onQueryChange = { query = it },
-        readerDefaultSettings = readerDefaults,
-        onReaderDefaultSettingsChange = { settings ->
-            readerDefaults = settings
-            saveAndroidReaderDefaultSettings(context, settings)
-            viewModel.setRenderMode(settings.toAndroidRenderMode())
-        },
-        ttsReplacementPreferences = ttsReplacementPreferences,
-        onTtsReplacementPreferencesChange = { preferences ->
-            ttsReplacementPreferences = preferences
-            saveTtsReplacementPreferences(context, preferences)
-        },
-        customFonts = sharedFonts,
-        showTopBar = true,
-        onBack = onBackClick,
-        modifier = modifier,
-        onAction = { action ->
-            when (action) {
-                SharedSettingsAction.APP_THEME -> showAppThemePanel = true
-                SharedSettingsAction.LANGUAGE -> showLanguageDialog = true
-                SharedSettingsAction.TABS_TOGGLE -> viewModel.setTabsEnabled(!uiState.isTabsEnabled)
-                SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
-                SharedSettingsAction.STRICT_FILE_FILTER -> {
-                    if (uiState.useStrictFileFilter) {
-                        viewModel.setStrictFileFilter(false)
-                    } else {
-                        showStrictFilterDialog = true
-                    }
-                }
-                SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
-                SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
-                    val next = !uiState.isScreenCaptureProtectionEnabled
-                    viewModel.setScreenCaptureProtectionEnabled(next)
-                    val messageRes = if (next) {
-                        R.string.banner_screen_capture_protection_on
-                    } else {
-                        R.string.banner_screen_capture_protection_off
-                    }
-                    viewModel.showBanner(context.getString(messageRes))
-                }
-                SharedSettingsAction.CUSTOM_FONTS -> navController.navigate(AppDestinations.FONTS_SCREEN_ROUTE)
-                SharedSettingsAction.SIGN_IN -> {
-                    scope.launch {
-                        context.findActivity()?.let { activity -> viewModel.signIn(activity) }
-                    }
-                }
-                SharedSettingsAction.SIGN_OUT -> showSignOutConfirmDialog = true
-                SharedSettingsAction.CLOUD_SYNC -> {
-                    if (uiState.isProUser) {
-                        viewModel.setSyncEnabled(!uiState.isSyncEnabled)
-                    } else {
-                        showUpgradeDialog = true
-                    }
-                }
-                SharedSettingsAction.FOLDER_SYNC -> viewModel.setFolderSyncEnabled(!uiState.isFolderSyncEnabled)
-                SharedSettingsAction.DEVICE_MANAGEMENT -> viewModel.showDeviceManagementForDebug()
-                SharedSettingsAction.AI_SETTINGS -> navController.navigate(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
-                SharedSettingsAction.HIDE_READER_AI -> {
-                    val nextHidden = !hideReaderAi
-                    saveHideReaderAiFeatures(context, nextHidden)
-                    hideReaderAi = nextHidden
-                }
-                SharedSettingsAction.TTS_SETTINGS -> showTtsSettingsSheet = true
-                SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
-                SharedSettingsAction.CLEAR_REFLOW_CACHE -> showClearReflowCacheDialog = true
-                SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
-                SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner("Debug actions remain in their existing menus.")
-                SharedSettingsAction.HELP_FEEDBACK -> navController.navigate(AppDestinations.FEEDBACK_SCREEN_ROUTE)
-                SharedSettingsAction.SUPPORT -> navController.navigate(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE)
-                SharedSettingsAction.ABOUT -> showAboutDialog = true
-                SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner("PDF-specific OCR, annotation, and tool settings remain in the PDF reader.")
-                SharedSettingsAction.TEXT_READER_DEFAULTS,
-                SharedSettingsAction.READER_TOOLBAR,
-                SharedSettingsAction.TTS_REPLACEMENTS,
-                SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
-            }
-        }
+    val settingsModel = sharedSettingsHubModel(
+        androidSettingsHubInput(
+            uiState = uiState,
+            hideReaderAi = hideReaderAi
+        )
     )
+    val settingsPage = settingsModel.page(settingsDestination)
+
+    fun navigateBackFromSettings() {
+        if (query.isNotBlank()) {
+            query = ""
+            return
+        }
+        val parent = settingsDestination.parentDestination()
+        if (parent != null) {
+            settingsDestination = parent
+        } else {
+            onBackClick()
+        }
+    }
+
+    BackHandler(enabled = query.isNotBlank() || settingsDestination != SharedSettingsDestination.ROOT) {
+        navigateBackFromSettings()
+    }
+
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            CustomTopAppBar(
+                title = { Text(settingsPage.title) },
+                navigationIcon = {
+                    IconButton(onClick = ::navigateBackFromSettings) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        },
+        contentWindowInsets = WindowInsets.navigationBars
+    ) { padding ->
+        SharedSettingsHub(
+            model = settingsModel,
+            query = query,
+            onQueryChange = { query = it },
+            readerDefaultSettings = readerDefaults,
+            onReaderDefaultSettingsChange = { settings ->
+                readerDefaults = settings
+                saveAndroidReaderDefaultSettings(context, settings)
+                viewModel.setRenderMode(settings.toAndroidRenderMode())
+            },
+            ttsReplacementPreferences = ttsReplacementPreferences,
+            onTtsReplacementPreferencesChange = { preferences ->
+                ttsReplacementPreferences = preferences
+                saveTtsReplacementPreferences(context, preferences)
+            },
+            customFonts = sharedFonts,
+            showTopBar = false,
+            destination = settingsDestination,
+            onDestinationChange = { settingsDestination = it },
+            contentPadding = padding,
+            modifier = Modifier.fillMaxSize(),
+            onAction = { action ->
+                when (action) {
+                    SharedSettingsAction.APP_THEME -> showAppThemePanel = true
+                    SharedSettingsAction.LANGUAGE -> showLanguageDialog = true
+                    SharedSettingsAction.TABS_TOGGLE -> viewModel.setTabsEnabled(!uiState.isTabsEnabled)
+                    SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
+                    SharedSettingsAction.STRICT_FILE_FILTER -> {
+                        if (uiState.useStrictFileFilter) {
+                            viewModel.setStrictFileFilter(false)
+                        } else {
+                            showStrictFilterDialog = true
+                        }
+                    }
+                    SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
+                    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
+                        val next = !uiState.isScreenCaptureProtectionEnabled
+                        viewModel.setScreenCaptureProtectionEnabled(next)
+                        val messageRes = if (next) {
+                            R.string.banner_screen_capture_protection_on
+                        } else {
+                            R.string.banner_screen_capture_protection_off
+                        }
+                        viewModel.showBanner(context.getString(messageRes))
+                    }
+                    SharedSettingsAction.CUSTOM_FONTS -> navController.navigate(AppDestinations.FONTS_SCREEN_ROUTE)
+                    SharedSettingsAction.SIGN_IN -> {
+                        scope.launch {
+                            context.findActivity()?.let { activity -> viewModel.signIn(activity) }
+                        }
+                    }
+                    SharedSettingsAction.SIGN_OUT -> showSignOutConfirmDialog = true
+                    SharedSettingsAction.CLOUD_SYNC -> {
+                        if (uiState.isProUser) {
+                            viewModel.setSyncEnabled(!uiState.isSyncEnabled)
+                        } else {
+                            showUpgradeDialog = true
+                        }
+                    }
+                    SharedSettingsAction.FOLDER_SYNC -> viewModel.setFolderSyncEnabled(!uiState.isFolderSyncEnabled)
+                    SharedSettingsAction.DEVICE_MANAGEMENT -> viewModel.showDeviceManagementForDebug()
+                    SharedSettingsAction.AI_SETTINGS -> navController.navigate(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                    SharedSettingsAction.HIDE_READER_AI -> {
+                        val nextHidden = !hideReaderAi
+                        saveHideReaderAiFeatures(context, nextHidden)
+                        hideReaderAi = nextHidden
+                    }
+                    SharedSettingsAction.TTS_SETTINGS -> showTtsSettingsSheet = true
+                    SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
+                    SharedSettingsAction.CLEAR_REFLOW_CACHE -> showClearReflowCacheDialog = true
+                    SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
+                    SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner("Debug actions remain in their existing menus.")
+                    SharedSettingsAction.HELP_FEEDBACK -> navController.navigate(AppDestinations.FEEDBACK_SCREEN_ROUTE)
+                    SharedSettingsAction.SUPPORT -> navController.navigate(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE)
+                    SharedSettingsAction.ABOUT -> showAboutDialog = true
+                    SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner("PDF-specific OCR, annotation, and tool settings remain in the PDF reader.")
+                    SharedSettingsAction.TEXT_READER_DEFAULTS,
+                    SharedSettingsAction.READER_TOOLBAR,
+                    SharedSettingsAction.TTS_REPLACEMENTS,
+                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                }
+            }
+        )
+    }
 
     if (showRecentLimitDialog) {
         RecentLimitDialog(

@@ -168,6 +168,7 @@ import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsDestination
 import com.aryan.reader.shared.SharedSettingsHubInput
 import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.Shelf
@@ -515,6 +516,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
     var settingsQuery by remember { mutableStateOf("") }
+    var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
     var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -1597,11 +1599,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 isTabsEnabled = state.isTabsEnabled,
                 featurePolicy = featurePolicy,
                 onTabSelected = { tab ->
-                    selectedTab = if (tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs) {
+                    val nextTab = if (tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs) {
                         SharedAppTab.HOME
                     } else {
                         tab
                     }
+                    if (nextTab == SharedAppTab.SETTINGS) {
+                        settingsQuery = ""
+                        settingsDestination = SharedSettingsDestination.ROOT
+                    }
+                    selectedTab = nextTab
                 },
                 onImportFiles = { importFiles(chooseFiles()) },
                 onImportFolder = { chooseFolder()?.let(::importFolder) },
@@ -1642,7 +1649,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onCloseAllTabs = ::closeAllReaderTabs,
                             onRecentLimitChange = { limit -> updateState(state.reduce(LibraryAction.RecentLimitChanged(limit))) },
                             onTogglePinned = { book -> updateState(state.reduce(AppAction.HomePinToggled(book.id))) },
-                            onOpenSettings = { selectedTab = SharedAppTab.SETTINGS }
+                            onOpenSettings = {
+                                settingsQuery = ""
+                                settingsDestination = SharedSettingsDestination.ROOT
+                                selectedTab = SharedAppTab.SETTINGS
+                            }
                         )
 
                         SharedAppTab.SETTINGS -> SharedSettingsHub(
@@ -1666,6 +1677,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             ),
                             query = settingsQuery,
                             onQueryChange = { settingsQuery = it },
+                            destination = settingsDestination,
+                            onDestinationChange = { settingsDestination = it },
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = { settings ->
                                 updateState(state.reduce(AppAction.ReaderDefaultSettingsChanged(settings)))

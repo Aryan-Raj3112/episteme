@@ -1,6 +1,8 @@
 package com.aryan.reader
 
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsHubModel
+import com.aryan.reader.shared.SharedSettingsItemModel
 import com.aryan.reader.shared.sharedSettingsHubModel
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -18,7 +20,7 @@ class AndroidSettingsHubModelsTest {
                 isDebugBuild = false
             )
         )
-        val actions = model.sections.flatMap { it.items }.map { it.action }
+        val actions = model.visibleNestedActions()
 
         assertFalse(SharedSettingsAction.AI_SETTINGS in actions)
         assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
@@ -36,7 +38,7 @@ class AndroidSettingsHubModelsTest {
                 isOfflineBuild = false,
                 isDebugBuild = false
             )
-        ).sections.flatMap { it.items }.map { it.action }
+        ).visibleNestedActions()
         val debugActions = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(),
@@ -44,7 +46,7 @@ class AndroidSettingsHubModelsTest {
                 isOfflineBuild = false,
                 isDebugBuild = true
             )
-        ).sections.flatMap { it.items }.map { it.action }
+        ).visibleNestedActions()
 
         assertFalse(SharedSettingsAction.EXPORT_LOGS in releaseActions)
         assertTrue(SharedSettingsAction.EXPORT_LOGS in debugActions)
@@ -64,7 +66,7 @@ class AndroidSettingsHubModelsTest {
                 isDebugBuild = false
             )
         )
-        val toggles = model.sections.flatMap { it.items }.associateBy { it.action }
+        val toggles = model.visibleNestedItems().associateBy { it.action }
 
         assertTrue(toggles.getValue(SharedSettingsAction.TABS_TOGGLE).checked == true)
         assertTrue(toggles.getValue(SharedSettingsAction.STRICT_FILE_FILTER).checked == true)
@@ -80,7 +82,7 @@ class AndroidSettingsHubModelsTest {
                 isOfflineBuild = false,
                 isDebugBuild = false
             )
-        ).sections.flatMap { it.items }.single { it.action == SharedSettingsAction.CLOUD_SYNC }
+        ).visibleNestedItems().single { it.action == SharedSettingsAction.CLOUD_SYNC }
         val proSync = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(isProUser = true),
@@ -88,9 +90,19 @@ class AndroidSettingsHubModelsTest {
                 isOfflineBuild = false,
                 isDebugBuild = false
             )
-        ).sections.flatMap { it.items }.single { it.action == SharedSettingsAction.CLOUD_SYNC }
+        ).visibleNestedItems().single { it.action == SharedSettingsAction.CLOUD_SYNC }
 
         assertFalse(freeSync.enabled)
         assertTrue(proSync.enabled)
     }
+}
+
+private fun SharedSettingsHubModel.visibleNestedItems(): List<SharedSettingsItemModel> {
+    return rootCategories.flatMap { category ->
+        page(category.destination).items
+    }
+}
+
+private fun SharedSettingsHubModel.visibleNestedActions(): List<SharedSettingsAction> {
+    return visibleNestedItems().map { it.action }
 }

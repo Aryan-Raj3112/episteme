@@ -6,15 +6,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,13 +23,11 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,10 +37,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -58,20 +50,16 @@ import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsCategoryModel
+import com.aryan.reader.shared.SharedSettingsDestination
 import com.aryan.reader.shared.SharedSettingsHubModel
 import com.aryan.reader.shared.SharedSettingsItemKind
 import com.aryan.reader.shared.SharedSettingsItemModel
-import com.aryan.reader.shared.SharedSettingsSection
+import com.aryan.reader.shared.SharedSettingsPageKind
+import com.aryan.reader.shared.SharedSettingsPageModel
+import com.aryan.reader.shared.SharedSettingsSearchResult
+import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.reader.ReaderSettings
-
-private enum class SharedSettingsReaderPane(val title: String) {
-    TEXT("Text"),
-    THEME("Theme"),
-    VISUAL("Visual"),
-    PDF("PDF"),
-    TOOLBAR("Toolbar"),
-    TTS("TTS")
-}
 
 @Composable
 fun SharedSettingsHub(
@@ -91,121 +79,82 @@ fun SharedSettingsHub(
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     showTopBar: Boolean = true,
-    onBack: (() -> Unit)? = null
+    onBack: (() -> Unit)? = null,
+    destination: SharedSettingsDestination = SharedSettingsDestination.ROOT,
+    onDestinationChange: (SharedSettingsDestination) -> Unit = {},
+    contentPadding: PaddingValues = PaddingValues(0.dp)
 ) {
-    val filteredModel = remember(model, query) { model.filtered(query) }
+    val page = remember(model, destination) { model.page(destination) }
+    val searchResults = remember(model, query) { model.searchResults(query) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        if (showTopBar) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (onBack != null) {
-                    TextButton(onClick = onBack) {
-                        Text("Back")
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Global defaults live here. Per-book overrides stay inside the reader.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+    fun navigateTo(next: SharedSettingsDestination) {
+        onQueryChange("")
+        onDestinationChange(next)
+    }
+
+    fun navigateUp() {
+        if (query.isNotBlank()) {
+            onQueryChange("")
+            return
         }
-
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            label = { Text("Search settings") }
-        )
-
-        if (filteredModel.sections.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(36.dp))
-                    Text("No settings found", fontWeight = FontWeight.SemiBold)
-                    Text(query, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
+        val parent = destination.parentDestination()
+        if (parent != null) {
+            onDestinationChange(parent)
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                filteredModel.sections.forEach { section ->
-                    item(key = section.section.name) {
-                        SharedSettingsSectionCard(
-                            section = section.section,
-                            items = section.items,
-                            readerDefaultSettings = readerDefaultSettings,
-                            onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
-                            readerToolbarPreferences = readerToolbarPreferences,
-                            onReaderToolbarPreferencesChange = onReaderToolbarPreferencesChange,
-                            ttsReplacementPreferences = ttsReplacementPreferences,
-                            onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
-                            customFonts = customFonts,
-                            onPickCustomFont = onPickCustomFont,
-                            readerCustomTextureIds = readerCustomTextureIds,
-                            onImportReaderTexture = onImportReaderTexture,
-                            onAction = onAction
-                        )
-                    }
-                }
-            }
+            onBack?.invoke()
         }
     }
-}
 
-@Composable
-private fun SharedSettingsSectionCard(
-    section: SharedSettingsSection,
-    items: List<SharedSettingsItemModel>,
-    readerDefaultSettings: ReaderSettings,
-    onReaderDefaultSettingsChange: (ReaderSettings) -> Unit,
-    readerToolbarPreferences: ReaderToolbarPreferences?,
-    onReaderToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
-    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
-    customFonts: List<CustomFontItem>,
-    onPickCustomFont: (() -> String?)?,
-    readerCustomTextureIds: List<String>,
-    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
-    onAction: (SharedSettingsAction) -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(contentPadding)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(section.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(section.summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val contentWidth = if (maxWidth >= 960.dp) Modifier.width(860.dp) else Modifier.fillMaxWidth()
+        Column(
+            modifier = contentWidth
+                .fillMaxHeight()
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            if (showTopBar) {
+                SharedSettingsHeader(
+                    page = page,
+                    canNavigateUp = query.isNotBlank() || destination != SharedSettingsDestination.ROOT || onBack != null,
+                    onNavigateUp = ::navigateUp
+                )
             }
 
-            if (section == SharedSettingsSection.READER) {
-                SharedReaderDefaultsSettingsPanel(
-                    items = items,
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                label = { Text("Search settings") }
+            )
+
+            when {
+                query.isNotBlank() -> SharedSettingsSearchResults(
+                    results = searchResults,
+                    onNavigate = ::navigateTo,
+                    onAction = onAction,
+                    modifier = Modifier.weight(1f)
+                )
+                page.kind == SharedSettingsPageKind.ROOT -> SharedSettingsCategoryList(
+                    categories = page.categories,
+                    onNavigate = ::navigateTo,
+                    modifier = Modifier.weight(1f)
+                )
+                page.kind == SharedSettingsPageKind.CATEGORY -> SharedSettingsItemList(
+                    page = page,
+                    onNavigate = ::navigateTo,
+                    onAction = onAction,
+                    modifier = Modifier.weight(1f)
+                )
+                else -> SharedSettingsDetailPage(
+                    page = page,
                     settings = readerDefaultSettings,
                     onSettingsChange = onReaderDefaultSettingsChange,
                     toolbarPreferences = readerToolbarPreferences,
@@ -216,12 +165,121 @@ private fun SharedSettingsSectionCard(
                     onPickCustomFont = onPickCustomFont,
                     readerCustomTextureIds = readerCustomTextureIds,
                     onImportReaderTexture = onImportReaderTexture,
-                    onAction = onAction
+                    modifier = Modifier.weight(1f)
                 )
-            } else {
-                items.forEachIndexed { index, item ->
-                    SharedSettingsRow(item = item, onAction = onAction)
-                    if (index != items.lastIndex) {
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsHeader(
+    page: SharedSettingsPageModel,
+    canNavigateUp: Boolean,
+    onNavigateUp: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (canNavigateUp) {
+            TextButton(onClick = onNavigateUp) {
+                Text("Back")
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(page.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(
+                page.summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsCategoryList(
+    categories: List<SharedSettingsCategoryModel>,
+    onNavigate: (SharedSettingsDestination) -> Unit,
+    modifier: Modifier
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        categories.forEach { category ->
+            item(key = category.destination.name) {
+                SharedSettingsCategoryRow(category = category, onNavigate = onNavigate)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsCategoryRow(
+    category: SharedSettingsCategoryModel,
+    onNavigate: (SharedSettingsDestination) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        onClick = { onNavigate(category.destination) }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(
+                category.destination.iconForSettingsDestination(),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(category.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    category.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    if (category.itemCount == 1) "1 setting" else "${category.itemCount} settings",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsItemList(
+    page: SharedSettingsPageModel,
+    onNavigate: (SharedSettingsDestination) -> Unit,
+    onAction: (SharedSettingsAction) -> Unit,
+    modifier: Modifier
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item(key = page.destination.name) {
+            SharedSettingsGroup {
+                page.items.forEachIndexed { index, item ->
+                    SharedSettingsRow(
+                        item = item,
+                        onNavigate = onNavigate,
+                        onAction = onAction
+                    )
+                    if (index != page.items.lastIndex) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
                     }
                 }
@@ -231,155 +289,32 @@ private fun SharedSettingsSectionCard(
 }
 
 @Composable
-private fun SharedReaderDefaultsSettingsPanel(
-    items: List<SharedSettingsItemModel>,
-    settings: ReaderSettings,
-    onSettingsChange: (ReaderSettings) -> Unit,
-    toolbarPreferences: ReaderToolbarPreferences?,
-    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
-    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
-    customFonts: List<CustomFontItem>,
-    onPickCustomFont: (() -> String?)?,
-    readerCustomTextureIds: List<String>,
-    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
-    onAction: (SharedSettingsAction) -> Unit
+private fun SharedSettingsSearchResults(
+    results: List<SharedSettingsSearchResult>,
+    onNavigate: (SharedSettingsDestination) -> Unit,
+    onAction: (SharedSettingsAction) -> Unit,
+    modifier: Modifier
 ) {
-    val availableActions = items.mapTo(mutableSetOf()) { it.action }
-    val availablePanes = buildList {
-        if (SharedSettingsAction.TEXT_READER_DEFAULTS in availableActions) {
-            add(SharedSettingsReaderPane.TEXT)
-            add(SharedSettingsReaderPane.THEME)
-            add(SharedSettingsReaderPane.VISUAL)
-        }
-        if (SharedSettingsAction.PDF_READER_DEFAULTS in availableActions) add(SharedSettingsReaderPane.PDF)
-        if (SharedSettingsAction.READER_TOOLBAR in availableActions) add(SharedSettingsReaderPane.TOOLBAR)
-        if (SharedSettingsAction.TTS_REPLACEMENTS in availableActions) add(SharedSettingsReaderPane.TTS)
-    }
-    var selectedPane by remember(availablePanes) { mutableStateOf(availablePanes.firstOrNull() ?: SharedSettingsReaderPane.TEXT) }
-    if (selectedPane !in availablePanes && availablePanes.isNotEmpty()) {
-        selectedPane = availablePanes.first()
+    if (results.isEmpty()) {
+        SharedSettingsEmptySearch(modifier = modifier)
+        return
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        items.firstOrNull { it.action == SharedSettingsAction.LOCAL_OVERRIDE_NOTE }?.let { note ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Column(Modifier.weight(1f)) {
-                        Text(note.title, fontWeight = FontWeight.SemiBold)
-                        Text(note.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
-
-        if (availablePanes.isNotEmpty()) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            ) {
-                availablePanes.forEach { pane ->
-                    FilterChip(
-                        selected = selectedPane == pane,
-                        onClick = { selectedPane = pane },
-                        label = { Text(pane.title) }
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            SharedSettingsGroup {
+                results.forEachIndexed { index, result ->
+                    SharedSettingsSearchResultRow(
+                        result = result,
+                        onNavigate = onNavigate,
+                        onAction = onAction
                     )
-                }
-            }
-        }
-
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val panelWidth = if (maxWidth > 820.dp) Modifier.widthIn(max = 760.dp) else Modifier.fillMaxWidth()
-            Surface(
-                modifier = panelWidth,
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(520.dp)
-                        .verticalScroll(rememberScrollState())
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    when (selectedPane) {
-                        SharedSettingsReaderPane.TEXT -> {
-                            SharedReaderFormatControls(
-                                settings = settings,
-                                toolbarPreferences = ReaderToolbarPreferences(),
-                                onPickCustomFont = onPickCustomFont,
-                                customFonts = customFonts,
-                                onReaderAction = { action ->
-                                    if (action is ReaderAction.SettingsChanged) onSettingsChange(action.settings)
-                                }
-                            )
-                        }
-
-                        SharedSettingsReaderPane.THEME -> {
-                            SharedReaderThemeControls(
-                                settings = settings,
-                                customTextureIds = readerCustomTextureIds,
-                                onImportTexture = onImportReaderTexture,
-                                onSettingsChange = onSettingsChange
-                            )
-                        }
-
-                        SharedSettingsReaderPane.VISUAL -> {
-                            SharedReaderVisualOptionsControls(
-                                settings = settings,
-                                onReaderAction = { action ->
-                                    if (action is ReaderAction.SettingsChanged) onSettingsChange(action.settings)
-                                }
-                            )
-                        }
-
-                        SharedSettingsReaderPane.PDF -> {
-                            Text("PDF and comic defaults", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "These defaults cover reader-level appearance where the platform supports it. PDF-specific OCR, annotation, and tool options remain available in the PDF reader too.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            SharedReaderThemeControls(
-                                settings = settings,
-                                builtInThemes = BuiltInPdfReaderThemes,
-                                customTextureIds = readerCustomTextureIds,
-                                onImportTexture = onImportReaderTexture,
-                                onSettingsChange = onSettingsChange
-                            )
-                            Button(onClick = { onAction(SharedSettingsAction.PDF_READER_DEFAULTS) }) {
-                                Text("Open PDF-specific settings")
-                            }
-                        }
-
-                        SharedSettingsReaderPane.TOOLBAR -> {
-                            if (toolbarPreferences == null) {
-                                Text("Reader toolbar defaults are managed from the reader on this platform.")
-                            } else {
-                                SharedReaderToolbarControls(
-                                    toolbarPreferences = toolbarPreferences,
-                                    onToolbarPreferencesChange = onToolbarPreferencesChange
-                                )
-                            }
-                        }
-
-                        SharedSettingsReaderPane.TTS -> {
-                            SharedReaderTtsReplacementControls(
-                                preferences = ttsReplacementPreferences,
-                                bookId = "global",
-                                onPreferencesChange = onTtsReplacementPreferencesChange,
-                                allowBookScope = false
-                            )
-                        }
+                    if (index != results.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
                     }
                 }
             }
@@ -388,8 +323,102 @@ private fun SharedReaderDefaultsSettingsPanel(
 }
 
 @Composable
+private fun SharedSettingsEmptySearch(modifier: Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(36.dp))
+            Text("No settings found", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsSearchResultRow(
+    result: SharedSettingsSearchResult,
+    onNavigate: (SharedSettingsDestination) -> Unit,
+    onAction: (SharedSettingsAction) -> Unit
+) {
+    val contentColor = if (result.enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.46f)
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        enabled = result.enabled,
+        onClick = {
+            result.destination?.let(onNavigate) ?: result.action?.let(onAction)
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                result.action?.iconForSettings() ?: result.destination?.iconForSettingsDestination() ?: Icons.Default.Settings,
+                contentDescription = null,
+                modifier = Modifier.size(22.dp),
+                tint = if (result.kind == SharedSettingsItemKind.DESTRUCTIVE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(result.title, fontWeight = FontWeight.SemiBold, color = contentColor)
+                Text(
+                    result.breadcrumb,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    result.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (result.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            when (result.kind) {
+                SharedSettingsItemKind.TOGGLE -> {
+                    Switch(
+                        checked = result.checked == true,
+                        enabled = result.enabled,
+                        onCheckedChange = { result.action?.let(onAction) }
+                    )
+                }
+                else -> Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsGroup(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
 private fun SharedSettingsRow(
     item: SharedSettingsItemModel,
+    onNavigate: (SharedSettingsDestination) -> Unit,
     onAction: (SharedSettingsAction) -> Unit
 ) {
     val contentColor = if (item.enabled) {
@@ -402,10 +431,12 @@ private fun SharedSettingsRow(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surface,
         enabled = item.enabled,
-        onClick = { onAction(item.action) }
+        onClick = {
+            item.destination?.let(onNavigate) ?: onAction(item.action)
+        }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 2.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -420,7 +451,9 @@ private fun SharedSettingsRow(
                 Text(
                     item.summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                    color = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             when (item.kind) {
@@ -431,15 +464,175 @@ private fun SharedSettingsRow(
                         onCheckedChange = { onAction(item.action) }
                     )
                 }
-
                 SharedSettingsItemKind.INFO -> Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                 SharedSettingsItemKind.DESTRUCTIVE,
                 SharedSettingsItemKind.NAVIGATION,
-                SharedSettingsItemKind.CONTROL -> {
-                    Spacer(Modifier.width(4.dp))
-                }
+                SharedSettingsItemKind.CONTROL -> Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun SharedSettingsDetailPage(
+    page: SharedSettingsPageModel,
+    settings: ReaderSettings,
+    onSettingsChange: (ReaderSettings) -> Unit,
+    toolbarPreferences: ReaderToolbarPreferences?,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    ttsReplacementPreferences: ReaderTtsReplacementPreferences,
+    onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
+    customFonts: List<CustomFontItem>,
+    onPickCustomFont: (() -> String?)?,
+    readerCustomTextureIds: List<String>,
+    onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
+    modifier: Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        page.localOverrideNote?.let { note ->
+            SharedSettingsLocalOverrideNote(note)
+        }
+
+        SharedSettingsDetailSurface {
+            when (page.destination) {
+                SharedSettingsDestination.EPUB_FORMAT -> {
+                    SharedReaderFormatControls(
+                        settings = settings,
+                        toolbarPreferences = ReaderToolbarPreferences(),
+                        onPickCustomFont = onPickCustomFont,
+                        customFonts = customFonts,
+                        onReaderAction = { action ->
+                            if (action is ReaderAction.SettingsChanged) onSettingsChange(action.settings)
+                        }
+                    )
+                }
+                SharedSettingsDestination.EPUB_THEME_TEXTURE -> {
+                    SharedReaderThemeControls(
+                        settings = settings,
+                        customTextureIds = readerCustomTextureIds,
+                        onImportTexture = onImportReaderTexture,
+                        onSettingsChange = onSettingsChange
+                    )
+                }
+                SharedSettingsDestination.EPUB_VISUAL_DEFAULTS -> {
+                    SharedReaderVisualOptionsControls(
+                        settings = settings,
+                        onReaderAction = { action ->
+                            if (action is ReaderAction.SettingsChanged) onSettingsChange(action.settings)
+                        }
+                    )
+                }
+                SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text("Fixed-layout appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "These defaults apply where the platform supports shared PDF appearance. Per-book PDF overrides stay in the PDF reader.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        SharedReaderThemeControls(
+                            settings = settings,
+                            builtInThemes = BuiltInPdfReaderThemes,
+                            customTextureIds = readerCustomTextureIds,
+                            onImportTexture = onImportReaderTexture,
+                            onSettingsChange = onSettingsChange
+                        )
+                    }
+                }
+                SharedSettingsDestination.PDF_READER_TOOLS -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text("Reader-managed PDF tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Auto-scroll, OCR, annotation defaults, and PDF-only tool visibility are managed inside the active PDF reader.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> {
+                    if (toolbarPreferences == null) {
+                        Text("Reader toolbar defaults are managed from the reader on this platform.")
+                    } else {
+                        SharedReaderToolbarControls(
+                            toolbarPreferences = toolbarPreferences,
+                            onToolbarPreferencesChange = onToolbarPreferencesChange
+                        )
+                    }
+                }
+                SharedSettingsDestination.EPUB_TTS_REPLACEMENTS,
+                SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> {
+                    SharedReaderTtsReplacementControls(
+                        preferences = ttsReplacementPreferences,
+                        bookId = "global",
+                        onPreferencesChange = onTtsReplacementPreferencesChange,
+                        allowBookScope = false
+                    )
+                }
+                else -> Text(page.summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsDetailSurface(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SharedSettingsLocalOverrideNote(note: SharedSettingsItemModel) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text(note.title, fontWeight = FontWeight.SemiBold)
+                Text(note.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+private fun SharedSettingsDestination.iconForSettingsDestination(): ImageVector {
+    return when (this) {
+        SharedSettingsDestination.EPUB_TEXT,
+        SharedSettingsDestination.EPUB_FORMAT,
+        SharedSettingsDestination.EPUB_TTS_REPLACEMENTS,
+        SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> Icons.Default.TextFields
+        SharedSettingsDestination.PDF_COMICS,
+        SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
+        SharedSettingsDestination.PDF_READER_TOOLS,
+        SharedSettingsDestination.EPUB_THEME_TEXTURE,
+        SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
+        SharedSettingsDestination.READER_TOOLBAR_DEFAULTS,
+        SharedSettingsDestination.THEME_APPEARANCE -> Icons.Default.Palette
+        SharedSettingsDestination.TTS_AI -> Icons.Default.Settings
+        SharedSettingsDestination.LIBRARY_SYNC_STORAGE -> Icons.Default.Folder
+        SharedSettingsDestination.HELP_ABOUT -> Icons.Default.Info
+        SharedSettingsDestination.ROOT -> Icons.Default.Settings
     }
 }
 

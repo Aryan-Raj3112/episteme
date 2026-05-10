@@ -8,27 +8,27 @@ import kotlin.test.assertTrue
 class SettingsHubModelsTest {
 
     @Test
-    fun `settings hub keeps reader settings first`() {
+    fun `settings hub root shows parent categories only`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)
         )
 
-        assertEquals(SharedSettingsSection.READER, model.sections.first().section)
         assertEquals(
             listOf(
-                SharedSettingsSection.READER,
-                SharedSettingsSection.APP_LIBRARY,
-                SharedSettingsSection.SYNC_ACCOUNTS,
-                SharedSettingsSection.AI_TTS,
-                SharedSettingsSection.STORAGE_ADVANCED,
-                SharedSettingsSection.HELP
+                SharedSettingsDestination.EPUB_TEXT,
+                SharedSettingsDestination.PDF_COMICS,
+                SharedSettingsDestination.THEME_APPEARANCE,
+                SharedSettingsDestination.TTS_AI,
+                SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
+                SharedSettingsDestination.HELP_ABOUT
             ),
-            model.sections.map { it.section }
+            model.rootCategories.map { it.destination }
         )
+        assertTrue(model.page(SharedSettingsDestination.ROOT).items.isEmpty())
     }
 
     @Test
-    fun `offline feature policy hides network backed settings`() {
+    fun `offline feature policy hides network backed nested settings`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.ANDROID,
@@ -37,7 +37,7 @@ class SettingsHubModelsTest {
                 isSignedIn = false
             )
         )
-        val actions = model.sections.flatMap { it.items }.map { it.action }
+        val actions = model.visibleNestedActions()
 
         assertFalse(SharedSettingsAction.AI_SETTINGS in actions)
         assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
@@ -47,27 +47,47 @@ class SettingsHubModelsTest {
     }
 
     @Test
-    fun `reader section always explains local overrides`() {
-        val readerItems = sharedSettingsHubModel(
-            SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)
-        ).itemsIn(SharedSettingsSection.READER)
-
-        val note = readerItems.single { it.action == SharedSettingsAction.LOCAL_OVERRIDE_NOTE }
-        assertEquals(SharedSettingsItemKind.INFO, note.kind)
-        assertTrue(note.summary.contains("Local overrides"))
-        assertTrue(note.summary.contains("reader"))
-    }
-
-    @Test
-    fun `search filters matching settings and sections`() {
+    fun `local override note appears on reader detail pages only`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)
         )
 
-        val filtered = model.filtered("fonts")
-        val actions = filtered.sections.flatMap { it.items }.map { it.action }
+        assertFalse(
+            model.page(SharedSettingsDestination.EPUB_TEXT)
+                .items
+                .any { it.action == SharedSettingsAction.LOCAL_OVERRIDE_NOTE }
+        )
+        val note = model.page(SharedSettingsDestination.EPUB_FORMAT).localOverrideNote
 
-        assertEquals(listOf(SharedSettingsSection.APP_LIBRARY), filtered.sections.map { it.section })
-        assertEquals(listOf(SharedSettingsAction.CUSTOM_FONTS), actions)
+        assertEquals(SharedSettingsItemKind.INFO, note?.kind)
+        assertTrue(note?.summary.orEmpty().contains("Local overrides"))
+        assertTrue(note?.summary.orEmpty().contains("reader"))
+    }
+
+    @Test
+    fun `search returns nested results with breadcrumbs`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)
+        )
+
+        val results = model.searchResults("custom fonts")
+
+        assertEquals(1, results.size)
+        assertEquals(SharedSettingsAction.CUSTOM_FONTS, results.first().action)
+        assertEquals("Settings / Theme & Appearance", results.first().breadcrumb)
+    }
+
+    @Test
+    fun `settings destinations expose stable parents`() {
+        assertEquals(SharedSettingsDestination.ROOT, SharedSettingsDestination.EPUB_TEXT.parentDestination())
+        assertEquals(SharedSettingsDestination.EPUB_TEXT, SharedSettingsDestination.EPUB_FORMAT.parentDestination())
+        assertEquals(SharedSettingsDestination.PDF_COMICS, SharedSettingsDestination.PDF_READER_TOOLS.parentDestination())
+        assertEquals(SharedSettingsDestination.TTS_AI, SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS.parentDestination())
+    }
+}
+
+private fun SharedSettingsHubModel.visibleNestedActions(): List<SharedSettingsAction> {
+    return rootCategories.flatMap { category ->
+        page(category.destination).items.map { it.action }
     }
 }
