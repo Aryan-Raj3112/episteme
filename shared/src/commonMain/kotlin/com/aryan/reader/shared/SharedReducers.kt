@@ -16,6 +16,7 @@ fun LibraryState.reduce(action: LibraryAction): LibraryState {
             }
             copy(selectedBookIds = selected)
         }
+        is LibraryAction.BookSelectionReplaced -> copy(selectedBookIds = action.bookIds)
         LibraryAction.SelectionCleared -> copy(selectedBookIds = emptySet())
         is LibraryAction.ShelfSelectionToggled -> this
         LibraryAction.ShelfSelectionCleared -> this
@@ -37,6 +38,7 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
             }
             copy(selectedBookIds = selected)
         }
+        is LibraryAction.BookSelectionReplaced -> copy(selectedBookIds = action.bookIds)
         LibraryAction.SelectionCleared -> copy(selectedBookIds = emptySet())
         is LibraryAction.ShelfSelectionToggled -> {
             val selected = if (action.shelfId in selectedShelfIds) {

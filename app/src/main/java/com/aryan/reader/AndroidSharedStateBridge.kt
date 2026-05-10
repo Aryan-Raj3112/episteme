@@ -3,7 +3,6 @@ package com.aryan.reader
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.AppAction as SharedAppAction
-import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedLibraryProjectionInput
@@ -68,9 +67,8 @@ internal object AndroidSharedStateBridge {
         action: SharedLibraryAction
     ): ReaderScreenState {
         val rawBooks = projectedState.rawLibraryFiles.ifEmpty { current.rawLibraryFiles }
-        val tags = projectedState.allTags.ifEmpty { current.allTags }
         val androidBooksById = (rawBooks + current.contextualActionItems).associateBy { it.bookId }
-        val reduced = current.toSharedReaderScreenState(rawBooks = rawBooks, dbTags = tags).reduce(action)
+        val reduced = current.toBridgeSharedState(projectedState).reduce(action)
         return current.copy(
             searchQuery = reduced.searchQuery,
             sortOrder = reduced.sortOrder.toAndroidSortOrder(),
@@ -87,10 +85,7 @@ internal object AndroidSharedStateBridge {
         projectedState: ReaderScreenState,
         action: SharedAppAction
     ): ReaderScreenState {
-        val reduced = current.toSharedReaderScreenState(
-            rawBooks = projectedState.rawLibraryFiles.ifEmpty { current.rawLibraryFiles },
-            dbTags = projectedState.allTags.ifEmpty { current.allTags }
-        ).reduce(action)
+        val reduced = current.toBridgeSharedState(projectedState).reduce(action)
         return current.copy(
             appThemeMode = reduced.appThemeMode.toAndroidAppThemeMode(),
             appContrastOption = reduced.appContrastOption.toAndroidAppContrastOption(),
@@ -98,6 +93,116 @@ internal object AndroidSharedStateBridge {
             appTextDimFactorDark = reduced.appTextDimFactorDark,
             appSeedColor = reduced.appSeedColor,
             customAppThemes = reduced.customAppThemes.map { it.toAndroidCustomAppTheme() }
+        )
+    }
+
+    fun setTabsEnabled(
+        current: ReaderScreenState,
+        projectedState: ReaderScreenState,
+        enabled: Boolean
+    ): ReaderScreenState {
+        val reduced = current.toBridgeSharedState(projectedState).reduce(SharedAppAction.TabsEnabledChanged(enabled))
+        if (enabled) return current.withTabStateFrom(reduced)
+
+        val activeTab = current.activeTabBookId
+        return current.copy(
+            isTabsEnabled = reduced.isTabsEnabled,
+            openTabIds = if (activeTab == null) emptyList() else listOf(activeTab),
+            activeTabBookId = activeTab
+        )
+    }
+
+    fun openBookTab(
+        current: ReaderScreenState,
+        projectedState: ReaderScreenState,
+        bookId: String
+    ): ReaderScreenState {
+        val reduced = current.toBridgeSharedState(projectedState).reduce(SharedAppAction.BookTabOpened(bookId))
+        return current.withTabStateFrom(reduced)
+    }
+
+    fun closeBookTab(
+        current: ReaderScreenState,
+        projectedState: ReaderScreenState,
+        bookId: String
+    ): ReaderScreenState {
+        val reduced = current.toBridgeSharedState(projectedState).reduce(SharedAppAction.BookTabClosed(bookId))
+        return current.withTabStateFrom(reduced)
+    }
+
+    fun closeAllTabs(current: ReaderScreenState, projectedState: ReaderScreenState): ReaderScreenState {
+        val reduced = current.toBridgeSharedState(projectedState).reduce(SharedAppAction.AllTabsClosed)
+        return current.withTabStateFrom(reduced)
+    }
+
+    fun togglePinsForSelectedBooks(
+        current: ReaderScreenState,
+        projectedState: ReaderScreenState,
+        isHome: Boolean
+    ): ReaderScreenState {
+        val selectedIds = current.contextualActionItems.mapTo(linkedSetOf()) { it.bookId }
+        if (selectedIds.isEmpty()) return current
+
+        val currentPins = if (isHome) current.pinnedHomeBookIds else current.pinnedLibraryBookIds
+        val idsToToggle = if (selectedIds.all { it in currentPins }) {
+            selectedIds
+        } else {
+            selectedIds - currentPins
+        }
+        val reduced = idsToToggle.fold(current.toBridgeSharedState(projectedState)) { state, bookId ->
+            state.reduce(
+                if (isHome) {
+                    SharedAppAction.HomePinToggled(bookId)
+                } else {
+                    SharedAppAction.LibraryPinToggled(bookId)
+                }
+            )
+        }
+
+        return if (isHome) {
+            current.copy(
+                pinnedHomeBookIds = reduced.pinnedHomeBookIds,
+                contextualActionItems = emptySet()
+            )
+        } else {
+            current.copy(
+                pinnedLibraryBookIds = reduced.pinnedLibraryBookIds,
+                contextualActionItems = emptySet()
+            )
+        }
+    }
+
+    fun replaceBookSelectionWithVisibleBooks(
+        current: ReaderScreenState,
+        projectedState: ReaderScreenState,
+        visibleBooks: Collection<RecentFileItem>
+    ): ReaderScreenState {
+        val visibleIds = visibleBooks.mapTo(linkedSetOf()) { it.bookId }
+        val selectedIds = current.contextualActionItems.mapTo(linkedSetOf()) { it.bookId }
+        val action = if (visibleIds.isNotEmpty() && selectedIds.containsAll(visibleIds)) {
+            SharedLibraryAction.SelectionCleared
+        } else {
+            SharedLibraryAction.BookSelectionReplaced(visibleIds)
+        }
+        return reduceLibraryAction(
+            current = current,
+            projectedState = projectedState,
+            action = action
+        )
+    }
+
+    private fun ReaderScreenState.toBridgeSharedState(projectedState: ReaderScreenState): SharedReaderScreenState {
+        return toSharedReaderScreenState(
+            rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles },
+            dbTags = projectedState.allTags.ifEmpty { allTags }
+        )
+    }
+
+    private fun ReaderScreenState.withTabStateFrom(sharedState: SharedReaderScreenState): ReaderScreenState {
+        return copy(
+            isTabsEnabled = sharedState.isTabsEnabled,
+            openTabIds = sharedState.openTabIds,
+            activeTabBookId = sharedState.activeTabBookId
         )
     }
 }

@@ -653,13 +653,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setTabsEnabled(enabled: Boolean) {
+        val projectedState = uiState.value
         prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }
-        _internalState.update { it.copy(isTabsEnabled = enabled) }
+        _internalState.update {
+            AndroidSharedStateBridge.setTabsEnabled(
+                current = it,
+                projectedState = projectedState,
+                enabled = enabled
+            )
+        }
         if (!enabled) {
-            val active = _internalState.value.activeTabBookId
-            val newTabs = if (active != null) listOf(active) else emptyList()
-            prefs.edit { putString(KEY_OPEN_TAB_IDS, JSONArray(newTabs).toString()) }
-            _internalState.update { it.copy(openTabIds = newTabs) }
+            persistTabState(_internalState.value.openTabIds, _internalState.value.activeTabBookId)
         }
     }
 
@@ -670,21 +674,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        val currentTabs = _internalState.value.openTabIds.toMutableList()
-        if (!currentTabs.contains(bookId)) {
-            if (currentTabs.size >= 20) {
+        val currentState = _internalState.value
+        if (bookId !in currentState.openTabIds) {
+            if (currentState.openTabIds.size >= 20) {
                 viewModelScope.launch(Dispatchers.Main) {
                     showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
                 }
                 return
             }
-            currentTabs.add(bookId)
         }
+        val tabState = AndroidSharedStateBridge.openBookTab(
+            current = currentState,
+            projectedState = uiState.value,
+            bookId = bookId
+        )
 
-        prefs.edit {
-            putString(KEY_ACTIVE_TAB, bookId)
-            putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
-        }
+        persistTabState(tabState.openTabIds, tabState.activeTabBookId)
 
         val uri = item.getUri()
         Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId. URI found: ${uri != null}")
@@ -694,8 +699,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
             _internalState.update { state ->
                 state.copy(
-                    openTabIds = currentTabs,
-                    activeTabBookId = bookId,
+                    isTabsEnabled = tabState.isTabsEnabled,
+                    openTabIds = tabState.openTabIds,
+                    activeTabBookId = tabState.activeTabBookId,
                     selectedPdfUri = it,
                     selectedBookId = bookId,
                     selectedFileType = item.type,
@@ -717,7 +723,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
         } ?: run {
-            _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
+            _internalState.update {
+                it.copy(
+                    openTabIds = tabState.openTabIds,
+                    activeTabBookId = tabState.activeTabBookId,
+                    isTabsEnabled = tabState.isTabsEnabled
+                )
+            }
+        }
+    }
+
+    private fun persistTabState(openTabIds: List<String>, activeTabBookId: String?) {
+        prefs.edit {
+            if (openTabIds.isEmpty()) {
+                remove(KEY_OPEN_TAB_IDS)
+            } else {
+                putString(KEY_OPEN_TAB_IDS, JSONArray(openTabIds).toString())
+            }
+            if (activeTabBookId == null) {
+                remove(KEY_ACTIVE_TAB)
+            } else {
+                putString(KEY_ACTIVE_TAB, activeTabBookId)
+            }
         }
     }
 
@@ -858,29 +885,45 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeTab(bookId: String) {
         Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
-        val currentTabs = _internalState.value.openTabIds.toMutableList()
-        currentTabs.remove(bookId)
+        val currentState = _internalState.value
+        val tabState = AndroidSharedStateBridge.closeBookTab(
+            current = currentState,
+            projectedState = uiState.value,
+            bookId = bookId
+        )
 
-        if (currentTabs.isEmpty()) {
-            prefs.edit {
-                remove(KEY_OPEN_TAB_IDS)
-                remove(KEY_ACTIVE_TAB)
+        if (tabState.openTabIds.isEmpty()) {
+            persistTabState(tabState.openTabIds, tabState.activeTabBookId)
+            _internalState.update {
+                it.copy(
+                    isTabsEnabled = tabState.isTabsEnabled,
+                    openTabIds = tabState.openTabIds,
+                    activeTabBookId = tabState.activeTabBookId
+                )
             }
-            _internalState.update { it.copy(openTabIds = emptyList(), activeTabBookId = null) }
             clearSelectedFile()
         } else {
-            val activeTab = _internalState.value.activeTabBookId
+            val activeTab = currentState.activeTabBookId
             if (activeTab == bookId) {
-                val nextTabId = currentTabs.last()
-                prefs.edit {
-                    putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
-                    putString(KEY_ACTIVE_TAB, nextTabId)
+                val nextTabId = tabState.activeTabBookId ?: tabState.openTabIds.last()
+                persistTabState(tabState.openTabIds, nextTabId)
+                _internalState.update {
+                    it.copy(
+                        isTabsEnabled = tabState.isTabsEnabled,
+                        openTabIds = tabState.openTabIds,
+                        activeTabBookId = nextTabId
+                    )
                 }
-                _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = nextTabId) }
                 switchTab(nextTabId)
             } else {
-                prefs.edit { putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString()) }
-                _internalState.update { it.copy(openTabIds = currentTabs) }
+                persistTabState(tabState.openTabIds, tabState.activeTabBookId)
+                _internalState.update {
+                    it.copy(
+                        isTabsEnabled = tabState.isTabsEnabled,
+                        openTabIds = tabState.openTabIds,
+                        activeTabBookId = tabState.activeTabBookId
+                    )
+                }
             }
         }
     }
@@ -1845,23 +1888,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun togglePinForContextualItems(isHome: Boolean) {
-        val selectedIds = _internalState.value.contextualActionItems.map { it.bookId }.toSet()
-        if (selectedIds.isEmpty()) return
+        if (_internalState.value.contextualActionItems.isEmpty()) return
 
+        var pinsToPersist: Set<String> = emptySet()
+        val projectedState = uiState.value
         _internalState.update { state ->
-            val currentPins = if (isHome) state.pinnedHomeBookIds else state.pinnedLibraryBookIds
-            val allPinned = selectedIds.all { it in currentPins }
-
-            val newPins = if (allPinned) currentPins - selectedIds else currentPins + selectedIds
-
-            prefs.edit { putStringSet(if (isHome) KEY_PINNED_HOME else KEY_PINNED_LIBRARY, newPins) }
-
-            if (isHome) {
-                state.copy(pinnedHomeBookIds = newPins, contextualActionItems = emptySet())
-            } else {
-                state.copy(pinnedLibraryBookIds = newPins, contextualActionItems = emptySet())
-            }
+            val updated = AndroidSharedStateBridge.togglePinsForSelectedBooks(
+                current = state,
+                projectedState = projectedState,
+                isHome = isHome
+            )
+            pinsToPersist = if (isHome) updated.pinnedHomeBookIds else updated.pinnedLibraryBookIds
+            updated
         }
+        prefs.edit { putStringSet(if (isHome) KEY_PINNED_HOME else KEY_PINNED_LIBRARY, pinsToPersist) }
     }
 
     fun updateLibraryFilters(filters: LibraryFilters) {
@@ -3926,22 +3966,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
 
-        if (_internalState.value.isTabsEnabled && type == FileType.PDF) {
-            val currentTabs = _internalState.value.openTabIds.toMutableList()
-            if (!currentTabs.contains(bookId)) {
-                if (currentTabs.size >= 20) {
+        val currentTabState = _internalState.value
+        if (currentTabState.isTabsEnabled && type == FileType.PDF) {
+            if (bookId !in currentTabState.openTabIds) {
+                if (currentTabState.openTabIds.size >= 20) {
                     viewModelScope.launch(Dispatchers.Main) {
                         showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
                     }
                     return
                 }
-                currentTabs.add(bookId)
             }
-            prefs.edit {
-                putString(KEY_OPEN_TAB_IDS, JSONArray(currentTabs).toString())
-                putString(KEY_ACTIVE_TAB, bookId)
+            val tabState = AndroidSharedStateBridge.openBookTab(
+                current = currentTabState,
+                projectedState = uiState.value,
+                bookId = bookId
+            )
+            persistTabState(tabState.openTabIds, tabState.activeTabBookId)
+            _internalState.update {
+                it.copy(
+                    isTabsEnabled = tabState.isTabsEnabled,
+                    openTabIds = tabState.openTabIds,
+                    activeTabBookId = tabState.activeTabBookId
+                )
             }
-            _internalState.update { it.copy(openTabIds = currentTabs, activeTabBookId = bookId) }
         }
 
         if (uri.scheme != "opds-pse") {
@@ -4617,24 +4664,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectAllRecentFiles() {
-        val currentVisible = uiState.value.recentFiles.filter { it.isRecent }.toSet()
+        val projectedState = uiState.value
+        val currentVisible = projectedState.recentFiles.filter { it.isRecent }
         _internalState.update { state ->
-            if (state.contextualActionItems.containsAll(currentVisible) && currentVisible.isNotEmpty()) {
-                state.copy(contextualActionItems = emptySet())
-            } else {
-                state.copy(contextualActionItems = currentVisible)
-            }
+            AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+                current = state,
+                projectedState = projectedState,
+                visibleBooks = currentVisible
+            )
         }
     }
 
     fun selectAllLibraryFiles() {
-        val currentVisible = uiState.value.allRecentFiles.toSet()
+        val projectedState = uiState.value
+        val currentVisible = projectedState.allRecentFiles
         _internalState.update { state ->
-            if (state.contextualActionItems.containsAll(currentVisible) && currentVisible.isNotEmpty()) {
-                state.copy(contextualActionItems = emptySet())
-            } else {
-                state.copy(contextualActionItems = currentVisible)
-            }
+            AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+                current = state,
+                projectedState = projectedState,
+                visibleBooks = currentVisible
+            )
         }
     }
 
@@ -5218,11 +5267,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeAllTabs() {
         Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called")
-        prefs.edit {
-            remove(KEY_OPEN_TAB_IDS)
-            remove(KEY_ACTIVE_TAB)
+        val tabState = AndroidSharedStateBridge.closeAllTabs(
+            current = _internalState.value,
+            projectedState = uiState.value
+        )
+        persistTabState(tabState.openTabIds, tabState.activeTabBookId)
+        _internalState.update {
+            it.copy(
+                isTabsEnabled = tabState.isTabsEnabled,
+                openTabIds = tabState.openTabIds,
+                activeTabBookId = tabState.activeTabBookId
+            )
         }
-        _internalState.update { it.copy(openTabIds = emptyList(), activeTabBookId = null) }
         clearSelectedFile()
     }
 

@@ -78,6 +78,138 @@ class AndroidSharedStateBridgeTest {
         assertEquals(AppThemeMode.DARK, result.appThemeMode)
     }
 
+    @Test
+    fun `setTabsEnabled disables shared tabs but preserves Android active reader session`() {
+        val result = AndroidSharedStateBridge.setTabsEnabled(
+            current = ReaderScreenState(
+                isTabsEnabled = true,
+                openTabIds = listOf("one", "two"),
+                activeTabBookId = "two"
+            ),
+            projectedState = ReaderScreenState(),
+            enabled = false
+        )
+
+        assertEquals(false, result.isTabsEnabled)
+        assertEquals(listOf("two"), result.openTabIds)
+        assertEquals("two", result.activeTabBookId)
+    }
+
+    @Test
+    fun `openBookTab delegates tab ordering and activation to shared reducer`() {
+        val result = AndroidSharedStateBridge.openBookTab(
+            current = ReaderScreenState(
+                isTabsEnabled = false,
+                openTabIds = listOf("old"),
+                activeTabBookId = "old"
+            ),
+            projectedState = ReaderScreenState(),
+            bookId = "new"
+        )
+
+        assertEquals(true, result.isTabsEnabled)
+        assertEquals(listOf("old", "new"), result.openTabIds)
+        assertEquals("new", result.activeTabBookId)
+    }
+
+    @Test
+    fun `closeBookTab selects the previous tab when the active tab closes`() {
+        val result = AndroidSharedStateBridge.closeBookTab(
+            current = ReaderScreenState(
+                isTabsEnabled = true,
+                openTabIds = listOf("one", "two", "three"),
+                activeTabBookId = "three"
+            ),
+            projectedState = ReaderScreenState(),
+            bookId = "three"
+        )
+
+        assertEquals(true, result.isTabsEnabled)
+        assertEquals(listOf("one", "two"), result.openTabIds)
+        assertEquals("two", result.activeTabBookId)
+    }
+
+    @Test
+    fun `closeAllTabs clears Android tab ids through shared reducer`() {
+        val result = AndroidSharedStateBridge.closeAllTabs(
+            current = ReaderScreenState(
+                isTabsEnabled = true,
+                openTabIds = listOf("one", "two"),
+                activeTabBookId = "two"
+            ),
+            projectedState = ReaderScreenState()
+        )
+
+        assertEquals(true, result.isTabsEnabled)
+        assertTrue(result.openTabIds.isEmpty())
+        assertEquals(null, result.activeTabBookId)
+    }
+
+    @Test
+    fun `togglePinsForSelectedBooks pins mixed home selection and clears selection`() {
+        val pinned = recentFile("pinned")
+        val unpinned = recentFile("unpinned")
+
+        val result = AndroidSharedStateBridge.togglePinsForSelectedBooks(
+            current = ReaderScreenState(
+                rawLibraryFiles = listOf(pinned, unpinned),
+                contextualActionItems = setOf(pinned, unpinned),
+                pinnedHomeBookIds = setOf(pinned.bookId)
+            ),
+            projectedState = ReaderScreenState(rawLibraryFiles = listOf(pinned, unpinned)),
+            isHome = true
+        )
+
+        assertEquals(setOf("pinned", "unpinned"), result.pinnedHomeBookIds)
+        assertTrue(result.contextualActionItems.isEmpty())
+    }
+
+    @Test
+    fun `togglePinsForSelectedBooks unpins when all selected library books are pinned`() {
+        val first = recentFile("first")
+        val second = recentFile("second")
+
+        val result = AndroidSharedStateBridge.togglePinsForSelectedBooks(
+            current = ReaderScreenState(
+                rawLibraryFiles = listOf(first, second),
+                contextualActionItems = setOf(first, second),
+                pinnedLibraryBookIds = setOf(first.bookId, second.bookId)
+            ),
+            projectedState = ReaderScreenState(rawLibraryFiles = listOf(first, second)),
+            isHome = false
+        )
+
+        assertTrue(result.pinnedLibraryBookIds.isEmpty())
+        assertTrue(result.contextualActionItems.isEmpty())
+    }
+
+    @Test
+    fun `replaceBookSelectionWithVisibleBooks selects visible books through shared reducer`() {
+        val visible = recentFile("visible")
+        val hidden = recentFile("hidden")
+
+        val result = AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+            current = ReaderScreenState(),
+            projectedState = ReaderScreenState(rawLibraryFiles = listOf(visible, hidden)),
+            visibleBooks = listOf(visible)
+        )
+
+        assertEquals(setOf(visible), result.contextualActionItems)
+    }
+
+    @Test
+    fun `replaceBookSelectionWithVisibleBooks clears when visible books are already selected`() {
+        val visible = recentFile("visible")
+
+        val result = AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+            current = ReaderScreenState(contextualActionItems = setOf(visible)),
+            projectedState = ReaderScreenState(rawLibraryFiles = listOf(visible)),
+            visibleBooks = listOf(visible)
+        )
+
+        assertTrue(result.contextualActionItems.isEmpty())
+    }
+
     private fun recentFile(
         id: String,
         sourceFolderUri: String? = null

@@ -9,6 +9,7 @@ sealed interface LibraryAction {
     data class SortChanged(val sortOrder: SortOrder) : LibraryAction
     data class FiltersChanged(val filters: LibraryFilters) : LibraryAction
     data class BookSelectionToggled(val bookId: String) : LibraryAction
+    data class BookSelectionReplaced(val bookIds: Set<String>) : LibraryAction
     data object SelectionCleared : LibraryAction
     data class ShelfSelectionToggled(val shelfId: String) : LibraryAction
     data object ShelfSelectionCleared : LibraryAction
