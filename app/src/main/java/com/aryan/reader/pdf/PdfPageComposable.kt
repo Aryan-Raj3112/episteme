@@ -5439,10 +5439,12 @@ private fun PdfPageRenderer(
                         tiles = if (effectiveScale > 1f) staticData.tiles.item else emptyList(),
                         currentScale = effectiveScale,
                         magnifierCenterOnBitmap = magnifierCenterTarget,
+                        contentWidthPx = staticData.targetWidth,
+                        contentHeightPx = staticData.targetHeight,
                         magnifierWidth = magnifierWidth,
                         magnifierHeight = magnifierHeight,
                         zoomFactor = effectiveZoomFactor,
-                        selectionRectsInBitmapCoords = selectionData.mergedSelectionRects.item,
+                        selectionRectsInContentCoords = selectionData.mergedSelectionRects.item,
                         highlightColor = Color(0x6633B5E5),
                         colorFilter = staticData.colorFilter.item,
                         modifier = Modifier

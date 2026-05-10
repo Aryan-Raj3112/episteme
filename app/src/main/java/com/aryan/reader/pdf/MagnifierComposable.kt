@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf
 
 import android.graphics.Rect
+import android.graphics.RectF
 import timber.log.Timber
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
@@ -43,17 +45,114 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+internal data class MagnifierContentSource(
+    val sourceWidth: Int,
+    val sourceHeight: Int,
+    val contentLeft: Float,
+    val contentTop: Float,
+    val contentWidth: Float,
+    val contentHeight: Float
+) {
+    val scaleX: Float
+        get() = if (contentWidth > 0f) sourceWidth.toFloat() / contentWidth else 1f
+
+    val scaleY: Float
+        get() = if (contentHeight > 0f) sourceHeight.toFloat() / contentHeight else 1f
+
+    fun sourceX(contentX: Float): Float = (contentX - contentLeft) * scaleX
+
+    fun sourceY(contentY: Float): Float = (contentY - contentTop) * scaleY
+}
+
+internal data class MagnifierSampleGeometry(
+    val srcLeft: Int,
+    val srcTop: Int,
+    val srcWidth: Int,
+    val srcHeight: Int,
+    val outputScaleX: Float,
+    val outputScaleY: Float
+)
+
+internal fun calculateMagnifierSampleGeometry(
+    centerContentX: Float,
+    centerContentY: Float,
+    contentSource: MagnifierContentSource,
+    magnifierWidthPx: Float,
+    magnifierHeightPx: Float,
+    zoomFactor: Float
+): MagnifierSampleGeometry? {
+    if (
+        contentSource.sourceWidth <= 0 ||
+        contentSource.sourceHeight <= 0 ||
+        contentSource.contentWidth <= 0f ||
+        contentSource.contentHeight <= 0f ||
+        magnifierWidthPx <= 0f ||
+        magnifierHeightPx <= 0f ||
+        zoomFactor <= 0f
+    ) {
+        return null
+    }
+
+    val sourceCenterX = contentSource.sourceX(centerContentX)
+    val sourceCenterY = contentSource.sourceY(centerContentY)
+    val sourceRectWidth = (magnifierWidthPx / zoomFactor * contentSource.scaleX).coerceAtLeast(1f)
+    val sourceRectHeight = (magnifierHeightPx / zoomFactor * contentSource.scaleY).coerceAtLeast(1f)
+
+    val maxSrcLeft = max(0f, contentSource.sourceWidth.toFloat() - sourceRectWidth)
+    val maxSrcTop = max(0f, contentSource.sourceHeight.toFloat() - sourceRectHeight)
+    val srcLeft = (sourceCenterX - sourceRectWidth / 2f).coerceIn(0f, maxSrcLeft)
+    val srcTop = (sourceCenterY - sourceRectHeight / 2f).coerceIn(0f, maxSrcTop)
+
+    val srcLeftInt = srcLeft.roundToInt().coerceIn(0, contentSource.sourceWidth - 1)
+    val srcTopInt = srcTop.roundToInt().coerceIn(0, contentSource.sourceHeight - 1)
+    val srcWidthInt = (contentSource.sourceWidth - srcLeftInt)
+        .coerceAtMost(sourceRectWidth.roundToInt().coerceAtLeast(1))
+        .coerceAtLeast(1)
+    val srcHeightInt = (contentSource.sourceHeight - srcTopInt)
+        .coerceAtMost(sourceRectHeight.roundToInt().coerceAtLeast(1))
+        .coerceAtLeast(1)
+
+    return MagnifierSampleGeometry(
+        srcLeft = srcLeftInt,
+        srcTop = srcTopInt,
+        srcWidth = srcWidthInt,
+        srcHeight = srcHeightInt,
+        outputScaleX = magnifierWidthPx / srcWidthInt,
+        outputScaleY = magnifierHeightPx / srcHeightInt
+    )
+}
+
+internal fun mapContentRectToMagnifier(
+    contentRect: Rect,
+    contentSource: MagnifierContentSource,
+    sample: MagnifierSampleGeometry
+): RectF {
+    val sourceLeft = contentSource.sourceX(contentRect.left.toFloat())
+    val sourceTop = contentSource.sourceY(contentRect.top.toFloat())
+    val sourceRight = contentSource.sourceX(contentRect.right.toFloat())
+    val sourceBottom = contentSource.sourceY(contentRect.bottom.toFloat())
+
+    return RectF(
+        (sourceLeft - sample.srcLeft) * sample.outputScaleX,
+        (sourceTop - sample.srcTop) * sample.outputScaleY,
+        (sourceRight - sample.srcLeft) * sample.outputScaleX,
+        (sourceBottom - sample.srcTop) * sample.outputScaleY
+    )
+}
+
 @Composable
 fun MagnifierComposable(
     sourceBitmap: ImageBitmap,
     tiles: List<PdfTile>,
     currentScale: Float,
     magnifierCenterOnBitmap: Offset,
+    contentWidthPx: Int = sourceBitmap.width,
+    contentHeightPx: Int = sourceBitmap.height,
     modifier: Modifier = Modifier,
     magnifierWidth: Dp = 120.dp,
     magnifierHeight: Dp = 60.dp,
     zoomFactor: Float = 1.5f,
-    selectionRectsInBitmapCoords: List<Rect>,
+    selectionRectsInContentCoords: List<Rect>,
     highlightColor: Color,
     colorFilter: ColorFilter? = null
 ) {
@@ -81,155 +180,71 @@ fun MagnifierComposable(
                 }
             } else null
 
-            if (relevantTile != null) {
-                // --- HIGH-RES TILE PATH ---
+            val bitmapToUse: ImageBitmap
+            val contentSource: MagnifierContentSource
+            if (relevantTile != null && !relevantTile.bitmap.isRecycled) {
                 Timber.d("Magnifier: Using HIGH-RES TILE path.")
                 Timber.d("Magnifier: Tile.renderRect=${relevantTile.renderRect}, Tile.bitmap.size=${relevantTile.bitmap.width}x${relevantTile.bitmap.height}")
-                val bitmapToUse = relevantTile.bitmap.asImageBitmap()
-
-                val tileBitmapWidth = relevantTile.bitmap.width.toFloat()
-                val tileRenderRectWidth = relevantTile.renderRect.width().toFloat()
-
-                val tileScale = if (tileRenderRectWidth > 0) {
-                    tileBitmapWidth / tileRenderRectWidth
-                } else {
-                    1f
-                }
-                Timber.d("Magnifier: Using derived tileScale=$tileScale instead of parent's currentScale=$currentScale")
-
-
-                val centerInTileBitmap = Offset(
-                    x = (magnifierCenterOnBitmap.x - relevantTile.renderRect.left) * tileScale,
-                    y = (magnifierCenterOnBitmap.y - relevantTile.renderRect.top) * tileScale
+                bitmapToUse = relevantTile.bitmap.asImageBitmap()
+                contentSource = MagnifierContentSource(
+                    sourceWidth = bitmapToUse.width,
+                    sourceHeight = bitmapToUse.height,
+                    contentLeft = relevantTile.renderRect.left.toFloat(),
+                    contentTop = relevantTile.renderRect.top.toFloat(),
+                    contentWidth = relevantTile.renderRect.width().toFloat(),
+                    contentHeight = relevantTile.renderRect.height().toFloat()
                 )
-
-                Timber.d("Magnifier: Calculated centerInTileBitmap=$centerInTileBitmap")
-
-                val sourceRectWidth = magnifierWidthPx / zoomFactor
-                val sourceRectHeight = magnifierHeightPx / zoomFactor
-                Timber.d("Magnifier: Desired sourceRect size=${sourceRectWidth}x$sourceRectHeight")
-
-                val srcLeft = (centerInTileBitmap.x - sourceRectWidth / 2f)
-                val srcTop = (centerInTileBitmap.y - sourceRectHeight / 2f)
-                Timber.d("Magnifier: Calculated source top-left=($srcLeft, $srcTop)")
-
-                val maxSrcLeft = max(0f, bitmapToUse.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
-                val maxSrcTop = max(0f, bitmapToUse.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
-                val clampedSrcLeft = srcLeft.coerceIn(0f, maxSrcLeft)
-                val clampedSrcTop = srcTop.coerceIn(0f, maxSrcTop)
-                Timber.d("Magnifier: Clamped source top-left=($clampedSrcLeft, $clampedSrcTop)")
-
-                val finalSrcLeftInt = clampedSrcLeft.roundToInt()
-                val finalSrcTopInt = clampedSrcTop.roundToInt()
-
-                val finalSrcWidthInt = (bitmapToUse.width - finalSrcLeftInt)
-                    .coerceAtMost(sourceRectWidth.roundToInt()).coerceAtLeast(1)
-                val finalSrcHeightInt = (bitmapToUse.height - finalSrcTopInt)
-                    .coerceAtMost(sourceRectHeight.roundToInt()).coerceAtLeast(1)
-                Timber.d("Magnifier: Final source rect to draw from tile: offset=($finalSrcLeftInt, $finalSrcTopInt), size=${finalSrcWidthInt}x$finalSrcHeightInt")
-
-                if (finalSrcWidthInt <= 0 || finalSrcHeightInt <= 0 || finalSrcLeftInt >= bitmapToUse.width || finalSrcTopInt >= bitmapToUse.height) {
-                    Timber.w("Magnifier: Final source rect is invalid, returning.")
-                    return@Canvas
-                }
-
-                drawImage(
-                    image = bitmapToUse,
-                    srcOffset = IntOffset(finalSrcLeftInt, finalSrcTopInt),
-                    srcSize = IntSize(finalSrcWidthInt, finalSrcHeightInt),
-                    dstSize = IntSize(magnifierWidthPx.roundToInt(), magnifierHeightPx.roundToInt()),
-                    colorFilter = colorFilter
-                )
-
-                selectionRectsInBitmapCoords.forEach { rectInBitmap ->
-                    val translatedLeft = (rectInBitmap.left - relevantTile.renderRect.left) * tileScale
-                    val translatedTop = (rectInBitmap.top - relevantTile.renderRect.top) * tileScale
-                    val translatedRight = (rectInBitmap.right - relevantTile.renderRect.left) * tileScale
-                    val translatedBottom = (rectInBitmap.bottom - relevantTile.renderRect.top) * tileScale
-
-                    val finalLeft = translatedLeft - clampedSrcLeft
-                    val finalTop = translatedTop - clampedSrcTop
-                    val finalRight = translatedRight - clampedSrcLeft
-                    val finalBottom = translatedBottom - clampedSrcTop
-
-                    val magnifiedLeft = finalLeft * zoomFactor
-                    val magnifiedTop = finalTop * zoomFactor
-                    val magnifiedRight = finalRight * zoomFactor
-                    val magnifiedBottom = finalBottom * zoomFactor
-
-                    if (magnifiedRight > 0 && magnifiedLeft < magnifierWidthPx && magnifiedBottom > 0 && magnifiedTop < magnifierHeightPx) {
-                        drawRect(
-                            color = highlightColor,
-                            topLeft = Offset(magnifiedLeft, magnifiedTop),
-                            size = androidx.compose.ui.geometry.Size(
-                                width = magnifiedRight - magnifiedLeft,
-                                height = magnifiedBottom - magnifiedTop
-                            )
-                        )
-                    }
-                }
-
             } else {
-                // --- LOW-RES / NO-ZOOM PATH ---
                 Timber.d("Magnifier: Using LOW-RES (base bitmap) path.")
-                val sourceRectWidth = magnifierWidthPx / zoomFactor
-                val sourceRectHeight = magnifierHeightPx / zoomFactor
-                Timber.d("Magnifier: Desired sourceRect size=${sourceRectWidth}x$sourceRectHeight")
-
-                val srcLeft = (magnifierCenterOnBitmap.x - sourceRectWidth / 2f)
-                val srcTop = (magnifierCenterOnBitmap.y - sourceRectHeight / 2f)
-                Timber.d("Magnifier: Calculated source top-left=($srcLeft, $srcTop)")
-
-                val maxSrcLeft = max(0f, sourceBitmap.width.toFloat() - sourceRectWidth.coerceAtLeast(1f))
-                val maxSrcTop = max(0f, sourceBitmap.height.toFloat() - sourceRectHeight.coerceAtLeast(1f))
-                val clampedSrcLeft = srcLeft.coerceIn(0f, maxSrcLeft)
-                val clampedSrcTop = srcTop.coerceIn(0f, maxSrcTop)
-                Timber.d("Magnifier: Clamped source top-left=($clampedSrcLeft, $clampedSrcTop)")
-
-                val finalSrcLeftInt = clampedSrcLeft.roundToInt()
-                val finalSrcTopInt = clampedSrcTop.roundToInt()
-
-                val finalSrcWidthInt = (sourceBitmap.width - finalSrcLeftInt)
-                    .coerceAtMost(sourceRectWidth.roundToInt()).coerceAtLeast(1)
-                val finalSrcHeightInt = (sourceBitmap.height - finalSrcTopInt)
-                    .coerceAtMost(sourceRectHeight.roundToInt()).coerceAtLeast(1)
-                Timber.d("Magnifier: Final source rect to draw from base: offset=($finalSrcLeftInt, $finalSrcTopInt), size=${finalSrcWidthInt}x$finalSrcHeightInt")
-
-                if (finalSrcWidthInt <= 0 || finalSrcHeightInt <= 0 || finalSrcLeftInt >= sourceBitmap.width || finalSrcTopInt >= sourceBitmap.height) {
-                    Timber.w("Magnifier: Final source rect is invalid, returning.")
-                    return@Canvas
-                }
-
-                drawImage(
-                    image = sourceBitmap,
-                    srcOffset = IntOffset(finalSrcLeftInt, finalSrcTopInt),
-                    srcSize = IntSize(finalSrcWidthInt, finalSrcHeightInt),
-                    dstSize = IntSize(magnifierWidthPx.roundToInt(), magnifierHeightPx.roundToInt()),
-                    colorFilter = colorFilter
+                bitmapToUse = sourceBitmap
+                contentSource = MagnifierContentSource(
+                    sourceWidth = sourceBitmap.width,
+                    sourceHeight = sourceBitmap.height,
+                    contentLeft = 0f,
+                    contentTop = 0f,
+                    contentWidth = contentWidthPx.toFloat(),
+                    contentHeight = contentHeightPx.toFloat()
                 )
+            }
 
-                selectionRectsInBitmapCoords.forEach { rectInBitmap ->
-                    val translatedLeft = rectInBitmap.left - clampedSrcLeft
-                    val translatedTop = rectInBitmap.top - clampedSrcTop
-                    val rectWidthInBitmap = rectInBitmap.width().toFloat()
-                    val rectHeightInBitmap = rectInBitmap.height().toFloat()
+            val sample = calculateMagnifierSampleGeometry(
+                centerContentX = magnifierCenterOnBitmap.x,
+                centerContentY = magnifierCenterOnBitmap.y,
+                contentSource = contentSource,
+                magnifierWidthPx = magnifierWidthPx,
+                magnifierHeightPx = magnifierHeightPx,
+                zoomFactor = zoomFactor
+            ) ?: run {
+                Timber.w("Magnifier: Source geometry is invalid, returning.")
+                return@Canvas
+            }
+            Timber.d("Magnifier: Final source rect offset=(${sample.srcLeft}, ${sample.srcTop}), size=${sample.srcWidth}x${sample.srcHeight}")
 
-                    val magnifiedLeft = translatedLeft * zoomFactor
-                    val magnifiedTop = translatedTop * zoomFactor
-                    val magnifiedWidth = rectWidthInBitmap * zoomFactor
-                    val magnifiedHeight = rectHeightInBitmap * zoomFactor
+            drawImage(
+                image = bitmapToUse,
+                srcOffset = IntOffset(sample.srcLeft, sample.srcTop),
+                srcSize = IntSize(sample.srcWidth, sample.srcHeight),
+                dstSize = IntSize(
+                    magnifierWidthPx.roundToInt().coerceAtLeast(1),
+                    magnifierHeightPx.roundToInt().coerceAtLeast(1)
+                ),
+                colorFilter = colorFilter
+            )
 
-                    if (magnifiedLeft + magnifiedWidth > 0 && magnifiedLeft < magnifierWidthPx &&
-                        magnifiedTop + magnifiedHeight > 0 && magnifiedTop < magnifierHeightPx) {
-                        drawRect(
-                            color = highlightColor,
-                            topLeft = Offset(magnifiedLeft, magnifiedTop),
-                            size = androidx.compose.ui.geometry.Size(
-                                width = magnifiedWidth,
-                                height = magnifiedHeight
-                            )
+            selectionRectsInContentCoords.forEach { contentRect ->
+                val magnifierRect = mapContentRectToMagnifier(contentRect, contentSource, sample)
+                if (magnifierRect.width() > 0f && magnifierRect.height() > 0f &&
+                    magnifierRect.right > 0f && magnifierRect.left < magnifierWidthPx &&
+                    magnifierRect.bottom > 0f && magnifierRect.top < magnifierHeightPx
+                ) {
+                    drawRect(
+                        color = highlightColor,
+                        topLeft = Offset(magnifierRect.left, magnifierRect.top),
+                        size = Size(
+                            width = magnifierRect.width(),
+                            height = magnifierRect.height()
                         )
-                    }
+                    )
                 }
             }
         }
