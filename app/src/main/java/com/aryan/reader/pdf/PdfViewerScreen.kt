@@ -205,6 +205,8 @@ import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderScreenOrientationEffect
+import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.SearchResult
 import com.aryan.reader.SummarizationResult
@@ -225,6 +227,7 @@ import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -240,6 +243,7 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.summarizationUrl
@@ -339,6 +343,8 @@ fun PdfViewerScreen(
     var showBars by rememberSaveable { mutableStateOf(true) }
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
+    var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
+    var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
@@ -349,6 +355,7 @@ fun PdfViewerScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
+    ReaderScreenOrientationEffect(screenOrientationMode)
 
     var ocrLanguage by remember { mutableStateOf(loadOcrLanguage(context)) }
     var hasSelectedOcrLanguage by remember { mutableStateOf(hasUserSelectedOcrLanguage(context)) }
@@ -5084,6 +5091,7 @@ fun PdfViewerScreen(
                         }
                     },
                     onShowVisualOptions = { showVisualOptionsSheet = true },
+                    onShowScreenOrientation = { showScreenOrientationSheet = true },
                     isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
                     showAllTextHighlights = showAllTextHighlights,
                     isHighlightingLoading = isHighlightingLoading,
@@ -5427,6 +5435,7 @@ fun PdfViewerScreen(
                     onShowAiHub = showPdfAiHub,
                     onToggleEditMode = togglePdfEditMode,
                     onToggleTts = togglePdfTts,
+                    onShowScreenOrientation = { showScreenOrientationSheet = true },
                     isBubbleZoomModeActive = isBubbleZoomModeActive,
                     onToggleBubbleZoom = {
                         if (isOss) {
@@ -6922,6 +6931,16 @@ fun PdfViewerScreen(
                 savePdfSystemUiMode(context, mode)
             },
             onDismiss = { showVisualOptionsSheet = false }
+        )
+    }
+    if (showScreenOrientationSheet) {
+        ReaderScreenOrientationSheet(
+            selectedMode = screenOrientationMode,
+            onModeSelected = { mode ->
+                screenOrientationMode = mode
+                saveReaderScreenOrientationMode(context, mode)
+            },
+            onDismiss = { showScreenOrientationSheet = false }
         )
     }
     if (showCustomizeToolsSheet) {

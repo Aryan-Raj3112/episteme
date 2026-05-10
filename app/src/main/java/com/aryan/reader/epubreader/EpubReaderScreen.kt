@@ -160,6 +160,8 @@ import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderScreenOrientationEffect
+import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchResult
@@ -176,6 +178,7 @@ import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadReaderThemeId
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.loadTtsReplacementPreferences
@@ -196,6 +199,7 @@ import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
@@ -239,6 +243,8 @@ private const val KEEP_SCREEN_ON_KEY = "keep_screen_on_enabled"
 private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
 private const val TOOL_ORDER_KEY = "reader_tool_order"
 private const val BOTTOM_TOOLS_KEY = "reader_bottom_tools"
+private const val HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "reader_hidden_tools_defaults_version"
+private const val HIDDEN_TOOLS_DEFAULTS_VERSION = 1
 private const val TTS_LOCATE_REASON_INITIAL_RESTORE = "initial_restore"
 private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
@@ -283,12 +289,25 @@ private fun rememberBottomRoundedCornerPadding(view: View): Dp {
 
 private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putStringSet(HIDDEN_TOOLS_KEY, hiddenTools) }
+    prefs.edit {
+        putStringSet(HIDDEN_TOOLS_KEY, hiddenTools)
+        putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
+    }
 }
 
 private fun loadHiddenTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
+    val savedHiddenTools = prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
+    val defaultsVersion = prefs.getInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
+    if (defaultsVersion < HIDDEN_TOOLS_DEFAULTS_VERSION) {
+        val migratedHiddenTools = savedHiddenTools + ReaderTool.SCREEN_ORIENTATION.name
+        prefs.edit {
+            putStringSet(HIDDEN_TOOLS_KEY, migratedHiddenTools)
+            putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
+        }
+        return migratedHiddenTools
+    }
+    return savedHiddenTools
 }
 
 private fun saveToolOrder(context: Context, toolOrder: List<ReaderTool>) {
@@ -652,9 +671,12 @@ fun EpubReaderHost(
     var systemUiMode by remember { mutableStateOf(loadSystemUiMode(context)) }
     var pageInfoMode by remember { mutableStateOf(loadPageInfoMode(context)) }
     var pageInfoPosition by remember { mutableStateOf(loadPageInfoPosition(context)) }
+    var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
+    var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
+    ReaderScreenOrientationEffect(screenOrientationMode)
 
     var volumeScrollEnabled by remember {
         mutableStateOf(loadVolumeScrollSetting(context))
@@ -4681,6 +4703,7 @@ fun EpubReaderHost(
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
                     onOpenVisualOptions = { showVisualOptionsSheet = true },
+                    onOpenScreenOrientation = { showScreenOrientationSheet = true },
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenSlider = {
                         when (currentRenderMode) {
@@ -4946,6 +4969,7 @@ fun EpubReaderHost(
                     onOpenDrawer = {
                         scope.launch { drawerState.open() }
                     },
+                    onOpenScreenOrientation = { showScreenOrientationSheet = true },
                     onToggleFormat = {
                         showFormatAdjustmentBars = !showFormatAdjustmentBars
                         if (showFormatAdjustmentBars) {
@@ -5399,6 +5423,17 @@ fun EpubReaderHost(
                     savePullToTurnMultiplier(context, it)
                 },
                 onDismiss = { showVisualOptionsSheet = false }
+            )
+        }
+
+        if (showScreenOrientationSheet) {
+            ReaderScreenOrientationSheet(
+                selectedMode = screenOrientationMode,
+                onModeSelected = {
+                    screenOrientationMode = it
+                    saveReaderScreenOrientationMode(context, it)
+                },
+                onDismiss = { showScreenOrientationSheet = false }
             )
         }
 

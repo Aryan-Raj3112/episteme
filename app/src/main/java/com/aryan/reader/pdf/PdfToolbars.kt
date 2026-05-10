@@ -57,7 +57,8 @@ private val pdfToolbarTools = setOf(
     PdfReaderTool.HIGHLIGHT_ALL,
     PdfReaderTool.AI_FEATURES,
     PdfReaderTool.EDIT_MODE,
-    PdfReaderTool.TTS_CONTROLS
+    PdfReaderTool.TTS_CONTROLS,
+    PdfReaderTool.SCREEN_ORIENTATION
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,6 +102,7 @@ internal fun PdfTopBar(
     onShowCustomizeTools: () -> Unit,
     onShowOcrLanguage: () -> Unit,
     onShowVisualOptions: () -> Unit,
+    onShowScreenOrientation: () -> Unit,
     onShowSlider: () -> Unit,
     onShowToc: () -> Unit,
     onSearchClick: () -> Unit,
@@ -262,6 +264,13 @@ internal fun PdfTopBar(
                                     ) {
                                         Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts), tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
+                                    PdfReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
+                                        text = stringResource(R.string.menu_screen_orientation),
+                                        description = stringResource(R.string.visual_options_screen_orientation_desc),
+                                        onClick = onShowScreenOrientation
+                                    ) {
+                                        Icon(Icons.Default.ScreenRotation, contentDescription = stringResource(R.string.menu_screen_orientation), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                     else -> Unit
                                 }
                             }
@@ -340,7 +349,8 @@ internal fun PdfTopBar(
                                                 onToggleHighlights = onToggleHighlights,
                                                 onShowAiHub = onShowAiHub,
                                                 onToggleEditMode = onToggleEditMode,
-                                                onToggleTts = onToggleTts
+                                                onToggleTts = onToggleTts,
+                                                onShowScreenOrientation = onShowScreenOrientation
                                             )
                                         }
                                     }
@@ -564,7 +574,8 @@ private fun HiddenPdfToolMenuItem(
     onToggleHighlights: () -> Unit,
     onShowAiHub: () -> Unit,
     onToggleEditMode: () -> Unit,
-    onToggleTts: () -> Unit
+    onToggleTts: () -> Unit,
+    onShowScreenOrientation: () -> Unit
 ) {
     val enabled = when (tool) {
         PdfReaderTool.SLIDER,
@@ -588,6 +599,7 @@ private fun HiddenPdfToolMenuItem(
                 PdfReaderTool.AI_FEATURES -> onShowAiHub()
                 PdfReaderTool.EDIT_MODE -> onToggleEditMode()
                 PdfReaderTool.TTS_CONTROLS -> onToggleTts()
+                PdfReaderTool.SCREEN_ORIENTATION -> onShowScreenOrientation()
                 else -> Unit
             }
         },
@@ -606,6 +618,7 @@ private fun HiddenPdfToolMenuItem(
                 PdfReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 PdfReaderTool.TTS_CONTROLS -> Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = null, modifier = Modifier.size(20.dp), tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = null, modifier = Modifier.size(20.dp))
                 else -> Icon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(20.dp))
             }
         }
@@ -766,6 +779,7 @@ fun PdfBottomBar(
     onShowAiHub: () -> Unit,
     onToggleEditMode: () -> Unit,
     onToggleTts: () -> Unit,
+    onShowScreenOrientation: () -> Unit,
     isBubbleZoomModeActive: Boolean,
     onToggleBubbleZoom: () -> Unit
 ) {
@@ -867,6 +881,13 @@ fun PdfBottomBar(
                                 onClick = onToggleTts
                             ) {
                                 Icon(if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech), contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts), tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            PdfReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
+                                text = stringResource(R.string.menu_screen_orientation),
+                                description = stringResource(R.string.visual_options_screen_orientation_desc),
+                                onClick = onShowScreenOrientation
+                            ) {
+                                Icon(Icons.Default.ScreenRotation, contentDescription = stringResource(R.string.menu_screen_orientation), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             else -> Unit
                         }

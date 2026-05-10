@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -143,7 +144,8 @@ fun PdfCustomizeToolsSheet(
         PdfReaderTool.DICTIONARY, PdfReaderTool.THEME, PdfReaderTool.LOCK_PANNING,
         PdfReaderTool.SLIDER, PdfReaderTool.TOC, PdfReaderTool.SEARCH,
         PdfReaderTool.HIGHLIGHT_ALL, PdfReaderTool.AI_FEATURES,
-        PdfReaderTool.EDIT_MODE, PdfReaderTool.TTS_CONTROLS
+        PdfReaderTool.EDIT_MODE, PdfReaderTool.TTS_CONTROLS,
+        PdfReaderTool.SCREEN_ORIENTATION
     )
 
     var localHiddenTools by remember { mutableStateOf(hiddenTools) }
@@ -504,6 +506,7 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
         PdfReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = tool.title, modifier = Modifier.size(20.dp))
         PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = tool.title, modifier = Modifier.size(20.dp))
         PdfReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = tool.title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = tool.title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = tool.title, modifier = Modifier.size(20.dp))
     }
 }

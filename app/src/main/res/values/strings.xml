@@ -705,6 +705,7 @@
     <string name="menu_realistic_page_turns">Realistic Page Turns</string>
     <string name="menu_keep_screen_on">Keep Screen On</string>
     <string name="menu_visual_options">Visual Options</string>
+    <string name="menu_screen_orientation">Screen Orientation</string>
     <string name="menu_auto_scroll">Auto Scroll</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_voice_settings">TTS Voice Settings</string>
@@ -828,6 +829,8 @@
     <!-- "Status Bar" and "Navigation Bar" are standard Android UI terms — keep consistent with your OS locale if applicable. -->
     <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
     <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>
+    <string name="visual_options_screen_orientation">Screen Orientation</string>
+    <string name="visual_options_screen_orientation_desc">Choose whether the reader follows the system orientation or prefers portrait or landscape when Android allows it.</string>
     <string name="visual_options_progress_bar">Progress Bar</string>
     <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator on the reading screen.</string>
     <string name="visual_options_progress_bar_position">Position</string>

@@ -88,6 +88,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
@@ -166,6 +167,7 @@ enum class ReaderTool(val title: String, val category: String) {
     PAGE_TURN_ANIM("Realistic Page Turns", "Overflow Menu"),
     KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
+    SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
     TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
     TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu")
@@ -258,7 +260,8 @@ private val epubToolbarTools = setOf(
     ReaderTool.FORMAT,
     ReaderTool.SEARCH,
     ReaderTool.AI_FEATURES,
-    ReaderTool.TTS_CONTROLS
+    ReaderTool.TTS_CONTROLS,
+    ReaderTool.SCREEN_ORIENTATION
 )
 
 @Composable
@@ -287,6 +290,7 @@ fun EpubReaderTopBar(
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
     onOpenVisualOptions: () -> Unit,
+    onOpenScreenOrientation: () -> Unit,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -414,6 +418,17 @@ fun EpubReaderTopBar(
                                         tint = if (isTtsActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
+                                ReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
+                                    text = stringResource(R.string.menu_screen_orientation),
+                                    description = stringResource(R.string.visual_options_screen_orientation_desc),
+                                    onClick = onOpenScreenOrientation
+                                ) {
+                                    Icon(
+                                        Icons.Default.ScreenRotation,
+                                        contentDescription = stringResource(R.string.menu_screen_orientation),
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                                 else -> Unit
                             }
                         }
@@ -480,7 +495,8 @@ fun EpubReaderTopBar(
                                             onToggleFormat = onToggleFormat,
                                             onToggleSearch = onToggleSearch,
                                             onOpenAiHub = onOpenAiHub,
-                                            onToggleTts = onToggleTts
+                                            onToggleTts = onToggleTts,
+                                            onOpenScreenOrientation = onOpenScreenOrientation
                                         )
                                     }
                                 }
@@ -723,6 +739,7 @@ fun EpubReaderBottomBar(
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
     onToggleTts: () -> Unit,
+    onOpenScreenOrientation: () -> Unit,
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
@@ -833,6 +850,16 @@ fun EpubReaderBottomBar(
                                         R.string.content_desc_start_tts
                                     ),
                                     tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            ReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
+                                text = stringResource(R.string.menu_screen_orientation),
+                                description = stringResource(R.string.visual_options_screen_orientation_desc),
+                                onClick = onOpenScreenOrientation
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ScreenRotation,
+                                    contentDescription = stringResource(R.string.menu_screen_orientation)
                                 )
                             }
                             else -> Unit
@@ -1849,6 +1876,7 @@ private fun ToolPreviewIcon(tool: ReaderTool) {
         ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = tool.title, modifier = Modifier.size(20.dp))
         ReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = tool.title, modifier = Modifier.size(20.dp))
         ReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = tool.title, modifier = Modifier.size(20.dp))
+        ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = tool.title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = tool.title, modifier = Modifier.size(20.dp))
     }
 }
@@ -1866,7 +1894,8 @@ private fun HiddenEpubToolMenuItem(
     onToggleFormat: () -> Unit,
     onToggleSearch: () -> Unit,
     onOpenAiHub: () -> Unit,
-    onToggleTts: () -> Unit
+    onToggleTts: () -> Unit,
+    onOpenScreenOrientation: () -> Unit
 ) {
     val enabled = when (tool) {
         ReaderTool.SLIDER -> currentRenderMode != RenderMode.VERTICAL_SCROLL
@@ -1886,6 +1915,7 @@ private fun HiddenEpubToolMenuItem(
                 ReaderTool.SEARCH -> onToggleSearch()
                 ReaderTool.AI_FEATURES -> onOpenAiHub()
                 ReaderTool.TTS_CONTROLS -> onToggleTts()
+                ReaderTool.SCREEN_ORIENTATION -> onOpenScreenOrientation()
                 else -> Unit
             }
         },

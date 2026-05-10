@@ -196,5 +196,6 @@ class EpubReaderBridgeAndControlsTest {
         assertTrue(ReaderTool.entries.any { it.category == "Top Bar" })
         assertTrue(ReaderTool.entries.any { it.category == "Bottom Bar" })
         assertTrue(ReaderTool.entries.any { it.category == "Overflow Menu" })
+        assertEquals("Top Bar", ReaderTool.SCREEN_ORIENTATION.category)
     }
 }

@@ -44,6 +44,8 @@ internal const val PDF_TOOL_ORDER_KEY = "pdf_tool_order"
 internal const val PDF_BOTTOM_TOOLS_KEY = "pdf_bottom_tools"
 internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
+private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
+private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 1
 
 enum class PdfReaderTool(val title: String, val category: String) {
     DICTIONARY("External Apps", "Top Bar"),
@@ -62,6 +64,7 @@ enum class PdfReaderTool(val title: String, val category: String) {
     OCR_LANGUAGE("OCR Language", "Overflow Menu"),
     READING_MODE("Reading Mode", "Overflow Menu"),
     KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
+    SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
     AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
     TTS_SETTINGS("TTS Voice Settings", "Overflow Menu"),
     TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu"),
@@ -91,12 +94,25 @@ val PdfBuiltInThemes = listOf(
 
 internal fun loadPdfHiddenTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()) ?: emptySet()
+    val savedHiddenTools = prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
+    val defaultsVersion = prefs.getInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
+    if (defaultsVersion < PDF_HIDDEN_TOOLS_DEFAULTS_VERSION) {
+        val migratedHiddenTools = savedHiddenTools + PdfReaderTool.SCREEN_ORIENTATION.name
+        prefs.edit {
+            putStringSet(PDF_HIDDEN_TOOLS_KEY, migratedHiddenTools)
+            putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
+        }
+        return migratedHiddenTools
+    }
+    return savedHiddenTools
 }
 
 internal fun savePdfHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putStringSet(PDF_HIDDEN_TOOLS_KEY, hiddenTools) }
+    prefs.edit {
+        putStringSet(PDF_HIDDEN_TOOLS_KEY, hiddenTools)
+        putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
+    }
 }
 
 internal fun loadPdfToolOrder(context: Context): List<PdfReaderTool> {
