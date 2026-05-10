@@ -25,6 +25,19 @@ class FileTypeResolverTest {
     }
 
     @Test
+    fun `metadata resolver maps provider mime types without exposing generic archives`() {
+        assertEquals(FileType.PDF, resolveFileTypeFromMetadata("download", "application/pdf"))
+        assertEquals(FileType.DOCX, resolveFileTypeFromMetadata("download", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+        assertEquals(FileType.MD, resolveFileTypeFromMetadata("notes.markdown.txt", "text/plain; charset=utf-8"))
+        assertEquals(FileType.EPUB, resolveFileTypeFromMetadata("book.epub.txt", "text/plain"))
+        assertEquals(FileType.TXT, resolveFileTypeFromMetadata("notes", "text/plain"))
+        assertEquals(FileType.HTML, resolveFileTypeFromMetadata("payload", "application/json"))
+        assertEquals(FileType.CBZ, resolveFileTypeFromMetadata("comic.cbz", "application/zip"))
+        assertEquals(FileType.FB2, resolveFileTypeFromMetadata("book.fb2.zip", "application/zip"))
+        assertNull(resolveFileTypeFromMetadata("archive.zip", "application/zip"))
+    }
+
+    @Test
     fun `manual only reader files are excluded from folder sync eligibility`() {
         assertTrue(isManualOnlyReaderFileName("table.csv"))
         assertTrue(isManualOnlyReaderFileName("script.kt.txt"))

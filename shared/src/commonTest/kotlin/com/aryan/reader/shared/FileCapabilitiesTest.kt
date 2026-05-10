@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileCapabilitiesTest {
@@ -15,6 +16,10 @@ class FileCapabilitiesTest {
         )
         assertFalse(FileType.UNKNOWN in SharedFileCapabilities.knownFileTypes)
         assertFalse(FileType.UNKNOWN in SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID))
+        assertNull(SharedFileCapabilities.primaryExtensionFor(FileType.UNKNOWN))
+        assertNull(SharedFileCapabilities.mimeTypeFor(FileType.UNKNOWN))
+        assertEquals("epub", SharedFileCapabilities.primaryExtensionFor(FileType.EPUB))
+        assertEquals("application/pdf", SharedFileCapabilities.mimeTypeFor(FileType.PDF))
         assertEquals(
             setOf(
                 FileType.EPUB,

@@ -118,6 +118,18 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `library organization does not expose unknown as an available file type`() {
+        val organization = SharedReaderScreenState(
+            rawLibraryBooks = listOf(
+                book("known", type = FileType.PDF),
+                book("unknown", type = FileType.UNKNOWN)
+            )
+        ).toNonReaderLibraryOrganizationModel()
+
+        assertEquals(listOf(FileType.PDF), organization.availableFileTypes)
+    }
+
+    @Test
     fun `shell model keeps primary navigation simple and exposes all tool actions`() {
         val model = sharedAppShellModel(
             selectedTab = SharedAppTab.CUSTOM_FONTS,

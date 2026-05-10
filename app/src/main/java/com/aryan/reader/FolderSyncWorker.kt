@@ -602,15 +602,7 @@ class FolderSyncWorker(
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {
-        return when (mimeType) {
-            "application/pdf" -> FileType.PDF
-            "application/epub+zip" -> FileType.EPUB
-            "application/vnd.oasis.opendocument.text" -> FileType.ODT
-            "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
-            "text/html", "application/xhtml+xml" -> FileType.HTML
-            else -> resolveFileTypeFromName(name)
-        }
+        return resolveFileTypeFromMetadata(name, mimeType)
     }
 
     private fun buildStableBookId(name: String, rootDocId: String, docId: String): String {

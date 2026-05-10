@@ -4327,40 +4327,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         Timber.d("Determining type for: $uri | Mime: $mimeType | Name: $fileName")
 
-        return when (mimeType) {
-            "application/vnd.oasis.opendocument.text" -> FileType.ODT
-            "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
-            "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
-                if (fileName?.endsWith(".cbz", ignoreCase = true) == true) FileType.CBZ else null
-            }
-            "application/vnd.comicbook-rar", "application/x-cbr", "application/x-rar-compressed" -> {
-                if (fileName?.endsWith(".cbr", ignoreCase = true) == true) FileType.CBR else null
-            }
-            "application/x-cb7", "application/x-7z-compressed" -> {
-                if (fileName?.endsWith(".cb7", ignoreCase = true) == true) FileType.CB7 else null
-            }
-            "application/pdf" -> FileType.PDF
-            "application/epub+zip" -> FileType.EPUB
-            "application/x-fictionbook+xml", "application/x-zip-compressed-fb2" -> FileType.FB2
-            "application/x-mobipocket-ebook", "application/vnd.amazon.ebook", "application/vnd.amazon.mobi8-ebook" -> FileType.MOBI
-            "text/markdown", "text/x-markdown" -> FileType.MD
-            "text/html", "application/xhtml+xml" -> FileType.HTML
-
-            "text/csv", "text/comma-separated-values", "text/tab-separated-values",
-            "application/json", "application/xml", "text/xml",
-            "text/x-java-source", "text/x-python", "text/x-kotlin",
-            "text/javascript", "application/javascript",
-            "text/x-c", "text/x-c++", "text/x-csharp", "text/x-ruby", "text/x-go", "text/x-log" -> FileType.HTML
-
-            "text/plain" -> {
-                resolveFileTypeFromName(fileName) ?: FileType.TXT
-            }
-
-            else -> {
-                resolveFileTypeFromName(fileName)
-            }
-        }
+        return resolveFileTypeFromMetadata(fileName, mimeType)
     }
 
     private fun loadMobi(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {

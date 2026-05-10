@@ -567,6 +567,36 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `updateLibraryFilters drops unknown file type before state and prefs`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        val requested = LibraryFilters(
+            fileTypes = setOf(FileType.PDF, FileType.UNKNOWN),
+            sourceFolders = setOf("content://sync"),
+            readStatus = ReadStatusFilter.IN_PROGRESS,
+            tagIds = setOf("favorite")
+        )
+        val expected = requested.copy(fileTypes = setOf(FileType.PDF))
+
+        viewModel.updateLibraryFilters(requested)
+
+        val state = viewModel.uiState.first { it.libraryFilters == expected }
+        assertEquals(expected, state.libraryFilters)
+        assertFalse(FileType.UNKNOWN in state.libraryFilters.fileTypes)
+        verify { mockEditor.putStringSet(KEY_FILTER_FILE_TYPES, setOf("PDF")) }
+    }
+
+    @Test
+    fun `saved library file filters drop stale unknown values during restore`() = runTest {
+        every { mockPrefs.getStringSet(KEY_FILTER_FILE_TYPES, any()) } returns mutableSetOf("PDF", "UNKNOWN")
+
+        val restored = MainViewModel(mockApplication)
+
+        assertEquals(setOf(FileType.PDF), restored.uiState.value.libraryFilters.fileTypes)
+    }
+
+    @Test
     fun `updateLibraryFilters clears active filters and persists empty dimensions`() = runTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
@@ -970,10 +1000,16 @@ class MainViewModelTest {
         title = title
     )
 
-    private fun mockUri(uriString: String): Uri {
+    private fun mockUri(
+        uriString: String,
+        path: String? = uriString.substringAfter(":", ""),
+        lastPathSegment: String? = path?.substringAfterLast('/')
+    ): Uri {
         return mockk<Uri>().also { uri ->
             every { uri.toString() } returns uriString
             every { uri.scheme } returns uriString.substringBefore(":", "")
+            every { uri.path } returns path
+            every { uri.lastPathSegment } returns lastPathSegment
         }
     }
 

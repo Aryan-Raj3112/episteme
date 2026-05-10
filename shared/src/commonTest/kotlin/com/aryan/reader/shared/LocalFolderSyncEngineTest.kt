@@ -174,6 +174,30 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `sync ignores unknown scanned files even with default allowed types`() {
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(),
+            folder = SyncedFolder(
+                uriString = "C:/Library",
+                name = "Library",
+                lastScanTime = 0L
+            ),
+            files = listOf(scannedFile("archive.zip", "archive.zip", type = FileType.UNKNOWN)),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+
+        assertTrue(result.state.rawLibraryBooks.isEmpty())
+        assertEquals(0, result.stats.supportedFiles)
+        assertEquals(0, result.stats.newBooks)
+    }
+
+    @Test
+    fun `default synced folder allowed types exclude unknown`() {
+        assertFalse(FileType.UNKNOWN in SyncedFolder("C:/Library", "Library", lastScanTime = 0L).allowedFileTypes)
+    }
+
+    @Test
     fun `metadata sidecar is skipped for clean unread folder books`() {
         assertNull(book(id = "local_Book.pdf", isRecent = false, progress = null).toSharedFolderBookMetadata())
         assertNotNull(book(id = "local_Book.pdf", isRecent = true).toSharedFolderBookMetadata())
@@ -214,14 +238,15 @@ class LocalFolderSyncEngineTest {
     private fun scannedFile(
         name: String,
         relativePath: String,
-        size: Long = 123L
+        size: Long = 123L,
+        type: FileType = FileType.PDF
     ): SharedFolderScannedFile {
         return SharedFolderScannedFile(
             name = name,
             path = "C:/Library/$relativePath",
             sourceFolder = "C:/Library",
             relativePath = relativePath,
-            type = FileType.PDF,
+            type = type,
             size = size,
             lastModified = 100L
         )

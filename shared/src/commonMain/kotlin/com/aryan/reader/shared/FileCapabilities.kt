@@ -166,6 +166,21 @@ object SharedFileCapabilities {
     private val typesByExtension: Map<String, FileType> = all
         .flatMap { capability -> capability.extensions.map { it.lowercase() to capability.type } }
         .toMap()
+    private val mimeTypesByType: Map<FileType, String> = mapOf(
+        FileType.PDF to "application/pdf",
+        FileType.EPUB to "application/epub+zip",
+        FileType.MOBI to "application/x-mobipocket-ebook",
+        FileType.MD to "text/markdown",
+        FileType.TXT to "text/plain",
+        FileType.HTML to "text/html",
+        FileType.FB2 to "application/x-fictionbook+xml",
+        FileType.CBZ to "application/zip",
+        FileType.CBR to "application/zip",
+        FileType.CB7 to "application/zip",
+        FileType.DOCX to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        FileType.ODT to "application/vnd.oasis.opendocument.text",
+        FileType.FODT to "application/x-vnd.oasis.opendocument.text-flat-xml"
+    )
     val knownFileTypes: Set<FileType> = all.mapTo(mutableSetOf()) { it.type }
 
     fun capabilityFor(type: FileType): FileTypeCapability? {
@@ -174,6 +189,14 @@ object SharedFileCapabilities {
 
     fun displayNameFor(type: FileType): String {
         return capabilityFor(type)?.displayName ?: type.name
+    }
+
+    fun primaryExtensionFor(type: FileType): String? {
+        return capabilityFor(type)?.extensions?.firstOrNull()
+    }
+
+    fun mimeTypeFor(type: FileType): String? {
+        return mimeTypesByType[type]
     }
 
     fun fileTypeForName(fileName: String): FileType {

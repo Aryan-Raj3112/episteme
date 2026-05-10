@@ -201,4 +201,36 @@ class SharedLibrarySnapshotJsonTest {
         assertFalse(decoded.books.first { it.id == "imported" }.isRecent)
         assertTrue(decoded.books.first { it.id == "opened" }.isRecent)
     }
+
+    @Test
+    fun `synced folder allowed types exclude unknown while preserving valid selections`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "syncedFolders": [
+                {
+                  "uriString": "C:/Books",
+                  "name": "Books",
+                  "lastScanTime": 12,
+                  "allowedFileTypes": ["PDF", "UNKNOWN", "EPUB"]
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val folder = decoded.syncedFolders.single()
+
+        assertEquals(setOf(FileType.PDF, FileType.EPUB), folder.allowedFileTypes)
+        assertFalse(FileType.UNKNOWN in folder.allowedFileTypes)
+
+        val encoded = SharedLibrarySnapshotJson.encode(
+            SharedLibrarySnapshot(
+                syncedFolders = listOf(
+                    SyncedFolder("C:/Books", "Books", lastScanTime = 12L, allowedFileTypes = setOf(FileType.PDF, FileType.UNKNOWN))
+                )
+            )
+        )
+
+        assertFalse("\"UNKNOWN\"" in encoded)
+    }
 }
