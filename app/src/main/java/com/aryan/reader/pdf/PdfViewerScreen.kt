@@ -294,6 +294,12 @@ internal fun resolveEraserStrokeWidth(
     eraserToolThickness: Float
 ): Float = if (isEraserOverride) eraserToolThickness else activeToolThickness
 
+internal fun canUsePdfSidecarsForBook(
+    activeBookId: String?,
+    loadedSidecarBookId: String?,
+    areSidecarsLoaded: Boolean
+): Boolean = activeBookId != null && areSidecarsLoaded && loadedSidecarBookId == activeBookId
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
@@ -415,6 +421,7 @@ fun PdfViewerScreen(
     val isTabsEnabled = uiState.isTabsEnabled
     val openTabs = uiState.openTabs
     val activeTabBookId = uiState.activeTabBookId
+    val isPdfTabStripVisible = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
     val originalFileName by remember(uiState.recentFiles,  effectivePdfUri) {
         derivedStateOf {
             uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }?.displayName
@@ -423,6 +430,7 @@ fun PdfViewerScreen(
     }
     var currentBookId by remember { mutableStateOf<String?>(null) }
     val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
+    val activeDocumentRenderKey = currentBookId ?: effectivePdfUri.toString()
     var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
     val view = LocalView.current
     var isDockDragging by remember { mutableStateOf(false) }
@@ -743,7 +751,8 @@ fun PdfViewerScreen(
     val targetTopOverlayInset = remember(
         showStandardBars,
         systemUiMode,
-        statusBarHeightDp
+        statusBarHeightDp,
+        isPdfTabStripVisible
     ) {
         if (!showStandardBars) {
             0.dp
@@ -754,6 +763,9 @@ fun PdfViewerScreen(
 
             if (isStatusBarVisible) {
                 inset += statusBarHeightDp
+            }
+            if (isPdfTabStripVisible) {
+                inset += PdfTabStripHeight
             }
             inset
         }
@@ -879,6 +891,7 @@ fun PdfViewerScreen(
     var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
 
     var areAnnotationsLoaded by remember { mutableStateOf(false) }
+    var loadedSidecarBookId by remember { mutableStateOf<String?>(null) }
 
     val richTextRepository = remember(context) { PdfRichTextRepository(context) }
     val richTextController = remember(currentBookId) {
@@ -1143,39 +1156,64 @@ fun PdfViewerScreen(
 
     val lastSavedHashes = remember(currentBookId) { IntArray(5) { -1 } }
 
+    val sidecarsReadyForCurrentBook =
+        canUsePdfSidecarsForBook(currentBookId, loadedSidecarBookId, areAnnotationsLoaded)
+    val visibleAllAnnotations = if (sidecarsReadyForCurrentBook) allAnnotations else emptyMap()
+    val visibleTextBoxes = if (sidecarsReadyForCurrentBook) textBoxes.toList() else emptyList()
+    val visibleUserHighlights = if (sidecarsReadyForCurrentBook) userHighlights.toList() else emptyList()
+
     val currentAnnotations by rememberUpdatedState(allAnnotations)
     val currentTextBoxes by rememberUpdatedState(textBoxes.toList())
     val currentHighlights by rememberUpdatedState(userHighlights.toList())
+    val currentLoadedSidecarBookId by rememberUpdatedState(loadedSidecarBookId)
+    val currentAreAnnotationsLoaded by rememberUpdatedState(areAnnotationsLoaded)
     val currentBookmarks by rememberUpdatedState(bookmarks)
     val currentTotalPages by rememberUpdatedState(totalDisplayPages)
     val currentPageState by rememberUpdatedState(currentPage)
     val currentPendingPage by rememberUpdatedState(pendingRestorePage)
+    val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
 
     val saveAllData = remember(currentBookId, annotationRepository, textBoxRepository, highlightRepository) {
         { force: Boolean ->
+            val bookIdSnapshot = currentBookId
+            val loadedSidecarBookIdSnapshot = currentLoadedSidecarBookId
+            val canSaveSidecarsSnapshot = canUsePdfSidecarsForBook(
+                bookIdSnapshot,
+                loadedSidecarBookIdSnapshot,
+                currentAreAnnotationsLoaded
+            )
+            val isDocumentReadySnapshot = isDocumentReady
+            val initialScrollDoneSnapshot = initialScrollDone
+            val annotsSnapshot = currentAnnotations
+            val boxesSnapshot = currentTextBoxes
+            val highlightsSnapshot = currentHighlights
+            val bookmarksSnapshot = currentBookmarks
+            val totalPagesSnapshot = currentTotalPages
+            val currentPageSnapshot = currentPageState
+            val pendingPageSnapshot = currentPendingPage
             viewModel.viewModelScope.launch {
-                val bookId = currentBookId ?: return@launch
+                val bookId = bookIdSnapshot ?: return@launch
 
-                if (!isDocumentReady && !force) {
+                if (!isDocumentReadySnapshot && !force) {
                     Timber.tag("PdfPositionDebug").w("UI: Save ignored. Document not ready.")
                     return@launch
                 }
 
-                val annots = currentAnnotations
-                val boxes = currentTextBoxes
-                val highlights = currentHighlights
-                val bms = currentBookmarks
-                val totalPgs = currentTotalPages
+                val annots = annotsSnapshot
+                val boxes = boxesSnapshot
+                val highlights = highlightsSnapshot
+                val bms = bookmarksSnapshot
+                val totalPgs = totalPagesSnapshot
 
-                val restoreTarget = currentPendingPage ?: 0
-                val page = if (!initialScrollDone) {
-                    Timber.tag("PdfPositionDebug").i("UI: Save during restoration | Using restoreTarget: $restoreTarget (CurrentUI: $currentPageState)")
+                val restoreTarget = pendingPageSnapshot ?: 0
+                val page = if (!initialScrollDoneSnapshot) {
+                    Timber.tag("PdfPositionDebug").i("UI: Save during restoration | Using restoreTarget: $restoreTarget (CurrentUI: $currentPageSnapshot)")
                     restoreTarget
                 } else {
-                    currentPageState
+                    currentPageSnapshot
                 }
 
-                Timber.tag("PdfPositionDebug").v("UI: Save logic | Choosing: $page (UI: $currentPageState, Target: $restoreTarget, Done: $initialScrollDone)")
+                Timber.tag("PdfPositionDebug").v("UI: Save logic | Choosing: $page (UI: $currentPageSnapshot, Target: $restoreTarget, Done: $initialScrollDoneSnapshot)")
 
                 val annotsHash = annots.hashCode()
                 val boxesHash = boxes.hashCode()
@@ -1187,20 +1225,26 @@ fun PdfViewerScreen(
                         withContext(Dispatchers.IO) {
                             @Suppress("VariableNeverRead") var didSave = false
 
-                            if (force || annotsHash != lastSavedHashes[0]) {
-                                annotationRepository.saveAnnotations(bookId, annots)
-                                lastSavedHashes[0] = annotsHash
-                                didSave = true
-                            }
-                            if (force || boxesHash != lastSavedHashes[1]) {
-                                textBoxRepository.saveTextBoxes(bookId, boxes)
-                                lastSavedHashes[1] = boxesHash
-                                didSave = true
-                            }
-                            if (force || highlightsHash != lastSavedHashes[2]) {
-                                highlightRepository.saveHighlights(bookId, highlights)
-                                lastSavedHashes[2] = highlightsHash
-                                didSave = true
+                            if (canSaveSidecarsSnapshot) {
+                                if (force || annotsHash != lastSavedHashes[0]) {
+                                    annotationRepository.saveAnnotations(bookId, annots)
+                                    lastSavedHashes[0] = annotsHash
+                                    didSave = true
+                                }
+                                if (force || boxesHash != lastSavedHashes[1]) {
+                                    textBoxRepository.saveTextBoxes(bookId, boxes)
+                                    lastSavedHashes[1] = boxesHash
+                                    didSave = true
+                                }
+                                if (force || highlightsHash != lastSavedHashes[2]) {
+                                    highlightRepository.saveHighlights(bookId, highlights)
+                                    lastSavedHashes[2] = highlightsHash
+                                    didSave = true
+                                }
+                            } else {
+                                Timber.tag("PdfTabSync").d(
+                                    "Skipping PDF sidecar save for $bookId; loaded sidecars belong to $loadedSidecarBookIdSnapshot"
+                                )
                             }
                             if (force || bmsHash != lastSavedHashes[3]) {
                                 val objectList = bms.map { bookmark ->
@@ -1260,15 +1304,16 @@ fun PdfViewerScreen(
         textBoxes.toList(),
         userHighlights.toList(),
         bookmarks,
-        currentPage
+        currentPage,
+        sidecarsReadyForCurrentBook
     ) {
-        if (areAnnotationsLoaded && currentBookId != null && initialScrollDone) {
+        if (sidecarsReadyForCurrentBook && initialScrollDone) {
             delay(2000) // Debounce period
             saveAllData(false)
         }
     }
 
-    val allAnnotationsProvider = remember { { allAnnotations } }
+    val allAnnotationsProvider = remember { { currentVisibleAllAnnotations } }
 
     LaunchedEffect(Unit) {
         Timber.d("PdfViewerScreen init: initialBookmarksJson is '$initialBookmarksJson'")
@@ -2088,25 +2133,38 @@ fun PdfViewerScreen(
     }
 
     LaunchedEffect(currentBookId) {
-        if (currentBookId != null) {
-            val loaded = annotationRepository.loadAnnotations(currentBookId!!)
-            allAnnotations = loaded
-            areAnnotationsLoaded = true
+        val loadingBookId = currentBookId
 
-            val loadedBoxes = textBoxRepository.loadTextBoxes(currentBookId!!)
-            textBoxes.clear()
-            textBoxes.addAll(loadedBoxes)
+        areAnnotationsLoaded = false
+        loadedSidecarBookId = null
+        allAnnotations = emptyMap()
+        textBoxes.clear()
+        userHighlights.clear()
+        selectedTextBoxId = null
+        undoStack.clear()
+        redoStack.clear()
+        erasedAnnotationsFromStroke.clear()
+        drawingState.onDrawCancel()
 
-            val loadedHighlights = highlightRepository.loadHighlights(currentBookId!!)
-            userHighlights.clear()
-            userHighlights.addAll(loadedHighlights)
-        }
+        if (loadingBookId == null) return@LaunchedEffect
+
+        val loaded = annotationRepository.loadAnnotations(loadingBookId)
+        val loadedBoxes = textBoxRepository.loadTextBoxes(loadingBookId)
+        val loadedHighlights = highlightRepository.loadHighlights(loadingBookId)
+
+        if (currentBookId != loadingBookId) return@LaunchedEffect
+
+        allAnnotations = loaded
+        textBoxes.addAll(loadedBoxes)
+        userHighlights.addAll(loadedHighlights)
+        loadedSidecarBookId = loadingBookId
+        areAnnotationsLoaded = true
     }
 
     var isRebuildingSyncedHighlightBounds by remember(currentBookId) { mutableStateOf(false) }
-    LaunchedEffect(pdfDocument, currentBookId, userHighlights.toList()) {
+    LaunchedEffect(pdfDocument, currentBookId, userHighlights.toList(), sidecarsReadyForCurrentBook) {
         val document = pdfDocument ?: return@LaunchedEffect
-        if (currentBookId == null || isRebuildingSyncedHighlightBounds) return@LaunchedEffect
+        if (!sidecarsReadyForCurrentBook || isRebuildingSyncedHighlightBounds) return@LaunchedEffect
         val snapshot = userHighlights.toList()
         if (snapshot.none { it.bounds.isEmpty() && it.range.second > it.range.first }) return@LaunchedEffect
 
@@ -2134,18 +2192,18 @@ fun PdfViewerScreen(
                         coroutineScope.launch {
                             val currentRichTextLayouts = richTextController?.pageLayouts
 
-                            Timber.tag("PdfExportDebug").i("SAVE TRIGGERED: userHighlights count: ${userHighlights.size}")
-                            if (userHighlights.isEmpty()) {
+                            Timber.tag("PdfExportDebug").i("SAVE TRIGGERED: userHighlights count: ${visibleUserHighlights.size}")
+                            if (visibleUserHighlights.isEmpty()) {
                                 Timber.tag("PdfExportDebug").w("Warning: userHighlights is EMPTY during save.")
                             }
 
                             viewModel.savePdfWithAnnotations(
                                 sourceUri = effectivePdfUri,
                                 destUri = uri,
-                                annotations = allAnnotations,
+                                annotations = visibleAllAnnotations,
                                 richTextPageLayouts = currentRichTextLayouts,
-                                textBoxes = textBoxes.toList(),
-                                highlights = userHighlights.toList(),
+                                textBoxes = visibleTextBoxes,
+                                highlights = visibleUserHighlights,
                                 bookId = currentBookId!!
                             )
                         }
@@ -2897,6 +2955,17 @@ fun PdfViewerScreen(
         isDocumentReady = false
         errorMessage = null
         documentMetadataTitle = null
+        currentBookId = null
+        areAnnotationsLoaded = false
+        loadedSidecarBookId = null
+        allAnnotations = emptyMap()
+        textBoxes.clear()
+        userHighlights.clear()
+        selectedTextBoxId = null
+        undoStack.clear()
+        redoStack.clear()
+        erasedAnnotationsFromStroke.clear()
+        drawingState.onDrawCancel()
 
         if (showPasswordDialog) isPasswordError = false
 
@@ -3528,9 +3597,10 @@ fun PdfViewerScreen(
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
                 PdfNavigationDrawerContent(
                     pdfDocument = pdfDocument,
+                    documentKey = activeDocumentRenderKey,
                     flatTableOfContents = flatTableOfContents,
                     bookmarks = bookmarks,
-                    userHighlights = userHighlights,
+                    userHighlights = visibleUserHighlights,
                     currentPage = currentPage,
                     totalPages = totalDisplayPages,
                     customHighlightColors = customHighlightColors,
@@ -3667,7 +3737,7 @@ fun PdfViewerScreen(
                         }
 
                         pdfDocument != null && totalPages > 0 -> {
-                            val stablePdfDocument = remember(pdfDocument) { StableHolder(pdfDocument!!) }
+                            val stablePdfDocument = remember(activeDocumentRenderKey, pdfDocument) { StableHolder(pdfDocument!!) }
                             when (displayMode) {
                                 DisplayMode.PAGINATION -> {
                                     val onPaginationPreSingleTap: (Offset) -> Boolean = { tapOffset ->
@@ -3720,7 +3790,7 @@ fun PdfViewerScreen(
                                         HorizontalPager(
                                             state = pagerState,
                                             modifier = Modifier.fillMaxSize(),
-                                            key = { it },
+                                            key = { page -> "$activeDocumentRenderKey:$page" },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
                                             reverseLayout = rightToLeftPagination,
                                             userScrollEnabled = run {
@@ -3908,6 +3978,7 @@ fun PdfViewerScreen(
 
                                             PdfPageComposable(
                                                 pdfDocument = stablePdfDocument,
+                                                documentKey = activeDocumentRenderKey,
                                                 pageIndex = pageIndex,
                                                 virtualPage = virtualPage,
                                                 totalPages = totalDisplayPages,
@@ -3988,7 +4059,7 @@ fun PdfViewerScreen(
                                                 onOcrModelDownloading = {
                                                     isOcrModelDownloading = true
                                                 },
-                                                userHighlights = userHighlights.filter { it.pageIndex == pageIndex },
+                                                userHighlights = visibleUserHighlights.filter { it.pageIndex == pageIndex },
                                                 onHighlightAdd = onHighlightAdd,
                                                 onHighlightUpdate = onHighlightUpdate,
                                                 onHighlightDelete = onHighlightDelete,
@@ -4026,7 +4097,7 @@ fun PdfViewerScreen(
                                                 isAutoScrollPlaying = isAutoScrollPlaying,
                                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                                 isEditMode = isDrawingActive,
-                                                textBoxes = textBoxes.filter { it.pageIndex == pageIndex },
+                                                textBoxes = visibleTextBoxes.filter { it.pageIndex == pageIndex },
                                                 selectedTextBoxId = selectedTextBoxId,
                                                 onTextBoxChange = { updatedBox ->
                                                     val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
@@ -4353,7 +4424,7 @@ fun PdfViewerScreen(
                                     Box(modifier = Modifier
                                         .fillMaxSize()
                                         .clip(RectangleShape)) {
-                                        val docHolder = remember(pdfDocument) {
+                                        val docHolder = remember(activeDocumentRenderKey, pdfDocument) {
                                             StableHolder(pdfDocument!!)
                                         }
                                         val bookmarksHolder =
@@ -4365,6 +4436,7 @@ fun PdfViewerScreen(
                                         PdfVerticalReader(
                                             state = verticalReaderState,
                                             pdfDocument = docHolder,
+                                            documentKey = activeDocumentRenderKey,
                                             activeTheme = activeTheme,
                                             activeTextureAlpha = 1f - globalTextureTransparency,
                                             excludeImages = excludeImages,
@@ -4391,7 +4463,7 @@ fun PdfViewerScreen(
                                             onSearchText = onSearchTextStable,
                                             ttsHighlightData = ttsHighlightData,
                                             ttsReadingPage = ttsDisplayPageIndex,
-                                            userHighlights = userHighlights,
+                                            userHighlights = visibleUserHighlights,
                                             onHighlightAdd = onHighlightAdd,
                                             onHighlightUpdate = onHighlightUpdate,
                                             onHighlightDelete = onHighlightDelete,
@@ -4446,7 +4518,7 @@ fun PdfViewerScreen(
                                             isStylusOnlyMode = isStylusOnlyMode,
                                             stylusButtonHovering = stylusButtonHovering,
                                             isEditMode = isDrawingActive,
-                                            textBoxes = textBoxes,
+                                            textBoxes = visibleTextBoxes,
                                             selectedTextBoxId = selectedTextBoxId,
                                             onTextBoxChange = { updatedBox ->
                                                 val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
@@ -5248,7 +5320,11 @@ fun PdfViewerScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = stringResource(R.string.msg_indexing_pages_progress),
+                                        text = stringResource(
+                                            R.string.msg_indexing_pages_progress,
+                                            (backgroundIndexingProgress * 100f).roundToInt()
+                                                .coerceIn(0, 100)
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
@@ -6867,7 +6943,7 @@ fun PdfViewerScreen(
                         onClick = {
                             showShareDialog = false
                             isShareLoading = true
-                            Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${userHighlights.size}")
+                            Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${visibleUserHighlights.size}")
                             val filename = getSuggestedFilename(
                                 originalFileName, isAnnotated = true
                             )
@@ -6877,10 +6953,10 @@ fun PdfViewerScreen(
                                 viewModel.sharePdf(
                                     activityContext = context,
                                     sourceUri = effectivePdfUri,
-                                    annotations = allAnnotations,
+                                    annotations = visibleAllAnnotations,
                                     richTextPageLayouts = currentRichTextLayouts,
-                                    textBoxes = textBoxes.toList(),
-                                    highlights = userHighlights.toList(),
+                                    textBoxes = visibleTextBoxes,
+                                    highlights = visibleUserHighlights,
                                     includeAnnotations = true,
                                     filename = filename,
                                     bookId = currentBookId
@@ -6904,7 +6980,7 @@ fun PdfViewerScreen(
                                 viewModel.sharePdf(
                                     activityContext = context,
                                     sourceUri = pdfUri,
-                                    annotations = allAnnotations,
+                                    annotations = emptyMap(),
                                     includeAnnotations = false,
                                     filename = filename
                                 )

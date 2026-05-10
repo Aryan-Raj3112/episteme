@@ -135,7 +135,6 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
@@ -185,6 +184,21 @@ data class EmbeddedAnnotation(
 data class PdfPoint(val x: Float, val y: Float, val timestamp: Long = 0L)
 
 data class PdfTile(val bitmap: Bitmap, val renderRect: Rect, val tileId: Int, val renderScale: Float = 1f)
+
+internal fun pdfRenderPageId(documentKey: String, pageIndex: Int, virtualPage: VirtualPage?): String {
+    val sourcePageId = when (virtualPage) {
+        is VirtualPage.BlankPage -> "BLANK_${virtualPage.id}"
+        is VirtualPage.PdfPage -> "PDF_${virtualPage.pdfIndex}"
+        null -> "PDF_$pageIndex"
+    }
+    return "$documentKey:$sourcePageId"
+}
+
+private fun Throwable.readablePdfErrorDetail(): String {
+    return localizedMessage?.takeIf { it.isNotBlank() }
+        ?: javaClass.simpleName.takeIf { it.isNotBlank() }
+        ?: "Unknown error"
+}
 
 private const val PDF_TILE_SIZE_DP = 256
 private const val PDF_MAX_TILE_BITMAP_SIZE_PX = 3072
@@ -400,20 +414,20 @@ internal object PdfThumbnailCache {
 
     private data class CacheEntry(val bitmap: Bitmap, val sizeKb: Int)
 
-    private val memoryCache = object : LruCache<Int, CacheEntry>(cacheSize) {
-        override fun sizeOf(key: Int, entry: CacheEntry): Int {
+    private val memoryCache = object : LruCache<String, CacheEntry>(cacheSize) {
+        override fun sizeOf(key: String, entry: CacheEntry): Int {
             return entry.sizeKb
         }
     }
 
-    fun get(pageIndex: Int): Bitmap? {
-        return memoryCache.get(pageIndex)?.bitmap?.takeUnless { it.isRecycled }
+    fun get(pageId: String): Bitmap? {
+        return memoryCache.get(pageId)?.bitmap?.takeUnless { it.isRecycled }
     }
 
-    fun put(pageIndex: Int, bitmap: Bitmap) {
-        if (get(pageIndex) == null) {
+    fun put(pageId: String, bitmap: Bitmap) {
+        if (get(pageId) == null) {
             val sizeKb = (bitmap.allocationByteCount / 1024).coerceAtLeast(1)
-            memoryCache.put(pageIndex, CacheEntry(bitmap, sizeKb))
+            memoryCache.put(pageId, CacheEntry(bitmap, sizeKb))
         }
     }
 
@@ -475,6 +489,7 @@ data class PageSelectionData(
 @Composable
 internal fun PdfPageComposable(
     pdfDocument: StableHolder<ReaderDocument>,
+    documentKey: String,
     pageIndex: Int,
     totalPages: Int,
     modifier: Modifier = Modifier,
@@ -558,18 +573,13 @@ internal fun PdfPageComposable(
     onShowPanelPopup: (Bitmap) -> Unit = {}
 ) {
     val pdfDocumentItem = pdfDocument.item
-    var bitmapState by remember { mutableStateOf(PdfThumbnailCache.get(pageIndex)) }
-    var currentRenderedPageId by remember { mutableStateOf<String?>(null) }
-
-    val targetPageId = remember(virtualPage, pageIndex) {
-        when (virtualPage) {
-            is VirtualPage.BlankPage -> "BLANK_${virtualPage.id}"
-            is VirtualPage.PdfPage -> "PDF_${virtualPage.pdfIndex}"
-            null -> "PDF_$pageIndex"
-        }
+    val targetPageId = remember(documentKey, virtualPage, pageIndex) {
+        pdfRenderPageId(documentKey, pageIndex, virtualPage)
     }
-    var isLoadingPage by remember { mutableStateOf(true) }
-    var pageErrorMessage by remember { mutableStateOf<String?>(null) }
+    var bitmapState by remember(targetPageId) { mutableStateOf(PdfThumbnailCache.get(targetPageId)) }
+    var currentRenderedPageId by remember(targetPageId) { mutableStateOf<String?>(null) }
+    var isLoadingPage by remember(targetPageId) { mutableStateOf(true) }
+    var pageErrorMessage by remember(targetPageId) { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
     val context = LocalContext.current
     val viewConfiguration = LocalViewConfiguration.current
@@ -609,7 +619,7 @@ internal fun PdfPageComposable(
     val isPdfPage = virtualPage == null || virtualPage is VirtualPage.PdfPage
     val pdfPageIndex = (virtualPage as? VirtualPage.PdfPage)?.pdfIndex ?: pageIndex
 
-    var tiles by remember { mutableStateOf<List<PdfTile>>(emptyList()) }
+    var tiles by remember(targetPageId) { mutableStateOf<List<PdfTile>>(emptyList()) }
     val tileSizeDp = PDF_TILE_SIZE_DP.dp
     val tileSizePx = with(LocalDensity.current) { tileSizeDp.toPx().toInt() }
     val latestEffectiveScale by rememberUpdatedState(effectiveScale)
@@ -645,15 +655,15 @@ internal fun PdfPageComposable(
         }
     }
 
-    val selectionCharRange = remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var activeDraggingHandle by remember { mutableStateOf<Handle?>(null) }
-    var selectedWordScreenRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
-    val startHandleContentPosition = remember { mutableStateOf<Offset?>(null) }
-    val endHandleContentPosition = remember { mutableStateOf<Offset?>(null) }
+    val selectionCharRange = remember(targetPageId) { mutableStateOf<Pair<Int, Int>?>(null) }
+    var activeDraggingHandle by remember(targetPageId) { mutableStateOf<Handle?>(null) }
+    var selectedWordScreenRects by remember(targetPageId) { mutableStateOf<List<Rect>>(emptyList()) }
+    val startHandleContentPosition = remember(targetPageId) { mutableStateOf<Offset?>(null) }
+    val endHandleContentPosition = remember(targetPageId) { mutableStateOf<Offset?>(null) }
 
-    var actualBitmapWidthPx by remember { mutableIntStateOf(0) }
-    var actualBitmapHeightPx by remember { mutableIntStateOf(0) }
-    var currentPageRotation by remember { mutableIntStateOf(0) }
+    var actualBitmapWidthPx by remember(targetPageId) { mutableIntStateOf(0) }
+    var actualBitmapHeightPx by remember(targetPageId) { mutableIntStateOf(0) }
+    var currentPageRotation by remember(targetPageId) { mutableIntStateOf(0) }
 
     val needsTilingNow = (effectiveScale > 1f || actualBitmapWidthPx > 3000 || actualBitmapHeightPx > 3000) && (isVerticalScroll || isActivePage)
 
@@ -736,7 +746,7 @@ internal fun PdfPageComposable(
     var magnifierBitmapCenterTarget by remember { mutableStateOf(Offset.Zero) }
     val magnifierZoomFactor = 2.0f
 
-    var customMenuState by remember { mutableStateOf<CustomPdfMenuState?>(null) }
+    var customMenuState by remember(targetPageId) { mutableStateOf<CustomPdfMenuState?>(null) }
 
     val inputScale = if (isZoomEnabled && !isVerticalScroll) scale else 1f
     val inputOffset = if (isZoomEnabled && !isVerticalScroll) offset else Offset.Zero
@@ -881,10 +891,10 @@ internal fun PdfPageComposable(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(targetPageId) {
         onDispose {
             val currentBitmap = bitmapState
-            val cachedBitmap = PdfThumbnailCache.get(pageIndex)
+            val cachedBitmap = PdfThumbnailCache.get(targetPageId)
             if (currentBitmap != null && !currentBitmap.isRecycled && currentBitmap !== cachedBitmap) {
                 currentBitmap.recycle()
             }
@@ -895,16 +905,16 @@ internal fun PdfPageComposable(
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
 
     // OCR
-    var ocrVisionTextForSelection by remember { mutableStateOf<OcrResult?>(null) }
+    var ocrVisionTextForSelection by remember(targetPageId) { mutableStateOf<OcrResult?>(null) }
     var isPerformingOcrForSelection by remember { mutableStateOf(false) }
     var selectionMethodUsed by remember { mutableStateOf(PdfSelectionMethod.PDFIUM) }
-    var ocrSelectionSymbolIndices by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var allOcrSymbolsForSelection by remember { mutableStateOf<List<OcrSymbolInfo>>(emptyList()) }
+    var ocrSelectionSymbolIndices by remember(targetPageId) { mutableStateOf<Pair<Int, Int>?>(null) }
+    var allOcrSymbolsForSelection by remember(targetPageId) { mutableStateOf<List<OcrSymbolInfo>>(emptyList()) }
 
-    var highlightedTextScreenRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
+    var highlightedTextScreenRects by remember(targetPageId) { mutableStateOf<List<Rect>>(emptyList()) }
     val ttsHighlightColor = Color(0xFFFFECB3).copy(alpha = 0.4f)
 
-    var allTextPageHighlightRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
+    var allTextPageHighlightRects by remember(targetPageId) { mutableStateOf<List<Rect>>(emptyList()) }
 
     var accumulatedKeyboardOffset by remember { mutableFloatStateOf(0f) }
 
@@ -937,7 +947,7 @@ internal fun PdfPageComposable(
     val mergedSearchHighlightRects =
         remember(searchHighlightRects) { mergeRectsIntoLines(searchHighlightRects) }
 
-    var pageLinks by remember { mutableStateOf<List<PageLink>>(emptyList()) }
+    var pageLinks by remember(targetPageId) { mutableStateOf<List<PageLink>>(emptyList()) }
     val linkHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
     val linkVerticalPaddingPx = remember(density) { with(density) { 10.dp.toPx().toInt() } }
 
@@ -1091,9 +1101,9 @@ internal fun PdfPageComposable(
         onHighlightLoading(false)
     }
 
-    @Suppress("VariableNeverRead") var embeddedAnnotations by remember { mutableStateOf<List<EmbeddedAnnotation>>(emptyList()) }
-    var standardAnnotScreenRects by remember { mutableStateOf<List<Pair<EmbeddedAnnotation, Rect>>>(emptyList()) }
-    var imageScreenRects by remember { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
+    @Suppress("VariableNeverRead") var embeddedAnnotations by remember(targetPageId) { mutableStateOf<List<EmbeddedAnnotation>>(emptyList()) }
+    var standardAnnotScreenRects by remember(targetPageId) { mutableStateOf<List<Pair<EmbeddedAnnotation, Rect>>>(emptyList()) }
+    var imageScreenRects by remember(targetPageId) { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
 
     LaunchedEffect(pageIndex, pdfDocumentItem, actualBitmapWidthPx, actualBitmapHeightPx, virtualPage) {
         if (!isPdfPage || actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0) {
@@ -1323,7 +1333,7 @@ internal fun PdfPageComposable(
                 Timber.d("Page $pageIndex hidden. Releasing bitmap to save memory.")
                 val old = bitmapState
                 bitmapState = null
-                @Suppress("ControlFlowWithEmptyBody") if (old != null && old !== PdfThumbnailCache.get(pageIndex)) { }
+                @Suppress("ControlFlowWithEmptyBody") if (old != null && old !== PdfThumbnailCache.get(targetPageId)) { }
             }
         }
     }
@@ -1584,10 +1594,10 @@ internal fun PdfPageComposable(
         }
     }
 
-    var searchFocusedRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
-    var searchAllRects by remember { mutableStateOf<List<Rect>>(emptyList()) }
+    var searchFocusedRects by remember(targetPageId) { mutableStateOf<List<Rect>>(emptyList()) }
+    var searchAllRects by remember(targetPageId) { mutableStateOf<List<Rect>>(emptyList()) }
 
-    var keyboardAdjustmentOriginalOffset by remember { mutableStateOf<Float?>(null) }
+    var keyboardAdjustmentOriginalOffset by remember(targetPageId) { mutableStateOf<Float?>(null) }
 
     val mergedSearchFocusedRects = remember(searchFocusedRects) { searchFocusedRects }
     val mergedSearchAllRects = remember(searchAllRects) { searchAllRects }
@@ -1931,10 +1941,6 @@ internal fun PdfPageComposable(
             }
         }
     }
-
-    val errorSelection = stringResource(R.string.error_selection)
-    val errorOcrSelection = stringResource(R.string.error_ocr_selection)
-    val errorProcessingPage = stringResource(R.string.error_processing_page)
 
     BoxWithConstraints(
         modifier = modifier
@@ -2706,7 +2712,10 @@ internal fun PdfPageComposable(
                                             Timber.e(
                                                 e, "Long press: Error during OCR text selection"
                                             )
-                                            pageErrorMessage = errorOcrSelection
+                                            pageErrorMessage = context.getString(
+                                                R.string.error_ocr_selection,
+                                                e.readablePdfErrorDetail()
+                                            )
                                         } finally {
                                             isPerformingOcrForSelection = false
                                             ocrRipplePosition = null
@@ -2727,7 +2736,10 @@ internal fun PdfPageComposable(
                                         e,
                                         "Error during long press text selection on page $pageIndex"
                                     )
-                                    pageErrorMessage = errorSelection
+                                    pageErrorMessage = context.getString(
+                                        R.string.error_selection,
+                                        e.readablePdfErrorDetail()
+                                    )
                                     customMenuState = null
                                     selectionCharRange.value = null
                                     selectedWordScreenRects = emptyList()
@@ -3277,7 +3289,7 @@ internal fun PdfPageComposable(
                             val startOffset = offset
                             paginationPanFlingJob = coroutineScope.launch {
                                 try {
-                                    coroutineScope {
+                                    kotlinx.coroutines.coroutineScope {
                                         launch {
                                             if (flingX != 0f) {
                                                 Animatable(startOffset.x).animateDecay(flingX, decay) {
@@ -3718,10 +3730,12 @@ internal fun PdfPageComposable(
                 currentContainerMaxHeight,
                 density,
                 virtualPage,
+                targetPageId,
                 isVisible,
                 currentRenderedPageId
             ) {
                 if (!isVisible && !isVerticalScroll) return@LaunchedEffect
+                pageErrorMessage = null
 
                 val viewContainerWidthPx = with(density) { currentContainerMaxWidth.toPx().toInt() }
                 val viewContainerHeightPx =
@@ -3779,7 +3793,7 @@ internal fun PdfPageComposable(
 
                     val old = bitmapState
                     if (old != null && old !== finalBitmap) {
-                        if (old !== PdfThumbnailCache.get(pageIndex)) {
+                        if (old !== PdfThumbnailCache.get(targetPageId)) {
                             old.recycle()
                         }
                     }
@@ -3790,7 +3804,7 @@ internal fun PdfPageComposable(
                     return@LaunchedEffect
                 }
 
-                coroutineScope.launch {
+                kotlinx.coroutines.coroutineScope {
                     var localBitmap: Bitmap? = null
                     try {
                         val renderResult = withContext(Dispatchers.IO) {
@@ -3802,62 +3816,62 @@ internal fun PdfPageComposable(
                                 return@withContext null
                             }
                             val page = pdfDocumentItem.openPage(pdfPageIndex) ?: return@withContext null
-                            val rotation = page.getPageRotation()
-                            val screenDpi = (density.density * 160).roundToInt()
-                            val originalWidthPdfUnits = page.getPageWidthPoint()
-                            val originalHeightPdfUnits = page.getPageHeightPoint()
+                            try {
+                                val rotation = page.getPageRotation()
+                                val originalWidthPdfUnits = page.getPageWidthPoint()
+                                val originalHeightPdfUnits = page.getPageHeightPoint()
 
-                            if (originalWidthPdfUnits <= 0 || originalHeightPdfUnits <= 0) {
+                                if (originalWidthPdfUnits <= 0 || originalHeightPdfUnits <= 0) {
+                                    throw Exception("Invalid page dimensions")
+                                }
+
+                                val aspectRatio =
+                                    originalWidthPdfUnits.toFloat() / originalHeightPdfUnits.toFloat()
+                                var scaledWidth = viewContainerWidthPx
+                                var scaledHeight = (scaledWidth / aspectRatio).toInt()
+
+                                if (scaledHeight > viewContainerHeightPx) {
+                                    scaledHeight = viewContainerHeightPx
+                                    scaledWidth = (scaledHeight * aspectRatio).toInt()
+                                }
+
+                                if (scaledWidth == actualBitmapWidthPx &&
+                                    scaledHeight == actualBitmapHeightPx &&
+                                    bitmapState != null &&
+                                    currentRenderedPageId == targetPageId
+                                ) {
+                                    return@withContext null
+                                }
+
+                                val MAX_BASE_DIMEN = 3000
+
+                                val baseRenderScale = 1.5f
+
+                                var baseW = (scaledWidth * baseRenderScale).toInt()
+                                var baseH = (scaledHeight * baseRenderScale).toInt()
+
+                                if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
+                                    val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
+                                    baseW = (baseW * downScale).toInt().coerceAtLeast(1)
+                                    baseH = (baseH * downScale).toInt().coerceAtLeast(1)
+                                }
+
+                                Timber.d(
+                                    "Rendering page $pageIndex at ${baseW}x${baseH} (logical: ${scaledWidth}x${scaledHeight})"
+                                )
+                                val newBitmap = createBitmap(baseW, baseH)
+                                localBitmap = newBitmap
+                                page.renderPageBitmap(
+                                    newBitmap,
+                                    0, 0,
+                                    baseW, baseH,
+                                    true
+                                )
+
+                                Triple(newBitmap, rotation, Pair(scaledWidth, scaledHeight))
+                            } finally {
                                 page.close()
-                                throw Exception("Invalid page dimensions")
                             }
-
-                            val aspectRatio =
-                                originalWidthPdfUnits.toFloat() / originalHeightPdfUnits.toFloat()
-                            var scaledWidth = viewContainerWidthPx
-                            var scaledHeight = (scaledWidth / aspectRatio).toInt()
-
-                            if (scaledHeight > viewContainerHeightPx) {
-                                scaledHeight = viewContainerHeightPx
-                                scaledWidth = (scaledHeight * aspectRatio).toInt()
-                            }
-
-                            if (scaledWidth == actualBitmapWidthPx &&
-                                scaledHeight == actualBitmapHeightPx &&
-                                bitmapState != null &&
-                                currentRenderedPageId == targetPageId
-                            ) {
-                                page.close()
-                                return@withContext null
-                            }
-
-                            val MAX_BASE_DIMEN = 3000
-
-                            val baseRenderScale = 1.5f
-
-                            var baseW = (scaledWidth * baseRenderScale).toInt()
-                            var baseH = (scaledHeight * baseRenderScale).toInt()
-
-                            if (baseW > MAX_BASE_DIMEN || baseH > MAX_BASE_DIMEN) {
-                                val downScale = MAX_BASE_DIMEN.toFloat() / maxOf(baseW, baseH)
-                                baseW = (baseW * downScale).toInt().coerceAtLeast(1)
-                                baseH = (baseH * downScale).toInt().coerceAtLeast(1)
-                            }
-
-                            Timber.d(
-                                "Rendering page $pageIndex at ${baseW}x${baseH} (logical: ${scaledWidth}x${scaledHeight})"
-                            )
-                            val newBitmap = createBitmap(baseW, baseH)
-                            localBitmap = newBitmap
-                            page.renderPageBitmap(
-                                newBitmap,
-                                0, 0,
-                                baseW, baseH,
-                                true
-                            )
-                            page.close()
-
-                            Triple(newBitmap, rotation, Pair(scaledWidth, scaledHeight))
                         }
 
                         if (renderResult != null) {
@@ -3875,7 +3889,7 @@ internal fun PdfPageComposable(
 
                             withContext(Dispatchers.IO) {
                                 if (old != null && old !== newBitmap && !old.isRecycled) {
-                                    val cached = PdfThumbnailCache.get(pageIndex)
+                                    val cached = PdfThumbnailCache.get(targetPageId)
                                     if (old !== cached) {
                                         old.recycle()
                                     }
@@ -3885,14 +3899,17 @@ internal fun PdfPageComposable(
                                 val thumbHeight = newBitmap.height / 2
                                 if (thumbWidth > 0 && thumbHeight > 0) {
                                     PdfThumbnailCache.put(
-                                        pageIndex, newBitmap.scale(thumbWidth, thumbHeight)
+                                        targetPageId, newBitmap.scale(thumbWidth, thumbHeight)
                                     )
                                 }
                             }
                         }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        pageErrorMessage = errorProcessingPage
+                        pageErrorMessage = context.getString(
+                            R.string.error_processing_page,
+                            e.readablePdfErrorDetail()
+                        )
                     } finally {
                         isLoadingPage = false
                         localBitmap?.recycle()
@@ -4315,7 +4332,7 @@ internal fun PdfPageComposable(
 
                 else -> {
                     Text(
-                        text = stringResource(R.string.error_unable_to_display_page),
+                        text = stringResource(R.string.error_unable_to_display_page, pageIndex + 1),
                         modifier = Modifier
                             .padding(16.dp)
                             .align(Alignment.Center)

@@ -230,6 +230,7 @@ internal fun PdfVerticalReader(
     modifier: Modifier = Modifier,
     state: VerticalPdfReaderState,
     pdfDocument: StableHolder<ReaderDocument>,
+    documentKey: String,
     activeTheme: com.aryan.reader.ReaderTheme,
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
@@ -1557,7 +1558,7 @@ internal fun PdfVerticalReader(
             Layout(
                 content = {
                     visiblePages.forEach { page ->
-                        key(page.index) {
+                        key(documentKey, page.index) {
                             val isBookmarked by remember(bookmarkSet, page.index) {
                                 derivedStateOf {
                                     bookmarkSet.any { it.pageIndex == page.index }
@@ -1773,6 +1774,7 @@ internal fun PdfVerticalReader(
                                 }) {
                                 PdfPageComposable(
                                     pdfDocument = pdfDocument,
+                                    documentKey = documentKey,
                                     pageIndex = page.index,
                                     virtualPage = virtualPage,
                                     totalPages = totalPages,

@@ -40,6 +40,8 @@ class PdfAnnotationRepository(private val context: Context) {
                 Timber.tag("AnnotationSync").d("Start saving local JSON for $bookId. Count: ${annotations.size}")
 
                 if (annotations.isEmpty()) {
+                    val file = getFile(bookId)
+                    if (file.exists()) file.delete()
                     return@withContext
                 }
 

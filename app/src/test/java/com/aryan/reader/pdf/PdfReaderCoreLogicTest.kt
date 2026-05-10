@@ -1,7 +1,12 @@
 package com.aryan.reader.pdf
 
+import android.content.Context
 import android.graphics.RectF
 import android.graphics.Rect
+import androidx.compose.ui.graphics.Color
+import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.pdf.data.PdfAnnotationRepository
+import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrBlock
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrLine
@@ -13,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class PdfReaderCoreLogicTest {
@@ -99,6 +105,54 @@ class PdfReaderCoreLogicTest {
         val filename = getSuggestedFilename(originalName = null, isAnnotated = false)
 
         assertTrue(filename, filename.matches(Regex("Document_\\d{4}\\.pdf")))
+    }
+
+    @Test
+    fun `pdfRenderPageId separates same page across documents`() {
+        val firstDocumentPage = pdfRenderPageId("book-a", 0, VirtualPage.PdfPage(0))
+        val secondDocumentPage = pdfRenderPageId("book-b", 0, VirtualPage.PdfPage(0))
+
+        assertEquals("book-a:PDF_0", firstDocumentPage)
+        assertTrue(firstDocumentPage != secondDocumentPage)
+    }
+
+    @Test
+    fun `pdfRenderPageId preserves virtual page source identity`() {
+        assertEquals("book:PDF_12", pdfRenderPageId("book", 3, VirtualPage.PdfPage(12)))
+        assertEquals(
+            "book:BLANK_blank-1",
+            pdfRenderPageId("book", 3, VirtualPage.BlankPage("blank-1", 595, 842))
+        )
+    }
+
+    @Test
+    fun `canUsePdfSidecarsForBook only accepts loaded sidecars for active book`() {
+        assertTrue(canUsePdfSidecarsForBook("book-a", "book-a", areSidecarsLoaded = true))
+        assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-b", areSidecarsLoaded = true))
+        assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-a", areSidecarsLoaded = false))
+        assertEquals(false, canUsePdfSidecarsForBook(null, "book-a", areSidecarsLoaded = true))
+    }
+
+    @Test
+    fun `saveAnnotations deletes stored annotations when saving empty map`() = runTest {
+        val context: Context = RuntimeEnvironment.getApplication()
+        val repository = PdfAnnotationRepository(context)
+        val bookId = "empty-annotation-save-${System.nanoTime()}"
+        val annotation = PdfAnnotation(
+            type = AnnotationType.INK,
+            inkType = InkType.PEN,
+            pageIndex = 0,
+            points = listOf(PdfPoint(0.1f, 0.2f)),
+            color = Color.Black,
+            strokeWidth = 0.01f
+        )
+
+        repository.saveAnnotations(bookId, mapOf(0 to listOf(annotation)))
+        assertEquals(1, repository.loadAnnotations(bookId)[0]?.size)
+
+        repository.saveAnnotations(bookId, emptyMap())
+
+        assertEquals(emptyMap<Int, List<PdfAnnotation>>(), repository.loadAnnotations(bookId))
     }
 
     @Test

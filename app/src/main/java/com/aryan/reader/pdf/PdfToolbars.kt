@@ -47,6 +47,8 @@ import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.epubreader.SystemUiMode
 import kotlin.collections.isNotEmpty
 
+internal val PdfTabStripHeight = 44.dp
+
 private val pdfToolbarTools = setOf(
     PdfReaderTool.DICTIONARY,
     PdfReaderTool.THEME,
@@ -534,7 +536,7 @@ internal fun PdfTopBar(
 
                                 if (!hiddenTools.contains(PdfReaderTool.REFLOW.name)) {
                                     DropdownMenuItem(
-                                        text = { Text(when { isReflowingThisBook -> stringResource(R.string.generating_reflow_progress); hasReflowFile -> stringResource(R.string.action_open_text_view); else -> stringResource(R.string.action_generate_text_view) }) },
+                                        text = { Text(when { isReflowingThisBook -> stringResource(R.string.generating_text_view); hasReflowFile -> stringResource(R.string.action_open_text_view); else -> stringResource(R.string.action_generate_text_view) }) },
                                         enabled = isPdfDocumentLoaded && !isReflowingThisBook,
                                         onClick = { showMoreMenu = false; onReflowAction() },
                                         leadingIcon = { Icon(painterResource(id = R.drawable.format_size), contentDescription = null, modifier = Modifier.size(20.dp)) }
@@ -588,7 +590,7 @@ internal fun PdfTopBar(
                 }
                 if (isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF) {
                     LazyRow(
-                        modifier = Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth().height(PdfTabStripHeight).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
                         verticalAlignment = Alignment.Bottom
                     ) {
                         items(openTabs, key = { it.bookId }) { tab ->
@@ -598,7 +600,7 @@ internal fun PdfTopBar(
 
                             Row(
                                 modifier = Modifier
-                                    .height(if (isSelected) 44.dp else 36.dp)
+                                    .height(if (isSelected) PdfTabStripHeight else 36.dp)
                                     .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                                     .background(bgColor)
                                     .clickable { onTabClick(tab.bookId) }

@@ -76,6 +76,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.pdf.data.VirtualPage
 
 private const val MAX_FIXED_RECURSION = 128
 
@@ -281,6 +282,7 @@ internal fun PdfTocTreeItem(
 @Composable
 internal fun PdfNavigationDrawerContent(
     pdfDocument: ReaderDocument?,
+    documentKey: String,
     flatTableOfContents: List<TocEntry>,
     bookmarks: Set<PdfBookmark>,
     userHighlights: List<PdfUserHighlight>,
@@ -859,13 +861,16 @@ internal fun PdfNavigationDrawerContent(
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                var thumb by remember { mutableStateOf(PdfThumbnailCache.get(pageIdx)) }
+                                                val thumbPageId = remember(documentKey, pageIdx) {
+                                                    pdfRenderPageId(documentKey, pageIdx, VirtualPage.PdfPage(pageIdx))
+                                                }
+                                                var thumb by remember(thumbPageId) { mutableStateOf(PdfThumbnailCache.get(thumbPageId)) }
 
-                                                LaunchedEffect(pageIdx, pdfDocument) {
+                                                LaunchedEffect(thumbPageId, pdfDocument) {
                                                     if (thumb == null && pdfDocument != null) {
                                                         withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                             try {
-                                                                val cached = PdfThumbnailCache.get(pageIdx)
+                                                                val cached = PdfThumbnailCache.get(thumbPageId)
                                                                 if (cached != null) {
                                                                     thumb = cached
                                                                 } else {
@@ -878,7 +883,7 @@ internal fun PdfNavigationDrawerContent(
                                                                         val bmp = createBitmap(thumbW, thumbH)
                                                                         bmp.eraseColor(android.graphics.Color.WHITE)
                                                                         p.renderPageBitmap(bmp, 0, 0, thumbW, thumbH, false)
-                                                                        PdfThumbnailCache.put(pageIdx, bmp)
+                                                                        PdfThumbnailCache.put(thumbPageId, bmp)
                                                                         thumb = bmp
                                                                     }
                                                                 }
