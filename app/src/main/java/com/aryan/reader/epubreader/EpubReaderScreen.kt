@@ -154,10 +154,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.AiDefinitionResult
-import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.BuiltInThemes
-import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.ReaderScreenOrientationEffect
@@ -639,7 +637,9 @@ fun EpubReaderHost(
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
-    var bannerMessage by remember { mutableStateOf<BannerMessage?>(null) }
+    fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
+        viewModel.showBanner(message, isError, isPersistent)
+    }
     DisposableEffect(window, view) {
         onDispose {
             window?.let {
@@ -1140,13 +1140,6 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(bannerMessage) {
-        if (bannerMessage != null) {
-            delay(2500L)
-            bannerMessage = null
-        }
-    }
-
     val configuration = LocalConfiguration.current
     var lastOrientation by remember { mutableIntStateOf(configuration.orientation) }
 
@@ -1180,7 +1173,7 @@ fun EpubReaderHost(
                 showInsufficientCreditsDialog = true
                 ttsController.stop()
             } else {
-                bannerMessage = BannerMessage(message, isError = true)
+                showBanner(message, isError = true)
             }
         }
     }
@@ -3386,8 +3379,7 @@ fun EpubReaderHost(
                             )
                             runRecap(chapterIndex, charsScrolled.toInt())
                         } else {
-                            bannerMessage =
-                                BannerMessage("Wait for book to load fully.", isError = true)
+                            showBanner("Wait for book to load fully.", isError = true)
                         }
                     }
                 }
@@ -5251,7 +5243,7 @@ fun EpubReaderHost(
                                     showBars = false
                                     startPageThumbnail = null
                                 } else {
-                                    bannerMessage = BannerMessage("Book is not paginated yet.")
+                                    showBanner("Book is not paginated yet.")
                                 }
                             }
                         }
@@ -5499,7 +5491,7 @@ fun EpubReaderHost(
                                     showBars = false
                                     startPageThumbnail = null
                                 } else {
-                                    bannerMessage = BannerMessage("Book is not paginated yet.")
+                                    showBanner("Book is not paginated yet.")
                                 }
                             }
                         }
@@ -5800,8 +5792,6 @@ fun EpubReaderHost(
                         onDismiss = { activeFootnoteHtml = null }
                     )
                 }
-
-                CustomTopBanner(bannerMessage = bannerMessage)
             }
         }
 

@@ -198,9 +198,7 @@ import com.aryan.reader.AiDefinitionPopup
 import com.aryan.reader.AiFeature
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.AiHubBottomSheet
-import com.aryan.reader.BannerMessage
 import com.aryan.reader.BuildConfig
-import com.aryan.reader.CustomTopBanner
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
@@ -515,9 +513,8 @@ fun PdfViewerScreen(
 
     val customFonts by viewModel.customFonts.collectAsState()
 
-    var bannerMessage by remember { mutableStateOf<BannerMessage?>(null) }
-    fun showBanner(message: String, isError: Boolean = false) {
-        bannerMessage = BannerMessage(message, isError = isError)
+    fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
+        viewModel.showBanner(message, isError, isPersistent)
     }
     val onOcrStateChange: (Boolean) -> Unit = {}
 
@@ -828,14 +825,6 @@ fun PdfViewerScreen(
 
     LaunchedEffect(errorMessage) {
         errorMessage?.let { showBanner(it, isError = true) }
-    }
-
-    LaunchedEffect(bannerMessage) {
-        val message = bannerMessage ?: return@LaunchedEffect
-        if (!message.isPersistent) {
-            delay(2500L)
-            bannerMessage = null
-        }
     }
 
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
@@ -6277,8 +6266,6 @@ fun PdfViewerScreen(
                         }
                     )
                 }
-
-                CustomTopBanner(bannerMessage = bannerMessage)
             }
         }
     }

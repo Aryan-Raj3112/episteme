@@ -115,6 +115,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -153,6 +154,8 @@ private data class CachedSpeechBubble(
     val bottomFraction: Float,
     val maskBitmap: Bitmap?
 )
+
+private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
 
 @kotlin.OptIn(ExperimentalSerializationApi::class)
 @UnstableApi
@@ -1174,6 +1177,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
         remoteConfigRepository.init()
+
+        viewModelScope.launch {
+            _internalState
+                .map { it.bannerMessage }
+                .distinctUntilChanged()
+                .collectLatest { banner ->
+                    if (banner != null && !banner.isPersistent) {
+                        delay(BANNER_AUTO_DISMISS_MILLIS)
+                        _internalState.update { state ->
+                            if (state.bannerMessage == banner) {
+                                state.copy(bannerMessage = null)
+                            } else {
+                                state
+                            }
+                        }
+                    }
+                }
+        }
 
         if (_internalState.value.syncedFolders.isNotEmpty()) {
             triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
@@ -3544,8 +3565,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(bannerMessage = null) }
     }
 
-    fun showBanner(message: String, isError: Boolean = false) {
-        _internalState.update { it.copy(bannerMessage = BannerMessage(message, isError)) }
+    fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
+        _internalState.update { it.copy(bannerMessage = BannerMessage(message, isError, isPersistent)) }
     }
 
     fun errorMessageShown() {

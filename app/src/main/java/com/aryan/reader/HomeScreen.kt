@@ -141,7 +141,6 @@ import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
@@ -223,15 +222,6 @@ fun HomeScreen(
             if (uiState.isRequestingDrivePermission) {
                 val intent = viewModel.getDriveSignInIntent(context)
                 drivePermissionLauncher.launch(intent)
-            }
-        }
-
-        LaunchedEffect(uiState.bannerMessage) {
-            uiState.bannerMessage?.let { msg ->
-                if (!msg.isPersistent) {
-                    delay(3000L)
-                    viewModel.bannerMessageShown()
-                }
             }
         }
 

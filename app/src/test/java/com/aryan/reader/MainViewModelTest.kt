@@ -984,6 +984,46 @@ class MainViewModelTest {
         assertEquals(null, clearedState.bannerMessage)
     }
 
+    @Test
+    fun `banner auto dismiss timer is owned by view model and restarts for replacement`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.showBanner("First")
+        viewModel.uiState.first { it.bannerMessage?.message == "First" }
+        runCurrent()
+
+        advanceTimeBy(2_000L)
+        viewModel.showBanner("Second")
+        viewModel.uiState.first { it.bannerMessage?.message == "Second" }
+        runCurrent()
+
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals("Second", viewModel.uiState.value.bannerMessage?.message)
+
+        advanceTimeBy(2_000L)
+        runCurrent()
+        assertEquals(null, viewModel.uiState.value.bannerMessage)
+    }
+
+    @Test
+    fun `persistent banner is not auto dismissed`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.showBanner("Syncing", isPersistent = true)
+        viewModel.uiState.first { it.bannerMessage?.message == "Syncing" }
+        runCurrent()
+
+        advanceTimeBy(3_000L)
+        runCurrent()
+
+        assertEquals("Syncing", viewModel.uiState.value.bannerMessage?.message)
+    }
+
     private fun recentFile(
         id: String,
         type: FileType = FileType.EPUB,

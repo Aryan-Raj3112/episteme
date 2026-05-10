@@ -231,6 +231,8 @@ fun AppNavigation(
                             CircularProgressIndicator()
                         }
                     }
+
+                    CustomTopBanner(bannerMessage = uiState.bannerMessage)
                 }
             } else if (uiState.isLoading) {
                 Timber.d("PDF URI is null but loading is in progress. Showing loading indicator.")
@@ -307,6 +309,8 @@ fun AppNavigation(
                                 CircularProgressIndicator()
                             }
                         }
+
+                        CustomTopBanner(bannerMessage = uiState.bannerMessage)
                     }
                 }
                 isLoading -> {
