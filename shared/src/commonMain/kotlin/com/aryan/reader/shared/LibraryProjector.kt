@@ -32,13 +32,16 @@ class LibraryProjector {
         val existingIds = state.books.mapTo(mutableSetOf()) { it.id }
         val imported = files.mapIndexedNotNull { index, file ->
             val id = file.path ?: file.name
-            if (!existingIds.add(id)) {
+            val type = file.name.toFileType()
+            if (type == FileType.UNKNOWN) {
+                null
+            } else if (!existingIds.add(id)) {
                 null
             } else {
                 BookItem(
                     id = id,
                     path = file.path,
-                    type = file.name.toFileType(),
+                    type = type,
                     displayName = file.name,
                     timestamp = now + index,
                     title = file.name.substringBeforeLast('.'),
@@ -48,9 +51,14 @@ class LibraryProjector {
                 )
             }
         }
+        val hasUnsupportedFiles = files.any { it.name.toFileType() == FileType.UNKNOWN }
         return state.copy(
             books = imported + state.books,
-            message = if (imported.isEmpty()) "Those files are already in the desktop library." else "Imported ${imported.size} file(s). Reader support comes later."
+            message = when {
+                imported.isNotEmpty() -> "Imported ${imported.size} file(s). Reader support comes later."
+                hasUnsupportedFiles -> "No supported files were imported."
+                else -> "Those files are already in the desktop library."
+            }
         )
     }
 

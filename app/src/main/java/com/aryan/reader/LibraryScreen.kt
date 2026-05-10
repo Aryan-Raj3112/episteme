@@ -1598,7 +1598,7 @@ private fun LibraryListItem(
     val context = LocalContext.current
     val placeholder = when (item.type) {
         FileType.PDF -> R.drawable.pdf_placeholder
-        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT -> R.drawable.epub_placeholder
+        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT, FileType.UNKNOWN -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {
         item.coverImagePath?.let { File(it) } ?: placeholder
@@ -2147,7 +2147,7 @@ private fun EditFolderFiltersDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    FileType.entries.forEach { type ->
+                    ANDROID_SYNCABLE_FILE_TYPES.forEach { type ->
                         val isSelected = type in selectedTypes
                         FilterChip(
                             selected = isSelected,
@@ -2225,7 +2225,7 @@ fun LibraryFilterSheet(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FileType.entries.forEach { type ->
+                ANDROID_READABLE_FILE_TYPES.forEach { type ->
                     FilterChip(
                         selected = type in currentFilters.fileTypes,
                         onClick = {

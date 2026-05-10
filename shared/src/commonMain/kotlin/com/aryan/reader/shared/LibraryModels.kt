@@ -68,7 +68,7 @@ data class SyncedFolder(
     val uriString: String,
     val name: String,
     val lastScanTime: Long,
-    val allowedFileTypes: Set<FileType> = FileType.entries.toSet()
+    val allowedFileTypes: Set<FileType> = SharedFileCapabilities.knownFileTypes
 )
 
 data class BookItem(

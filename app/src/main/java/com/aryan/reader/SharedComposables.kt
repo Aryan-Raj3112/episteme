@@ -931,7 +931,7 @@ fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolea
         border = if (overlay) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
     ) {
         Text(
-            text = type.name.uppercase(),
+            text = if (type == FileType.UNKNOWN) "FILE" else type.name.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)

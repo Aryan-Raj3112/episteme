@@ -79,14 +79,14 @@ class FolderSyncWorker(
                             try { allowedFileTypes.add(FileType.valueOf(typesArray.getString(j))) } catch (_: Exception) {}
                         }
                     } else {
-                        allowedFileTypes.addAll(FileType.entries)
+                        allowedFileTypes.addAll(ANDROID_SYNCABLE_FILE_TYPES)
                     }
-                    folders.add(Pair(uri, allowedFileTypes))
+                    folders.add(Pair(uri, allowedFileTypes.filterTo(mutableSetOf()) { it in ANDROID_SYNCABLE_FILE_TYPES }))
                 }
             } catch (e: Exception) { Timber.e(e) }
         } else {
             val single = prefs.getString("synced_folder_uri", null)
-            if (single != null) folders.add(Pair(single, FileType.entries.toSet()))
+            if (single != null) folders.add(Pair(single, ANDROID_SYNCABLE_FILE_TYPES))
         }
 
         if (folders.isEmpty()) {

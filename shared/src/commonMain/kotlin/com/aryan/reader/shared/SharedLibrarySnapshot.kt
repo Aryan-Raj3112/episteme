@@ -288,8 +288,9 @@ private fun JsonElement.asSyncedFolderOrNull(): SyncedFolder? {
         lastScanTime = obj.long("lastScanTime"),
         allowedFileTypes = obj.stringArray("allowedFileTypes")
             .mapNotNull { runCatching { FileType.valueOf(it) }.getOrNull() }
+            .filter { it in SharedFileCapabilities.knownFileTypes }
             .toSet()
-            .ifEmpty { FileType.entries.toSet() }
+            .ifEmpty { SharedFileCapabilities.knownFileTypes }
     )
 }
 
@@ -380,7 +381,11 @@ private fun SyncedFolder.toJsonObject(): JsonObject {
             "uriString" to JsonPrimitive(uriString),
             "name" to JsonPrimitive(name),
             "lastScanTime" to JsonPrimitive(lastScanTime),
-            "allowedFileTypes" to allowedFileTypes.map { it.name }.sorted().asJsonArray()
+            "allowedFileTypes" to allowedFileTypes
+                .filter { it in SharedFileCapabilities.knownFileTypes }
+                .map { it.name }
+                .sorted()
+                .asJsonArray()
         )
     )
 }

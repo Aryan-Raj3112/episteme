@@ -166,6 +166,11 @@ fun AppNavigation(
                         navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
                     }
                 }
+                FileType.UNKNOWN -> {
+                    if (currentRoute == AppDestinations.PDF_VIEWER_ROUTE || currentRoute == AppDestinations.EPUB_READER_ROUTE) {
+                        navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
+                    }
+                }
             }
         }
     }

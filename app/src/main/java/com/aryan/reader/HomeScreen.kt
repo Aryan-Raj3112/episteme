@@ -809,7 +809,7 @@ fun RecentFileCard(
     val authorText = item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) } ?: " "
     val placeholder = when (item.type) {
         FileType.PDF -> R.drawable.pdf_placeholder
-        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT -> R.drawable.epub_placeholder
+        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT, FileType.UNKNOWN -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {
         item.coverImagePath?.let { File(it) } ?: placeholder

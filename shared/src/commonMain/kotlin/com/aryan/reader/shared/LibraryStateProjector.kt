@@ -306,13 +306,16 @@ fun SharedReaderScreenState.withImportedFiles(
     val existingIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
     val imported = files.mapIndexedNotNull { index, file ->
         val id = file.localPath ?: file.uriString ?: file.name
-        if (!existingIds.add(id)) {
+        val type = file.name.toFileType()
+        if (type == FileType.UNKNOWN) {
+            null
+        } else if (!existingIds.add(id)) {
             null
         } else {
             BookItem(
                 id = id,
                 path = file.localPath ?: file.uriString,
-                type = file.name.toFileType(),
+                type = type,
                 displayName = file.name,
                 timestamp = now + index,
                 title = file.name.substringBeforeLast('.'),
@@ -322,13 +325,14 @@ fun SharedReaderScreenState.withImportedFiles(
             )
         }
     }
+    val hasUnsupportedFiles = files.any { it.name.toFileType() == FileType.UNKNOWN }
     return copy(
         rawLibraryBooks = imported + rawLibraryBooks,
         bannerMessage = BannerMessage(
-            if (imported.isEmpty()) {
-                "Those files are already in the library."
-            } else {
-                "Imported ${imported.size} file(s)."
+            when {
+                imported.isNotEmpty() -> "Imported ${imported.size} file(s)."
+                hasUnsupportedFiles -> "No supported files were imported."
+                else -> "Those files are already in the library."
             }
         )
     )

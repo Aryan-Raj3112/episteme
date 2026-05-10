@@ -8,7 +8,11 @@ import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.paginatedreader.Locator
 import java.util.Date
 
-data class BannerMessage(val message: String, val isError: Boolean = false, val isPersistent: Boolean = false)
+typealias BannerMessage = com.aryan.reader.shared.BannerMessage
+typealias UserData = com.aryan.reader.shared.UserData
+typealias AppThemeMode = com.aryan.reader.shared.AppThemeMode
+typealias AppContrastOption = com.aryan.reader.shared.AppContrastOption
+typealias CustomAppTheme = com.aryan.reader.shared.CustomAppTheme
 
 data class ImportResult(
     val internalUri: Uri,
@@ -17,35 +21,10 @@ data class ImportResult(
     val bundleResult: CalibreBundleResult? = null
 )
 
-data class UserData(
-    val uid: String,
-    val displayName: String?,
-    val photoUrl: String?,
-    val email: String?
-)
-
 data class NavigationEvent(
     val route: String,
     val bookId: String? = null,
     val uri: Uri? = null
-)
-
-enum class AppThemeMode {
-    SYSTEM,
-    LIGHT,
-    DARK
-}
-
-enum class AppContrastOption(val value: Double) {
-    STANDARD(0.0),
-    MEDIUM(0.5),
-    HIGH(1.0)
-}
-
-data class CustomAppTheme(
-    val id: String,
-    val name: String,
-    val seedColor: androidx.compose.ui.graphics.Color
 )
 
 data class DeviceItem(val deviceId: String, val deviceName: String, val lastSeen: Date?)

@@ -521,7 +521,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             libraryFilters = LibraryFilters(
                 fileTypes = prefs.getStringSet(KEY_FILTER_FILE_TYPES, emptySet())?.mapNotNull {
                     runCatching { FileType.valueOf(it) }.getOrNull()
-                }?.toSet() ?: emptySet(),
+                }?.filterTo(mutableSetOf()) { it in ANDROID_READABLE_FILE_TYPES } ?: emptySet(),
                 sourceFolders = prefs.getStringSet(KEY_FILTER_FOLDERS, emptySet()) ?: emptySet(),
                 readStatus = runCatching {
                     ReadStatusFilter.valueOf(prefs.getString(KEY_FILTER_READ_STATUS, ReadStatusFilter.ALL.name) ?: ReadStatusFilter.ALL.name)
@@ -1905,16 +1905,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateLibraryFilters(filters: LibraryFilters) {
-        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.FiltersChanged(filters.toSharedLibraryFilters())) }
+        val sanitizedFilters = filters.copy(
+            fileTypes = filters.fileTypes.filterTo(mutableSetOf()) { it in ANDROID_READABLE_FILE_TYPES }
+        )
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.FiltersChanged(sanitizedFilters.toSharedLibraryFilters())) }
 
         prefs.edit {
-            putStringSet(KEY_FILTER_FILE_TYPES, filters.fileTypes.map { it.name }.toSet())
-            putStringSet(KEY_FILTER_FOLDERS, filters.sourceFolders)
-            putString(KEY_FILTER_READ_STATUS, filters.readStatus.name)
-            putStringSet(KEY_FILTER_TAG_IDS, filters.tagIds)
+            putStringSet(KEY_FILTER_FILE_TYPES, sanitizedFilters.fileTypes.map { it.name }.toSet())
+            putStringSet(KEY_FILTER_FOLDERS, sanitizedFilters.sourceFolders)
+            putString(KEY_FILTER_READ_STATUS, sanitizedFilters.readStatus.name)
+            putStringSet(KEY_FILTER_TAG_IDS, sanitizedFilters.tagIds)
         }
 
-        Timber.d("Library filters updated and persisted: $filters")
+        Timber.d("Library filters updated and persisted: $sanitizedFilters")
     }
 
     suspend fun sharePdf(
@@ -2357,7 +2360,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val oldTime = prefs.getLong(KEY_LAST_FOLDER_SCAN_TIME, 0L)
             if (oldUri != null) {
                 val name = getDisplayPathFromUri(appContext, oldUri)
-                val migrated = SyncedFolder(oldUri, name, oldTime, FileType.entries.toSet())
+                val migrated = SyncedFolder(oldUri, name, oldTime, ANDROID_SYNCABLE_FILE_TYPES)
                 folders.add(migrated)
                 saveSyncedFoldersToPrefs(folders)
 
@@ -2381,7 +2384,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             } catch (_: Exception) {}
                         }
                     } else {
-                        allowedFileTypes.addAll(FileType.entries)
+                        allowedFileTypes.addAll(ANDROID_SYNCABLE_FILE_TYPES)
                     }
 
                     folders.add(
@@ -2389,7 +2392,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             uriString = obj.getString("uri"),
                             name = obj.getString("name"),
                             lastScanTime = obj.optLong("lastScanTime", 0L),
-                            allowedFileTypes = allowedFileTypes
+                            allowedFileTypes = allowedFileTypes.filterTo(mutableSetOf()) { it in ANDROID_SYNCABLE_FILE_TYPES }
                         )
                     )
                 }
@@ -2408,7 +2411,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             obj.put("name", folder.name)
             obj.put("lastScanTime", folder.lastScanTime)
             val typesArray = JSONArray()
-            folder.allowedFileTypes.forEach { typesArray.put(it.name) }
+            folder.allowedFileTypes
+                .filter { it in ANDROID_SYNCABLE_FILE_TYPES }
+                .forEach { typesArray.put(it.name) }
             obj.put("allowedFileTypes", typesArray)
             jsonArray.put(obj)
         }
@@ -2436,7 +2441,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 val name = getDisplayPathFromUri(appContext, folderUri.toString())
-                val newFolder = SyncedFolder(folderUri.toString(), name, 0L, FileType.entries.toSet())
+                val newFolder = SyncedFolder(folderUri.toString(), name, 0L, ANDROID_SYNCABLE_FILE_TYPES)
                 val newStats = currentFolders + newFolder
 
                 saveSyncedFoldersToPrefs(newStats)
@@ -2589,13 +2594,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val currentFolders = _internalState.value.syncedFolders.toMutableList()
             val index = currentFolders.indexOfFirst { it.uriString == folder.uriString }
             if (index != -1) {
-                val updatedFolder = folder.copy(allowedFileTypes = newFilters)
+                val sanitizedFilters = newFilters.filterTo(mutableSetOf()) { it in ANDROID_SYNCABLE_FILE_TYPES }
+                val updatedFolder = folder.copy(allowedFileTypes = sanitizedFilters)
                 currentFolders[index] = updatedFolder
                 saveSyncedFoldersToPrefs(currentFolders)
                 _internalState.update { it.copy(syncedFolders = currentFolders) }
 
                 val filesToRemove = recentFilesRepository.getFilesBySourceFolder(folder.uriString)
-                    .filter { it.type !in newFilters }
+                    .filter { it.type !in sanitizedFilters }
 
                 if (filesToRemove.isNotEmpty()) {
                     Timber.d("Removing ${filesToRemove.size} files that no longer match the filter for folder ${folder.name}")
@@ -3642,6 +3648,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             var importedCount = 0
+            var unsupportedCount = 0
 
             withContext(Dispatchers.IO) {
                 for (externalUri in uris) {
@@ -3666,15 +3673,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                         if (hash != null && recentFilesRepository.getFileByBookId(hash) != null) {
                             importedCount++
+                        } else if (getFileTypeFromUri(externalUri, appContext) == null) {
+                            unsupportedCount++
                         }
                     }
                 }
             }
 
             _internalState.update {
+                val message = when {
+                    importedCount > 0 -> "Imported $importedCount books. You can find them in the Library tab."
+                    unsupportedCount > 0 -> appContext.getString(R.string.error_unsupported_file_type)
+                    else -> appContext.getString(R.string.error_import_file_failed)
+                }
                 it.copy(
                     bannerMessage = BannerMessage(
-                        message = "Imported $importedCount books. You can find them in the Library tab.",
+                        message = message,
+                        isError = importedCount == 0,
                         isPersistent = false
                     )
                 )
@@ -3733,8 +3748,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             return@launch
                         }
                     }
+                    val messageRes = if (getFileTypeFromUri(externalUri, appContext) == null) {
+                        R.string.error_unsupported_file_type
+                    } else {
+                        R.string.error_import_file_failed
+                    }
                     _internalState.update {
-                        it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
+                        it.copy(isLoading = false, errorMessage = appContext.getString(messageRes))
                     }
                 }
             } catch (e: SecurityException) {
@@ -3829,7 +3849,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _navigationEvent.send(NavigationEvent("pdf_viewer", bookId, uri))
                 stateUpdateDeferred.complete(true)
 
-            } else {
+            } else if (type in EPUB_READER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
                 try {
                     val epubBook = restoreEpubReaderBook(type, bookId, item.displayName, uri)
@@ -3876,6 +3896,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     stateUpdateDeferred.complete(false)
                 }
+            } else {
+                _internalState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = appContext.getString(R.string.error_unsupported_file_type),
+                        selectedFileType = null
+                    )
+                }
+                stateUpdateDeferred.complete(false)
             }
         }
     }
@@ -4121,6 +4150,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     }
                 }
+            } else {
+                _internalState.update {
+                    it.copy(
+                        selectedPdfUri = null,
+                        selectedEpubUri = null,
+                        selectedEpubBook = null,
+                        selectedFileType = null,
+                        selectedBookId = null,
+                        isLoading = false,
+                        errorMessage = appContext.getString(R.string.error_unsupported_file_type)
+                    )
+                }
             }
         }
     }
@@ -4208,6 +4249,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile START | type=$type")
         viewModelScope.launch {
+            if (type !in EPUB_READER_FILE_TYPES) {
+                _internalState.update {
+                    it.copy(
+                        errorMessage = appContext.getString(R.string.error_unsupported_file_type),
+                        isLoading = false
+                    )
+                }
+                return@launch
+            }
             if (!_internalState.value.isLoading) {
                 _internalState.update { it.copy(isLoading = true, errorMessage = null) }
             }

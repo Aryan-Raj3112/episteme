@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,6 +21,7 @@ class FileTypeResolverTest {
         assertEquals(FileType.HTML, resolveFileTypeFromName("table.csv"))
         assertEquals(FileType.HTML, resolveFileTypeFromName("script.kt"))
         assertEquals(FileType.HTML, resolveFileTypeFromName("payload.json.txt"))
+        assertEquals(com.aryan.reader.shared.SharedFileCapabilities.resolveFileTypeForName("payload.json.txt"), resolveFileTypeFromName("payload.json.txt"))
     }
 
     @Test
@@ -40,6 +42,7 @@ class FileTypeResolverTest {
     fun `plain txt remains txt when inner extension is unsupported`() {
         assertEquals(FileType.TXT, resolveFileTypeFromName("notes.txt"))
         assertEquals(FileType.TXT, resolveFileTypeFromName("archive.unknown.txt"))
+        assertNull(resolveFileTypeFromName("archive.zip"))
     }
 
     @Test

@@ -508,6 +508,7 @@
     <string name="error_recent_item_not_found">Could not find recent item.</string>
     <string name="error_import_file_failed">Failed to import file.</string>
     <string name="error_file_location_not_found">Could not find file location.</string>
+    <string name="error_unsupported_file_type">This file type is not supported.</string>
     <!-- "Text view" is the name of the PDF reflow feature in this app. -->
     <string name="error_load_generated_text_view">Failed to load generated text view.</string>
     <!-- "Text view" is the name of the PDF reflow feature in this app. -->

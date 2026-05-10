@@ -244,83 +244,59 @@ fun SharedShelf.toAndroidShelf(
 }
 
 fun FileType.toSharedFileType(): SharedFileType {
-    return runCatching { SharedFileType.valueOf(name) }.getOrDefault(SharedFileType.UNKNOWN)
+    return this
 }
 
 fun SharedFileType.toAndroidFileType(): FileType {
-    return runCatching { FileType.valueOf(name) }.getOrDefault(FileType.EPUB)
+    return this
 }
 
 fun RenderMode.toSharedRenderMode(): SharedRenderMode {
-    return SharedRenderMode.valueOf(name)
+    return this
 }
 
 fun SharedRenderMode.toAndroidRenderMode(): RenderMode {
-    return RenderMode.valueOf(name)
+    return this
 }
 
 fun AddBooksSource.toSharedAddBooksSource(): SharedAddBooksSource {
-    return SharedAddBooksSource.valueOf(name)
+    return this
 }
 
 fun SharedAddBooksSource.toAndroidAddBooksSource(): AddBooksSource {
-    return AddBooksSource.valueOf(name)
+    return this
 }
 
 fun SortOrder.toSharedSortOrder(): SharedSortOrder {
-    return SharedSortOrder.valueOf(name)
+    return this
 }
 
 fun SharedSortOrder.toAndroidSortOrder(): SortOrder {
-    return SortOrder.valueOf(name)
+    return this
 }
 
 fun ReadStatusFilter.toSharedReadStatusFilter(): SharedReadStatusFilter {
-    return SharedReadStatusFilter.valueOf(name)
+    return this
 }
 
 fun SharedReadStatusFilter.toAndroidReadStatusFilter(): ReadStatusFilter {
-    return ReadStatusFilter.valueOf(name)
+    return this
 }
 
 fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters {
-    return SharedLibraryFilters(
-        fileTypes = fileTypes.mapTo(mutableSetOf()) { it.toSharedFileType() },
-        sourceFolders = sourceFolders,
-        readStatus = readStatus.toSharedReadStatusFilter(),
-        tagIds = tagIds
-    )
+    return this
 }
 
 fun SharedLibraryFilters.toAndroidLibraryFilters(): LibraryFilters {
-    return LibraryFilters(
-        fileTypes = fileTypes.mapNotNullTo(mutableSetOf()) { type ->
-            runCatching { FileType.valueOf(type.name) }.getOrNull()
-        },
-        sourceFolders = sourceFolders,
-        readStatus = readStatus.toAndroidReadStatusFilter(),
-        tagIds = tagIds
-    )
+    return this
 }
 
 fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder {
-    return SharedSyncedFolder(
-        uriString = uriString,
-        name = name,
-        lastScanTime = lastScanTime,
-        allowedFileTypes = allowedFileTypes.mapTo(mutableSetOf()) { it.toSharedFileType() }
-    )
+    return this
 }
 
 fun SharedSyncedFolder.toAndroidSyncedFolder(): SyncedFolder {
-    return SyncedFolder(
-        uriString = uriString,
-        name = name,
-        lastScanTime = lastScanTime,
-        allowedFileTypes = allowedFileTypes.mapNotNullTo(mutableSetOf()) { type ->
-            runCatching { FileType.valueOf(type.name) }.getOrNull()
-        }
-    )
+    return this
 }
 
 private fun SharedShelfType.toAndroidShelfType(): ShelfType {
@@ -328,41 +304,29 @@ private fun SharedShelfType.toAndroidShelfType(): ShelfType {
 }
 
 fun BannerMessage.toSharedBannerMessage(): SharedBannerMessage {
-    return SharedBannerMessage(
-        message = message,
-        isError = isError,
-        isPersistent = isPersistent
-    )
+    return this
 }
 
 fun AppThemeMode.toSharedAppThemeMode(): SharedAppThemeMode {
-    return SharedAppThemeMode.valueOf(name)
+    return this
 }
 
 fun SharedAppThemeMode.toAndroidAppThemeMode(): AppThemeMode {
-    return AppThemeMode.valueOf(name)
+    return this
 }
 
 fun AppContrastOption.toSharedAppContrastOption(): SharedAppContrastOption {
-    return SharedAppContrastOption.valueOf(name)
+    return this
 }
 
 fun SharedAppContrastOption.toAndroidAppContrastOption(): AppContrastOption {
-    return AppContrastOption.valueOf(name)
+    return this
 }
 
 fun CustomAppTheme.toSharedCustomAppTheme(): SharedCustomAppTheme {
-    return SharedCustomAppTheme(
-        id = id,
-        name = name,
-        seedColor = seedColor
-    )
+    return this
 }
 
 fun SharedCustomAppTheme.toAndroidCustomAppTheme(): CustomAppTheme {
-    return CustomAppTheme(
-        id = id,
-        name = name,
-        seedColor = seedColor
-    )
+    return this
 }

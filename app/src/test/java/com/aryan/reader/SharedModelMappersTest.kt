@@ -9,6 +9,7 @@ import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfType as SharedShelfType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class SharedModelMappersTest {
@@ -106,8 +107,13 @@ class SharedModelMappersTest {
 
         assertEquals(FileType.PDF, SharedFileType.PDF.toAndroidFileType())
         assertEquals(SharedFileType.CBZ, FileType.CBZ.toSharedFileType())
+        assertSame(FileType.UNKNOWN, SharedFileType.UNKNOWN.toAndroidFileType())
+        assertSame(filters, filters.toSharedLibraryFilters())
+        assertSame(folder, folder.toSharedSyncedFolder())
         assertEquals(filters, filters.toSharedLibraryFilters().toAndroidLibraryFilters())
         assertEquals(folder, folder.toSharedSyncedFolder().toAndroidSyncedFolder())
+        assertFalse(FileType.UNKNOWN in ANDROID_READABLE_FILE_TYPES)
+        assertFalse(FileType.UNKNOWN in ANDROID_SYNCABLE_FILE_TYPES)
     }
 
     @Test
