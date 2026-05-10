@@ -170,14 +170,13 @@ fun LibraryScreen(
     }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val screenModel = remember(uiState) { uiState.toLibraryScreenModel() }
-    val selectedItems = screenModel.selectedItems
-    val isContextualModeActive = screenModel.isContextualModeActive
-    val selectedShelves = screenModel.selectedShelves
-    val isShelfContextualModeActive = screenModel.isShelfContextualModeActive
-    val sortOrder = screenModel.sortOrder
-    val shelves = screenModel.shelves
-    val rawLibraryFiles = screenModel.rawLibraryFiles
+    val selectedItems = uiState.contextualActionItems
+    val isContextualModeActive = selectedItems.isNotEmpty()
+    val selectedShelves = uiState.contextualActionShelfIds
+    val isShelfContextualModeActive = selectedShelves.isNotEmpty()
+    val sortOrder = uiState.sortOrder
+    val shelves = uiState.shelves
+    val rawLibraryFiles = uiState.rawLibraryFiles
     val tabTitles = remember {
         buildList {
             add(context.getString(R.string.tab_all_books))
@@ -193,13 +192,13 @@ fun LibraryScreen(
         pageCount = { tabTitles.size }
     )
 
-    val containsFolderItems = screenModel.containsFolderItemsInSelection
+    val containsFolderItems = selectedItems.any { it.sourceFolderUri != null }
 
     val scope = rememberCoroutineScope()
     var showFilterSheet by remember { mutableStateOf(false) }
 
-    val isSearchActive = screenModel.isSearchActive
-    val searchQuery = screenModel.searchQuery
+    val isSearchActive = uiState.isSearchActive
+    val searchQuery = uiState.searchQuery
 
     val pickFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
