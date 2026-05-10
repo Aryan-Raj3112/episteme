@@ -230,6 +230,10 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("""<a href="notes.xhtml#ref" data-reader-link="true">reference</a>"""))
+        assertTrue(html.contains("--reader-link:"))
+        assertTrue(html.contains("a[href],"))
+        assertTrue(html.contains("color: var(--reader-link) !important"))
+        assertTrue(html.contains("a[href] *"))
         assertTrue(html.contains("readerLinkClicked"))
         assertTrue(html.contains("bridge_missing"))
         assertTrue(html.contains("readerlink://click?payload="))
@@ -380,6 +384,34 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("font-size:0.85em"))
         assertTrue(html.contains("list-style-image:url(&#39;icons/toc-dot.png&#39;)"))
         assertTrue(html.contains("""<a href="chap02.xhtml" data-reader-link="true">Chapter two</a>"""))
+    }
+
+    @Test
+    fun `vertical document includes theme aware link styling`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = SharedEpubBook(
+                id = "book",
+                fileName = "book.epub",
+                title = "Book",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "one",
+                        title = "One",
+                        plainText = "Read more",
+                        htmlContent = """<p><a href="notes.xhtml"><span>Read more</span></a></p>"""
+                    )
+                )
+            ),
+            settings = ReaderSettings(
+                readingMode = ReaderReadingMode.VERTICAL,
+                darkMode = true
+            )
+        )
+
+        assertTrue(html.contains("--reader-link:"))
+        assertTrue(html.contains("--reader-link-bg: rgba("))
+        assertTrue(html.contains("a[href] *,"))
+        assertTrue(html.contains("""<a href="notes.xhtml"><span>Read more</span></a>"""))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

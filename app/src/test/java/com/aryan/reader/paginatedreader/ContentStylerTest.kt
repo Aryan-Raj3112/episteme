@@ -1,9 +1,12 @@
 package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
@@ -123,6 +126,47 @@ class ContentStylerTest {
         assertEquals("li1", first.elementId)
         assertEquals("https://example.org", first.content.getStringAnnotations("URL", 0, 5).single().item)
         assertEquals("link", first.content.getStringAnnotations("ID", 0, 5).single().item)
+        assertTrue(first.content.spanStyles.any { range ->
+            range.start <= 0 &&
+                range.end >= 5 &&
+                range.item.color.isSpecified &&
+                range.item.color != Color.Red &&
+                range.item.background.isSpecified &&
+                range.item.textDecoration?.contains(TextDecoration.Underline) == true
+        })
+    }
+
+    @Test
+    fun `runtime theme reapplies visible link style for cached paginated text`() {
+        val linkText = "Cached link"
+        val text = buildAnnotatedString {
+            append(linkText)
+            addStringAnnotation("URL", "https://example.org", 0, linkText.length)
+        }
+        val page = Page(
+            content = listOf(
+                ParagraphBlock(
+                    content = text,
+                    blockIndex = 1
+                )
+            )
+        )
+
+        val themed = page.applyReaderThemeForDisplay(
+            isDarkTheme = true,
+            themeBackgroundColor = Color(0xFF121212),
+            themeTextColor = Color(0xFFE0E0E0)
+        )
+        val paragraph = themed.content.single() as ParagraphBlock
+
+        assertTrue(paragraph.content.spanStyles.any { range ->
+            range.start == 0 &&
+                range.end == linkText.length &&
+                range.item.color.isSpecified &&
+                range.item.color != Color(0xFFE0E0E0) &&
+                range.item.background.isSpecified &&
+                range.item.textDecoration?.contains(TextDecoration.Underline) == true
+        })
     }
 
     @Test

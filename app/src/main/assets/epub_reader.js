@@ -82,6 +82,34 @@
                 max-width: 100%; width: auto; height: auto; display: block; margin-left: auto; margin-right: auto; background-color: transparent; object-fit: contain;
             }
 
+            #content-container a[href],
+            #content-container a[href]:link,
+            #content-container a[href]:visited,
+            body a[href],
+            body a[href]:link,
+            body a[href]:visited,
+            a[href],
+            a[href]:link,
+            a[href]:visited {
+                color: var(--reader-link, #005FCC) !important;
+                cursor: pointer;
+                text-decoration-line: underline !important;
+                text-decoration-color: var(--reader-link-decoration, var(--reader-link, #005FCC)) !important;
+                text-decoration-thickness: 0.08em;
+                text-decoration-thickness: max(1px, 0.08em);
+                text-underline-offset: 0.14em;
+                text-decoration-skip-ink: auto;
+                background-image: linear-gradient(transparent 62%, var(--reader-link-bg, rgba(0, 95, 204, 0.16)) 62%);
+                border-radius: 2px;
+            }
+
+            #content-container a[href] *,
+            body a[href] *,
+            a[href] * {
+                color: var(--reader-link, #005FCC) !important;
+                text-decoration-color: var(--reader-link-decoration, var(--reader-link, #005FCC)) !important;
+            }
+
             figure img {
                 height: auto !important;
             }
@@ -206,6 +234,7 @@
 
         var effectiveBg = bgHex || (isDark ? '#121212' : '#FFFFFF');
         var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
+        var linkPalette = getReaderLinkPalette(isDark, effectiveBg, effectiveText);
 
         var effectiveTextureAlpha = Math.max(0, Math.min(1, textureAlpha == null ? 0.55 : textureAlpha));
         var bgMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(effectiveBg);
@@ -221,6 +250,9 @@
             :root {
                 --reader-bg: ${effectiveBg};
                 --reader-text: ${effectiveText};
+                --reader-link: ${linkPalette.color};
+                --reader-link-decoration: ${linkPalette.color};
+                --reader-link-bg: ${linkPalette.background};
             }
             html.${themeClassName}, html.${themeClassName} body {
                 background-color: var(--reader-bg) !important;
@@ -228,21 +260,46 @@
                 ${textureCss}
             }
 
-            html.${themeClassName} a {
-                color: ${isDark ? '#BB86FC' : '#1A0DAB'} !important;
+            html.${themeClassName} body a[href],
+            html.${themeClassName} body a[href]:link,
+            html.${themeClassName} body a[href]:visited,
+            html.${themeClassName} a[href],
+            html.${themeClassName} a[href]:link,
+            html.${themeClassName} a[href]:visited {
+                color: var(--reader-link) !important;
+                cursor: pointer;
+                text-decoration-line: underline !important;
+                text-decoration-color: var(--reader-link-decoration) !important;
+                text-decoration-thickness: 0.08em;
+                text-decoration-thickness: max(1px, 0.08em);
+                text-underline-offset: 0.14em;
+                text-decoration-skip-ink: auto;
+                background-image: linear-gradient(transparent 62%, var(--reader-link-bg) 62%);
+                border-radius: 2px;
             }
 
-            html.${themeClassName} a p,
-            html.${themeClassName} a div,
-            html.${themeClassName} a span,
-            html.${themeClassName} a li,
-            html.${themeClassName} a h1,
-            html.${themeClassName} a h2,
-            html.${themeClassName} a h3,
-            html.${themeClassName} a h4,
-            html.${themeClassName} a h5,
-            html.${themeClassName} a h6 {
-                color: var(--reader-text) !important;
+            html.${themeClassName} body a[href] p,
+            html.${themeClassName} body a[href] div,
+            html.${themeClassName} body a[href] span,
+            html.${themeClassName} body a[href] li,
+            html.${themeClassName} body a[href] h1,
+            html.${themeClassName} body a[href] h2,
+            html.${themeClassName} body a[href] h3,
+            html.${themeClassName} body a[href] h4,
+            html.${themeClassName} body a[href] h5,
+            html.${themeClassName} body a[href] h6,
+            html.${themeClassName} a[href] p,
+            html.${themeClassName} a[href] div,
+            html.${themeClassName} a[href] span,
+            html.${themeClassName} a[href] li,
+            html.${themeClassName} a[href] h1,
+            html.${themeClassName} a[href] h2,
+            html.${themeClassName} a[href] h3,
+            html.${themeClassName} a[href] h4,
+            html.${themeClassName} a[href] h5,
+            html.${themeClassName} a[href] h6 {
+                color: var(--reader-link) !important;
+                text-decoration-color: var(--reader-link-decoration) !important;
                 background-color: transparent !important;
             }
 
@@ -288,6 +345,67 @@
             g: parseInt(result[2], 16),
             b: parseInt(result[3], 16)
         } : {r:255,g:255,b:255};
+    }
+
+    function rgbToHex(rgb) {
+        function channel(value) {
+            var hex = Math.max(0, Math.min(255, value)).toString(16);
+            return hex.length < 2 ? '0' + hex : hex;
+        }
+        return '#' + channel(rgb.r) + channel(rgb.g) + channel(rgb.b);
+    }
+
+    function contrastRatio(first, second) {
+        var firstLum = getLuminance(first.r, first.g, first.b);
+        var secondLum = getLuminance(second.r, second.g, second.b);
+        var lighter = Math.max(firstLum, secondLum);
+        var darker = Math.min(firstLum, secondLum);
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    function getReaderLinkPalette(isDark, bgHex, textHex) {
+        var bg = hexToRgb(bgHex);
+        var text = hexToRgb(textHex);
+        var bgLum = getLuminance(bg.r, bg.g, bg.b);
+        var textLum = getLuminance(text.r, text.g, text.b);
+        var candidates = (isDark || bgLum < 0.45)
+            ? [
+                { r: 125, g: 211, b: 252 },
+                { r: 94, g: 234, b: 212 },
+                { r: 165, g: 180, b: 252 },
+                { r: 253, g: 230, b: 138 },
+                { r: 255, g: 255, b: 255 }
+            ]
+            : [
+                { r: 0, g: 95, b: 204 },
+                { r: 0, g: 109, b: 117 },
+                { r: 122, g: 30, b: 82 },
+                { r: 74, g: 20, b: 140 },
+                { r: 17, g: 24, b: 39 }
+            ];
+
+        var best = candidates[0];
+        var bestScore = -1;
+        for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            var contrast = contrastRatio(candidate, bg);
+            var separation = Math.abs(getLuminance(candidate.r, candidate.g, candidate.b) - textLum);
+            if (contrast >= 4.5 && separation >= 0.08) {
+                best = candidate;
+                break;
+            }
+            var score = contrast * 10 + separation;
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        var alpha = bgLum < 0.45 ? 0.24 : 0.16;
+        return {
+            color: rgbToHex(best),
+            background: `rgba(${best.r}, ${best.g}, ${best.b}, ${alpha})`
+        };
     }
 
     function rgbStringToRgb(rgbStr) {
@@ -346,6 +464,7 @@
 
         var elements = document.querySelectorAll('[style*="color"]');
         elements.forEach(function(el) {
+            if (el.closest && el.closest('a[href]')) return;
             var style = window.getComputedStyle(el);
             var colorStr = style.color;
             var rgb = rgbStringToRgb(colorStr);

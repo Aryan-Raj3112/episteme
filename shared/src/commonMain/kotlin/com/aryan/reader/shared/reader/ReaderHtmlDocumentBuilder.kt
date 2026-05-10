@@ -21,6 +21,8 @@ import com.aryan.reader.shared.UserHighlight
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
+import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 object ReaderHtmlDocumentBuilder {
@@ -151,8 +153,11 @@ object ReaderHtmlDocumentBuilder {
         externalLookupEnabled: Boolean,
         textureDataUri: String?
     ): String {
-        val bg = settings.backgroundColorArgb?.toCssColor() ?: if (settings.darkMode) "#171A17" else "#FFFCF5"
-        val fg = settings.textColorArgb?.toCssColor() ?: if (settings.darkMode) "#E7E3D8" else "#24231F"
+        val bgArgb = settings.backgroundColorArgb ?: if (settings.darkMode) 0xFF171A17L else 0xFFFFFCF5L
+        val fgArgb = settings.textColorArgb ?: if (settings.darkMode) 0xFFE7E3D8L else 0xFF24231FL
+        val bg = bgArgb.toCssColor()
+        val fg = fgArgb.toCssColor()
+        val linkColors = readerLinkCssColors(bgArgb, fgArgb, settings.darkMode)
         val highlight = if (settings.darkMode) "#675A00" else "#FFE36E"
         val align = when (settings.textAlign) {
             SharedReaderTextAlign.START -> "left"
@@ -216,6 +221,9 @@ object ReaderHtmlDocumentBuilder {
                   color-scheme: ${if (settings.darkMode) "dark" else "light"};
                   --reader-bg: $bg;
                   --reader-fg: $fg;
+                  --reader-link: ${linkColors.color};
+                  --reader-link-decoration: ${linkColors.decoration};
+                  --reader-link-bg: ${linkColors.background};
                   --reader-highlight: $highlight;
                   --reader-font-size: ${settings.fontSize}px;
                   --reader-line-height: ${settings.lineSpacing};
@@ -324,7 +332,30 @@ object ReaderHtmlDocumentBuilder {
                 #reader-selection-menu button:hover {
                   background: color-mix(in srgb, var(--reader-fg) 10%, transparent);
                 }
-                a { color: inherit; text-decoration-thickness: 0.08em; }
+                .reader-content a[href],
+                .reader-content a[href]:link,
+                .reader-content a[href]:visited,
+                a[href],
+                a[href]:link,
+                a[href]:visited,
+                a[data-reader-link="true"] {
+                  color: var(--reader-link) !important;
+                  cursor: pointer;
+                  text-decoration-line: underline !important;
+                  text-decoration-color: var(--reader-link-decoration) !important;
+                  text-decoration-thickness: 0.08em;
+                  text-decoration-thickness: max(1px, 0.08em);
+                  text-underline-offset: 0.14em;
+                  text-decoration-skip-ink: auto;
+                  background-image: linear-gradient(transparent 62%, var(--reader-link-bg) 62%);
+                  border-radius: 2px;
+                }
+                .reader-content a[href] *,
+                a[href] *,
+                a[data-reader-link="true"] * {
+                  color: var(--reader-link) !important;
+                  text-decoration-color: var(--reader-link-decoration) !important;
+                }
               </style>
             </head>
             <body data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
@@ -1764,6 +1795,60 @@ object ReaderHtmlDocumentBuilder {
         val blue = (value and 0xFF).toString(16).padStart(2, '0')
         return "#$red$green$blue"
     }
+
+    private fun readerLinkCssColors(backgroundArgb: Long, textArgb: Long, darkMode: Boolean): ReaderLinkCssColors {
+        val backgroundLuminance = backgroundArgb.relativeLuminance()
+        val textLuminance = textArgb.relativeLuminance()
+        val candidates = if (darkMode || backgroundLuminance < 0.45f) {
+            listOf(0xFF7DD3FCL, 0xFF5EEAD4L, 0xFFA5B4FCL, 0xFFFDE68AL, 0xFFFFFFFFL)
+        } else {
+            listOf(0xFF005FCCL, 0xFF006D75L, 0xFF7A1E52L, 0xFF4A148CL, 0xFF111827L)
+        }
+        val linkColor = candidates.firstOrNull {
+            it.contrastRatio(backgroundArgb) >= 4.5f && abs(it.relativeLuminance() - textLuminance) >= 0.08f
+        } ?: candidates.maxByOrNull { it.contrastRatio(backgroundArgb) } ?: if (darkMode) 0xFF7DD3FCL else 0xFF005FCCL
+        val alpha = if (backgroundLuminance < 0.45f) 0.24f else 0.16f
+        return ReaderLinkCssColors(
+            color = linkColor.toCssColor(),
+            decoration = linkColor.toCssColor(),
+            background = linkColor.toCssRgba(alpha)
+        )
+    }
+
+    private fun Long.toCssRgba(alpha: Float): String {
+        val value = this and 0xFFFFFFFFL
+        val red = (value shr 16) and 0xFF
+        val green = (value shr 8) and 0xFF
+        val blue = value and 0xFF
+        return "rgba($red, $green, $blue, ${alpha.coerceIn(0f, 1f)})"
+    }
+
+    private fun Long.contrastRatio(other: Long): Float {
+        val first = relativeLuminance()
+        val second = other.relativeLuminance()
+        val lighter = maxOf(first, second)
+        val darker = minOf(first, second)
+        return (lighter + 0.05f) / (darker + 0.05f)
+    }
+
+    private fun Long.relativeLuminance(): Float {
+        val value = this and 0xFFFFFFFFL
+        fun channel(shift: Int): Float {
+            val normalized = (((value shr shift) and 0xFF).toFloat() / 255f)
+            return if (normalized <= 0.03928f) {
+                normalized / 12.92f
+            } else {
+                ((normalized + 0.055f) / 1.055f).toDouble().pow(2.4).toFloat()
+            }
+        }
+        return 0.2126f * channel(16) + 0.7152f * channel(8) + 0.0722f * channel(0)
+    }
+
+    private data class ReaderLinkCssColors(
+        val color: String,
+        val decoration: String,
+        val background: String
+    )
 
     private fun String.toCssFontUrl(): String {
         val trimmed = trim()

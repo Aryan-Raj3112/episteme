@@ -118,6 +118,17 @@ private fun AnnotatedString.applyReaderThemeForDisplay(
             }
             addStringAnnotation(range.tag, item, range.start, range.end)
         }
+        this@applyReaderThemeForDisplay.getStringAnnotations("URL", 0, this@applyReaderThemeForDisplay.length).forEach { range ->
+            addStyle(
+                readerLinkSpanStyle(
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor
+                ),
+                range.start,
+                range.end
+            )
+        }
     }
 }
 

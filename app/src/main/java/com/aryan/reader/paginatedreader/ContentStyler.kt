@@ -433,6 +433,14 @@ class ContentStyler(
                             baselineShift = baselineShift
                         )
 
+                        if (!span.linkHref.isNullOrBlank()) {
+                            finalSpanStyle = finalSpanStyle.withReaderLinkStyle(
+                                isDarkTheme = isDarkTheme,
+                                themeBackgroundColor = themeBackgroundColor,
+                                themeTextColor = themeTextColor
+                            )
+                        }
+
                         val hasCustomDeco = themedSpanStyle.textDecorationStyle != null ||
                                 themedSpanStyle.textDecorationColor.isSpecified ||
                                 themedSpanStyle.textUnderlineOffset.isSpecified
