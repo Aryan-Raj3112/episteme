@@ -1,0 +1,186 @@
+package com.aryan.reader.desktop
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.ptr.IntByReference
+import com.sun.jna.win32.StdCallLibrary
+import java.awt.Component
+import java.awt.Container
+import java.awt.Dimension
+import java.awt.EventQueue
+import java.awt.Color as AwtColor
+import java.awt.Window as AwtWindow
+import javax.swing.RootPaneContainer
+import javax.swing.SwingUtilities
+
+internal const val EpistemeDesktopWindowTitle = "Episteme"
+internal const val EpistemeDesktopWindowIconResource = "episteme_icon.png"
+internal const val EpistemeDesktopWindowMinimumWidthPx = 960
+internal const val EpistemeDesktopWindowMinimumHeightPx = 640
+
+internal data class DesktopWindowDefaults(
+    val title: String,
+    val defaultSize: DpSize,
+    val minimumSize: Dimension,
+    val iconResourcePath: String
+)
+
+internal fun epistemeDesktopWindowDefaults(): DesktopWindowDefaults {
+    return DesktopWindowDefaults(
+        title = EpistemeDesktopWindowTitle,
+        defaultSize = DpSize(1280.dp, 820.dp),
+        minimumSize = Dimension(EpistemeDesktopWindowMinimumWidthPx, EpistemeDesktopWindowMinimumHeightPx),
+        iconResourcePath = EpistemeDesktopWindowIconResource
+    )
+}
+
+internal data class DesktopWindowChromeColors(
+    val useDarkMode: Boolean,
+    val captionColorRef: Int,
+    val textColorRef: Int,
+    val borderColorRef: Int
+)
+
+internal fun desktopWindowChromeColors(
+    captionColor: Color,
+    textColor: Color,
+    borderColor: Color
+): DesktopWindowChromeColors {
+    return DesktopWindowChromeColors(
+        useDarkMode = captionColor.luminance() < 0.5f,
+        captionColorRef = captionColor.toWindowsColorRef(),
+        textColorRef = textColor.toWindowsColorRef(),
+        borderColorRef = borderColor.toWindowsColorRef()
+    )
+}
+
+@Composable
+internal fun EpistemeDesktopWindowChromeEffect(
+    window: Component?,
+    captionColor: Color,
+    textColor: Color,
+    borderColor: Color
+) {
+    DisposableEffect(window, captionColor, textColor, borderColor) {
+        applyDesktopWindowBackground(window, borderColor)
+        applyWindowsDesktopWindowChrome(
+            window = window,
+            colors = desktopWindowChromeColors(
+                captionColor = captionColor,
+                textColor = textColor,
+                borderColor = borderColor
+            )
+        )
+        onDispose {}
+    }
+}
+
+internal fun isWindowsDesktop(osName: String = System.getProperty("os.name").orEmpty()): Boolean {
+    return osName.startsWith("Windows", ignoreCase = true)
+}
+
+private fun applyDesktopWindowBackground(window: Component?, color: Color) {
+    val awtColor = color.toAwtOpaqueColor()
+    runOnEventDispatchThread {
+        val awtWindow = window.toAwtWindowOrNull()
+        window?.background = awtColor
+        awtWindow?.background = awtColor
+        (awtWindow as? Container)?.background = awtColor
+        (awtWindow as? RootPaneContainer)?.let { rootPaneContainer ->
+            rootPaneContainer.contentPane.background = awtColor
+            rootPaneContainer.rootPane.background = awtColor
+            rootPaneContainer.layeredPane.background = awtColor
+            rootPaneContainer.glassPane.background = awtColor
+        }
+    }
+}
+
+private fun applyWindowsDesktopWindowChrome(
+    window: Component?,
+    colors: DesktopWindowChromeColors,
+    osName: String = System.getProperty("os.name").orEmpty()
+) {
+    if (!isWindowsDesktop(osName)) return
+    runOnEventDispatchThread {
+        val awtWindow = window.toAwtWindowOrNull() ?: return@runOnEventDispatchThread
+        val hwnd = runCatching { Native.getWindowPointer(awtWindow) }.getOrNull() ?: return@runOnEventDispatchThread
+        WindowsDwmApi.applyWindowChrome(hwnd, colors)
+    }
+}
+
+private fun Component?.toAwtWindowOrNull(): AwtWindow? {
+    return when (this) {
+        null -> null
+        is AwtWindow -> this
+        else -> SwingUtilities.getWindowAncestor(this)
+    }
+}
+
+private fun runOnEventDispatchThread(block: () -> Unit) {
+    if (EventQueue.isDispatchThread()) {
+        block()
+    } else {
+        EventQueue.invokeLater(block)
+    }
+}
+
+private fun Color.toAwtOpaqueColor(): AwtColor {
+    val argb = toArgb()
+    return AwtColor(
+        (argb shr 16) and 0xFF,
+        (argb shr 8) and 0xFF,
+        argb and 0xFF
+    )
+}
+
+private fun Color.toWindowsColorRef(): Int {
+    val argb = toArgb()
+    val red = (argb shr 16) and 0xFF
+    val green = (argb shr 8) and 0xFF
+    val blue = argb and 0xFF
+    return red or (green shl 8) or (blue shl 16)
+}
+
+private object WindowsDwmApi {
+    private const val DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
+    private const val DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+    private const val DWMWA_BORDER_COLOR = 34
+    private const val DWMWA_CAPTION_COLOR = 35
+    private const val DWMWA_TEXT_COLOR = 36
+
+    fun applyWindowChrome(hwnd: Pointer, colors: DesktopWindowChromeColors) {
+        val api = runCatching { DwmApi.INSTANCE }.getOrNull() ?: return
+        val darkModeValue = if (colors.useDarkMode) 1 else 0
+        val darkModeResult = api.setIntAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, darkModeValue)
+        if (darkModeResult != 0) {
+            api.setIntAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, darkModeValue)
+        }
+        api.setIntAttribute(hwnd, DWMWA_CAPTION_COLOR, colors.captionColorRef)
+        api.setIntAttribute(hwnd, DWMWA_TEXT_COLOR, colors.textColorRef)
+        api.setIntAttribute(hwnd, DWMWA_BORDER_COLOR, colors.borderColorRef)
+    }
+
+    private fun DwmApi.setIntAttribute(hwnd: Pointer, attribute: Int, value: Int): Int {
+        return runCatching {
+            val ref = IntByReference(value)
+            DwmSetWindowAttribute(hwnd, attribute, ref.pointer, Int.SIZE_BYTES)
+        }.getOrDefault(-1)
+    }
+}
+
+private interface DwmApi : StdCallLibrary {
+    fun DwmSetWindowAttribute(hwnd: Pointer, attribute: Int, value: Pointer, valueSize: Int): Int
+
+    companion object {
+        val INSTANCE: DwmApi by lazy {
+            Native.load("dwmapi", DwmApi::class.java) as DwmApi
+        }
+    }
+}

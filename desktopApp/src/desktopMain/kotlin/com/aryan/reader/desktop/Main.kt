@@ -108,6 +108,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -125,7 +126,9 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
 import com.aryan.reader.paginatedreader.SemanticHeader
@@ -365,10 +368,21 @@ import kotlin.math.roundToInt
 fun main() {
     configureComposeSwingInterop()
     application {
+        val windowDefaults = remember { epistemeDesktopWindowDefaults() }
+        val windowState = rememberWindowState(
+            position = WindowPosition(Alignment.Center),
+            size = windowDefaults.defaultSize
+        )
         Window(
             onCloseRequest = ::exitApplication,
-            title = "Episteme",
+            title = windowDefaults.title,
+            state = windowState,
+            icon = painterResource(windowDefaults.iconResourcePath)
         ) {
+            DisposableEffect(window, windowDefaults.minimumSize) {
+                window.minimumSize = windowDefaults.minimumSize
+                onDispose {}
+            }
             EpistemeDesktopApp(window)
         }
     }
@@ -1643,6 +1657,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         appTextDimFactorDark = state.appTextDimFactorDark,
         appSeedColor = state.appSeedColor
     ) {
+        EpistemeDesktopWindowChromeEffect(
+            window = window,
+            captionColor = MaterialTheme.colorScheme.surface,
+            textColor = MaterialTheme.colorScheme.onSurface,
+            borderColor = MaterialTheme.colorScheme.background
+        )
         Box(
             Modifier
                 .fillMaxSize()

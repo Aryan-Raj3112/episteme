@@ -38,6 +38,7 @@ val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard")
 val isOssOfflineDesktop = desktopFlavor == "oss-offline"
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
 val bundledWebViewDir = layout.projectDirectory.dir("kcef-bundle")
+val desktopWindowsIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.ico")
 
 val checkBundledWebViewRuntime by tasks.registering(CheckBundledWebViewRuntimeTask::class) {
     bundleDir.set(bundledWebViewDir)
@@ -97,6 +98,9 @@ compose.desktop {
             }
             vendor = "Aryan Reader"
             appResourcesRootDir.set(generatedDesktopResourcesDir)
+            windows {
+                iconFile.set(desktopWindowsIconFile)
+            }
         }
     }
 }
