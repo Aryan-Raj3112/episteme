@@ -67,7 +67,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -304,10 +303,11 @@ import com.multiplatform.webview.request.RequestInterceptor
 import com.multiplatform.webview.request.WebRequest
 import com.multiplatform.webview.request.WebRequestInterceptResult
 import com.multiplatform.webview.web.LoadingState
+import com.multiplatform.webview.web.WebContent
 import com.multiplatform.webview.web.WebView
 import com.multiplatform.webview.web.WebViewNavigator
+import com.multiplatform.webview.web.WebViewState
 import com.multiplatform.webview.web.rememberWebViewNavigator
-import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1214,9 +1214,30 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         openedState.rawLibraryBooks.firstOrNull { it.id == bookId }?.let(::syncBookSidecars)
     }
 
+    fun scheduleOpenedBookMetadataExtraction(book: BookItem) {
+        scope.launch {
+            val enriched = withContext(Dispatchers.IO) {
+                DesktopFolderMetadataExtractor.enrichOpenedBook(book)
+            }
+            if (enriched == book) return@launch
+            updateState(
+                state.copy(
+                    rawLibraryBooks = state.rawLibraryBooks.map { current ->
+                        if (current.id == book.id) {
+                            current.withDesktopImportMetadata(enriched = enriched, original = book)
+                        } else {
+                            current
+                        }
+                    }
+                )
+            )
+        }
+    }
+
     fun openReader(book: BookItem) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
         if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
+            scheduleOpenedBookMetadataExtraction(book)
             val path = book.path
             if (path.isNullOrBlank()) {
                 updateState(
@@ -1306,6 +1327,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             )
             return
         }
+        scheduleOpenedBookMetadataExtraction(book)
 
         val loadedBook = runCatching {
             val path = book.path
@@ -7674,90 +7696,101 @@ private fun DesktopEpubWebView(
         }
     }
 
-    key(html) {
-        val state = rememberWebViewStateWithHTMLData(
-            data = html,
+    val state = remember {
+        WebViewState(
+            WebContent.Data(
+                data = html,
+                baseUrl = null,
+                encoding = "utf-8",
+                mimeType = "text/html",
+                historyUrl = null
+            )
+        )
+    }
+
+    LaunchedEffect(html) {
+        navigator.loadHtml(
+            html = html,
             baseUrl = null,
-            encoding = "utf-8",
             mimeType = "text/html",
+            encoding = "utf-8",
             historyUrl = null
         )
+    }
 
-        Box(modifier = modifier) {
-            WebView(
-                state = state,
-                modifier = Modifier.fillMaxSize(),
-                captureBackPresses = false,
-                navigator = navigator,
-                webViewJsBridge = bridge
-            )
+    Box(modifier = modifier) {
+        WebView(
+            state = state,
+            modifier = Modifier.fillMaxSize(),
+            captureBackPresses = false,
+            navigator = navigator,
+            webViewJsBridge = bridge
+        )
 
-            LaunchedEffect(
-                navigationTarget.autoScroll,
-                navigationTarget.readingMode,
-                state.loadingState
-            ) {
-                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
-                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
-                val autoScroll = navigationTarget.autoScroll.sanitized()
-                val command = if (autoScroll.enabled) {
-                    "window.readerAutoScroll && window.readerAutoScroll.start(${autoScroll.speed});"
-                } else {
-                    "window.readerAutoScroll && window.readerAutoScroll.stop();"
-                }
-                navigator.evaluateJavaScript(command)
+        LaunchedEffect(
+            navigationTarget.autoScroll,
+            navigationTarget.readingMode,
+            state.loadingState
+        ) {
+            if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            val autoScroll = navigationTarget.autoScroll.sanitized()
+            val command = if (autoScroll.enabled) {
+                "window.readerAutoScroll && window.readerAutoScroll.start(${autoScroll.speed});"
+            } else {
+                "window.readerAutoScroll && window.readerAutoScroll.stop();"
             }
+            navigator.evaluateJavaScript(command)
+        }
 
-            LaunchedEffect(
-                navigationTarget.requestId,
-                navigationTarget.readingMode,
-                state.loadingState
-            ) {
-                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
-                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
-                val locator = navigationTarget.locator ?: return@LaunchedEffect
-                navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
-            }
+        LaunchedEffect(
+            navigationTarget.requestId,
+            navigationTarget.readingMode,
+            state.loadingState
+        ) {
+            if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            val locator = navigationTarget.locator ?: return@LaunchedEffect
+            navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
+        }
 
-            LaunchedEffect(
-                navigationTarget.ttsRequestId,
-                navigationTarget.ttsLocator,
-                navigationTarget.readingMode,
-                state.loadingState
-            ) {
-                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
-                val locator = navigationTarget.ttsLocator
-                val command = if (locator == null) {
-                    logDesktopTts(
-                        "epub_highlight_command clear mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId}"
-                    )
-                    "window.readerSetTtsLocator && window.readerSetTtsLocator(null, false);"
-                } else {
-                    val follow = navigationTarget.readingMode == com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL
-                    logDesktopTts(
-                        "epub_highlight_command set mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId} " +
-                            "follow=$follow chapter=${locator.chapterIndex} page=${locator.pageIndex} " +
-                            "offsets=${locator.startOffset}..${locator.endOffset} cfi=\"${locator.cfi.orEmpty().logPreview()}\" " +
-                            "text=\"${locator.textQuote.orEmpty().logPreview()}\""
-                    )
-                    "window.readerSetTtsLocator && window.readerSetTtsLocator(${locator.toReaderLocatorJson()}, $follow);"
-                }
-                navigator.evaluateJavaScript(command)
-            }
-
-            LaunchedEffect(highlights, navigationTarget.readingMode, state.loadingState) {
-                if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
-                if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
-                navigator.evaluateJavaScript("window.readerApplyHighlights && window.readerApplyHighlights(${EpubAnnotationSerializer.highlightsToJson(highlights)});")
-            }
-
-            val loadingState = state.loadingState
-            if (loadingState is LoadingState.Loading) {
-                LinearProgressIndicator(
-                    progress = { loadingState.progress },
-                    modifier = Modifier.fillMaxWidth()
+        LaunchedEffect(
+            navigationTarget.ttsRequestId,
+            navigationTarget.ttsLocator,
+            navigationTarget.readingMode,
+            state.loadingState
+        ) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            val locator = navigationTarget.ttsLocator
+            val command = if (locator == null) {
+                logDesktopTts(
+                    "epub_highlight_command clear mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId}"
                 )
+                "window.readerSetTtsLocator && window.readerSetTtsLocator(null, false);"
+            } else {
+                val follow = navigationTarget.readingMode == com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL
+                logDesktopTts(
+                    "epub_highlight_command set mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId} " +
+                        "follow=$follow chapter=${locator.chapterIndex} page=${locator.pageIndex} " +
+                        "offsets=${locator.startOffset}..${locator.endOffset} cfi=\"${locator.cfi.orEmpty().logPreview()}\" " +
+                        "text=\"${locator.textQuote.orEmpty().logPreview()}\""
+                )
+                "window.readerSetTtsLocator && window.readerSetTtsLocator(${locator.toReaderLocatorJson()}, $follow);"
             }
+            navigator.evaluateJavaScript(command)
+        }
+
+        LaunchedEffect(highlights, state.loadingState) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            navigator.evaluateJavaScript("window.readerApplyHighlights && window.readerApplyHighlights(${EpubAnnotationSerializer.highlightsToJson(highlights)});")
+        }
+
+        val loadingState = state.loadingState
+        if (loadingState is LoadingState.Loading) {
+            LinearProgressIndicator(
+                progress = { loadingState.progress },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

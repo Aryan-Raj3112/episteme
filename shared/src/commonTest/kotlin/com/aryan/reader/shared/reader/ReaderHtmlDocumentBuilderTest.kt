@@ -66,6 +66,27 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `reader highlight script verifies stored text before painting offsets`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta alpha beta",
+                startOffset = 0,
+                endOffset = 21
+            ),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("actualNormalized !== expectedNormalized"))
+        assertTrue(html.contains("startOffset >= pageEnd || endOffset <= pageStart"))
+        assertTrue(html.contains("normalizedRangeForText(searchRoot, expectedNormalized, false)"))
+        assertTrue(html.contains("locator.textQuote || highlight.text"))
+    }
+
+    @Test
     fun `vertical document carries active locator for shared scroll navigation`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = SharedEpubBook(

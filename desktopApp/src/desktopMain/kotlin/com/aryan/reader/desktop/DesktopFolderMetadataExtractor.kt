@@ -69,6 +69,11 @@ object DesktopFolderMetadataExtractor {
         return enrichBooks(books) { book -> book.id in importedBookIds }
     }
 
+    fun enrichOpenedBook(book: BookItem): BookItem {
+        if (!book.needsFolderMetadataExtraction()) return book
+        return runCatching { enrichBook(book) }.getOrDefault(book)
+    }
+
     private fun enrichBooks(
         books: List<BookItem>,
         shouldConsider: (BookItem) -> Boolean

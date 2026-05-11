@@ -49,6 +49,34 @@ class DesktopFolderMetadataExtractorTest {
     }
 
     @Test
+    fun `opened epub gets embedded cover`() = withCoverCacheDir { tempDir ->
+        val epub = File(tempDir, "opened.epub")
+        writeEpub(
+            target = epub,
+            opf = """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <metadata>
+                    <dc:title>Opened EPUB</dc:title>
+                    <dc:creator>Mary Shelley</dc:creator>
+                    <meta name="cover" content="cover-image" />
+                  </metadata>
+                  <manifest>
+                    <item id="cover-image" href="images/cover.png" media-type="image/png" />
+                  </manifest>
+                </package>
+            """.trimIndent()
+        )
+        val book = bookFor(epub, FileType.EPUB, title = null)
+
+        val enriched = DesktopFolderMetadataExtractor.enrichOpenedBook(book)
+
+        assertEquals("Opened EPUB", enriched.title)
+        assertEquals("Mary Shelley", enriched.author)
+        assertTrue(enriched.folderTextMetadataParsed)
+        assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
+    }
+
+    @Test
     fun `direct imported text file gets generated cover`() = withCoverCacheDir { tempDir ->
         val textFile = File(tempDir, "notes.txt").apply { writeText("Notes") }
         val book = bookFor(textFile, FileType.TXT, title = "Notes")

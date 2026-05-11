@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +58,7 @@ fun ReaderWorkspaceShell(
     var rightPanelOpen by remember(model.kind, model.panelDefaults.inspectorOpen) {
         mutableStateOf(model.panelDefaults.inspectorOpen)
     }
+    var modalAnchorBounds by remember { mutableStateOf<SharedReaderModalAnchorBounds?>(null) }
 
     LaunchedEffect(model.kind, model.chrome.forceVisibleReasons) {
         val reasons = model.chrome.forceVisibleReasons
@@ -75,64 +79,78 @@ fun ReaderWorkspaceShell(
             }
         }
 
-        Column(
-            modifier = Modifier.fillMaxSize().padding(start = 8.dp, top = 8.dp, end = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ReaderWorkspaceTopChrome(
-                title = title,
-                subtitle = subtitle,
-                progressLabel = progressLabel,
-                hasLeftPanel = model.leftSections.isNotEmpty(),
-                hasRightPanel = model.inspectorSections.isNotEmpty(),
-                leftPanelOpen = leftPanelOpen,
-                rightPanelOpen = rightPanelOpen,
-                onReturnToLibrary = onReturnToLibrary,
-                onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
-            )
+        CompositionLocalProvider(LocalSharedReaderModalAnchorBounds provides modalAnchorBounds) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(start = 8.dp, top = 8.dp, end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ReaderWorkspaceTopChrome(
+                    title = title,
+                    subtitle = subtitle,
+                    progressLabel = progressLabel,
+                    hasLeftPanel = model.leftSections.isNotEmpty(),
+                    hasRightPanel = model.inspectorSections.isNotEmpty(),
+                    leftPanelOpen = leftPanelOpen,
+                    rightPanelOpen = rightPanelOpen,
+                    onReturnToLibrary = onReturnToLibrary,
+                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
+                )
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (wide && leftPanelOpen && model.leftSections.isNotEmpty()) {
-                        leftSidebar()
-                    }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        content()
+                        if (wide && leftPanelOpen && model.leftSections.isNotEmpty()) {
+                            leftSidebar()
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .onGloballyPositioned { coordinates ->
+                                    val bounds = coordinates.boundsInWindow()
+                                    val nextBounds = SharedReaderModalAnchorBounds(
+                                        leftPx = bounds.left,
+                                        topPx = bounds.top,
+                                        widthPx = bounds.width,
+                                        heightPx = bounds.height
+                                    )
+                                    if (modalAnchorBounds != nextBounds) {
+                                        modalAnchorBounds = nextBounds
+                                    }
+                                }
+                        ) {
+                            content()
+                        }
+                        if (wide && rightPanelOpen && model.inspectorSections.isNotEmpty()) {
+                            rightInspector()
+                        }
                     }
-                    if (wide && rightPanelOpen && model.inspectorSections.isNotEmpty()) {
-                        rightInspector()
+
+                    if (!wide && leftPanelOpen && model.leftSections.isNotEmpty()) {
+                        ReaderWorkspaceOverlayPanel(
+                            title = "Reader",
+                            onClose = { leftPanelOpen = false },
+                            modifier = Modifier.align(Alignment.CenterStart).width(320.dp)
+                        ) {
+                            leftSidebar()
+                        }
+                    }
+                    if (!wide && rightPanelOpen && model.inspectorSections.isNotEmpty()) {
+                        ReaderWorkspaceOverlayPanel(
+                            title = "Tools",
+                            onClose = { rightPanelOpen = false },
+                            modifier = Modifier.align(Alignment.CenterEnd).width(360.dp)
+                        ) {
+                            rightInspector()
+                        }
                     }
                 }
 
-                if (!wide && leftPanelOpen && model.leftSections.isNotEmpty()) {
-                    ReaderWorkspaceOverlayPanel(
-                        title = "Reader",
-                        onClose = { leftPanelOpen = false },
-                        modifier = Modifier.align(Alignment.CenterStart).width(320.dp)
-                    ) {
-                        leftSidebar()
-                    }
-                }
-                if (!wide && rightPanelOpen && model.inspectorSections.isNotEmpty()) {
-                    ReaderWorkspaceOverlayPanel(
-                        title = "Tools",
-                        onClose = { rightPanelOpen = false },
-                        modifier = Modifier.align(Alignment.CenterEnd).width(360.dp)
-                    ) {
-                        rightInspector()
-                    }
-                }
+                bottomBar()
             }
-
-            bottomBar()
         }
     }
 }

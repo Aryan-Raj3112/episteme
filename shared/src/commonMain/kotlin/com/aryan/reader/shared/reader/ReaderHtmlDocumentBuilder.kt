@@ -1148,7 +1148,46 @@ object ReaderHtmlDocumentBuilder {
                     var startOffset = locator.startOffset;
                     var endOffset = locator.endOffset;
                     if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) return;
-                    var range = rangeForOffsets(chapterIndex, startOffset, endOffset);
+                    var targetChapter = document.querySelector('[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]');
+                    if (!targetChapter) return;
+                    var pageStart = numberAttribute(targetChapter, 'data-reader-page-start', null);
+                    var pageEnd = numberAttribute(targetChapter, 'data-reader-page-end', null);
+                    if (pageStart !== null && pageEnd !== null && (startOffset >= pageEnd || endOffset <= pageStart)) return;
+                    var sourceCfi = locator.cfi || highlight.cfi;
+                    var range = rangeForOffsets(chapterIndex, startOffset, endOffset, sourceCfi);
+                    var expectedText = locator.textQuote || highlight.text || '';
+                    var expectedNormalized = readerTtsNormalized(expectedText);
+                    var actualNormalized = range && !range.collapsed ? readerTtsNormalized(range.toString()) : '';
+                    if (expectedNormalized && (!range || range.collapsed || actualNormalized !== expectedNormalized)) {
+                      var chapter = targetChapter;
+                      var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
+                      var searchRoot = content;
+                      if (content && sourceCfi) {
+                        searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
+                      }
+                      if (content && searchRoot === content) {
+                        var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end]'));
+                        var containing = null;
+                        var bestSpan = Number.MAX_SAFE_INTEGER;
+                        hosts.forEach(function (host) {
+                          var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                          var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                          if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
+                          if (startOffset >= hostEnd || endOffset <= hostStart) return;
+                          var span = hostEnd - hostStart;
+                          if (span < bestSpan) {
+                            containing = host;
+                            bestSpan = span;
+                          }
+                        });
+                        searchRoot = containing || content;
+                      }
+                      var textRange = normalizedRangeForText(searchRoot, expectedNormalized, false);
+                      if (textRange && !textRange.collapsed) {
+                        if (range && range.detach) range.detach();
+                        range = textRange;
+                      }
+                    }
                     if (!range || range.collapsed) return;
                     var marker = document.createElement('mark');
                     marker.className = 'reader-user-highlight user-highlight-' + (highlight.colorId || 'yellow');

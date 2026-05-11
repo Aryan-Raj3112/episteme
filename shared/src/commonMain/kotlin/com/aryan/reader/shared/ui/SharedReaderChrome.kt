@@ -392,7 +392,6 @@ fun SharedReaderScreen(
                     settings,
                     session.searchQuery,
                     session.searchOptions,
-                    session.highlights,
                     highlightPalette,
                     navigationLocator,
                     byokSettings.areReaderAiFeaturesAvailable,
@@ -405,7 +404,7 @@ fun SharedReaderScreen(
                         settings = settings,
                         searchQuery = session.searchQuery,
                         searchOptions = session.searchOptions,
-                        highlights = session.highlights,
+                        highlights = emptyList(),
                         highlightPalette = highlightPalette,
                         navigationLocator = navigationLocator,
                         readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
@@ -426,7 +425,7 @@ fun SharedReaderScreen(
                     ttsLocator = activeTtsLocator,
                     ttsRequestId = ttsRequestId
                 ),
-                if (settings.readingMode == ReaderReadingMode.VERTICAL) session.highlights else emptyList(),
+                session.highlights,
                 { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) },
                 { highlightId -> selectedHighlightId = highlightId }
             )
