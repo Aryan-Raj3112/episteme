@@ -27,7 +27,8 @@ enum class SharedAppToolAction {
 data class SharedAppShellModel(
     val primaryTabs: List<SharedAppTab>,
     val selectedPrimaryTab: SharedAppTab,
-    val toolActions: List<SharedAppToolAction>
+    val toolActions: List<SharedAppToolAction>,
+    val showPrimaryNavigation: Boolean
 )
 
 fun sharedAppShellModel(
@@ -67,7 +68,8 @@ fun sharedAppShellModel(
     return SharedAppShellModel(
         primaryTabs = primaryTabs,
         selectedPrimaryTab = selectedPrimaryTab,
-        toolActions = toolActions
+        toolActions = toolActions,
+        showPrimaryNavigation = selectedTab != SharedAppTab.READER
     )
 }
 

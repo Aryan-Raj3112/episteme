@@ -131,20 +131,22 @@ fun SharedAppShell(
         ) {
             val useSidebar = maxWidth >= 900.dp
             Row(Modifier.fillMaxSize()) {
-                if (useSidebar) {
-                    SharedAppSidebar(
-                        selectedTab = shellModel.selectedPrimaryTab,
-                        primaryTabs = shellModel.primaryTabs,
-                        onTabSelected = onTabSelected,
-                        onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
-                    )
-                } else {
-                    SharedAppCompactRail(
-                        selectedTab = shellModel.selectedPrimaryTab,
-                        primaryTabs = shellModel.primaryTabs,
-                        onTabSelected = onTabSelected,
-                        onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
-                    )
+                if (shellModel.showPrimaryNavigation) {
+                    if (useSidebar) {
+                        SharedAppSidebar(
+                            selectedTab = shellModel.selectedPrimaryTab,
+                            primaryTabs = shellModel.primaryTabs,
+                            onTabSelected = onTabSelected,
+                            onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
+                        )
+                    } else {
+                        SharedAppCompactRail(
+                            selectedTab = shellModel.selectedPrimaryTab,
+                            primaryTabs = shellModel.primaryTabs,
+                            onTabSelected = onTabSelected,
+                            onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
+                        )
+                    }
                 }
 
                 Box(

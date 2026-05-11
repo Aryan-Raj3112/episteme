@@ -242,6 +242,7 @@ import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
+import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -1857,6 +1858,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?: state.readerDefaultSettings,
                                     onOpenPdf = ::importAndOpenPdf,
                                     onOpenBook = ::importAndOpenBook,
+                                    onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
                                     },
@@ -1891,6 +1893,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     },
                                     onOpenBook = ::importAndOpenBook,
                                     onOpenPdf = ::importAndOpenPdf,
+                                    onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
@@ -2882,6 +2885,7 @@ private fun PdfReaderScreen(
     initialReaderSettings: ReaderSettings? = null,
     onOpenPdf: () -> Unit,
     onOpenBook: () -> Unit,
+    onReturnToLibrary: (() -> Unit)? = null,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
     customTextureIds: List<String> = emptyList(),
@@ -3345,6 +3349,29 @@ private fun PdfReaderScreen(
                 verticalListState.scrollToItem(clampedTarget)
             }
         }
+    }
+
+    fun updatePdfPageScrub(value: Float) {
+        if (pageScrubStartPage == null) {
+            pageScrubStartPage = pdfState.pageIndex
+        }
+        val targetPage = value.roundToInt().coerceIn(0, document.pageCount - 1)
+        pageScrubPreview = targetPage
+        goToPage(targetPage)
+    }
+
+    fun finishPdfPageScrub() {
+        val startPage = pageScrubStartPage
+        val targetPage = pdfState.pageIndex
+        if (startPage != null) {
+            jumpHistory = jumpHistory.record(
+                currentPageIndex = startPage,
+                targetPageIndex = targetPage,
+                pageCount = document.pageCount
+            )
+        }
+        pageScrubStartPage = null
+        pageScrubPreview = null
     }
 
     fun goBackInJumpHistory() {
@@ -4049,31 +4076,11 @@ private fun PdfReaderScreen(
                             "Page ${pageIndex + 1} of ${document.pageCount}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Slider(
+                        ReaderMinimalSlider(
                             value = pageIndex.toFloat(),
-                            onValueChange = { value ->
-                                if (pageScrubStartPage == null) {
-                                    pageScrubStartPage = pdfState.pageIndex
-                                }
-                                val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
-                                pageScrubPreview = targetPage
-                                goToPage(targetPage)
-                            },
-                            onValueChangeFinished = {
-                                val startPage = pageScrubStartPage
-                                val targetPage = currentPdfPageIndex
-                                if (startPage != null) {
-                                    jumpHistory = jumpHistory.record(
-                                        currentPageIndex = startPage,
-                                        targetPageIndex = targetPage,
-                                        pageCount = document.pageCount
-                                    )
-                                }
-                                pageScrubStartPage = null
-                                pageScrubPreview = null
-                            },
-                            valueRange = 0f..(document.pageCount - 1).toFloat(),
-                            steps = (document.pageCount - 2).coerceAtLeast(0)
+                            onValueChange = ::updatePdfPageScrub,
+                            onValueChangeFinished = ::finishPdfPageScrub,
+                            valueRange = 0f..(document.pageCount - 1).toFloat()
                         )
                     }
                 }
@@ -4222,53 +4229,41 @@ private fun PdfReaderScreen(
     fun PdfBottomChrome() {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(6.dp),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp
+            tonalElevation = 1.dp
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
-                    Text("Previous")
+                IconButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
+                    Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
                 }
-                Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Page ${pageIndex + 1} of ${document.pageCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 if (document.pageCount > 1) {
-                    Slider(
+                    ReaderMinimalSlider(
                         value = pageIndex.toFloat(),
-                        onValueChange = { value ->
-                            if (pageScrubStartPage == null) {
-                                pageScrubStartPage = pdfState.pageIndex
-                            }
-                            val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
-                            pageScrubPreview = targetPage
-                            goToPage(targetPage)
-                        },
-                        onValueChangeFinished = {
-                            val startPage = pageScrubStartPage
-                            val targetPage = currentPdfPageIndex
-                            if (startPage != null) {
-                                jumpHistory = jumpHistory.record(
-                                    currentPageIndex = startPage,
-                                    targetPageIndex = targetPage,
-                                    pageCount = document.pageCount
-                                )
-                            }
-                            pageScrubStartPage = null
-                            pageScrubPreview = null
-                        },
+                        onValueChange = ::updatePdfPageScrub,
+                        onValueChangeFinished = ::finishPdfPageScrub,
                         valueRange = 0f..(document.pageCount - 1).toFloat(),
-                        steps = (document.pageCount - 2).coerceAtLeast(0),
                         modifier = Modifier.weight(1f)
                     )
                 } else {
                     Spacer(Modifier.weight(1f))
                 }
-                Text("${progressPercent.toInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
-                    Text("Next")
+                Text(
+                    "${progressPercent.toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
+                    Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
                 }
             }
         }
@@ -4279,6 +4274,7 @@ private fun PdfReaderScreen(
         title = document.title,
         subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
         progressLabel = "${progressPercent.toInt()}%",
+        onReturnToLibrary = onReturnToLibrary,
         modifier = Modifier
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
@@ -4358,31 +4354,11 @@ private fun PdfReaderScreen(
                     if (document.pageCount > 1) {
                         item {
                             Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Slider(
+                            ReaderMinimalSlider(
                                 value = pageIndex.toFloat(),
-                                onValueChange = { value ->
-                                    if (pageScrubStartPage == null) {
-                                        pageScrubStartPage = pdfState.pageIndex
-                                    }
-                                    val targetPage = value.toInt().coerceIn(0, document.pageCount - 1)
-                                    pageScrubPreview = targetPage
-                                    goToPage(targetPage)
-                                },
-                                onValueChangeFinished = {
-                                    val startPage = pageScrubStartPage
-                                    val targetPage = currentPdfPageIndex
-                                    if (startPage != null) {
-                                        jumpHistory = jumpHistory.record(
-                                            currentPageIndex = startPage,
-                                            targetPageIndex = targetPage,
-                                            pageCount = document.pageCount
-                                        )
-                                    }
-                                    pageScrubStartPage = null
-                                    pageScrubPreview = null
-                                },
-                                valueRange = 0f..(document.pageCount - 1).toFloat(),
-                                steps = (document.pageCount - 2).coerceAtLeast(0)
+                                onValueChange = ::updatePdfPageScrub,
+                                onValueChangeFinished = ::finishPdfPageScrub,
+                                valueRange = 0f..(document.pageCount - 1).toFloat()
                             )
                         }
                     }
@@ -6995,6 +6971,7 @@ private fun ReaderScreen(
     onSessionChange: (ReaderSessionState) -> Unit,
     onOpenBook: () -> Unit,
     onOpenPdf: () -> Unit,
+    onReturnToLibrary: (() -> Unit)? = null,
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
@@ -7036,6 +7013,7 @@ private fun ReaderScreen(
         onSessionChange = onSessionChange,
         onOpenBook = onOpenBook,
         onOpenPdf = onOpenPdf,
+        onReturnToLibrary = onReturnToLibrary,
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         highlightPalette = highlightPalette,

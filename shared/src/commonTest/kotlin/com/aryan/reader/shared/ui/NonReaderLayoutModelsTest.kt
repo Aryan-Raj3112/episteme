@@ -151,10 +151,26 @@ class NonReaderLayoutModelsTest {
         assertTrue(SharedAppToolAction.SUPPORT in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
         assertTrue(SharedAppToolAction.TABS_TOGGLE in model.toolActions)
+        assertTrue(model.showPrimaryNavigation)
 
         val withoutAi = sharedAppShellModel(SharedAppTab.SHELVES, aiSettingsAvailable = false)
         assertEquals(SharedAppTab.LIBRARY, withoutAi.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in withoutAi.toolActions)
+    }
+
+    @Test
+    fun `shell model hides primary navigation while reading`() {
+        val readerModel = sharedAppShellModel(
+            selectedTab = SharedAppTab.READER,
+            aiSettingsAvailable = true
+        )
+        val libraryModel = sharedAppShellModel(
+            selectedTab = SharedAppTab.LIBRARY,
+            aiSettingsAvailable = true
+        )
+
+        assertFalse(readerModel.showPrimaryNavigation)
+        assertTrue(libraryModel.showPrimaryNavigation)
     }
 
     @Test
@@ -172,6 +188,7 @@ class NonReaderLayoutModelsTest {
         assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
+        assertTrue(model.showPrimaryNavigation)
     }
 
     private fun book(

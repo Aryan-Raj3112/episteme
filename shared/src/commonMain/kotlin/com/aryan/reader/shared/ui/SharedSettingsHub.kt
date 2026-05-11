@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
@@ -254,7 +255,7 @@ private fun SharedSettingsCategoryRow(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
-            Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -395,7 +396,7 @@ private fun SharedSettingsSearchResultRow(
                         onCheckedChange = { result.action?.let(onAction) }
                     )
                 }
-                else -> Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
+                else -> Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -467,7 +468,7 @@ private fun SharedSettingsRow(
                 SharedSettingsItemKind.INFO -> Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                 SharedSettingsItemKind.DESTRUCTIVE,
                 SharedSettingsItemKind.NAVIGATION,
-                SharedSettingsItemKind.CONTROL -> Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
+                SharedSettingsItemKind.CONTROL -> Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(20.dp))
             }
         }
     }

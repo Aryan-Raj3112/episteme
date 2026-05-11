@@ -51,6 +51,11 @@ data class ReaderWorkspaceChromeModel(
     val forceVisibleReasons: Set<String> = emptySet()
 )
 
+data class ReaderWorkspacePanelDefaults(
+    val leftOpen: Boolean = false,
+    val inspectorOpen: Boolean = false
+)
+
 data class ReaderWorkspaceModel(
     val kind: ReaderWorkspaceKind,
     val leftSections: List<ReaderWorkspaceLeftSection>,
@@ -58,6 +63,7 @@ data class ReaderWorkspaceModel(
     val topActions: List<ReaderWorkspaceTopAction>,
     val bottomActions: List<ReaderWorkspaceBottomAction>,
     val defaultPdfInteractionMode: PdfInkTool? = null,
+    val panelDefaults: ReaderWorkspacePanelDefaults = ReaderWorkspacePanelDefaults(),
     val chrome: ReaderWorkspaceChromeModel
 )
 
@@ -115,7 +121,7 @@ fun epubReaderWorkspaceModel(
         topActions = topActions,
         bottomActions = bottomActions,
         chrome = readerWorkspaceChromeModel(
-            preferAutoHide = true,
+            preferAutoHide = false,
             searchActive = session.isSearchActive,
             leftPanelOpen = false,
             inspectorOpen = false,
@@ -198,7 +204,7 @@ fun pdfReaderWorkspaceModel(
         ),
         defaultPdfInteractionMode = null,
         chrome = readerWorkspaceChromeModel(
-            preferAutoHide = true,
+            preferAutoHide = false,
             searchActive = searchActive || state.searchQuery.isNotBlank(),
             leftPanelOpen = false,
             inspectorOpen = false,

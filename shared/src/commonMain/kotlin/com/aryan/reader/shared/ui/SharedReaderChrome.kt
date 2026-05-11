@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -34,7 +35,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -149,6 +149,7 @@ fun SharedReaderScreen(
     onSessionChange: (ReaderSessionState) -> Unit,
     onOpenBook: () -> Unit,
     onOpenPdf: () -> Unit,
+    onReturnToLibrary: (() -> Unit)? = null,
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
@@ -223,6 +224,7 @@ fun SharedReaderScreen(
         title = readerState.book.title,
         subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
         progressLabel = "${readerState.progress.toInt()}%",
+        onReturnToLibrary = onReturnToLibrary,
         modifier = Modifier
             .fillMaxSize()
             .onPreviewKeyEvent { event ->
@@ -293,6 +295,30 @@ fun SharedReaderScreen(
                 cloudTtsControlsAvailable = cloudTtsControlsAvailable,
                 externalLookupAvailable = externalLookupAvailable
             )
+            SharedReaderQuickActions(
+                toolbarPreferences = toolbarPreferences,
+                bottom = true,
+                isBookmarked = session.currentBookmark != null,
+                isDarkMode = settings.darkMode,
+                isSearchActive = session.isSearchActive,
+                onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
+                onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
+                onToggleSearch = {
+                    dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
+                },
+                onExternalLookup = onExternalLookup,
+                onAiAction = onAiAction,
+                onCloudTtsStart = onCloudTtsStart,
+                onCloudTtsPauseResume = onCloudTtsPauseResume,
+                onCloudTtsStop = onCloudTtsStop,
+                onCloudTtsClearCache = onCloudTtsClearCache,
+                onAutoScrollChange = onAutoScrollChange,
+                session = session,
+                extrasState = readerExtrasState,
+                aiByokSettings = byokSettings,
+                cloudTtsControlsAvailable = cloudTtsControlsAvailable,
+                externalLookupAvailable = externalLookupAvailable
+            )
         },
         leftSidebar = {
             SharedReaderSidebar(
@@ -307,6 +333,9 @@ fun SharedReaderScreen(
                 onGoToChapter = { dispatch(ReaderAction.JumpToChapter(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
                 onGoToSearchResult = { dispatch(ReaderAction.JumpToSearchResult(it)) },
+                onJumpBack = { dispatch(ReaderAction.JumpBack) },
+                onJumpForward = { dispatch(ReaderAction.JumpForward) },
+                onClearJumpHistory = { dispatch(ReaderAction.JumpHistoryCleared) },
                 toolbarPreferences = toolbarPreferences,
                 highlightPalette = highlightPalette,
                 onHighlightPaletteChange = onHighlightPaletteChange,
@@ -351,67 +380,20 @@ fun SharedReaderScreen(
         bottomBar = {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(6.dp),
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
+                tonalElevation = 1.dp
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SharedReaderJumpHistoryBar(
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SharedReaderCompactNavigation(
                         session = session,
-                        onBack = { dispatch(ReaderAction.JumpBack) },
-                        onForward = { dispatch(ReaderAction.JumpForward) },
-                        onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
-                    )
-                    if (toolbarPreferences.isVisible(ReaderTool.SLIDER)) {
-                        SharedReaderPageSlider(
-                            session = session,
-                            onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) }
-                        )
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            enabled = readerState.canGoPrevious,
-                            onClick = { dispatch(ReaderAction.PreviousPage) }
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null)
-                            Text("Previous")
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
-                            Text(pageInfoText)
-                        }
-                        Spacer(Modifier.weight(1f))
-                        Button(
-                            enabled = readerState.canGoNext,
-                            onClick = { dispatch(ReaderAction.NextPage) }
-                        ) {
-                            Text("Next")
-                            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = null)
-                        }
-                    }
-                    SharedReaderQuickActions(
-                        toolbarPreferences = toolbarPreferences,
-                        bottom = true,
-                        isBookmarked = session.currentBookmark != null,
-                        isDarkMode = settings.darkMode,
-                        isSearchActive = session.isSearchActive,
-                        onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
-                        onToggleTheme = { dispatch(ReaderAction.SettingsChanged(settings.copy(darkMode = !settings.darkMode))) },
-                        onToggleSearch = {
-                            dispatch(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
-                        },
-                        onExternalLookup = onExternalLookup,
-                        onAiAction = onAiAction,
-                        onCloudTtsStart = onCloudTtsStart,
-                        onCloudTtsPauseResume = onCloudTtsPauseResume,
-                        onCloudTtsStop = onCloudTtsStop,
-                        onCloudTtsClearCache = onCloudTtsClearCache,
-                        onAutoScrollChange = onAutoScrollChange,
-                        session = session,
-                        extrasState = readerExtrasState,
-                        aiByokSettings = byokSettings,
-                        cloudTtsControlsAvailable = cloudTtsControlsAvailable,
-                        externalLookupAvailable = externalLookupAvailable
+                        showSlider = toolbarPreferences.isVisible(ReaderTool.SLIDER),
+                        canGoPrevious = readerState.canGoPrevious,
+                        canGoNext = readerState.canGoNext,
+                        pageInfoText = if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoText else null,
+                        onPrevious = { dispatch(ReaderAction.PreviousPage) },
+                        onNext = { dispatch(ReaderAction.NextPage) },
+                        onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) }
                     )
                 }
             }
@@ -593,7 +575,7 @@ private fun SharedReaderQuickActions(
                         }
                     }
                 ) {
-                    Icon(Icons.Default.VolumeUp, contentDescription = if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) "Stop read aloud" else "Read aloud")
+                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) "Stop read aloud" else "Read aloud")
                 }
 
                 ReaderTool.AUTO_SCROLL -> IconButton(
@@ -1971,34 +1953,77 @@ private fun SharedReaderThemeChoice(
 }
 
 @Composable
+private fun SharedReaderCompactNavigation(
+    session: ReaderSessionState,
+    showSlider: Boolean,
+    canGoPrevious: Boolean,
+    canGoNext: Boolean,
+    pageInfoText: String?,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onPageNumberChange: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            enabled = canGoPrevious,
+            onClick = onPrevious
+        ) {
+            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
+        }
+        if (showSlider) {
+            SharedReaderPageSlider(
+                session = session,
+                onPageNumberChange = onPageNumberChange,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            Text(
+                pageInfoText.orEmpty(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        IconButton(
+            enabled = canGoNext,
+            onClick = onNext
+        ) {
+            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
+        }
+    }
+}
+
+@Composable
 private fun SharedReaderPageSlider(
     session: ReaderSessionState,
-    onPageNumberChange: (Int) -> Unit
+    onPageNumberChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val readerState = session.reader
     val totalPages = readerState.pages.size.coerceAtLeast(1)
     val sliderMax = totalPages.coerceAtLeast(2)
     val currentPageNumber = (readerState.currentPageIndex + 1).coerceIn(1, totalPages)
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("$currentPageNumber / $totalPages")
-        Slider(
+        Text(
+            "$currentPageNumber / $totalPages",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        ReaderMinimalSlider(
             value = currentPageNumber.toFloat(),
             onValueChange = { value -> onPageNumberChange(value.roundToInt().coerceIn(1, totalPages)) },
             valueRange = 1f..sliderMax.toFloat(),
-            steps = if (totalPages > 2) totalPages - 2 else 0,
             enabled = totalPages > 1,
             modifier = Modifier.weight(1f)
-        )
-        Text(
-            readerState.currentPage?.chapterTitle.orEmpty(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(180.dp)
         )
     }
 }
@@ -2016,6 +2041,9 @@ private fun SharedReaderSidebar(
     onGoToChapter: (Int) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
     onGoToSearchResult: (Int) -> Unit,
+    onJumpBack: () -> Unit,
+    onJumpForward: () -> Unit,
+    onClearJumpHistory: () -> Unit,
     toolbarPreferences: ReaderToolbarPreferences,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
@@ -2035,6 +2063,17 @@ private fun SharedReaderSidebar(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
+                item {
+                    SharedReaderJumpHistoryBar(
+                        session = session,
+                        onBack = onJumpBack,
+                        onForward = onJumpForward,
+                        onClear = onClearJumpHistory
+                    )
+                }
+            }
+
             if (toolbarPreferences.isVisible(ReaderTool.TOC)) {
                 item {
                     Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

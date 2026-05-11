@@ -42,12 +42,15 @@ class ReaderWorkspaceModelsTest {
         assertTrue(ReaderWorkspaceTopAction.SEARCH in model.topActions)
         assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
         assertTrue(ReaderWorkspaceBottomAction.PAGE_SLIDER in model.bottomActions)
+        assertFalse(model.panelDefaults.leftOpen)
+        assertFalse(model.panelDefaults.inspectorOpen)
+        assertFalse(model.chrome.preferAutoHide)
     }
 
     @Test
     fun `chrome model is forced visible for active reader states`() {
         val model = readerWorkspaceChromeModel(
-            preferAutoHide = true,
+            preferAutoHide = false,
             searchActive = true,
             leftPanelOpen = false,
             inspectorOpen = true,
@@ -59,7 +62,7 @@ class ReaderWorkspaceModelsTest {
             ttsBusy = true
         )
 
-        assertTrue(model.preferAutoHide)
+        assertFalse(model.preferAutoHide)
         assertTrue(model.forceVisible)
         assertEquals(
             setOf("search", "inspector", "annotation", "rich-text", "loading", "error", "auto-scroll", "tts"),
@@ -160,6 +163,9 @@ class ReaderWorkspaceModelsTest {
         assertTrue(ReaderWorkspaceInspectorSection.TOOLS in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
         assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
+        assertFalse(model.panelDefaults.leftOpen)
+        assertFalse(model.panelDefaults.inspectorOpen)
+        assertFalse(model.chrome.preferAutoHide)
     }
 
     @Test
@@ -184,6 +190,7 @@ class ReaderWorkspaceModelsTest {
         )
 
         assertTrue(model.chrome.forceVisible)
+        assertFalse(model.chrome.preferAutoHide)
         assertTrue("search" in model.chrome.forceVisibleReasons)
         assertTrue("annotation" in model.chrome.forceVisibleReasons)
         assertTrue("error" in model.chrome.forceVisibleReasons)
