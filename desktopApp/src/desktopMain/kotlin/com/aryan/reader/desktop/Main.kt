@@ -211,6 +211,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfBookmarkSerializer
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
@@ -274,6 +275,7 @@ import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
+import com.aryan.reader.shared.ui.SharedPdfHighlighterPaletteEditor
 import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfPageNumberOverlay
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
@@ -483,6 +485,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             readerDefaultSettings = initialLibrarySnapshot.readerDefaultSettings,
             readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
             readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette,
+            pdfHighlighterPalette = initialLibrarySnapshot.pdfHighlighterPalette,
             readerTtsReplacementPreferences = initialLibrarySnapshot.readerTtsReplacementPreferences
         )
         mutableStateOf(
@@ -584,6 +587,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         readerDefaultSettings = projected.readerDefaultSettings,
                         readerToolbarPreferences = projected.readerToolbarPreferences,
                         readerHighlightPalette = projected.readerHighlightPalette,
+                        pdfHighlighterPalette = projected.pdfHighlighterPalette,
                         readerTtsReplacementPreferences = projected.readerTtsReplacementPreferences
                     )
                 )
@@ -1872,6 +1876,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         updateActiveBookReadingState(page, progress)
                                     },
                                     onReaderSettingsChange = ::updateActiveBookReaderSettings,
+                                    pdfHighlighterPalette = state.pdfHighlighterPalette,
+                                    onPdfHighlighterPaletteChange = { palette ->
+                                        updateState(state.reduce(AppAction.PdfHighlighterPaletteChanged(palette)))
+                                    },
                                     customTextureIds = readerCustomTextureIds,
                                     onImportTexture = ::importDesktopReaderTexture,
                                     onLocalSidecarsChanged = {
@@ -2896,6 +2904,8 @@ private fun PdfReaderScreen(
     onReturnToLibrary: (() -> Unit)? = null,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
+    pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    onPdfHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit = {},
     customTextureIds: List<String> = emptyList(),
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     onLocalSidecarsChanged: () -> Unit = {},
@@ -3149,6 +3159,11 @@ private fun PdfReaderScreen(
             clearPdfInteractionState()
         }
         dispatchPdf(SharedPdfReaderAction.ToolSelected(tool))
+        if (tool.isDesktopHighlighter) {
+            pdfHighlighterPalette.sanitized().colors.firstOrNull()?.let { colorArgb ->
+                dispatchPdf(SharedPdfReaderAction.ColorSelected(colorArgb))
+            }
+        }
     }
 
     val pageIndex = pdfState.pageIndex
@@ -3160,6 +3175,7 @@ private fun PdfReaderScreen(
     val selectedTool = pdfState.selectedTool
     val selectedColor = pdfState.selectedColorArgb
     val strokeWidth = pdfState.strokeWidth
+    val pdfHighlighterColors = pdfHighlighterPalette.sanitized().colors
     val isTextSelectionMode = pdfState.isTextSelectionMode
     val bookmarks = pdfState.bookmarks
     val selectedAnnotationId = pdfState.selectedAnnotationId
@@ -4455,6 +4471,7 @@ private fun PdfReaderScreen(
                             selectedColor = selectedColor,
                             strokeWidth = strokeWidth,
                             tools = DesktopPdfAnnotationTools,
+                            highlighterPalette = pdfHighlighterColors,
                             onToolSelected = ::selectPdfAnnotationTool,
                             onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
                             onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
@@ -4466,6 +4483,22 @@ private fun PdfReaderScreen(
                             },
                             isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                             onHighlighterSnapChange = { isHighlighterSnapEnabled = it }
+                        )
+                        SharedPdfHighlighterPaletteEditor(
+                            palette = pdfHighlighterPalette,
+                            onPaletteChange = { nextPalette ->
+                                val previousSlot = pdfHighlighterPalette.sanitized().colors.indexOf(selectedColor)
+                                val sanitizedPalette = nextPalette.sanitized()
+                                onPdfHighlighterPaletteChange(sanitizedPalette)
+                                if (selectedTool.isDesktopHighlighter && selectedColor !in sanitizedPalette.colors) {
+                                    val colorArgb = sanitizedPalette.colors.getOrNull(previousSlot)
+                                        ?: sanitizedPalette.colors.firstOrNull()
+                                    colorArgb?.let { nextSelectedColor ->
+                                        dispatchPdf(SharedPdfReaderAction.ColorSelected(nextSelectedColor))
+                                    }
+                                }
+                            },
+                            modifier = Modifier.padding(top = 10.dp)
                         )
                     }
                     if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
@@ -4624,6 +4657,7 @@ private fun PdfReaderScreen(
                                 selectedEmbeddedAnnotationId = selectedEmbeddedAnnotationId,
                                 selectedTool = selectedTool,
                                 selectedColor = selectedColor,
+                                highlighterPalette = pdfHighlighterColors,
                                 strokeWidth = strokeWidth,
                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                 activeTextDraft = activeTextDraft,
@@ -4650,6 +4684,7 @@ private fun PdfReaderScreen(
                                 onSpeakSelection = { togglePdfCloudTts(it.text) },
                                 onTranslateSelection = ::translateSelection,
                                 onEmbeddedAnnotationSelected = ::selectEmbeddedAnnotation,
+                                onAnnotationSelected = ::selectAnnotation,
                                 onLinkActivated = ::activatePdfLink,
                                 onAnnotationAdded = { dispatchPdf(SharedPdfReaderAction.AnnotationAdded(it)) },
                                 onAnnotationUpdated = ::updateAnnotation,
@@ -4780,6 +4815,21 @@ private fun PdfReaderScreen(
                                             val event = awaitPointerEvent()
                                             val point = event.changes.firstOrNull()?.position ?: continue
                                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                                val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
+                                                    currentPdfAnnotations.asReversed().firstOrNull {
+                                                        it.kind == PdfAnnotationKind.HIGHLIGHT &&
+                                                            it.pageIndex == pageIndex &&
+                                                            it.sharedPdfHitTest(point, pageCanvasSize)
+                                                    }
+                                                } else {
+                                                    null
+                                                }
+                                                if (highlightHit != null) {
+                                                    selectAnnotation(highlightHit)
+                                                    clearPdfInteractionState()
+                                                    event.changes.forEach { it.consume() }
+                                                    continue
+                                                }
                                                 if (selectedTool != PdfInkTool.TEXT) {
                                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                                     if (linkTarget != null) {
@@ -5109,6 +5159,7 @@ private fun PdfReaderScreen(
                                 selection = textSelection,
                                 menuOffset = selectionMenuOffset,
                                 canvasSize = pageCanvasSize,
+                                highlighterPalette = pdfHighlighterColors,
                                 onCopy = {
                                     textSelection?.let(::copySelection)
                                     clearSelection()
@@ -5235,8 +5286,8 @@ private fun DesktopReaderBottomSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = 24.dp, vertical = 16.dp)
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 760.dp)
+                .fillMaxWidth(0.78f)
+                .widthIn(max = 560.dp)
                 .heightIn(max = 560.dp),
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -5879,6 +5930,7 @@ private fun DesktopVerticalPdfPage(
     selectedEmbeddedAnnotationId: String?,
     selectedTool: PdfInkTool,
     selectedColor: Int,
+    highlighterPalette: List<Int>,
     strokeWidth: Float,
     isHighlighterSnapEnabled: Boolean,
     activeTextDraft: SharedPdfTextDraft?,
@@ -5899,6 +5951,7 @@ private fun DesktopVerticalPdfPage(
     onSpeakSelection: (DesktopPdfTextSelection) -> Unit,
     onTranslateSelection: (DesktopPdfTextSelection) -> Unit,
     onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit,
+    onAnnotationSelected: (SharedPdfAnnotation?) -> Unit,
     onLinkActivated: (DesktopPdfLinkTarget) -> Unit,
     onAnnotationAdded: (SharedPdfAnnotation) -> Unit,
     onAnnotationUpdated: (SharedPdfAnnotation) -> Unit,
@@ -6014,6 +6067,22 @@ private fun DesktopVerticalPdfPage(
                             val event = awaitPointerEvent()
                             val point = event.changes.firstOrNull()?.position ?: continue
                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
+                                    currentAnnotations.asReversed().firstOrNull {
+                                        it.kind == PdfAnnotationKind.HIGHLIGHT &&
+                                            it.pageIndex == pageIndex &&
+                                            it.sharedPdfHitTest(point, pageCanvasSize)
+                                    }
+                                } else {
+                                    null
+                                }
+                                if (highlightHit != null) {
+                                    onSelectPage(pageIndex)
+                                    onAnnotationSelected(highlightHit)
+                                    clearInteractionState()
+                                    event.changes.forEach { it.consume() }
+                                    continue
+                                }
                                 if (selectedTool != PdfInkTool.TEXT) {
                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                     if (linkTarget != null) {
@@ -6437,6 +6506,7 @@ private fun DesktopVerticalPdfPage(
                         selection = textSelection,
                         menuOffset = selectionMenuOffset,
                         canvasSize = pageCanvasSize,
+                        highlighterPalette = highlighterPalette,
                         onCopy = {
                             textSelection?.let(onCopySelection)
                             clearSelection()
@@ -6860,6 +6930,7 @@ private fun PdfSelectionMenu(
     selection: DesktopPdfTextSelection?,
     menuOffset: Offset?,
     canvasSize: IntSize,
+    highlighterPalette: List<Int> = SharedPdfHighlighterPalette.defaultColors,
     onCopy: () -> Unit,
     onHighlight: (Int) -> Unit,
     onSearch: () -> Unit,
@@ -6915,7 +6986,7 @@ private fun PdfSelectionMenu(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SharedPdfAnnotationDefaults.highlighterPalette.forEach { colorArgb ->
+                highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }.forEach { colorArgb ->
                     Surface(
                         modifier = Modifier
                             .padding(horizontal = 5.dp)
@@ -7313,7 +7384,7 @@ private fun ReaderScreen(
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture
-    ) { html, background, navigationTarget, highlights, onVisiblePageChanged ->
+    ) { html, background, navigationTarget, highlights, onVisiblePageChanged, onHighlightSelected ->
         Surface(
             color = background,
             shape = RoundedCornerShape(8.dp),
@@ -7329,6 +7400,7 @@ private fun ReaderScreen(
                     onHighlightCreated = { highlight ->
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
+                    onHighlightSelected = onHighlightSelected,
                     onSelectionAction = { action, text ->
                         val settings = aiByokSettings.sanitized()
                         when (action) {
@@ -7398,6 +7470,7 @@ private fun DesktopEpubWebView(
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
+    onHighlightSelected: (String) -> Unit,
     onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -7405,6 +7478,7 @@ private fun DesktopEpubWebView(
     modifier: Modifier = Modifier
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val latestOnHighlightSelected by rememberUpdatedState(onHighlightSelected)
     val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
@@ -7446,6 +7520,19 @@ private fun DesktopEpubWebView(
             ) {
                 EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)?.let { highlight ->
                     scope.launch { latestOnHighlightCreated(highlight) }
+                }
+            }
+        }
+        val highlightSelectionHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerHighlightClicked"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                message.params.readerHighlightClickOrNull()?.let { highlightClick ->
+                    scope.launch { latestOnHighlightSelected(highlightClick.highlightId) }
                 }
             }
         }
@@ -7509,12 +7596,14 @@ private fun DesktopEpubWebView(
             }
         }
         bridge.register(highlightHandler)
+        bridge.register(highlightSelectionHandler)
         bridge.register(positionHandler)
         bridge.register(selectionActionHandler)
         bridge.register(ttsHighlightLogHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
+            bridge.unregister(highlightSelectionHandler)
             bridge.unregister(positionHandler)
             bridge.unregister(selectionActionHandler)
             bridge.unregister(ttsHighlightLogHandler)
@@ -7615,6 +7704,10 @@ private data class DesktopReaderPosition(
     val locator: ReaderLocator?
 )
 
+private data class DesktopReaderHighlightClick(
+    val highlightId: String
+)
+
 private data class DesktopEpubLinkClick(
     val href: String,
     val chapterIndex: Int?,
@@ -7641,6 +7734,29 @@ private data class DesktopReaderSelectionActionPayload(
     val action: DesktopReaderSelectionAction,
     val text: String
 )
+
+private fun String.readerHighlightClickOrNull(): DesktopReaderHighlightClick? {
+    fun parse(rawJson: String): DesktopReaderHighlightClick? = runCatching {
+        val obj = Json.parseToJsonElement(rawJson).jsonObject
+        val highlightId = obj["id"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: obj["highlightId"]
+                ?.takeUnless { it is JsonNull }
+                ?.jsonPrimitive
+                ?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+            ?: return@runCatching null
+        DesktopReaderHighlightClick(highlightId)
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
 
 private fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionPayload? {
     fun parse(rawJson: String): DesktopReaderSelectionActionPayload? = runCatching {

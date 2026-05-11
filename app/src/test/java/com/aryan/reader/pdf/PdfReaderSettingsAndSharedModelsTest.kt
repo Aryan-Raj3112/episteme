@@ -14,6 +14,7 @@ import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -126,6 +127,21 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertTrue(pen.strokeWidth > 0f)
         assertEquals(0x00000000, eraser.colorArgb)
         assertTrue(highlighter.strokeWidth > pen.strokeWidth)
+    }
+
+    @Test
+    fun `SharedPdfHighlighterPalette preserves slots and normalizes alpha`() {
+        val palette = SharedPdfHighlighterPalette(
+            colors = listOf(0xFFFF0000.toInt())
+        ).sanitized()
+
+        assertEquals(SharedPdfHighlighterPalette.MaxColors, palette.colors.size)
+        assertEquals(0x8CFF0000.toInt(), palette.colors.first())
+        assertTrue(palette.colors.all { (it ushr 24) == SharedPdfHighlighterPalette.DefaultAlpha })
+
+        val updated = palette.withColorAt(2, 0xFF123456.toInt())
+
+        assertEquals(0x8C123456.toInt(), updated.colors[2])
     }
 
     @Test

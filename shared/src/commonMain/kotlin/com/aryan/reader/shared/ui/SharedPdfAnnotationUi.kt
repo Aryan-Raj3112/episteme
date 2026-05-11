@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.TextFields
@@ -68,6 +70,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -87,6 +91,7 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
@@ -116,6 +121,8 @@ fun SharedPdfAnnotationToolDock(
     selectedColor: Int,
     strokeWidth: Float,
     tools: List<PdfInkTool> = SharedPdfAnnotationDefaultTools,
+    penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
+    highlighterPalette: List<Int> = SharedPdfHighlighterPalette.defaultColors,
     onToolSelected: (PdfInkTool) -> Unit,
     onColorSelected: (Int) -> Unit,
     onStrokeWidthChange: (Float) -> Unit,
@@ -129,9 +136,9 @@ fun SharedPdfAnnotationToolDock(
     val showColorPalette = selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER
     val showStrokeSettings = selectedTool != PdfInkTool.TEXT
     val palette = if (selectedTool.isHighlighter) {
-        SharedPdfAnnotationDefaults.highlighterPalette
+        highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
     } else {
-        SharedPdfAnnotationDefaults.penPalette
+        penPalette.ifEmpty { SharedPdfAnnotationDefaults.penPalette }
     }
 
     Surface(
@@ -241,6 +248,108 @@ fun SharedPdfAnnotationToolDock(
                             uncheckedThumbColor = Color.Gray,
                             uncheckedTrackColor = Color.White.copy(alpha = 0.16f)
                         )
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SharedPdfHighlighterPaletteEditor(
+    palette: SharedPdfHighlighterPalette,
+    onPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val sanitized = palette.sanitized()
+    var editingSlot by remember { mutableStateOf<Int?>(null) }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Highlight colors",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "Tap a color to customize it.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            sanitized.colors.forEachIndexed { index, argb ->
+                val color = Color(argb)
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(color.copy(alpha = 1f))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            shape = CircleShape
+                        )
+                        .clickable { editingSlot = index },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${index + 1}",
+                        color = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+
+    editingSlot?.let { slot ->
+        val initialColor = Color(sanitized.colors.getOrElse(slot) { SharedPdfHighlighterPalette.defaultColors.first() }).copy(alpha = 1f)
+        SharedHsvColorPickerDialog(
+            initialColor = initialColor,
+            title = "Highlight color ${slot + 1}",
+            onDismiss = { editingSlot = null },
+            onSave = { color ->
+                onPaletteChange(
+                    sanitized.withColorAt(
+                        slotIndex = slot,
+                        colorArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
+                    )
+                )
+                editingSlot = null
+            }
+        ) { color ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (color.luminance() > 0.5f) Color.Black else Color.White
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("PDF highlighter", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Saved with reader highlight transparency.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }

@@ -750,9 +750,30 @@ object ReaderHtmlDocumentBuilder {
                     fallbackReaderLinkNavigation(payload, 'bridge_gave_up');
                     return false;
                   }
+                  function sendReaderHighlightClick(highlightId) {
+                    if (!highlightId) return false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerHighlightClicked', JSON.stringify({ id: highlightId }));
+                        return true;
+                      } catch (error) {
+                        console.log('READER_HIGHLIGHT bridge_error id=' + highlightId + ' error=' + error);
+                      }
+                    }
+                    return false;
+                  }
                   document.addEventListener('click', function (event) {
                     var target = event.target;
                     if (!target || !target.closest) return;
+                    var highlight = target.closest('.reader-user-highlight[data-reader-highlight-id]');
+                    if (highlight && !menu.contains(highlight)) {
+                      var highlightId = highlight.getAttribute('data-reader-highlight-id') || '';
+                      if (highlightId && sendReaderHighlightClick(highlightId)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
+                    }
                     var anchor = target.closest('a[href]');
                     if (!anchor || menu.contains(anchor)) return;
                     var href = anchor.getAttribute('href') || '';

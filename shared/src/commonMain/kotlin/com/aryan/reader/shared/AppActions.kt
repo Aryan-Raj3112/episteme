@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 
@@ -88,6 +89,7 @@ sealed interface AppAction {
     data class ReaderToolPlacementChanged(val tool: ReaderTool, val bottom: Boolean) : AppAction
     data class ReaderToolOrderChanged(val toolOrder: List<ReaderTool>) : AppAction
     data class ReaderHighlightPaletteChanged(val palette: ReaderHighlightPalette) : AppAction
+    data class PdfHighlighterPaletteChanged(val palette: SharedPdfHighlighterPalette) : AppAction
     data class ReaderTtsReplacementPreferencesChanged(
         val preferences: ReaderTtsReplacementPreferences,
     ) : AppAction

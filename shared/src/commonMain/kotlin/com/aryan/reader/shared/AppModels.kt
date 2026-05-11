@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderSettings
 
 data class BannerMessage(
@@ -123,5 +124,6 @@ data class SharedReaderScreenState(
     val showTagSelectionDialogFor: Set<String> = emptySet(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
 )

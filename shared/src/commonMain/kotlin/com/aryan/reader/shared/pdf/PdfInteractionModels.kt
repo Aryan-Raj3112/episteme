@@ -170,6 +170,41 @@ object SharedPdfAnnotationDefaults {
     }
 }
 
+data class SharedPdfHighlighterPalette(
+    val colors: List<Int> = defaultColors
+) {
+    fun sanitized(): SharedPdfHighlighterPalette {
+        val normalized = colors
+            .filter { it != 0 }
+            .map { it.withPdfHighlighterAlpha() }
+            .take(MaxColors)
+        val filled = if (normalized.isEmpty()) {
+            defaultColors
+        } else {
+            normalized + defaultColors.drop(normalized.size)
+        }
+        return copy(colors = filled.take(MaxColors))
+    }
+
+    fun withColorAt(slotIndex: Int, colorArgb: Int): SharedPdfHighlighterPalette {
+        val nextColors = sanitized().colors.toMutableList()
+        if (slotIndex !in nextColors.indices) return sanitized()
+        nextColors[slotIndex] = colorArgb.withPdfHighlighterAlpha()
+        return copy(colors = nextColors).sanitized()
+    }
+
+    companion object {
+        const val DefaultAlpha: Int = 0x8C
+        const val MaxColors: Int = 5
+        val defaultColors: List<Int>
+            get() = SharedPdfAnnotationDefaults.highlighterPalette.map { it.withPdfHighlighterAlpha() }
+    }
+}
+
+private fun Int.withPdfHighlighterAlpha(): Int {
+    return (SharedPdfHighlighterPalette.DefaultAlpha shl 24) or (this and 0x00FFFFFF)
+}
+
 @Serializable
 data class SharedPdfAnnotationStore(
     val version: Int = 1,

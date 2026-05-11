@@ -135,6 +135,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.ReaderHighlightPaletteChanged -> copy(
             readerHighlightPalette = action.palette.sanitized()
         )
+        is AppAction.PdfHighlighterPaletteChanged -> copy(
+            pdfHighlighterPalette = action.palette.sanitized()
+        )
         is AppAction.ReaderTtsReplacementPreferencesChanged -> copy(
             readerTtsReplacementPreferences = action.preferences
         )

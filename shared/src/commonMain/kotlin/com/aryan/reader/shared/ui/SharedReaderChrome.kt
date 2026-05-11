@@ -2,6 +2,7 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Palette
@@ -63,7 +66,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -188,7 +195,8 @@ fun SharedReaderScreen(
         background: Color,
         navigationTarget: ReaderContentNavigationTarget,
         highlights: List<UserHighlight>,
-        onVisiblePageChanged: (Int, ReaderLocator?) -> Unit
+        onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+        onHighlightSelected: (String) -> Unit
     ) -> Unit
 ) {
     val readerState = session.reader
@@ -311,6 +319,8 @@ fun SharedReaderScreen(
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 ttsReplacementBookId = ttsReplacementBookId ?: session.reader.book.title,
                 onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
+                highlightPalette = highlightPalette,
+                onHighlightPaletteChange = onHighlightPaletteChange,
                 readerCustomTextureIds = readerCustomTextureIds,
                 onImportReaderTexture = onImportReaderTexture,
                 onReaderAction = { action -> dispatch(action) }
@@ -412,7 +422,8 @@ fun SharedReaderScreen(
                     ttsRequestId = ttsRequestId
                 ),
                 if (settings.readingMode == ReaderReadingMode.VERTICAL) session.highlights else emptyList(),
-                { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) }
+                { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) },
+                { highlightId -> selectedHighlightId = highlightId }
             )
         }
         when {
@@ -665,8 +676,8 @@ private fun SharedReaderBottomSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(horizontal = 24.dp, vertical = 16.dp)
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 760.dp)
+                .fillMaxWidth(0.78f)
+                .widthIn(max = 560.dp)
                 .heightIn(max = 560.dp),
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -846,6 +857,8 @@ private fun SharedReaderControlPanel(
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
+    highlightPalette: ReaderHighlightPalette,
+    onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderAction: (ReaderAction) -> Unit
@@ -922,6 +935,8 @@ private fun SharedReaderControlPanel(
                         settings = session.reader.settings,
                         customTextureIds = readerCustomTextureIds,
                         onImportTexture = onImportReaderTexture,
+                        highlightPalette = highlightPalette,
+                        onHighlightPaletteChange = onHighlightPaletteChange,
                         onSettingsChange = { onReaderAction(ReaderAction.SettingsChanged(it)) }
                     )
 
@@ -1346,9 +1361,12 @@ fun SharedReaderThemeControls(
     builtInThemes: List<ReaderTheme> = BuiltInReaderThemes,
     customTextureIds: List<String> = emptyList(),
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
+    highlightPalette: ReaderHighlightPalette? = null,
+    onHighlightPaletteChange: ((ReaderHighlightPalette) -> Unit)? = null,
     onSettingsChange: (ReaderSettings) -> Unit
 ) {
     var textured by remember(settings.themeId, settings.textureId) { mutableStateOf(settings.textureId != null) }
+    var editingColorTarget by remember { mutableStateOf<ReaderThemeColorTarget?>(null) }
     val activeThemes = builtInThemes.filter { (it.textureId != null) == textured }
     val visibleCustomTextureIds = remember(customTextureIds, settings.textureId) {
         buildList {
@@ -1387,6 +1405,49 @@ fun SharedReaderThemeControls(
                         Spacer(Modifier.weight(1f))
                     }
                 }
+            }
+        }
+
+        SharedReaderPanelSection("Custom colors") {
+            val backgroundColor = settings.readerBackgroundColor(builtInThemes)
+            val textColor = settings.readerTextColor(builtInThemes)
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(76.dp),
+                color = backgroundColor,
+                contentColor = textColor,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("Custom theme preview", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("Page and text colors", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                SharedReaderThemeColorButton(
+                    label = "Page",
+                    color = backgroundColor,
+                    onClick = { editingColorTarget = ReaderThemeColorTarget.BACKGROUND },
+                    modifier = Modifier.weight(1f)
+                )
+                SharedReaderThemeColorButton(
+                    label = "Text",
+                    color = textColor,
+                    onClick = { editingColorTarget = ReaderThemeColorTarget.TEXT },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        if (highlightPalette != null && onHighlightPaletteChange != null) {
+            SharedReaderPanelSection("Highlight palette") {
+                SharedHighlightPaletteEditor(
+                    palette = highlightPalette,
+                    onPaletteChange = onHighlightPaletteChange
+                )
             }
         }
 
@@ -1437,6 +1498,97 @@ fun SharedReaderThemeControls(
             }
         }
     }
+
+    editingColorTarget?.let { target ->
+        val backgroundColor = settings.readerBackgroundColor(builtInThemes)
+        val textColor = settings.readerTextColor(builtInThemes)
+        val initialColor = when (target) {
+            ReaderThemeColorTarget.BACKGROUND -> backgroundColor
+            ReaderThemeColorTarget.TEXT -> textColor
+        }
+        SharedHsvColorPickerDialog(
+            initialColor = initialColor,
+            title = target.title,
+            onDismiss = { editingColorTarget = null },
+            onSave = { color ->
+                val nextBackground = if (target == ReaderThemeColorTarget.BACKGROUND) color else backgroundColor
+                val nextText = if (target == ReaderThemeColorTarget.TEXT) color else textColor
+                onSettingsChange(
+                    settings.copy(
+                        themeId = ReaderCustomThemeId,
+                        darkMode = nextBackground.luminance() < 0.45f,
+                        backgroundColorArgb = nextBackground.toArgb().toLong(),
+                        textColorArgb = nextText.toArgb().toLong()
+                    )
+                )
+                editingColorTarget = null
+            }
+        ) { color ->
+            val previewBackground = if (target == ReaderThemeColorTarget.BACKGROUND) color else backgroundColor
+            val previewText = if (target == ReaderThemeColorTarget.TEXT) color else textColor
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(64.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = previewBackground,
+                contentColor = previewText,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("Live preview", fontWeight = FontWeight.Bold)
+                    Text("Page and text colors", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+private const val ReaderCustomThemeId = "custom_reader"
+
+private enum class ReaderThemeColorTarget(val title: String) {
+    BACKGROUND("Page color"),
+    TEXT("Text color")
+}
+
+@Composable
+private fun SharedReaderThemeColorButton(
+    label: String,
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(54.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = color,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+            Text(
+                label,
+                color = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+private fun ReaderSettings.readerBackgroundColor(themes: List<ReaderTheme>): Color {
+    return backgroundColorArgb?.toComposeColor()
+        ?: themes.firstOrNull { it.id == themeId }?.backgroundColor?.takeIf { it.isSpecified }
+        ?: if (darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+}
+
+private fun ReaderSettings.readerTextColor(themes: List<ReaderTheme>): Color {
+    return textColorArgb?.toComposeColor()
+        ?: themes.firstOrNull { it.id == themeId }?.textColor?.takeIf { it.isSpecified }
+        ?: if (darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
 }
 
 @Composable
@@ -1705,6 +1857,7 @@ private fun SharedReaderExtrasControls(
             }
         }
     }
+
 }
 
 private enum class SharedTtsReplacementScope {
@@ -2692,31 +2845,67 @@ private fun SharedHighlightPaletteEditor(
     onPaletteChange: (ReaderHighlightPalette) -> Unit
 ) {
     val sanitized = palette.sanitized()
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Palette", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    var selectedSlotIndex by remember(sanitized.colors) { mutableStateOf(0) }
+    val colors = sanitized.colors
+
+    fun replaceSlot(color: HighlightColor) {
+        if (colors.isEmpty()) return
+        val next = colors.toMutableList()
+        val slot = selectedSlotIndex.coerceIn(0, next.lastIndex)
+        val previousColor = next[slot]
+        val existingIndex = next.indexOf(color)
+        if (existingIndex >= 0 && existingIndex != slot) {
+            next[existingIndex] = previousColor
+        }
+        next[slot] = color
+        onPaletteChange(ReaderHighlightPalette(colors = next).sanitized())
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Tap a slot, then pick a color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.horizontalScroll(rememberScrollState())
         ) {
-            HighlightColor.entries.forEach { color ->
-                FilterChip(
-                    selected = sanitized.contains(color),
-                    onClick = {
-                        onPaletteChange(sanitized.withColor(color, enabled = !sanitized.contains(color)))
-                    },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .width(10.dp)
-                                    .height(10.dp)
-                                    .background(color.color, RoundedCornerShape(2.dp))
-                            )
-                            Text(color.id)
-                        }
+            colors.forEachIndexed { index, color ->
+                val selected = index == selectedSlotIndex.coerceIn(0, colors.lastIndex)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(color.color)
+                        .border(
+                            width = if (selected) 3.dp else 1.dp,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            shape = CircleShape
+                        )
+                        .clickable { selectedSlotIndex = index },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = if (color.color.luminance() > 0.5f) Color.Black else Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
-                )
+                }
+            }
+        }
+        HighlightColor.entries.chunked(7).forEach { rowColors ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                rowColors.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(color.color)
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), CircleShape)
+                            .clickable { replaceSlot(color) }
+                    )
+                }
             }
         }
     }

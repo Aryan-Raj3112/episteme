@@ -9,12 +9,14 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -43,11 +45,12 @@ data class SharedLibrarySnapshot(
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 11
+    private const val SCHEMA_VERSION = 12
 
     private val json = Json {
         prettyPrint = true
@@ -103,6 +106,10 @@ object SharedLibrarySnapshotJson {
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderHighlightPaletteOrNull()
                 ?: ReaderHighlightPalette(),
+            pdfHighlighterPalette = root["pdfHighlighterPalette"]
+                ?.takeUnless { it is JsonNull }
+                ?.asSharedPdfHighlighterPaletteOrNull()
+                ?: SharedPdfHighlighterPalette(),
             readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
@@ -136,6 +143,7 @@ object SharedLibrarySnapshotJson {
                 "readerDefaultSettings" to snapshot.readerDefaultSettings.asJson(),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
+                "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
                     snapshot.readerTtsReplacementPreferences,
                 )
@@ -152,6 +160,12 @@ private fun JsonObject.array(name: String): List<JsonElement> {
 private fun JsonObject.stringArray(name: String): List<String> {
     return array(name).mapNotNull { element ->
         runCatching { element.jsonPrimitive.content }.getOrNull()
+    }
+}
+
+private fun JsonObject.intArray(name: String): List<Int> {
+    return array(name).mapNotNull { element ->
+        runCatching { element.jsonPrimitive.intOrNull }.getOrNull()
     }
 }
 
@@ -411,6 +425,10 @@ private fun List<String>.asJsonArray(): JsonArray {
     return JsonArray(map { JsonPrimitive(it) })
 }
 
+private fun List<Int>.asIntJsonArray(): JsonArray {
+    return JsonArray(map { JsonPrimitive(it) })
+}
+
 private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     val defaults = ReaderSettings()
@@ -471,6 +489,11 @@ private fun JsonElement.asReaderHighlightPaletteOrNull(): ReaderHighlightPalette
     val colors = obj.stringArray("colorIds")
         .mapNotNull { colorId -> HighlightColor.entries.firstOrNull { it.id == colorId || it.name == colorId } }
     return ReaderHighlightPalette(colors = colors).sanitized()
+}
+
+private fun JsonElement.asSharedPdfHighlighterPaletteOrNull(): SharedPdfHighlighterPalette? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return SharedPdfHighlighterPalette(colors = obj.intArray("colorsArgb")).sanitized()
 }
 
 private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
@@ -583,6 +606,14 @@ private fun ReaderHighlightPalette.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
             "colorIds" to sanitized().colors.map { it.id }.asJsonArray()
+        )
+    )
+}
+
+private fun SharedPdfHighlighterPalette.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "colorsArgb" to sanitized().colors.asIntJsonArray()
         )
     )
 }
