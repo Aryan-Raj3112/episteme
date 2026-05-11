@@ -212,6 +212,8 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("function scheduleMenuFromSelection()"))
         assertTrue(html.contains("selectionAnchorRect(selection)"))
+        assertTrue(html.contains("if (selectionPointerDown || activeSelectionHandle) return;"))
+        assertTrue(html.contains("rangeBoundaryRect(range.startContainer"))
         assertTrue(html.contains("document.addEventListener('selectionchange'"))
         assertTrue(html.contains("document.addEventListener('pointerdown'"))
         assertTrue(html.contains("document.addEventListener('mouseup'"))
@@ -238,6 +240,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""id="reader-selection-end-handle""""))
         assertTrue(html.contains("beginSelectionHandleDrag('start'"))
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
+        assertTrue(html.contains("document.addEventListener('selectstart'"))
+        assertFalse(html.contains("next.toString().trim().length"))
         assertTrue(html.contains("document.caretRangeFromPoint"))
     }
 

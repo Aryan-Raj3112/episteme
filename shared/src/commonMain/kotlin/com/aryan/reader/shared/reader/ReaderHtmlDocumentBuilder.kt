@@ -899,6 +899,11 @@ object ReaderHtmlDocumentBuilder {
                     }, 0);
                   }, true);
                   function scheduleVisiblePageReport() {
+                    if (selectionPointerDown || activeSelectionHandle) {
+                      if (reportTimer !== null) window.clearTimeout(reportTimer);
+                      reportTimer = null;
+                      return;
+                    }
                     if (reportTimer !== null) window.clearTimeout(reportTimer);
                     reportTimer = window.setTimeout(function () {
                       reportTimer = null;
@@ -917,16 +922,33 @@ object ReaderHtmlDocumentBuilder {
                     });
                   }
                   function hideMenu() {
+                    if (selectionMenuTimer !== null) {
+                      window.clearTimeout(selectionMenuTimer);
+                      selectionMenuTimer = null;
+                    }
                     menu.style.display = 'none';
                     if (!activeSelectionHandle) hideSelectionHandles();
                   }
                   function selectionAnchorRect(selection) {
                     if (!selection || selection.rangeCount === 0) return null;
                     var range = selection.getRangeAt(0);
-                    var rect = range.getBoundingClientRect();
-                    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
-                    var rects = range.getClientRects ? range.getClientRects() : [];
-                    return rects && rects.length > 0 ? rects[0] : null;
+                    var startRect = rangeBoundaryRect(range.startContainer, range.startOffset, false);
+                    var endRect = rangeBoundaryRect(range.endContainer, range.endOffset, true);
+                    if (startRect && endRect) {
+                      var left = Math.min(startRect.left, endRect.left);
+                      var top = Math.min(startRect.top, endRect.top);
+                      var right = Math.max(startRect.right, endRect.right);
+                      var bottom = Math.max(startRect.bottom, endRect.bottom);
+                      return {
+                        left: left,
+                        top: top,
+                        right: right,
+                        bottom: bottom,
+                        width: right - left,
+                        height: bottom - top
+                      };
+                    }
+                    return startRect || endRect || firstRangeRect(range, false);
                   }
                   function positionMenu(left, top, anchorRect) {
                     menu.style.visibility = 'hidden';
@@ -954,19 +976,67 @@ object ReaderHtmlDocumentBuilder {
                     handle.style.left = (x - 12) + 'px';
                     handle.style.top = rect.bottom + 'px';
                   }
+                  function usableRangeRect(rect) {
+                    return rect && (rect.width > 0 || rect.height > 0) ? rect : null;
+                  }
+                  function firstRangeRect(range, preferLast) {
+                    var rects = Array.prototype.slice.call(range && range.getClientRects ? range.getClientRects() : []);
+                    rects = rects.filter(usableRangeRect);
+                    if (rects.length === 0) return null;
+                    return preferLast ? rects[rects.length - 1] : rects[0];
+                  }
+                  function rangeBoundaryRect(container, offset, preferPrevious) {
+                    if (!container) return null;
+                    var collapsed = document.createRange();
+                    try {
+                      collapsed.setStart(container, offset);
+                      collapsed.collapse(true);
+                      var collapsedRect = firstRangeRect(collapsed, preferPrevious);
+                      if (collapsedRect) return collapsedRect;
+                    } catch (error) {
+                    } finally {
+                      collapsed.detach && collapsed.detach();
+                    }
+
+                    var expanded = document.createRange();
+                    try {
+                      if (container.nodeType === Node.TEXT_NODE) {
+                        var textLength = container.nodeValue ? container.nodeValue.length : 0;
+                        var start = preferPrevious ? Math.max(0, offset - 1) : Math.min(offset, Math.max(0, textLength - 1));
+                        var end = Math.min(textLength, start + 1);
+                        if (end <= start && start > 0) {
+                          start -= 1;
+                          end = start + 1;
+                        }
+                        if (end > start) {
+                          expanded.setStart(container, start);
+                          expanded.setEnd(container, end);
+                          return firstRangeRect(expanded, preferPrevious);
+                        }
+                      } else {
+                        var childCount = container.childNodes ? container.childNodes.length : 0;
+                        if (childCount > 0) {
+                          var childIndex = preferPrevious ? Math.max(0, offset - 1) : Math.min(offset, childCount - 1);
+                          expanded.selectNodeContents(container.childNodes[childIndex]);
+                          return firstRangeRect(expanded, preferPrevious);
+                        }
+                      }
+                    } catch (error) {
+                      return null;
+                    } finally {
+                      expanded.detach && expanded.detach();
+                    }
+                    return null;
+                  }
                   function positionSelectionHandles(selection) {
                     if (!selection || selection.rangeCount === 0) return;
                     var range = selection.getRangeAt(0);
-                    var rects = Array.prototype.slice.call(range.getClientRects ? range.getClientRects() : []);
-                    rects = rects.filter(function (rect) {
-                      return rect && (rect.width > 0 || rect.height > 0);
-                    });
-                    if (rects.length === 0) {
+                    var first = rangeBoundaryRect(range.startContainer, range.startOffset, false) || firstRangeRect(range, false);
+                    var last = rangeBoundaryRect(range.endContainer, range.endOffset, true) || firstRangeRect(range, true);
+                    if (!first || !last) {
                       hideSelectionHandles();
                       return;
                     }
-                    var first = rects[0];
-                    var last = rects[rects.length - 1];
                     showSelectionHandle(startHandle, first, first.left);
                     showSelectionHandle(endHandle, last, last.right);
                   }
@@ -989,6 +1059,7 @@ object ReaderHtmlDocumentBuilder {
                     if (selectionMenuTimer !== null) window.clearTimeout(selectionMenuTimer);
                     selectionMenuTimer = window.setTimeout(function () {
                       selectionMenuTimer = null;
+                      if (selectionPointerDown || activeSelectionHandle) return;
                       if (selectionText().length > 0) showMenu(null);
                       else hideMenu();
                     }, 90);
@@ -1028,7 +1099,7 @@ object ReaderHtmlDocumentBuilder {
                     } catch (error) {
                       return null;
                     }
-                    if (next.collapsed || next.toString().trim().length === 0) return null;
+                    if (next.collapsed) return null;
                     return next;
                   }
                   function updateSelectionHandle(event) {
@@ -1658,6 +1729,10 @@ object ReaderHtmlDocumentBuilder {
                         event.stopPropagation();
                         requestSelectionHandleUpdate(event);
                       });
+                      handle.addEventListener('mousedown', function (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      });
                       handle.addEventListener('pointerup', finishSelectionHandleDrag);
                       handle.addEventListener('pointercancel', finishSelectionHandleDrag);
                     });
@@ -1694,8 +1769,15 @@ object ReaderHtmlDocumentBuilder {
                     if (selectionPointerDown) return;
                     scheduleMenuFromSelection();
                   });
+                  document.addEventListener('selectstart', function (event) {
+                    if (!activeSelectionHandle) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }, true);
                   document.addEventListener('pointermove', function (event) {
                     if (!activeSelectionHandle) return;
+                    event.preventDefault();
+                    event.stopPropagation();
                     requestSelectionHandleUpdate(event);
                   });
                   document.addEventListener('pointerup', function (event) {
@@ -1706,6 +1788,7 @@ object ReaderHtmlDocumentBuilder {
                     if (selectionPointerDown && !menu.contains(event.target)) {
                       selectionPointerDown = false;
                       scheduleMenuFromSelection();
+                      scheduleVisiblePageReport();
                     }
                   });
                   document.addEventListener('pointercancel', function () {
@@ -1716,11 +1799,14 @@ object ReaderHtmlDocumentBuilder {
                     if (activeSelectionHandle) return;
                     selectionPointerDown = false;
                     scheduleMenuFromSelection();
+                    scheduleVisiblePageReport();
                   });
                   document.addEventListener('keyup', function () {
                     scheduleMenuFromSelection();
                   });
-                  document.addEventListener('scroll', hideMenu, true);
+                  document.addEventListener('scroll', function () {
+                    if (!selectionPointerDown && !activeSelectionHandle) hideMenu();
+                  }, true);
                   document.addEventListener('scroll', scheduleVisiblePageReport, true);
                   window.addEventListener('scroll', scheduleVisiblePageReport, { passive: true });
                   document.addEventListener('pointerdown', function (event) {
