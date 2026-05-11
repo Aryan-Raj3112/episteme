@@ -111,6 +111,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.platform.Font as DesktopFont
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -242,11 +243,15 @@ import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderLinkTarget
+import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.reader.ReaderViewportSpec
+import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -7431,6 +7436,23 @@ private fun ReaderScreen(
     webViewNetworkAccessEnabled: Boolean
 ) {
     val clipboardManager = LocalClipboardManager.current
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val measuredPaginator = remember(
+        textMeasurer,
+        density,
+        session.reader.settings.fontFamily,
+        session.reader.settings.customFontPath
+    ) {
+        SharedMeasuredEpubPaginator(
+            textMeasurer = textMeasurer,
+            density = density,
+            fontFamily = session.reader.settings.toDesktopReaderFontFamily()
+        )
+    }
+    var readerViewport by remember(session.reader.book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    val latestSession by rememberUpdatedState(session)
+    val latestOnSessionChange by rememberUpdatedState(onSessionChange)
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
 
@@ -7438,6 +7460,24 @@ private fun ReaderScreen(
         url = externalLinkDialogUrl,
         onDismiss = { externalLinkDialogUrl = null }
     )
+
+    LaunchedEffect(
+        session.reader.book.id,
+        session.reader.settings,
+        readerViewport,
+        measuredPaginator
+    ) {
+        val settings = session.reader.settings
+        if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) return@LaunchedEffect
+        val pages = measuredPaginator.paginate(
+            book = session.reader.book,
+            settings = settings,
+            viewport = readerViewport
+        )
+        if (pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)) {
+            latestOnSessionChange(readerEngine.replacePages(latestSession, pages))
+        }
+    }
 
     SharedReaderScreen(
         session = session,
@@ -7476,6 +7516,10 @@ private fun ReaderScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .onSizeChanged { size ->
+                    val next = ReaderViewportSpec(size.width, size.height)
+                    if (next != readerViewport) readerViewport = next
+                }
         ) {
             if (webViewRuntimeState.initialized) {
                 DesktopEpubWebView(
@@ -8281,6 +8325,27 @@ private fun String.toComposeFontFamily(): FontFamily {
         "Sans" -> FontFamily.SansSerif
         "Mono" -> FontFamily.Monospace
         else -> FontFamily.Default
+    }
+}
+
+private fun ReaderSettings.toDesktopReaderFontFamily(): FontFamily {
+    customFontPath?.takeIf { it.isNotBlank() }?.let { path ->
+        runCatching { FontFamily(DesktopFont(File(path))) }.getOrNull()?.let { return it }
+    }
+    return fontFamily.toComposeFontFamily()
+}
+
+private fun List<ReaderPage>.samePageLayoutAs(other: List<ReaderPage>): Boolean {
+    if (size != other.size) return false
+    return indices.all { index ->
+        val left = this[index]
+        val right = other[index]
+        left.pageIndex == right.pageIndex &&
+            left.chapterIndex == right.chapterIndex &&
+            left.startOffset == right.startOffset &&
+            left.endOffset == right.endOffset &&
+            left.text.length == right.text.length &&
+            left.semanticBlocks.size == right.semanticBlocks.size
     }
 }
 

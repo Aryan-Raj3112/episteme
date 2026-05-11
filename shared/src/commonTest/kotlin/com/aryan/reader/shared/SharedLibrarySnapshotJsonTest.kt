@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -56,6 +57,7 @@ class SharedLibrarySnapshotJsonTest {
                         systemUiMode = SystemUiMode.HIDDEN,
                         pageInfoMode = PageInfoMode.SYNC,
                         pageInfoPosition = PageInfoPosition.TOP,
+                        pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
                         seamlessChapterNavigation = false,
                         chapterTurnDragMultiplier = 1.6f
                     ),

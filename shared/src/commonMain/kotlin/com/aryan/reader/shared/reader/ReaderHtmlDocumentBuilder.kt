@@ -77,6 +77,7 @@ object ReaderHtmlDocumentBuilder {
     fun pageDocument(
         book: SharedEpubBook,
         page: ReaderPage?,
+        visiblePages: List<ReaderPage> = listOfNotNull(page),
         settings: ReaderSettings,
         searchQuery: String = "",
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
@@ -88,38 +89,26 @@ object ReaderHtmlDocumentBuilder {
         externalLookupEnabled: Boolean = true,
         textureDataUri: String? = null
     ): String {
-        val chapter = page?.let { book.chapters.getOrNull(it.chapterIndex) }
-        val body = if (page == null || chapter == null) {
+        val pagesToRender = visiblePages.ifEmpty { listOfNotNull(page) }
+        val body = if (pagesToRender.isEmpty()) {
             logReaderHtml("page_document_empty reason=missing_page_or_chapter")
             "<section class=\"page\"></section>"
         } else {
-            val semanticPageBlocks = chapter.semanticBlocks.blocksForPage(page)
-            val usedSemanticBlocks = semanticPageBlocks.isNotEmpty()
-            val blocks = if (usedSemanticBlocks) {
-                semanticPageBlocks.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-            } else {
-                page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
+            val sections = pagesToRender.mapNotNull { readerPage ->
+                pageSectionHtml(
+                    book = book,
+                    page = readerPage,
+                    settings = settings,
+                    searchQuery = searchQuery,
+                    searchOptions = searchOptions,
+                    highlights = highlights
+                )
             }
-            val pageHtml = blocks.applyUserHighlights(
-                highlights = highlights.filter { it.belongsToPage(page) },
-                contentStartOffset = page.startOffset,
-                contentEndOffset = page.endOffset
-            )
-            logReaderHtml(
-                "page_document page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
-                    "range=${page.startOffset}..${page.endOffset} pageText=${page.text.length} " +
-                    "semantic=$usedSemanticBlocks blocks=${semanticPageBlocks.size}/${chapter.semanticBlocks.size} " +
-                    "htmlChars=${pageHtml.length} settingsFont=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
-                    "summary=\"${semanticPageBlocks.blockSummary()}\" styles=\"${semanticPageBlocks.styleSummary()}\""
-            )
-            """
-            <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
-              <h1 class="chapter-title">${page.chapterTitle.escapeHtml()}</h1>
-              <div class="reader-content" data-reader-content-start="${page.startOffset}" data-reader-content-end="${page.endOffset}">
-                $pageHtml
-              </div>
-            </section>
-            """.trimIndent()
+            if (sections.size > 1) {
+                sections.joinToString("\n", "<div class=\"reader-spread\" data-reader-spread-count=\"${sections.size}\">", "</div>")
+            } else {
+                sections.firstOrNull() ?: "<section class=\"page\"></section>"
+            }
         }
         return document(
             title = book.title,
@@ -130,12 +119,51 @@ object ReaderHtmlDocumentBuilder {
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
             navigationLocator = navigationLocator,
-            pageAnchors = emptyList(),
+            pageAnchors = pagesToRender,
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
             cloudTtsEnabled = cloudTtsEnabled,
             externalLookupEnabled = externalLookupEnabled,
             textureDataUri = textureDataUri
         )
+    }
+
+    private fun pageSectionHtml(
+        book: SharedEpubBook,
+        page: ReaderPage,
+        settings: ReaderSettings,
+        searchQuery: String,
+        searchOptions: ReaderSearchOptions,
+        highlights: List<UserHighlight>
+    ): String? {
+        val chapter = book.chapters.getOrNull(page.chapterIndex) ?: return null
+        val measuredPageBlocks = page.semanticBlocks
+        val semanticPageBlocks = measuredPageBlocks.ifEmpty { chapter.semanticBlocks.blocksForPage(page) }
+        val usedSemanticBlocks = semanticPageBlocks.isNotEmpty()
+        val blocks = if (usedSemanticBlocks) {
+            semanticPageBlocks.joinToString("") { it.toHtml(searchQuery, searchOptions) }
+        } else {
+            page.text.textToParagraphHtml(searchQuery, searchOptions, baseOffset = page.startOffset)
+        }
+        val pageHtml = blocks.applyUserHighlights(
+            highlights = highlights.filter { it.belongsToPage(page) },
+            contentStartOffset = page.startOffset,
+            contentEndOffset = page.endOffset
+        )
+        logReaderHtml(
+            "page_document page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
+                "range=${page.startOffset}..${page.endOffset} pageText=${page.text.length} " +
+                "semantic=$usedSemanticBlocks measured=${measuredPageBlocks.isNotEmpty()} " +
+                "blocks=${semanticPageBlocks.size}/${chapter.semanticBlocks.size} " +
+                "htmlChars=${pageHtml.length} settingsFont=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
+                "summary=\"${semanticPageBlocks.blockSummary()}\" styles=\"${semanticPageBlocks.styleSummary()}\""
+        )
+        return """
+        <section class="page" data-reader-chapter-index="${page.chapterIndex}" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}" data-reader-page-index="${page.pageIndex}" data-reader-page-start="${page.startOffset}" data-reader-page-end="${page.endOffset}">
+          <div class="reader-content" data-reader-content-start="${page.startOffset}" data-reader-content-end="${page.endOffset}">
+            $pageHtml
+          </div>
+        </section>
+        """.trimIndent()
     }
 
     private fun document(
@@ -251,6 +279,10 @@ object ReaderHtmlDocumentBuilder {
                   overflow-wrap: anywhere;
                   position: relative;
                 }
+                body.reader-paginated {
+                  height: 100vh;
+                  overflow: hidden;
+                }
                 $textureOverlayCss
                 .chapter, .page {
                   max-width: var(--reader-page-width);
@@ -258,6 +290,27 @@ object ReaderHtmlDocumentBuilder {
                   text-align: var(--reader-align);
                   position: relative;
                   z-index: 1;
+                }
+                body.reader-paginated .page {
+                  box-sizing: border-box;
+                  height: calc(100vh - (var(--reader-margin-y) * 2));
+                  margin-bottom: 0;
+                  overflow: hidden;
+                }
+                .reader-spread {
+                  display: grid;
+                  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                  gap: 28px;
+                  width: min(100%, calc((var(--reader-page-width) * 2) + 28px));
+                  height: calc(100vh - (var(--reader-margin-y) * 2));
+                  margin: 0 auto;
+                  position: relative;
+                  z-index: 1;
+                }
+                .reader-spread .page {
+                  width: 100%;
+                  max-width: none;
+                  min-width: 0;
                 }
                 .chapter-title {
                   text-align: left;
@@ -407,7 +460,7 @@ object ReaderHtmlDocumentBuilder {
                 }
               </style>
             </head>
-            <body data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
+            <body class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated" else "reader-vertical"}" data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
               $body
               <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
                 <div class="reader-selection-colors" aria-label="Highlight colors">

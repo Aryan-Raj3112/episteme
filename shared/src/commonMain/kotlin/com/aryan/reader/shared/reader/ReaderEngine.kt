@@ -102,7 +102,7 @@ class ReaderEngine(
         highlights: List<UserHighlight> = emptyList()
     ): ReaderSessionState {
         val pages = pagesFor(book, settings)
-        val initialIndex = initialPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
+        val initialIndex = ReaderSpreadLayout.normalizePageIndex(initialPageIndex, pages.size, settings)
         val reader = PaginatedReaderState(
             book = book,
             pages = pages,
@@ -125,16 +125,22 @@ class ReaderEngine(
 
     fun next(state: ReaderSessionState): ReaderSessionState {
         if (!state.reader.canGoNext) return state
-        return goToPage(state, state.reader.currentPageIndex + 1)
+        return goToPage(
+            state,
+            ReaderSpreadLayout.nextPageIndex(state.reader.currentPageIndex, state.reader.pages.size, state.reader.settings)
+        )
     }
 
     fun previous(state: ReaderSessionState): ReaderSessionState {
         if (!state.reader.canGoPrevious) return state
-        return goToPage(state, state.reader.currentPageIndex - 1)
+        return goToPage(
+            state,
+            ReaderSpreadLayout.previousPageIndex(state.reader.currentPageIndex, state.reader.pages.size, state.reader.settings)
+        )
     }
 
     fun goToPage(state: ReaderSessionState, pageIndex: Int): ReaderSessionState {
-        val target = pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+        val target = ReaderSpreadLayout.normalizePageIndex(pageIndex, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(target)
         return state.copy(
             reader = state.reader.copy(currentPageIndex = target),
@@ -160,26 +166,28 @@ class ReaderEngine(
     }
 
     fun goToLocator(state: ReaderSessionState, locator: ReaderLocator): ReaderSessionState {
-        val pageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
+        val requestedPageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
             .takeIf { it >= 0 }
             ?: locator.pageIndex
             ?.takeIf { it in state.reader.pages.indices }
             ?: return state
+        val pageIndex = ReaderSpreadLayout.normalizePageIndex(requestedPageIndex, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(pageIndex) ?: return state
-        val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
-        val normalizedLocator = locator.copy(pageIndex = pageIndex).withFallbacks(
-            chapterIndex = page.chapterIndex,
-            chapterId = chapter?.id,
-            href = chapter?.baseHref,
-            pageIndex = pageIndex,
-            startOffset = page.startOffset,
-            endOffset = page.endOffset,
-            textQuote = locator.textQuote ?: page.text.preview(),
-            cfi = locator.cfi ?: page.toDesktopCfi()
+        val requestedPage = state.reader.pages.getOrNull(requestedPageIndex) ?: page
+        val requestedChapter = state.reader.book.chapters.getOrNull(requestedPage.chapterIndex)
+        val normalizedLocator = locator.copy(pageIndex = requestedPageIndex).withFallbacks(
+            chapterIndex = requestedPage.chapterIndex,
+            chapterId = requestedChapter?.id,
+            href = requestedChapter?.baseHref,
+            pageIndex = requestedPageIndex,
+            startOffset = requestedPage.startOffset,
+            endOffset = requestedPage.endOffset,
+            textQuote = locator.textQuote ?: requestedPage.text.preview(),
+            cfi = locator.cfi ?: requestedPage.toDesktopCfi()
         )
         return state.copy(
             reader = state.reader.copy(currentPageIndex = pageIndex),
-            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == pageIndex },
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == requestedPageIndex },
             navigationLocator = normalizedLocator,
             navigationRequestId = state.navigationRequestId + 1
         )
@@ -322,12 +330,12 @@ class ReaderEngine(
     }
 
     fun syncVisiblePage(state: ReaderSessionState, pageIndex: Int, locator: ReaderLocator? = null): ReaderSessionState {
-        val target = pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
-        val normalizedLocator = locator?.normalizedForPage(state, target)
+        val target = ReaderSpreadLayout.normalizePageIndex(pageIndex, state.reader.pages.size, state.reader.settings)
+        val normalizedLocator = locator?.normalizedForPage(state, pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0)))
         if (target == state.reader.currentPageIndex && normalizedLocator == null) return state
         return state.copy(
             reader = state.reader.copy(currentPageIndex = target),
-            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target },
+            activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == pageIndex },
             navigationLocator = normalizedLocator ?: state.navigationLocator
         )
     }
@@ -345,9 +353,34 @@ class ReaderEngine(
         val updated = state.copy(
             reader = state.reader.copy(
                 pages = pages,
-                currentPageIndex = newIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)),
+                currentPageIndex = ReaderSpreadLayout.normalizePageIndex(newIndex, pages.size, settings),
                 settings = settings
             )
+        )
+        return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
+    }
+
+    fun replacePages(state: ReaderSessionState, pages: List<ReaderPage>): ReaderSessionState {
+        if (pages.isEmpty()) return state
+        val currentLocator = state.navigationLocator ?: state.reader.currentPage?.toLocator(state.reader.book)
+        val targetIndex = currentLocator
+            ?.let { locator -> pages.indexOfFirst { page -> page.contains(locator) } }
+            ?.takeIf { it >= 0 }
+            ?: state.reader.currentPage?.let { current ->
+                pages.indexOfFirst {
+                    it.chapterIndex == current.chapterIndex &&
+                        it.startOffset <= current.startOffset &&
+                        it.endOffset >= current.startOffset
+                }.takeIf { it >= 0 }
+            }
+            ?: state.reader.currentPageIndex
+        val normalizedIndex = ReaderSpreadLayout.normalizePageIndex(targetIndex, pages.size, state.reader.settings)
+        val updated = state.copy(
+            reader = state.reader.copy(
+                pages = pages,
+                currentPageIndex = normalizedIndex
+            ),
+            navigationLocator = currentLocator ?: pages.getOrNull(normalizedIndex)?.toLocator(state.reader.book)
         )
         return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
     }
@@ -577,19 +610,20 @@ class ReaderEngine(
         if (state.searchResults.isEmpty()) return state
         val targetIndex = resultIndex.coerceIn(0, state.searchResults.lastIndex)
         val result = state.searchResults[targetIndex]
-        val targetPage = state.reader.pages.indexOfFirst { page -> page.contains(result.locator) }
+        val requestedPage = state.reader.pages.indexOfFirst { page -> page.contains(result.locator) }
             .takeIf { it >= 0 }
             ?: result.pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+        val targetPage = ReaderSpreadLayout.normalizePageIndex(requestedPage, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(targetPage)
         val chapter = page?.let { state.reader.book.chapters.getOrNull(it.chapterIndex) }
         return state.copy(
             reader = state.reader.copy(currentPageIndex = targetPage),
             activeSearchResultIndex = targetIndex,
-            navigationLocator = result.locator.copy(pageIndex = targetPage).withFallbacks(
+            navigationLocator = result.locator.copy(pageIndex = requestedPage).withFallbacks(
                 chapterIndex = page?.chapterIndex,
                 chapterId = chapter?.id,
                 href = chapter?.baseHref,
-                pageIndex = targetPage
+                pageIndex = requestedPage
             ),
             navigationRequestId = state.navigationRequestId + 1
         )

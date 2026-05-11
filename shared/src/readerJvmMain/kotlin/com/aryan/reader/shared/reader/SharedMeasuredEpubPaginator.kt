@@ -1,0 +1,596 @@
+package com.aryan.reader.shared.reader
+
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticHeader
+import com.aryan.reader.paginatedreader.SemanticImage
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticListItem
+import com.aryan.reader.paginatedreader.SemanticMath
+import com.aryan.reader.paginatedreader.SemanticParagraph
+import com.aryan.reader.paginatedreader.SemanticSpacer
+import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
+
+class SharedMeasuredEpubPaginator(
+    private val textMeasurer: TextMeasurer,
+    private val density: Density,
+    private val fontFamily: FontFamily = FontFamily.Default
+) {
+    suspend fun paginate(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        viewport: ReaderViewportSpec
+    ): List<ReaderPage> {
+        val geometry = MeasuredPageGeometry.from(settings, viewport)
+        val baseStyle = TextStyle(
+            fontSize = settings.fontSize.sp,
+            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+            fontFamily = fontFamily,
+            textAlign = settings.textAlign.toComposeTextAlign()
+        )
+        val pages = mutableListOf<ReaderPage>()
+        book.chapters.forEachIndexed { chapterIndex, chapter ->
+            pages += paginateChapter(
+                chapter = chapter,
+                chapterIndex = chapterIndex,
+                firstPageIndex = pages.size,
+                settings = settings,
+                geometry = geometry,
+                baseStyle = baseStyle
+            )
+        }
+        return pages.mapIndexed { index, page -> page.copy(pageIndex = index) }
+    }
+
+    private suspend fun paginateChapter(
+        chapter: SharedEpubChapter,
+        chapterIndex: Int,
+        firstPageIndex: Int,
+        settings: ReaderSettings,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle
+    ): List<ReaderPage> {
+        val sourceBlocks = chapter.semanticBlocks.ifEmpty { chapter.plainText.toPlainSemanticBlocks() }
+        if (sourceBlocks.isEmpty()) {
+            return listOf(
+                ReaderPage(
+                    pageIndex = firstPageIndex,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapter.title,
+                    text = "",
+                    startOffset = 0,
+                    endOffset = 0
+                )
+            )
+        }
+
+        val pages = mutableListOf<ReaderPage>()
+        val queue = ArrayDeque<SemanticBlock>().apply { addAll(sourceBlocks) }
+        var pageBlocks = mutableListOf<SemanticBlock>()
+        var usedHeight = 0
+
+        fun emitPage() {
+            if (pageBlocks.isEmpty()) return
+            pages += pageBlocks.toReaderPage(
+                pageIndex = firstPageIndex + pages.size,
+                chapterIndex = chapterIndex,
+                chapterTitle = chapter.title
+            )
+            pageBlocks = mutableListOf()
+            usedHeight = 0
+        }
+
+        while (queue.isNotEmpty()) {
+            val block = queue.removeFirst()
+            val blockHeight = measureBlock(block, geometry, baseStyle, settings)
+            val fitsCurrent = blockHeight <= geometry.pageHeightPx &&
+                (usedHeight == 0 || usedHeight + blockHeight <= geometry.pageHeightPx)
+            if (fitsCurrent) {
+                pageBlocks += block
+                usedHeight += blockHeight
+                continue
+            }
+
+            val remainingHeight = (geometry.pageHeightPx - usedHeight).coerceAtLeast(0)
+            val split = splitBlock(block, remainingHeight, geometry, baseStyle, settings)
+            if (split != null && split.first.hasReadableContent()) {
+                pageBlocks += split.first
+                if (split.second.hasReadableContent()) queue.addFirst(split.second)
+                emitPage()
+                continue
+            }
+
+            emitPage()
+            if (blockHeight <= geometry.pageHeightPx) {
+                pageBlocks += block
+                usedHeight = blockHeight
+                continue
+            }
+
+            val oversizedSplit = splitBlock(block, geometry.pageHeightPx, geometry, baseStyle, settings)
+            if (oversizedSplit != null && oversizedSplit.first.hasReadableContent()) {
+                pages += listOf(oversizedSplit.first).toReaderPage(
+                    pageIndex = firstPageIndex + pages.size,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapter.title
+                )
+                if (oversizedSplit.second.hasReadableContent()) queue.addFirst(oversizedSplit.second)
+            } else {
+                pages += listOf(block).toReaderPage(
+                    pageIndex = firstPageIndex + pages.size,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapter.title
+                )
+            }
+        }
+        emitPage()
+        return pages.ifEmpty {
+            listOf(
+                ReaderPage(
+                    pageIndex = firstPageIndex,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapter.title,
+                    text = chapter.plainText.trim(),
+                    startOffset = 0,
+                    endOffset = chapter.plainText.length
+                )
+            )
+        }
+    }
+
+    private suspend fun measureBlock(
+        block: SemanticBlock,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Int {
+        val margins = block.style.blockStyle.margin.verticalPx()
+        val padding = block.style.blockStyle.padding.verticalPx()
+        val contentWidth = (geometry.pageWidthPx - block.style.blockStyle.horizontalOuterPx()).coerceAtLeast(64)
+        val contentHeight = when (block) {
+            is SemanticTextBlock -> measureTextBlock(block, contentWidth, baseStyle, settings)
+            is SemanticList -> block.items.sumOf { measureBlock(it, geometry, baseStyle, settings) } +
+                (block.items.size - 1).coerceAtLeast(0) * 4
+            is SemanticTable -> measureTable(block, geometry, baseStyle, settings)
+            is SemanticFlexContainer -> block.children.sumOf { measureBlock(it, geometry, baseStyle, settings) }
+            is SemanticWrappingBlock -> measureBlock(block.floatedImage, geometry, baseStyle, settings) +
+                block.paragraphsToWrap.sumOf { measureBlock(it, geometry, baseStyle, settings) }
+            is SemanticImage -> measureImage(block, geometry, settings)
+            is SemanticMath -> measureMath(block, geometry, baseStyle, settings)
+            is SemanticSpacer -> if (block.isExplicitLineBreak) 8 else 16
+        }
+        return (contentHeight + padding + margins).coerceAtLeast(1)
+    }
+
+    private suspend fun measureTextBlock(
+        block: SemanticTextBlock,
+        widthPx: Int,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Int {
+        val annotated = block.toAnnotatedString()
+        if (annotated.text.isBlank()) return (settings.fontSize * settings.lineSpacing).roundToInt().coerceAtLeast(1)
+        val style = block.textStyle(baseStyle, settings)
+        return withContext(Dispatchers.Main) {
+            textMeasurer.measure(
+                text = annotated,
+                style = style,
+                constraints = Constraints(maxWidth = widthPx.coerceAtLeast(1))
+            ).size.height
+        }.coerceAtLeast((settings.fontSize * settings.lineSpacing).roundToInt())
+    }
+
+    private suspend fun measureTable(
+        block: SemanticTable,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Int {
+        if (block.rows.isEmpty()) return 1
+        return block.rows.sumOf { row ->
+            row.maxOfOrNull { cell ->
+                cell.content.sumOf { measureBlock(it, geometry, baseStyle, settings) }
+            } ?: 1
+        }
+    }
+
+    private suspend fun measureMath(
+        block: SemanticMath,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Int {
+        val explicit = block.svgHeight?.toCssPxOrNull(geometry.pageHeightPx)
+        if (explicit != null) return explicit.coerceIn(16, geometry.pageHeightPx)
+        return measureTextBlock(
+            SemanticParagraph(
+                text = block.altText ?: "Equation",
+                spans = emptyList(),
+                style = block.style,
+                elementId = block.elementId,
+                cfi = block.cfi,
+                blockIndex = block.blockIndex
+            ),
+            geometry.pageWidthPx,
+            baseStyle,
+            settings
+        )
+    }
+
+    private fun measureImage(block: SemanticImage, geometry: MeasuredPageGeometry, settings: ReaderSettings): Int {
+        val width = block.intrinsicWidth?.takeIf { it > 0f }
+        val height = block.intrinsicHeight?.takeIf { it > 0f }
+        val maxWidth = geometry.pageWidthPx * settings.imageScale.coerceIn(0.5f, 2.0f)
+        val measured = when {
+            width != null && height != null -> {
+                val scale = (maxWidth / width).coerceAtMost(1.0f)
+                (height * scale).roundToInt()
+            }
+            block.style.blockStyle.height.isSpecified -> block.style.blockStyle.height.toPxInt()
+            else -> (settings.fontSize * 8f).roundToInt()
+        }
+        return measured.coerceIn(24, (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24))
+    }
+
+    private suspend fun splitBlock(
+        block: SemanticBlock,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        if (availableHeight < (settings.fontSize * settings.lineSpacing * 2f).roundToInt()) return null
+        return when (block) {
+            is SemanticTextBlock -> splitTextBlock(block, availableHeight, geometry, baseStyle, settings)
+            is SemanticList -> splitList(block, availableHeight, geometry, baseStyle, settings)
+            is SemanticFlexContainer -> splitFlex(block, availableHeight, geometry, baseStyle, settings)
+            is SemanticWrappingBlock -> splitWrapping(block, availableHeight, geometry, baseStyle, settings)
+            else -> null
+        }
+    }
+
+    private suspend fun splitTextBlock(
+        block: SemanticTextBlock,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        val text = block.text
+        if (text.length < 24) return null
+        var low = 1
+        var high = text.length
+        var best = 0
+        while (low <= high) {
+            val mid = (low + high) / 2
+            val candidate = block.sliceText(0, mid)
+            val height = measureBlock(candidate, geometry, baseStyle, settings)
+            if (height <= availableHeight) {
+                best = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        val breakPoint = text.findReadableBreak(best)
+        if (breakPoint <= 0 || breakPoint >= text.length) return null
+        return block.sliceText(0, breakPoint) to block.sliceText(breakPoint, text.length).trimLeadingText()
+    }
+
+    private suspend fun splitList(
+        block: SemanticList,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        val firstItems = mutableListOf<SemanticListItem>()
+        var used = 0
+        for (item in block.items) {
+            val itemHeight = measureBlock(item, geometry, baseStyle, settings)
+            if (firstItems.isNotEmpty() && used + itemHeight > availableHeight) break
+            if (firstItems.isEmpty() && itemHeight > availableHeight) return null
+            firstItems += item
+            used += itemHeight
+        }
+        if (firstItems.isEmpty() || firstItems.size >= block.items.size) return null
+        return block.copy(items = firstItems) to block.copy(items = block.items.drop(firstItems.size))
+    }
+
+    private suspend fun splitFlex(
+        block: SemanticFlexContainer,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        val firstChildren = mutableListOf<SemanticBlock>()
+        var used = 0
+        for (child in block.children) {
+            val childHeight = measureBlock(child, geometry, baseStyle, settings)
+            if (firstChildren.isNotEmpty() && used + childHeight > availableHeight) break
+            if (firstChildren.isEmpty() && childHeight > availableHeight) return null
+            firstChildren += child
+            used += childHeight
+        }
+        if (firstChildren.isEmpty() || firstChildren.size >= block.children.size) return null
+        return block.copy(children = firstChildren) to block.copy(children = block.children.drop(firstChildren.size))
+    }
+
+    private suspend fun splitWrapping(
+        block: SemanticWrappingBlock,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        val imageHeight = measureBlock(block.floatedImage, geometry, baseStyle, settings)
+        if (imageHeight >= availableHeight) return null
+        val firstParagraphs = mutableListOf<SemanticParagraph>()
+        var used = imageHeight
+        for (paragraph in block.paragraphsToWrap) {
+            val height = measureBlock(paragraph, geometry, baseStyle, settings)
+            if (firstParagraphs.isNotEmpty() && used + height > availableHeight) break
+            if (firstParagraphs.isEmpty() && used + height > availableHeight) return null
+            firstParagraphs += paragraph
+            used += height
+        }
+        if (firstParagraphs.isEmpty() || firstParagraphs.size >= block.paragraphsToWrap.size) return null
+        return block.copy(paragraphsToWrap = firstParagraphs) to
+            block.copy(paragraphsToWrap = block.paragraphsToWrap.drop(firstParagraphs.size))
+    }
+
+    private fun Dp.toPxInt(): Int = with(density) { toPx().roundToInt() }
+
+    private fun com.aryan.reader.paginatedreader.BoxBorders.verticalPx(): Int {
+        return top.toPxIfSpecified() + bottom.toPxIfSpecified()
+    }
+
+    private fun com.aryan.reader.paginatedreader.BoxBorders.horizontalPx(): Int {
+        return left.toPxIfSpecified() + right.toPxIfSpecified()
+    }
+
+    private fun com.aryan.reader.paginatedreader.BlockStyle.horizontalOuterPx(): Int {
+        return margin.horizontalPx() + padding.horizontalPx()
+    }
+
+    private fun Dp.toPxIfSpecified(): Int = if (isSpecified) toPxInt() else 0
+
+    private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
+        return when (this) {
+            SharedReaderTextAlign.START -> TextAlign.Start
+            SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
+            SharedReaderTextAlign.CENTER -> TextAlign.Center
+        }
+    }
+}
+
+private data class MeasuredPageGeometry(
+    val pageWidthPx: Int,
+    val pageHeightPx: Int
+) {
+    companion object {
+        fun from(settings: ReaderSettings, viewport: ReaderViewportSpec): MeasuredPageGeometry {
+            val safeWidth = viewport.widthPx.takeIf { it > 0 } ?: 980
+            val safeHeight = viewport.heightPx.takeIf { it > 0 } ?: 720
+            val gutter = if (settings.isTwoPageSpreadEnabled()) 28 else 0
+            val horizontalMargin = settings.resolvedHorizontalMargin * 2
+            val verticalMargin = settings.resolvedVerticalMargin * 2
+            val availableWidth = (safeWidth - horizontalMargin - gutter).coerceAtLeast(360)
+            val pageWidth = if (settings.isTwoPageSpreadEnabled()) {
+                (availableWidth / 2).coerceAtLeast(320)
+            } else {
+                availableWidth.coerceAtMost(settings.pageWidth.coerceAtLeast(360))
+            }
+            val pageHeight = (safeHeight - verticalMargin).coerceAtLeast(360)
+            return MeasuredPageGeometry(pageWidthPx = pageWidth, pageHeightPx = pageHeight)
+        }
+    }
+}
+
+private fun List<SemanticBlock>.toReaderPage(
+    pageIndex: Int,
+    chapterIndex: Int,
+    chapterTitle: String
+): ReaderPage {
+    val textBlocks = flatMap { it.textBlocks() }.sortedBy { it.startCharOffsetInSource }
+    val text = textBlocks.joinToString("\n\n") { it.text }.trim()
+    val startOffset = textBlocks.minOfOrNull { it.startCharOffsetInSource } ?: 0
+    val endOffset = textBlocks.maxOfOrNull { it.startCharOffsetInSource + it.text.length } ?: startOffset
+    return ReaderPage(
+        pageIndex = pageIndex,
+        chapterIndex = chapterIndex,
+        chapterTitle = chapterTitle,
+        text = text,
+        startOffset = startOffset,
+        endOffset = endOffset,
+        semanticBlocks = this
+    )
+}
+
+private fun SemanticBlock.hasReadableContent(): Boolean {
+    return when (this) {
+        is SemanticTextBlock -> text.isNotBlank()
+        is SemanticList -> items.any { it.hasReadableContent() }
+        is SemanticTable -> rows.any { row -> row.any { cell -> cell.content.any { it.hasReadableContent() } } }
+        is SemanticFlexContainer -> children.any { it.hasReadableContent() }
+        is SemanticWrappingBlock -> floatedImage.hasReadableContent() || paragraphsToWrap.any { it.hasReadableContent() }
+        is SemanticImage -> true
+        is SemanticMath -> true
+        is SemanticSpacer -> true
+    }
+}
+
+private fun SemanticBlock.textBlocks(): List<SemanticTextBlock> {
+    return when (this) {
+        is SemanticTextBlock -> listOf(this)
+        is SemanticList -> items
+        is SemanticTable -> rows.flatMap { row -> row.flatMap { cell -> cell.content.flatMap { it.textBlocks() } } }
+        is SemanticFlexContainer -> children.flatMap { it.textBlocks() }
+        is SemanticWrappingBlock -> paragraphsToWrap
+        else -> emptyList()
+    }
+}
+
+private fun SemanticTextBlock.toAnnotatedString(): AnnotatedString {
+    return buildAnnotatedString {
+        append(text)
+        spans.forEach { span ->
+            val start = span.start.coerceIn(0, text.length)
+            val end = span.end.coerceIn(start, text.length)
+            if (start < end) {
+                addStyle(span.style.spanStyle, start, end)
+            }
+        }
+    }
+}
+
+private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSettings): TextStyle {
+    val fontSize = style.fontSize.takeIfSpecified()
+        ?: style.spanStyle.fontSize.takeIfSpecified()
+        ?: when (this) {
+            is SemanticHeader -> (settings.fontSize * headerScale(level)).sp
+            else -> baseStyle.fontSize
+        }
+    val lineHeight = if (fontSize.isSpecified) {
+        (fontSize.value * settings.lineSpacing).sp
+    } else {
+        baseStyle.lineHeight
+    }
+    return baseStyle.copy(
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
+        textAlign = style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: baseStyle.textAlign
+    )
+}
+
+private fun TextUnit.takeIfSpecified(): TextUnit? = if (isSpecified) this else null
+
+private fun headerScale(level: Int): Float {
+    return when (level) {
+        1 -> 1.5f
+        2 -> 1.35f
+        3 -> 1.2f
+        4 -> 1.1f
+        else -> 1f
+    }
+}
+
+private fun SemanticTextBlock.sliceText(start: Int, end: Int): SemanticTextBlock {
+    val safeStart = start.coerceIn(0, text.length)
+    val safeEnd = end.coerceIn(safeStart, text.length)
+    val slicedText = text.substring(safeStart, safeEnd)
+    val slicedSpans = spans.mapNotNull { span ->
+        val spanStart = span.start.coerceAtLeast(safeStart)
+        val spanEnd = span.end.coerceAtMost(safeEnd)
+        if (spanEnd <= spanStart) {
+            null
+        } else {
+            span.copy(start = spanStart - safeStart, end = spanEnd - safeStart)
+        }
+    }
+    val nextOffset = startCharOffsetInSource + safeStart
+    return when (this) {
+        is SemanticParagraph -> copy(
+            text = slicedText,
+            spans = slicedSpans,
+            startCharOffsetInSource = nextOffset
+        )
+        is SemanticHeader -> copy(
+            text = slicedText,
+            spans = slicedSpans,
+            startCharOffsetInSource = nextOffset
+        )
+        is SemanticListItem -> copy(
+            text = slicedText,
+            spans = slicedSpans,
+            startCharOffsetInSource = nextOffset
+        )
+        else -> SemanticParagraph(
+            text = slicedText,
+            spans = slicedSpans,
+            style = style,
+            elementId = elementId,
+            cfi = cfi,
+            startCharOffsetInSource = nextOffset,
+            blockIndex = blockIndex
+        )
+    }
+}
+
+private fun SemanticBlock.trimLeadingText(): SemanticBlock {
+    return when (this) {
+        is SemanticTextBlock -> {
+            val trimCount = text.indexOfFirst { !it.isWhitespace() }.takeIf { it >= 0 } ?: text.length
+            if (trimCount <= 0) this else sliceText(trimCount, text.length)
+        }
+        else -> this
+    }
+}
+
+private fun String.findReadableBreak(bestFit: Int): Int {
+    if (bestFit <= 0) return 0
+    if (bestFit >= length) return length
+    val minimum = (bestFit * 0.62f).roundToInt().coerceAtLeast(1)
+    val paragraph = lastIndexOf("\n\n", bestFit).takeIf { it >= minimum }
+    if (paragraph != null) return paragraph
+    val sentence = lastIndexOfAny(charArrayOf('.', '!', '?'), bestFit - 1).takeIf { it >= minimum }
+    if (sentence != null) return sentence + 1
+    val word = lastIndexOf(' ', bestFit - 1).takeIf { it >= minimum }
+    return word ?: bestFit
+}
+
+private fun String.toCssPxOrNull(containerPx: Int): Int? {
+    val trimmed = trim().lowercase()
+    if (trimmed.isBlank()) return null
+    return when {
+        trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.roundToInt()
+        trimmed.endsWith("%") -> trimmed.removeSuffix("%").toFloatOrNull()?.let { (containerPx * it / 100f).roundToInt() }
+        else -> trimmed.toFloatOrNull()?.roundToInt()
+    }?.takeIf { it > 0 }
+}
+
+private fun String.toPlainSemanticBlocks(): List<SemanticBlock> {
+    val normalized = replace("\r\n", "\n")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .trim()
+    if (normalized.isBlank()) return emptyList()
+    val blocks = mutableListOf<SemanticBlock>()
+    var cursor = 0
+    normalized.split(Regex("\\n\\s*\\n")).forEachIndexed { index, paragraph ->
+        val clean = paragraph.trim()
+        if (clean.isBlank()) return@forEachIndexed
+        val start = normalized.indexOf(clean, cursor).takeIf { it >= 0 } ?: cursor
+        blocks += SemanticParagraph(
+            text = clean,
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = null,
+            cfi = null,
+            startCharOffsetInSource = start,
+            blockIndex = index
+        )
+        cursor = start + clean.length
+    }
+    return blocks
+}

@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -50,7 +51,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 12
+    private const val SCHEMA_VERSION = 13
 
     private val json = Json {
         prettyPrint = true
@@ -464,6 +465,9 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
         pageInfoPosition = obj.string("pageInfoPosition")
             ?.let { runCatching { PageInfoPosition.valueOf(it) }.getOrNull() }
             ?: defaults.pageInfoPosition,
+        pageSpreadMode = obj.string("pageSpreadMode")
+            ?.let { runCatching { ReaderPageSpreadMode.valueOf(it) }.getOrNull() }
+            ?: defaults.pageSpreadMode,
         seamlessChapterNavigation = obj.boolean("seamlessChapterNavigation", defaults.seamlessChapterNavigation),
         chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier
     )
@@ -585,6 +589,7 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "systemUiMode" to JsonPrimitive(settings.systemUiMode.name),
             "pageInfoMode" to JsonPrimitive(settings.pageInfoMode.name),
             "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
+            "pageSpreadMode" to JsonPrimitive(settings.pageSpreadMode.name),
             "seamlessChapterNavigation" to JsonPrimitive(settings.seamlessChapterNavigation),
             "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier)
         )

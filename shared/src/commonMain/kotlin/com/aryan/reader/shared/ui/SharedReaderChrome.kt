@@ -118,9 +118,11 @@ import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -401,6 +403,7 @@ fun SharedReaderScreen(
                     ReaderHtmlDocumentBuilder.pageDocument(
                         book = readerState.book,
                         page = page,
+                        visiblePages = readerState.visiblePages,
                         settings = settings,
                         searchQuery = session.searchQuery,
                         searchOptions = session.searchOptions,
@@ -1153,6 +1156,28 @@ fun SharedReaderFormatControls(
                         },
                         label = { Text("Vertical") }
                     )
+                }
+                if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                    SharedReaderChoiceRow {
+                        FilterChip(
+                            selected = settings.pageSpreadMode == ReaderPageSpreadMode.SINGLE,
+                            onClick = {
+                                onReaderAction(
+                                    ReaderAction.SettingsChanged(settings.copy(pageSpreadMode = ReaderPageSpreadMode.SINGLE))
+                                )
+                            },
+                            label = { Text("Single page") }
+                        )
+                        FilterChip(
+                            selected = settings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE,
+                            onClick = {
+                                onReaderAction(
+                                    ReaderAction.SettingsChanged(settings.copy(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE))
+                                )
+                            },
+                            label = { Text("Two pages") }
+                        )
+                    }
                 }
             }
         }
@@ -2535,14 +2560,15 @@ private fun SharedReaderPageSlider(
     val readerState = session.reader
     val totalPages = readerState.pages.size.coerceAtLeast(1)
     val sliderMax = totalPages.coerceAtLeast(2)
-    val currentPageNumber = (readerState.currentPageIndex + 1).coerceIn(1, totalPages)
+    val currentPageNumber = (readerState.currentSpreadStartIndex + 1).coerceIn(1, totalPages)
+    val pageRangeLabel = ReaderSpreadLayout.pageRangeLabel(readerState.currentPageIndex, totalPages, readerState.settings)
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "$currentPageNumber / $totalPages",
+            "$pageRangeLabel / $totalPages",
             style = MaterialTheme.typography.labelSmall,
             color = contentColor.copy(alpha = 0.72f)
         )
@@ -3015,10 +3041,10 @@ private fun Long.toComposeColor(): Color {
 }
 
 private fun PaginatedReaderState.pageInfoText(): String {
-    val current = currentPageIndex + 1
     val total = pages.size.coerceAtLeast(1)
     val percent = progress.roundToInt().coerceIn(0, 100)
     val mode = if (settings.readingMode == ReaderReadingMode.VERTICAL) "Continuous" else "Page"
+    val current = ReaderSpreadLayout.pageRangeLabel(currentPageIndex, total, settings)
     val chapter = currentPage?.chapterTitle?.takeIf { it.isNotBlank() }
     return listOfNotNull("$mode $current of $total ($percent%)", chapter).joinToString(" - ")
 }

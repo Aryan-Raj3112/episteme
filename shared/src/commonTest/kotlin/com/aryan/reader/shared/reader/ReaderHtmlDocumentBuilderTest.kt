@@ -87,6 +87,38 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `page document can render a two page spread`() {
+        val left = ReaderPage(
+            pageIndex = 2,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "left page",
+            startOffset = 0,
+            endOffset = 9
+        )
+        val right = ReaderPage(
+            pageIndex = 3,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "right page",
+            startOffset = 10,
+            endOffset = 20
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("left page\n\nright page"),
+            page = left,
+            visiblePages = listOf(left, right),
+            settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        )
+
+        assertTrue(html.contains("reader-spread"))
+        assertEquals(2, Regex("<section class=\"page\"").findAll(html).count())
+        assertTrue(html.contains("data-reader-page-index=\"2\""))
+        assertTrue(html.contains("data-reader-page-index=\"3\""))
+    }
+
+    @Test
     fun `vertical document carries active locator for shared scroll navigation`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = SharedEpubBook(
