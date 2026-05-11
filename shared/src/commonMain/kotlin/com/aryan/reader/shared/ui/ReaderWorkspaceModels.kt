@@ -18,7 +18,8 @@ enum class ReaderWorkspaceLeftSection(val title: String) {
     CONTENTS("Contents"),
     SEARCH("Search"),
     BOOKMARKS("Bookmarks"),
-    NOTES("Notes")
+    NOTES("Annotations"),
+    PAGES("Pages")
 }
 
 enum class ReaderWorkspaceInspectorSection(val title: String) {
@@ -78,9 +79,8 @@ fun epubReaderWorkspaceModel(
     val preferences = toolbarPreferences.sanitized()
     val leftSections = buildList {
         if (preferences.isVisible(ReaderTool.TOC)) add(ReaderWorkspaceLeftSection.CONTENTS)
-        if (preferences.isVisible(ReaderTool.SEARCH)) add(ReaderWorkspaceLeftSection.SEARCH)
-        if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceLeftSection.BOOKMARKS)
         if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceLeftSection.NOTES)
+        if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceLeftSection.BOOKMARKS)
     }
     val inspectorSections = buildList {
         if (preferences.isVisible(ReaderTool.THEME) || preferences.isVisible(ReaderTool.FORMAT)) {
@@ -172,9 +172,9 @@ fun pdfReaderWorkspaceModel(
 ): ReaderWorkspaceModel {
     val leftSections = buildList {
         add(ReaderWorkspaceLeftSection.CONTENTS)
-        add(ReaderWorkspaceLeftSection.SEARCH)
-        if (hasBookmarks) add(ReaderWorkspaceLeftSection.BOOKMARKS)
-        if (hasContents || hasAnnotations || hasEmbeddedComments) add(ReaderWorkspaceLeftSection.NOTES)
+        add(ReaderWorkspaceLeftSection.NOTES)
+        add(ReaderWorkspaceLeftSection.BOOKMARKS)
+        add(ReaderWorkspaceLeftSection.PAGES)
     }.distinct()
     val inspectorSections = listOf(
         ReaderWorkspaceInspectorSection.APPEARANCE,

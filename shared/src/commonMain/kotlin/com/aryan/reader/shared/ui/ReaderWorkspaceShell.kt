@@ -63,10 +63,7 @@ fun ReaderWorkspaceShell(
 
     LaunchedEffect(model.kind, model.chrome.forceVisibleReasons) {
         val reasons = model.chrome.forceVisibleReasons
-        if ("search" in reasons && model.leftSections.isNotEmpty()) {
-            leftPanelOpen = true
-        }
-        if (reasons.any { it == "annotation" || it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
+        if (reasons.any { it == "search" || it == "annotation" || it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
             rightPanelOpen = true
         }
     }

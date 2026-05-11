@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +43,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,7 +102,6 @@ import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderReadingMode
-import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -323,32 +323,10 @@ fun SharedReaderScreen(
         leftSidebar = {
             SharedReaderSidebar(
                 session = session,
-                onSearchChange = { dispatch(ReaderAction.SearchChanged(it)) },
-                onPreviousSearchResult = { dispatch(ReaderAction.JumpToPreviousSearchResult) },
-                onNextSearchResult = { dispatch(ReaderAction.JumpToNextSearchResult) },
-                onOpenSearch = { dispatch(ReaderAction.SearchOpened) },
-                onCloseSearch = { dispatch(ReaderAction.SearchClosed) },
-                onToggleSearchResultsPanel = { dispatch(ReaderAction.SearchResultsPanelToggled) },
-                onSearchOptionsChange = { dispatch(ReaderAction.SearchOptionsChanged(it)) },
+                sections = workspaceModel.leftSections,
                 onGoToChapter = { dispatch(ReaderAction.JumpToChapter(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
-                onGoToSearchResult = { dispatch(ReaderAction.JumpToSearchResult(it)) },
-                onJumpBack = { dispatch(ReaderAction.JumpBack) },
-                onJumpForward = { dispatch(ReaderAction.JumpForward) },
-                onClearJumpHistory = { dispatch(ReaderAction.JumpHistoryCleared) },
-                toolbarPreferences = toolbarPreferences,
-                highlightPalette = highlightPalette,
-                onHighlightPaletteChange = onHighlightPaletteChange,
-                onGoToHighlight = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
-                onHighlightColorChange = { highlight, color ->
-                    dispatch(ReaderAction.HighlightUpdated(highlight.id, color = color))
-                },
-                onHighlightNoteChange = { highlight, note ->
-                    dispatch(ReaderAction.HighlightUpdated(highlight.id, note = note))
-                },
-                onHighlightDelete = { highlight ->
-                    dispatch(ReaderAction.HighlightDeleted(highlight.id))
-                }
+                onGoToHighlight = { dispatch(ReaderAction.JumpToLocator(it.locator)) }
             )
         },
         rightInspector = {
@@ -620,8 +598,20 @@ private fun SharedReaderControlPanel(
 ) {
     val sections = toolbarPreferences.availableReaderControlSections()
     if (sections.isEmpty()) return
-    var selectedSection by remember { mutableStateOf(sections.first()) }
-    val activeSection = selectedSection.takeIf { it in sections } ?: sections.first()
+    val defaultSection = if (session.isSearchActive && ReaderControlSection.SEARCH in sections) {
+        ReaderControlSection.SEARCH
+    } else {
+        sections.firstOrNull { it != ReaderControlSection.SEARCH } ?: sections.first()
+    }
+    var selectedSection by remember(sections) { mutableStateOf(defaultSection) }
+    LaunchedEffect(session.isSearchActive, sections) {
+        if (session.isSearchActive && ReaderControlSection.SEARCH in sections) {
+            selectedSection = ReaderControlSection.SEARCH
+        } else if (selectedSection !in sections) {
+            selectedSection = defaultSection
+        }
+    }
+    val activeSection = selectedSection.takeIf { it in sections } ?: defaultSection
 
     Surface(
         modifier = Modifier
@@ -656,6 +646,11 @@ private fun SharedReaderControlPanel(
             }
             item {
                 when (activeSection) {
+                    ReaderControlSection.SEARCH -> SharedReaderSearchControls(
+                        session = session,
+                        onReaderAction = onReaderAction
+                    )
+
                     ReaderControlSection.FORMAT -> SharedReaderFormatControls(
                         settings = session.reader.settings,
                         toolbarPreferences = toolbarPreferences,
@@ -706,6 +701,7 @@ private fun SharedReaderControlPanel(
 }
 
 private enum class ReaderControlSection(val title: String) {
+    SEARCH("Search"),
     FORMAT("Format"),
     THEME("Theme"),
     VISUAL("Visual"),
@@ -715,6 +711,7 @@ private enum class ReaderControlSection(val title: String) {
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(): List<ReaderControlSection> {
     return buildList {
+        if (isVisible(ReaderTool.SEARCH)) add(ReaderControlSection.SEARCH)
         if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
         if (isVisible(ReaderTool.VISUAL_OPTIONS)) add(ReaderControlSection.VISUAL)
@@ -729,6 +726,114 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(): List<Read
             add(ReaderControlSection.EXTRAS)
         }
         add(ReaderControlSection.TOOLBAR)
+    }
+}
+
+@Composable
+private fun SharedReaderSearchControls(
+    session: ReaderSessionState,
+    onReaderAction: (ReaderAction) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Find in book", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    onReaderAction(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
+                }
+            ) {
+                Text(if (session.isSearchActive) "Close" else "Open")
+            }
+        }
+
+        if (session.isSearchActive) {
+            OutlinedTextField(
+                value = session.searchQuery,
+                onValueChange = { onReaderAction(ReaderAction.SearchChanged(it)) },
+                label = { Text("Search text") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            ) {
+                FilterChip(
+                    selected = session.searchOptions.matchCase,
+                    onClick = {
+                        onReaderAction(ReaderAction.SearchOptionsChanged(session.searchOptions.copy(matchCase = !session.searchOptions.matchCase)))
+                    },
+                    label = { Text("Match case") }
+                )
+                FilterChip(
+                    selected = session.searchOptions.wholeWords,
+                    onClick = {
+                        onReaderAction(ReaderAction.SearchOptionsChanged(session.searchOptions.copy(wholeWords = !session.searchOptions.wholeWords)))
+                    },
+                    label = { Text("Whole words") }
+                )
+            }
+
+            if (session.searchQuery.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        when {
+                            session.searchResults.isEmpty() -> "No matches"
+                            else -> "${session.activeSearchResultIndex + 1} of ${session.searchResults.size}"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        enabled = session.canGoToPreviousSearchResult,
+                        onClick = { onReaderAction(ReaderAction.JumpToPreviousSearchResult) }
+                    ) {
+                        Text("Prev")
+                    }
+                    TextButton(
+                        enabled = session.canGoToNextSearchResult,
+                        onClick = { onReaderAction(ReaderAction.JumpToNextSearchResult) }
+                    ) {
+                        Text("Next")
+                    }
+                }
+
+                if (session.searchResults.isNotEmpty()) {
+                    TextButton(onClick = { onReaderAction(ReaderAction.SearchResultsPanelToggled) }) {
+                        Text(if (session.showSearchResultsPanel) "Hide results" else "Show results")
+                    }
+                }
+            }
+
+            if (session.searchQuery.isNotBlank() && session.showSearchResultsPanel) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    session.searchResults.forEachIndexed { index, result ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                onReaderAction(ReaderAction.JumpToSearchResult(index))
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    "Page ${result.pageIndex + 1} - ${result.chapterTitle}",
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2031,225 +2136,197 @@ private fun SharedReaderPageSlider(
 @Composable
 private fun SharedReaderSidebar(
     session: ReaderSessionState,
-    onSearchChange: (String) -> Unit,
-    onPreviousSearchResult: () -> Unit,
-    onNextSearchResult: () -> Unit,
-    onOpenSearch: () -> Unit,
-    onCloseSearch: () -> Unit,
-    onToggleSearchResultsPanel: () -> Unit,
-    onSearchOptionsChange: (ReaderSearchOptions) -> Unit,
+    sections: List<ReaderWorkspaceLeftSection>,
     onGoToChapter: (Int) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
-    onGoToSearchResult: (Int) -> Unit,
-    onJumpBack: () -> Unit,
-    onJumpForward: () -> Unit,
-    onClearJumpHistory: () -> Unit,
-    toolbarPreferences: ReaderToolbarPreferences,
-    highlightPalette: ReaderHighlightPalette,
-    onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
-    onGoToHighlight: (UserHighlight) -> Unit,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
-    onHighlightNoteChange: (UserHighlight, String) -> Unit,
-    onHighlightDelete: (UserHighlight) -> Unit
+    onGoToHighlight: (UserHighlight) -> Unit
 ) {
+    val tabs = remember(sections) {
+        listOf(
+            ReaderWorkspaceLeftSection.CONTENTS,
+            ReaderWorkspaceLeftSection.NOTES,
+            ReaderWorkspaceLeftSection.BOOKMARKS
+        ).filter { it in sections }
+    }
+    var selectedSection by remember(tabs) { mutableStateOf(tabs.firstOrNull()) }
+    val selectedTabIndex = tabs.indexOf(selectedSection).takeIf { it >= 0 } ?: 0
+
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .width(300.dp)
             .fillMaxHeight(),
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(8.dp)
     ) {
+        Column(Modifier.fillMaxSize()) {
+            if (tabs.isNotEmpty()) {
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabs.forEach { section ->
+                        Tab(
+                            selected = selectedSection == section,
+                            onClick = { selectedSection = section },
+                            text = { Text(section.readerNavigationTabLabel()) }
+                        )
+                    }
+                }
+            }
+
+            when (selectedSection) {
+                ReaderWorkspaceLeftSection.CONTENTS -> SharedReaderTocTab(
+                    session = session,
+                    onGoToChapter = onGoToChapter
+                )
+                ReaderWorkspaceLeftSection.NOTES -> SharedReaderAnnotationsTab(
+                    session = session,
+                    onGoToHighlight = onGoToHighlight
+                )
+                ReaderWorkspaceLeftSection.BOOKMARKS -> SharedReaderBookmarksTab(
+                    session = session,
+                    onGoToBookmark = onGoToBookmark
+                )
+                else -> SharedReaderEmptyNavigation("No navigation items")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderTocTab(
+    session: ReaderSessionState,
+    onGoToChapter: (Int) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        items(session.reader.book.chapters.indices.toList()) { index ->
+            val chapter = session.reader.book.chapters[index]
+            val selected = session.reader.currentPage?.chapterIndex == index
+            Surface(
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth().clickable { onGoToChapter(index) }
+            ) {
+                Text(
+                    chapter.title,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderBookmarksTab(
+    session: ReaderSessionState,
+    onGoToBookmark: (ReaderBookmark) -> Unit
+) {
+    if (session.bookmarks.isEmpty()) {
+        SharedReaderEmptyNavigation("No bookmarks yet")
+    } else {
         LazyColumn(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.fillMaxSize().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
-                item {
-                    SharedReaderJumpHistoryBar(
-                        session = session,
-                        onBack = onJumpBack,
-                        onForward = onJumpForward,
-                        onClear = onClearJumpHistory
-                    )
-                }
-            }
-
-            if (toolbarPreferences.isVisible(ReaderTool.TOC)) {
-                item {
-                    Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                items(session.reader.book.chapters.indices.toList()) { index ->
-                    val chapter = session.reader.book.chapters[index]
-                    val selected = session.reader.currentPage?.chapterIndex == index
-                    Surface(
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onGoToChapter(index) }
+            items(session.bookmarks, key = { it.id }) { bookmark ->
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onGoToBookmark(bookmark) }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .fillMaxWidth()
                     ) {
-                        Text(
-                            chapter.title,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
+        }
+    }
+}
 
-            if (toolbarPreferences.isVisible(ReaderTool.BOOKMARK)) {
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                if (session.bookmarks.isEmpty()) {
-                    item {
-                        Text("No bookmarks yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    items(session.bookmarks, key = { it.id }) { bookmark ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { onGoToBookmark(bookmark) }
-                        ) {
-                            Column(
+@Composable
+private fun SharedReaderAnnotationsTab(
+    session: ReaderSessionState,
+    onGoToHighlight: (UserHighlight) -> Unit
+) {
+    if (session.highlights.isEmpty()) {
+        SharedReaderEmptyNavigation("No annotations yet")
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(session.highlights, key = { it.id }) { highlight ->
+                val locator = highlight.locator.withFallbacks(
+                    chapterIndex = highlight.chapterIndex,
+                    cfi = highlight.cfi,
+                    textQuote = highlight.text
+                )
+                val chapterTitle = session.reader.book.chapters
+                    .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
+                    ?.title
+                    ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
+                val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
                                 modifier = Modifier
-                                    .padding(8.dp)
-                                    .fillMaxWidth()
-                            ) {
-                                Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (toolbarPreferences.isVisible(ReaderTool.BOOKMARK)) {
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text("Highlights", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                if (session.highlights.isEmpty()) {
-                    item {
-                        Text("No highlights yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    items(session.highlights, key = { it.id }) { highlight ->
-                        SharedHighlightListItem(
-                            session = session,
-                            highlight = highlight,
-                            palette = highlightPalette,
-                            onGoToHighlight = onGoToHighlight,
-                            onColorChange = onHighlightColorChange,
-                            onNoteChange = onHighlightNoteChange,
-                            onDelete = onHighlightDelete
-                        )
-                    }
-                }
-                item {
-                    SharedHighlightPaletteEditor(
-                        palette = highlightPalette,
-                        onPaletteChange = onHighlightPaletteChange
-                    )
-                }
-            }
-
-            if (toolbarPreferences.isVisible(ReaderTool.SEARCH)) {
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        TextButton(onClick = if (session.isSearchActive) onCloseSearch else onOpenSearch) {
-                            Text(if (session.isSearchActive) "Close" else "Open")
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    if (session.isSearchActive) {
-                        OutlinedTextField(
-                            value = session.searchQuery,
-                            onValueChange = onSearchChange,
-                            label = { Text("Find in book") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.horizontalScroll(rememberScrollState())
-                        ) {
-                            FilterChip(
-                                selected = session.searchOptions.matchCase,
-                                onClick = {
-                                    onSearchOptionsChange(session.searchOptions.copy(matchCase = !session.searchOptions.matchCase))
-                                },
-                                label = { Text("Match case") }
+                                    .width(12.dp)
+                                    .height(12.dp)
+                                    .background(highlight.color.color, RoundedCornerShape(2.dp))
                             )
-                            FilterChip(
-                                selected = session.searchOptions.wholeWords,
-                                onClick = {
-                                    onSearchOptionsChange(session.searchOptions.copy(wholeWords = !session.searchOptions.wholeWords))
-                                },
-                                label = { Text("Whole words") }
-                            )
-                            if (session.searchQuery.isNotBlank()) {
-                                TextButton(onClick = onToggleSearchResultsPanel) {
-                                    Text(if (session.showSearchResultsPanel) "Hide results" else "Show results")
-                                }
-                            }
-                        }
-                    }
-                    if (session.isSearchActive && session.searchQuery.isNotBlank() && session.searchResults.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
                             Text(
-                                "${session.activeSearchResultIndex + 1} of ${session.searchResults.size}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(
-                                enabled = session.canGoToPreviousSearchResult,
-                                onClick = onPreviousSearchResult
-                            ) {
-                                Text("Prev")
-                            }
-                            TextButton(
-                                enabled = session.canGoToNextSearchResult,
-                                onClick = onNextSearchResult
-                            ) {
-                                Text("Next")
-                            }
                         }
-                    }
-                }
-                if (session.isSearchActive && session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
-                    item {
-                        Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else if (session.isSearchActive && session.showSearchResultsPanel) {
-                    itemsIndexed(
-                        session.searchResults,
-                        key = { _, result -> "${result.pageIndex}_${result.matchIndex}_${result.chapterIndex}_${result.preview}" }
-                    ) { index, result ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { onGoToSearchResult(index) }
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text("Page ${result.pageIndex + 1} - ${result.chapterTitle}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            }
+                        Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SharedReaderEmptyNavigation(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
+    return when (this) {
+        ReaderWorkspaceLeftSection.CONTENTS -> "TOC"
+        ReaderWorkspaceLeftSection.NOTES -> "Annotations"
+        ReaderWorkspaceLeftSection.BOOKMARKS -> "Bookmarks"
+        ReaderWorkspaceLeftSection.PAGES -> "Pages"
+        ReaderWorkspaceLeftSection.SEARCH -> "Search"
     }
 }
 

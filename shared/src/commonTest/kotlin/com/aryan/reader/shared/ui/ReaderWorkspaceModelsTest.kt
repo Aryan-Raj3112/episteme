@@ -33,9 +33,15 @@ class ReaderWorkspaceModelsTest {
         )
 
         assertEquals(ReaderWorkspaceKind.EPUB, model.kind)
-        assertTrue(ReaderWorkspaceLeftSection.CONTENTS in model.leftSections)
-        assertTrue(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
-        assertTrue(ReaderWorkspaceLeftSection.BOOKMARKS in model.leftSections)
+        assertEquals(
+            listOf(
+                ReaderWorkspaceLeftSection.CONTENTS,
+                ReaderWorkspaceLeftSection.NOTES,
+                ReaderWorkspaceLeftSection.BOOKMARKS
+            ),
+            model.leftSections
+        )
+        assertFalse(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
         assertFalse(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)
@@ -155,10 +161,16 @@ class ReaderWorkspaceModelsTest {
 
         assertEquals(ReaderWorkspaceKind.PDF, model.kind)
         assertNull(model.defaultPdfInteractionMode)
-        assertTrue(ReaderWorkspaceLeftSection.CONTENTS in model.leftSections)
-        assertTrue(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
-        assertTrue(ReaderWorkspaceLeftSection.BOOKMARKS in model.leftSections)
-        assertTrue(ReaderWorkspaceLeftSection.NOTES in model.leftSections)
+        assertEquals(
+            listOf(
+                ReaderWorkspaceLeftSection.CONTENTS,
+                ReaderWorkspaceLeftSection.NOTES,
+                ReaderWorkspaceLeftSection.BOOKMARKS,
+                ReaderWorkspaceLeftSection.PAGES
+            ),
+            model.leftSections
+        )
+        assertFalse(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
         assertTrue(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.TOOLS in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)

@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -52,6 +53,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -88,6 +91,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -4045,6 +4049,9 @@ private fun PdfReaderScreen(
 
     @Composable
     fun PdfNavigationSidebar() {
+        val tabs = listOf("TOC", "Annotations", "Bookmarks", "Pages")
+        var selectedTabIndex by remember(document.path) { mutableStateOf(0) }
+
         Surface(
             modifier = Modifier
                 .width(300.dp)
@@ -4053,170 +4060,128 @@ private fun PdfReaderScreen(
             shape = RoundedCornerShape(8.dp),
             tonalElevation = 2.dp
         ) {
-            LazyColumn(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item {
-                    Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
-                            Text("Previous")
-                        }
-                        TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
-                            Text("Next")
-                        }
-                    }
-                }
-                if (document.pageCount > 1) {
-                    item {
-                        Text(
-                            "Page ${pageIndex + 1} of ${document.pageCount}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        ReaderMinimalSlider(
-                            value = pageIndex.toFloat(),
-                            onValueChange = ::updatePdfPageScrub,
-                            onValueChangeFinished = ::finishPdfPageScrub,
-                            valueRange = 0f..(document.pageCount - 1).toFloat()
+            Column(Modifier.fillMaxSize()) {
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTabIndex == index,
+                            onClick = { selectedTabIndex = index },
+                            text = { Text(title) }
                         )
                     }
                 }
-                item {
-                    DesktopPdfJumpHistoryControls(
-                        backPage = jumpHistory.backPage,
-                        forwardPage = jumpHistory.forwardPage,
-                        onBack = ::goBackInJumpHistory,
-                        onForward = ::goForwardInJumpHistory,
-                        onClear = { jumpHistory = jumpHistory.clear() }
-                    )
-                }
-                item {
-                    val isBookmarked = bookmarks.any { it.pageIndex == pageIndex }
-                    TextButton(onClick = { toggleBookmark(pageIndex) }) {
-                        Text(if (isBookmarked) "Remove bookmark" else "Bookmark page")
-                    }
-                }
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { dispatchPdf(SharedPdfReaderAction.SearchChanged(it)) },
-                        label = { Text("Find in PDF") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                if (searchQuery.isNotBlank()) {
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                when {
-                                    isSearchIndexing -> {
-                                        val progress = "Indexing ${indexedSearchPageCount.coerceAtMost(document.pageCount)}/${document.pageCount}"
-                                        if (searchResults.isEmpty()) progress else "${searchResults.size} matches - $progress"
-                                    }
-                                    searchResults.isEmpty() -> "No matches"
-                                    activeSearchIndex in searchResults.indices -> "${activeSearchIndex + 1} of ${searchResults.size}"
-                                    else -> "${searchResults.size} matches"
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = { goToSearchResult(activeSearchIndex - 1) }, enabled = searchResults.isNotEmpty()) {
-                                Text("Prev")
-                            }
-                            TextButton(onClick = { goToSearchResult(activeSearchIndex + 1) }, enabled = searchResults.isNotEmpty()) {
-                                Text("Next")
-                            }
-                        }
-                    }
-                    items(searchResults, key = { "nav_search_${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
-                        Surface(
-                            color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                goToSearchResult(searchResults.indexOf(result))
-                            }
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text("Page ${result.pageIndex + 1}", fontWeight = FontWeight.SemiBold)
-                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-                if (document.toc.isNotEmpty()) {
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    }
-                    itemsIndexed(document.toc, key = { index, entry -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }) { _, entry ->
-                        Surface(
-                            color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(start = (entry.nestLevel * 12).dp)
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+
+                when (selectedTabIndex) {
+                    0 -> {
+                        if (document.toc.isEmpty()) {
+                            DesktopPdfNavigationEmpty("No table of contents")
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                Text("p. ${entry.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                itemsIndexed(document.toc, key = { index, entry -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }) { _, entry ->
+                                    Surface(
+                                        color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .padding(start = (entry.nestLevel * 12).dp)
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text("p. ${entry.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                if (bookmarks.isNotEmpty()) {
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    }
-                    items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
-                        Surface(
-                            color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
-                        ) {
-                            Text(
-                                bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
-                                modifier = Modifier.padding(8.dp)
-                            )
-                        }
-                    }
-                }
-                if (sortedAnnotations.isNotEmpty() || sortedEmbeddedAnnotations.isNotEmpty()) {
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Notes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    }
-                    items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
-                        Surface(
-                            color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    1 -> {
+                        if (sortedAnnotations.isEmpty() && sortedEmbeddedAnnotations.isEmpty()) {
+                            DesktopPdfNavigationEmpty("No annotations yet")
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
+                                    Surface(
+                                        color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
+                                    ) {
+                                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+                                items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
+                                    Surface(
+                                        color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
+                                    ) {
+                                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
-                        Surface(
-                            color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
+                    2 -> {
+                        if (bookmarks.isEmpty()) {
+                            DesktopPdfNavigationEmpty("No bookmarks yet")
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
+                                    Surface(
+                                        color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
+                                    ) {
+                                        Text(
+                                            bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                                            modifier = Modifier.padding(8.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    3 -> {
+                        val pageRows = remember(document.pageCount) { (0 until document.pageCount).chunked(3) }
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            items(pageRows, key = { row -> row.firstOrNull() ?: 0 }) { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    row.forEach { page ->
+                                        DesktopPdfThumbnailTile(
+                                            document = document,
+                                            pageIndex = page,
+                                            selected = page == pageIndex,
+                                            onClick = { goToPage(page, recordJump = true) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    repeat(3 - row.size) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
                             }
                         }
                     }
@@ -5737,6 +5702,88 @@ private fun DesktopPdfJumpHistoryControls(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfNavigationEmpty(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun DesktopPdfThumbnailTile(
+    document: DesktopPdfDocument,
+    pageIndex: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var thumbnail by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfPageRender?>(null) }
+    var renderFailed by remember(document.path, pageIndex) { mutableStateOf(false) }
+    val pageSize = document.pageSizes.getOrNull(pageIndex)
+    val thumbnailScale = remember(pageSize) {
+        val width = pageSize?.width?.coerceAtLeast(1f) ?: 612f
+        (120f / width).coerceIn(0.08f, 0.35f)
+    }
+
+    LaunchedEffect(document.path, pageIndex, thumbnailScale) {
+        thumbnail = null
+        renderFailed = false
+        val rendered = withContext(Dispatchers.IO) {
+            runCatching {
+                DesktopPdfium.renderPage(
+                    document = document,
+                    pageIndex = pageIndex,
+                    scale = thumbnailScale,
+                    renderAnnotations = false
+                )
+            }.getOrNull()
+        }
+        thumbnail = rendered
+        renderFailed = rendered == null
+    }
+
+    Surface(
+        modifier = modifier.aspectRatio(0.707f).clickable(onClick = onClick),
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val render = thumbnail
+            if (render != null) {
+                Image(
+                    bitmap = render.image,
+                    contentDescription = "Page ${pageIndex + 1}",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(3.dp)
+                )
+            } else {
+                Text(
+                    if (renderFailed) "!" else "${pageIndex + 1}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = "${pageIndex + 1}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .background(Color.Black.copy(alpha = 0.58f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+            )
         }
     }
 }
