@@ -298,6 +298,30 @@ internal fun canUsePdfSidecarsForBook(
     areSidecarsLoaded: Boolean
 ): Boolean = activeBookId != null && areSidecarsLoaded && loadedSidecarBookId == activeBookId
 
+internal fun currentPageScaleAfterPdfPageChange(
+    displayMode: DisplayMode,
+    isScrollLocked: Boolean,
+    lockedState: Triple<Float, Float, Float>?,
+    currentActiveScale: Float
+): Float {
+    return if (displayMode == DisplayMode.PAGINATION && isScrollLocked) {
+        lockedState?.first ?: currentActiveScale
+    } else {
+        1f
+    }
+}
+
+internal fun activePdfCameraAfterLockPreferenceLoad(
+    isScrollLocked: Boolean,
+    lockedState: Triple<Float, Float, Float>?
+): Pair<Float, Offset> {
+    return if (isScrollLocked && lockedState != null) {
+        lockedState.first to Offset(lockedState.second, lockedState.third)
+    } else {
+        1f to Offset.Zero
+    }
+}
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
@@ -442,8 +466,16 @@ fun PdfViewerScreen(
     }
 
     LaunchedEffect(bookId) {
-        isScrollLocked = loadPdfScrollLocked(context, bookId)
-        lockedState = loadPdfLockedState(context, bookId)
+        val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
+        val savedLockedState = loadPdfLockedState(context, bookId)
+        val activeCamera = activePdfCameraAfterLockPreferenceLoad(
+            isScrollLocked = savedIsScrollLocked,
+            lockedState = savedLockedState
+        )
+        isScrollLocked = savedIsScrollLocked
+        lockedState = savedLockedState
+        currentActiveScale = activeCamera.first
+        currentActiveOffset = activeCamera.second
     }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
@@ -802,13 +834,14 @@ fun PdfViewerScreen(
 
     LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
 
-    LaunchedEffect(currentActiveScale, currentActiveOffset, isScrollLocked) {
+    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked) {
         if (isScrollLocked) {
+            val requestedCamera = currentActiveScale to currentActiveOffset
             delay(500)
-            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=$currentActiveScale | X=${currentActiveOffset.x} | Y=${currentActiveOffset.y}")
+            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
 
-            lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-            savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+            lockedState = Triple(requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
+            savePdfLockedState(context, bookId, requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
         }
     }
 
@@ -3208,8 +3241,14 @@ fun PdfViewerScreen(
         summarizationResult = null
     }
 
-    LaunchedEffect(pagerState.currentPage) {
-        currentPageScale = 1f
+    LaunchedEffect(pagerState.currentPage, displayMode, isScrollLocked, lockedState) {
+        val nextPageScale = currentPageScaleAfterPdfPageChange(
+            displayMode = displayMode,
+            isScrollLocked = isScrollLocked,
+            lockedState = lockedState,
+            currentActiveScale = currentActiveScale
+        )
+        currentPageScale = nextPageScale
         ocrUsedForCurrentPageTts = false
     }
 

@@ -170,6 +170,47 @@ enum class InkType {
     PEN, HIGHLIGHTER, HIGHLIGHTER_ROUND, ERASER, FOUNTAIN_PEN, PENCIL, TEXT
 }
 
+internal fun shouldReportPdfPageCamera(
+    isZoomEnabled: Boolean,
+    isVerticalScroll: Boolean,
+    isScrollLocked: Boolean,
+    lockedState: Triple<Float, Float, Float>?,
+    hasAppliedLockedState: Boolean
+): Boolean {
+    return !isZoomEnabled ||
+        isVerticalScroll ||
+        !isScrollLocked ||
+        lockedState == null ||
+        hasAppliedLockedState
+}
+
+internal fun initialPdfPageCamera(
+    isZoomEnabled: Boolean,
+    isVerticalScroll: Boolean,
+    isScrollLocked: Boolean,
+    lockedState: Triple<Float, Float, Float>?
+): Pair<Float, Offset> {
+    return if (isZoomEnabled && !isVerticalScroll && isScrollLocked && lockedState != null) {
+        lockedState.first to Offset(lockedState.second, lockedState.third)
+    } else {
+        1f to Offset.Zero
+    }
+}
+
+internal fun shouldResetPdfZoomAfterBubbleZoomCleanup(
+    isBubbleZoomModeActive: Boolean,
+    scale: Float,
+    isVerticalScroll: Boolean,
+    isZoomEnabled: Boolean,
+    isScrollLocked: Boolean
+): Boolean {
+    return !isBubbleZoomModeActive &&
+        scale > 1f &&
+        !isVerticalScroll &&
+        isZoomEnabled &&
+        !isScrollLocked
+}
+
 data class EmbeddedAnnotation(
     val index: Int,
     val subtype: Int,
@@ -591,12 +632,30 @@ internal fun PdfPageComposable(
     var ocrRipplePosition by remember { mutableStateOf<Offset?>(null) }
 
     var isTransforming by remember { mutableStateOf(false) }
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    val initialCamera = initialPdfPageCamera(
+        isZoomEnabled = isZoomEnabled,
+        isVerticalScroll = isVerticalScroll,
+        isScrollLocked = isScrollLocked,
+        lockedState = lockedState
+    )
+    var scale by remember(targetPageId) { mutableFloatStateOf(initialCamera.first) }
+    var offset by remember(targetPageId) { mutableStateOf(initialCamera.second) }
     var paginationPanFlingJob by remember { mutableStateOf<Job?>(null) }
+    var hasAppliedLockedPaginationState by remember(targetPageId) {
+        mutableStateOf(initialCamera.second != Offset.Zero || initialCamera.first != 1f)
+    }
+    val shouldReportCamera = shouldReportPdfPageCamera(
+        isZoomEnabled = isZoomEnabled,
+        isVerticalScroll = isVerticalScroll,
+        isScrollLocked = isScrollLocked,
+        lockedState = lockedState,
+        hasAppliedLockedState = hasAppliedLockedPaginationState
+    )
 
-    LaunchedEffect(scale, offset) {
-        onZoomAndPanChanged?.invoke(scale, offset)
+    LaunchedEffect(scale, offset, shouldReportCamera) {
+        if (shouldReportCamera) {
+            onZoomAndPanChanged?.invoke(scale, offset)
+        }
     }
 
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
@@ -836,7 +895,15 @@ internal fun PdfPageComposable(
             expandedBubbleIndex = -1
             expandedBubbleRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
             expandedBubbleRender = null
-            if (!isBubbleZoomModeActive && scale > 1f && !isVerticalScroll && isZoomEnabled) {
+            if (
+                shouldResetPdfZoomAfterBubbleZoomCleanup(
+                    isBubbleZoomModeActive = isBubbleZoomModeActive,
+                    scale = scale,
+                    isVerticalScroll = isVerticalScroll,
+                    isZoomEnabled = isZoomEnabled,
+                    isScrollLocked = isScrollLocked
+                )
+            ) {
                 coroutineScope.launch {
                     Animatable(scale).animateTo(1f, tween(300)) {
                         scale = this.value
@@ -3573,16 +3640,20 @@ internal fun PdfPageComposable(
                 if (orientationChanged) {
                     scale = 1f
                     offset = Offset.Zero
-                    onZoomAndPanChanged?.invoke(1f, Offset.Zero)
+                    hasAppliedLockedPaginationState = true
                     Timber.tag("PdfLockDiagnostic").i(
                         "Orientation changed while locked; reset paginated zoom to fit on page $pageIndex"
                     )
                 } else if (lockedState != null) {
                     scale = lockedState.first
                     offset = Offset(lockedState.second, lockedState.third)
+                    hasAppliedLockedPaginationState = true
+                } else {
+                    hasAppliedLockedPaginationState = true
                 }
                 onScaleChanged(scale)
             } else if (!isScrollLocked && !isVerticalScroll) {
+                hasAppliedLockedPaginationState = false
                 scale = 1f
                 offset = Offset.Zero
                 onScaleChanged(1f)
