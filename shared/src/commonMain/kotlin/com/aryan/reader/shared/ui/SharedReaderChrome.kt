@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -61,12 +60,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.luminance
@@ -215,6 +217,7 @@ fun SharedReaderScreen(
     val ttsRequestId = activeTtsChunk?.let { activeTtsProgress.sessionId + it.index + 1L } ?: 0L
     val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     val effectiveCloudTtsAvailable = cloudTtsControlsAvailable && byokSettings.isCloudTtsAvailable
+    val readerFocusRequester = remember(session.reader.book.id) { FocusRequester() }
     var selectedHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
     val selectedHighlight = remember(session.highlights, selectedHighlightId) {
         session.highlights.firstOrNull { it.id == selectedHighlightId }
@@ -244,6 +247,10 @@ fun SharedReaderScreen(
         dispatch(ReaderAction.NextPage)
     }
 
+    LaunchedEffect(session.reader.book.id, settings.readingMode, readerState.currentPageIndex) {
+        runCatching { readerFocusRequester.requestFocus() }
+    }
+
     ReaderWorkspaceShell(
         model = workspaceModel,
         title = readerState.book.title,
@@ -252,6 +259,7 @@ fun SharedReaderScreen(
         onReturnToLibrary = onReturnToLibrary,
         modifier = Modifier
             .fillMaxSize()
+            .focusRequester(readerFocusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when {
@@ -2444,7 +2452,7 @@ private fun SharedReaderSettingSlider(
 
 @Composable
 private fun SharedReaderThemeChoice(
-    theme: com.aryan.reader.shared.ReaderTheme,
+    theme: ReaderTheme,
     selected: Boolean,
     onSelected: () -> Unit,
     modifier: Modifier = Modifier
@@ -2897,7 +2905,7 @@ private fun SharedHighlightPaletteEditor(
     onPaletteChange: (ReaderHighlightPalette) -> Unit
 ) {
     val sanitized = palette.sanitized()
-    var selectedSlotIndex by remember(sanitized.colors) { mutableStateOf(0) }
+    var selectedSlotIndex by remember(sanitized.colors) { mutableIntStateOf(0) }
     val colors = sanitized.colors
 
     fun replaceSlot(color: HighlightColor) {

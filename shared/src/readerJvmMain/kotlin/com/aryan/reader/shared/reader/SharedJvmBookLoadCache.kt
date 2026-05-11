@@ -14,7 +14,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import java.io.File
 
 private const val SharedJvmBookLoadCacheSchemaVersion = 1
-private const val SharedJvmBookLoadCacheProcessingVersion = 1
+private const val SharedJvmBookLoadCacheProcessingVersion = 2
 
 data class SharedJvmBookLoadCacheKey(
     val canonicalPath: String,

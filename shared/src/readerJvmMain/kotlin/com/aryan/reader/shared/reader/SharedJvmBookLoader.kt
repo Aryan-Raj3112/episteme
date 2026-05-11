@@ -5,7 +5,17 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssParser
+import com.aryan.reader.paginatedreader.HtmlResourceResolver
 import com.aryan.reader.paginatedreader.OptimizedCssRules
+import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticImage
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticMath
+import com.aryan.reader.paginatedreader.SemanticSpacer
+import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.UserAgentStylesheet
 import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
 import com.aryan.reader.shared.FileType
@@ -17,10 +27,13 @@ import org.jsoup.parser.Parser
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.URI
+import java.net.URLDecoder
 import java.nio.charset.Charset
 import java.util.Base64
 import java.util.UUID
 import java.util.zip.ZipFile
+import javax.imageio.ImageIO
 
 object SharedJvmBookLoader {
     private val persistentBookCache = SharedJvmBookLoadCache()
@@ -98,21 +111,18 @@ object SharedJvmBookLoader {
                 val html = zip.readTextOrNull(path) ?: return@mapIndexedNotNull null
                 val resourceReadyHtml = html.sanitizeReaderHtml().withEmbeddedResources(zip, path)
                 val text = html.htmlToText()
-                if (text.isBlank()) {
-                    null
-                } else {
-                    chapterFromHtml(
-                        id = "chapter_$index",
-                        title = html.tagText("h1")
-                            .ifBlank { html.tagText("h2") }
-                            .ifBlank { html.tagText("title") }
-                            .ifBlank { "Chapter ${index + 1}" },
-                        html = resourceReadyHtml,
-                        plainText = text,
-                        baseHref = path,
-                        cssRules = cssRules
-                    )
-                }
+                val chapter = chapterFromHtml(
+                    id = "chapter_$index",
+                    title = html.tagText("h1")
+                        .ifBlank { html.tagText("h2") }
+                        .ifBlank { html.tagText("title") }
+                        .ifBlank { "Chapter ${index + 1}" },
+                    html = resourceReadyHtml,
+                    plainText = text,
+                    baseHref = path,
+                    cssRules = cssRules
+                )
+                chapter.takeIf { text.isNotBlank() || it.semanticBlocks.isNotEmpty() }
             }
 
             return SharedEpubBook(
@@ -335,13 +345,14 @@ object SharedJvmBookLoader {
                 extractionBasePath = "",
                 density = Density(1f),
                 fontFamilyMap = emptyMap(),
-                constraints = Constraints(maxWidth = 980, maxHeight = 720)
+                constraints = Constraints(maxWidth = 980, maxHeight = 720),
+                resourceResolver = SharedJvmHtmlResourceResolver
             )
         }.getOrDefault(emptyList())
         return SharedEpubChapter(
             id = id,
             title = title,
-            plainText = plainText,
+            plainText = plainText.takeUnlessBlank() ?: semanticBlocks.semanticFallbackText().ifBlank { title },
             semanticBlocks = semanticBlocks,
             htmlContent = html.extractBodyOrSelf(),
             baseHref = baseHref
@@ -1284,6 +1295,82 @@ object SharedJvmBookLoader {
             title = titleOverride.takeUnlessBlank() ?: title,
             author = authorOverride.takeUnlessBlank() ?: author
         )
+    }
+
+    private object SharedJvmHtmlResourceResolver : HtmlResourceResolver {
+        override fun resolvePath(chapterAbsPath: String, extractionBasePath: String, src: String): String? {
+            val raw = src.trim().takeIf { it.isNotBlank() } ?: return null
+            if (raw.startsWith("data:", ignoreCase = true)) return raw
+            if (raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true)) return raw
+            if (raw.startsWith("file:", ignoreCase = true)) return raw
+
+            val clean = raw.substringBefore('#').substringBefore('?').takeIf { it.isNotBlank() } ?: return null
+            val decoded = runCatching { URLDecoder.decode(clean, Charsets.UTF_8.name()) }.getOrDefault(clean)
+            val direct = File(decoded)
+            if (direct.isAbsolute && direct.isFile) return direct.toURI().toString()
+
+            val chapterFile = chapterAbsPath.trim().takeIf { it.isNotBlank() }?.let(::File)
+            val chapterRelative = chapterFile?.parentFile?.let { File(it, decoded) }
+            if (chapterRelative?.isFile == true) return chapterRelative.toURI().toString()
+
+            val extractionRelative = extractionBasePath.trim().takeIf { it.isNotBlank() }?.let { File(it, decoded) }
+            if (extractionRelative?.isFile == true) return extractionRelative.toURI().toString()
+
+            return null
+        }
+
+        override fun readText(path: String): String? {
+            dataUriBytes(path)?.let { bytes -> return bytes.toString(Charsets.UTF_8) }
+            return path.toFileOrNull()?.takeIf { it.isFile }?.readText()
+        }
+
+        override fun imageDimensions(path: String): Pair<Float?, Float?>? {
+            val image = runCatching {
+                dataUriBytes(path)?.let { bytes ->
+                    ImageIO.read(ByteArrayInputStream(bytes))
+                } ?: path.toFileOrNull()?.takeIf { it.isFile }?.let { file -> ImageIO.read(file) }
+            }.getOrNull() ?: return null
+            return image.width.toFloat() to image.height.toFloat()
+        }
+
+        private fun dataUriBytes(value: String): ByteArray? {
+            if (!value.startsWith("data:", ignoreCase = true)) return null
+            val commaIndex = value.indexOf(',')
+            if (commaIndex < 0) return null
+            val metadata = value.substring(0, commaIndex)
+            val payload = value.substring(commaIndex + 1)
+            return if (";base64" in metadata.lowercase()) {
+                runCatching { Base64.getDecoder().decode(payload) }.getOrNull()
+            } else {
+                runCatching { URLDecoder.decode(payload, Charsets.UTF_8.name()).toByteArray(Charsets.UTF_8) }.getOrNull()
+            }
+        }
+
+        private fun String.toFileOrNull(): File? {
+            return when {
+                startsWith("file:", ignoreCase = true) -> runCatching { File(URI(this)) }.getOrNull()
+                else -> File(this)
+            }
+        }
+    }
+
+    private fun List<SemanticBlock>.semanticFallbackText(): String {
+        return flatMap { it.semanticTextParts() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n\n")
+    }
+
+    private fun SemanticBlock.semanticTextParts(): List<String> {
+        return when (this) {
+            is SemanticTextBlock -> listOf(text)
+            is SemanticList -> items.flatMap { it.semanticTextParts() }
+            is SemanticTable -> rows.flatMap { row -> row.flatMap { cell -> cell.content.flatMap { it.semanticTextParts() } } }
+            is SemanticFlexContainer -> children.flatMap { it.semanticTextParts() }
+            is SemanticWrappingBlock -> floatedImage.semanticTextParts() + paragraphsToWrap.flatMap { it.semanticTextParts() }
+            is SemanticImage -> listOf(altText.orEmpty())
+            is SemanticMath -> listOf(altText.orEmpty())
+            is SemanticSpacer -> emptyList()
+        }
     }
 
     private fun ByteArray.u16(offset: Int): Int {

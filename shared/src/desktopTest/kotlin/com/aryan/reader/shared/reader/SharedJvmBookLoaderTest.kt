@@ -1,8 +1,10 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.FileType
 import java.io.File
 import java.nio.file.Files
+import java.util.Base64
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
@@ -139,6 +141,60 @@ class SharedJvmBookLoaderTest {
         assertTrue(book.chapters.joinToString("\n") { it.plainText }.length > 100)
     }
 
+    @Test
+    fun `epub loader keeps embedded images in semantic pagination blocks`() = withTempDir { dir ->
+        val file = File(dir, "image-book.epub")
+        writeZip(file) {
+            text(
+                "META-INF/container.xml",
+                """
+                <container>
+                  <rootfiles>
+                    <rootfile full-path="OPS/content.opf"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent()
+            )
+            text(
+                "OPS/content.opf",
+                """
+                <package>
+                  <metadata>
+                    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Image Book</dc:title>
+                  </metadata>
+                  <manifest>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="pixel" href="images/pixel.png" media-type="image/png"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="chapter"/>
+                  </spine>
+                </package>
+                """.trimIndent()
+            )
+            text(
+                "OPS/chapter.xhtml",
+                """
+                <html>
+                  <body>
+                    <h1>One</h1>
+                    <p>Before</p>
+                    <img src="images/pixel.png" alt="Pixel"/>
+                    <p>After</p>
+                  </body>
+                </html>
+                """.trimIndent()
+            )
+            bytes("OPS/images/pixel.png", onePixelPng)
+        }
+
+        val book = SharedJvmBookLoader.loadEpub(file)
+        val image = book.chapters.single().semanticBlocks.filterIsInstance<SemanticImage>().single()
+
+        assertTrue(image.path.startsWith("data:image/png;base64,"))
+        assertEquals("Pixel", image.altText)
+    }
+
     private fun withTempDir(block: (File) -> Unit) {
         val dir = Files.createTempDirectory("reader-shared-loader").toFile()
         try {
@@ -193,9 +249,16 @@ class SharedJvmBookLoaderTest {
 
     private class ZipBuilder(private val zip: ZipOutputStream) {
         fun text(path: String, value: String) {
+            bytes(path, value.toByteArray(Charsets.UTF_8))
+        }
+
+        fun bytes(path: String, value: ByteArray) {
             zip.putNextEntry(ZipEntry(path))
-            zip.write(value.toByteArray(Charsets.UTF_8))
+            zip.write(value)
             zip.closeEntry()
         }
     }
+
+    private val onePixelPng: ByteArray =
+        Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
 }

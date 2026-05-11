@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -76,6 +77,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -3043,6 +3046,7 @@ private fun PdfReaderScreen(
     val pageVerticalScrollState = rememberScrollState()
     val pageHorizontalScrollState = rememberScrollState()
     val verticalListState = rememberLazyListState(initialFirstVisibleItemIndex = pdfState.pageIndex)
+    val pdfReaderFocusRequester = remember(document.path) { FocusRequester() }
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentPdfAnnotations by rememberUpdatedState(pdfState.annotations)
     val currentPdfPageIndex by rememberUpdatedState(pdfState.pageIndex)
@@ -3207,6 +3211,11 @@ private fun PdfReaderScreen(
     val pageIndex = pdfState.pageIndex
     val scale = pdfState.zoom
     val displayMode = pdfState.displayMode
+
+    LaunchedEffect(document.path, pageIndex, displayMode) {
+        runCatching { pdfReaderFocusRequester.requestFocus() }
+    }
+
     val searchQuery = pdfState.searchQuery
     val activeSearchIndex = pdfState.activeSearchResultIndex
     val searchHighlightMode = pdfState.searchHighlightMode
@@ -4060,6 +4069,16 @@ private fun PdfReaderScreen(
         if ((isEditingTextAnnotation || isRichTextMode) && !event.isCtrlPressed) {
             return false
         }
+        fun scrollVertically(delta: Float): Boolean {
+            pdfScope.launch {
+                if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
+                    verticalListState.scrollBy(delta)
+                } else {
+                    pageVerticalScrollState.scrollBy(delta)
+                }
+            }
+            return true
+        }
         return when {
             event.key == Key.DirectionLeft -> {
                 goToPage(pageIndex - 1)
@@ -4069,14 +4088,8 @@ private fun PdfReaderScreen(
                 goToPage(pageIndex + 1)
                 true
             }
-            event.key == Key.DirectionUp && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                goToPage(pageIndex - 1)
-                true
-            }
-            event.key == Key.DirectionDown && displayMode == PdfDisplayMode.VERTICAL_SCROLL -> {
-                goToPage(pageIndex + 1)
-                true
-            }
+            event.key == Key.DirectionUp -> scrollVertically(-96f)
+            event.key == Key.DirectionDown -> scrollVertically(96f)
             event.key == Key.PageUp -> {
                 goToPage(pageIndex - 1)
                 true
@@ -4326,6 +4339,7 @@ private fun PdfReaderScreen(
         progressLabel = "${progressPercent.toInt()}%",
         onReturnToLibrary = onReturnToLibrary,
         modifier = Modifier
+            .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
         leftSidebar = { PdfNavigationSidebar() },
@@ -7533,6 +7547,7 @@ private fun ReaderScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
                 .onSizeChanged { size ->
                     val next = ReaderViewportSpec(size.width, size.height)
                     if (next != readerViewport) readerViewport = next
@@ -7547,6 +7562,16 @@ private fun ReaderScreen(
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
                     onHighlightSelected = onHighlightSelected,
+                    onKeyboardNavigation = { action ->
+                        when (action) {
+                            DesktopReaderKeyNavigation.NEXT -> onSessionChange(session.reduce(ReaderAction.NextPage, readerEngine))
+                            DesktopReaderKeyNavigation.PREVIOUS -> onSessionChange(session.reduce(ReaderAction.PreviousPage, readerEngine))
+                            DesktopReaderKeyNavigation.FIRST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(0), readerEngine))
+                            DesktopReaderKeyNavigation.LAST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(session.reader.pages.lastIndex), readerEngine))
+                            DesktopReaderKeyNavigation.SEARCH -> onSessionChange(session.reduce(ReaderAction.SearchOpened, readerEngine))
+                            DesktopReaderKeyNavigation.NEXT_SEARCH -> onSessionChange(session.reduce(ReaderAction.JumpToNextSearchResult, readerEngine))
+                        }
+                    },
                     onSelectionAction = { action, text ->
                         val settings = aiByokSettings.sanitized()
                         when (action) {
@@ -7617,6 +7642,7 @@ private fun DesktopEpubWebView(
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
     onHighlightSelected: (String) -> Unit,
+    onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
     onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -7625,6 +7651,7 @@ private fun DesktopEpubWebView(
 ) {
     val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
     val latestOnHighlightSelected by rememberUpdatedState(onHighlightSelected)
+    val latestOnKeyboardNavigation by rememberUpdatedState(onKeyboardNavigation)
     val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
@@ -7709,6 +7736,19 @@ private fun DesktopEpubWebView(
                 }
             }
         }
+        val keyNavigationHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerKeyNavigation"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                message.params.readerKeyNavigationOrNull()?.let { action ->
+                    scope.launch { latestOnKeyboardNavigation(action) }
+                }
+            }
+        }
         val ttsHighlightLogHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerTtsHighlightLog"
 
@@ -7745,6 +7785,7 @@ private fun DesktopEpubWebView(
         bridge.register(highlightSelectionHandler)
         bridge.register(positionHandler)
         bridge.register(selectionActionHandler)
+        bridge.register(keyNavigationHandler)
         bridge.register(ttsHighlightLogHandler)
         bridge.register(linkHandler)
         onDispose {
@@ -7752,6 +7793,7 @@ private fun DesktopEpubWebView(
             bridge.unregister(highlightSelectionHandler)
             bridge.unregister(positionHandler)
             bridge.unregister(selectionActionHandler)
+            bridge.unregister(keyNavigationHandler)
             bridge.unregister(ttsHighlightLogHandler)
             bridge.unregister(linkHandler)
         }
@@ -7787,6 +7829,34 @@ private fun DesktopEpubWebView(
             navigator = navigator,
             webViewJsBridge = bridge
         )
+
+        LaunchedEffect(state.loadingState) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            navigator.evaluateJavaScript(
+                """
+                (function () {
+                  if (window.readerDesktopKeyNavigationInstalled) return;
+                  window.readerDesktopKeyNavigationInstalled = true;
+                  document.addEventListener('keydown', function (event) {
+                    var target = event.target;
+                    var tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+                    if (target && (target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select')) return;
+                    var action = null;
+                    if (event.ctrlKey && (event.key === 'f' || event.key === 'F')) action = 'search';
+                    else if (event.ctrlKey && (event.key === 'g' || event.key === 'G')) action = 'nextSearch';
+                    else if (event.key === 'ArrowRight' || event.key === 'PageDown') action = 'next';
+                    else if (event.key === 'ArrowLeft' || event.key === 'PageUp') action = 'previous';
+                    else if (event.key === 'Home') action = 'first';
+                    else if (event.key === 'End') action = 'last';
+                    if (!action || !window.kmpJsBridge || !window.kmpJsBridge.callNative) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.kmpJsBridge.callNative('readerKeyNavigation', JSON.stringify({ action: action }));
+                  }, true);
+                })();
+                """.trimIndent()
+            )
+        }
 
         LaunchedEffect(
             navigationTarget.autoScroll,
@@ -7887,6 +7957,15 @@ private enum class DesktopReaderSelectionAction {
     SEARCH
 }
 
+private enum class DesktopReaderKeyNavigation {
+    NEXT,
+    PREVIOUS,
+    FIRST,
+    LAST,
+    SEARCH,
+    NEXT_SEARCH
+}
+
 private data class DesktopReaderSelectionActionPayload(
     val action: DesktopReaderSelectionAction,
     val text: String
@@ -7964,6 +8043,31 @@ private fun String.readerPositionOrNull(): DesktopReaderPosition? {
             cfi = obj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull
         )
         DesktopReaderPosition(pageIndex, locator)
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
+
+private fun String.readerKeyNavigationOrNull(): DesktopReaderKeyNavigation? {
+    fun parse(rawJson: String): DesktopReaderKeyNavigation? = runCatching {
+        val action = Json.parseToJsonElement(rawJson)
+            .jsonObject["action"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?: return@runCatching null
+        when (action) {
+            "next" -> DesktopReaderKeyNavigation.NEXT
+            "previous" -> DesktopReaderKeyNavigation.PREVIOUS
+            "first" -> DesktopReaderKeyNavigation.FIRST
+            "last" -> DesktopReaderKeyNavigation.LAST
+            "search" -> DesktopReaderKeyNavigation.SEARCH
+            "nextSearch" -> DesktopReaderKeyNavigation.NEXT_SEARCH
+            else -> null
+        }
     }.getOrNull()
 
     parse(this)?.let { return it }
