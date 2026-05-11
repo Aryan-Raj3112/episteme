@@ -248,6 +248,7 @@ import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
+import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.ReaderViewportSpec
@@ -7438,16 +7439,22 @@ private fun ReaderScreen(
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
+    val paginationCache = remember { SharedEpubPaginationCache() }
+    val paginationCacheWriteScope = rememberCoroutineScope()
     val measuredPaginator = remember(
         textMeasurer,
         density,
         session.reader.settings.fontFamily,
-        session.reader.settings.customFontPath
+        session.reader.settings.customFontPath,
+        paginationCache,
+        paginationCacheWriteScope
     ) {
         SharedMeasuredEpubPaginator(
             textMeasurer = textMeasurer,
             density = density,
-            fontFamily = session.reader.settings.toDesktopReaderFontFamily()
+            fontFamily = session.reader.settings.toDesktopReaderFontFamily(),
+            pageCache = paginationCache,
+            cacheWriteScope = paginationCacheWriteScope
         )
     }
     var readerViewport by remember(session.reader.book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
@@ -7469,13 +7476,23 @@ private fun ReaderScreen(
     ) {
         val settings = session.reader.settings
         if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) return@LaunchedEffect
+        val reflowStartSession = latestSession
+        val reflowStartRequestId = reflowStartSession.navigationRequestId
+        val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
         val pages = measuredPaginator.paginate(
             book = session.reader.book,
             settings = settings,
             viewport = readerViewport
         )
         if (pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)) {
-            latestOnSessionChange(readerEngine.replacePages(latestSession, pages))
+            latestOnSessionChange(
+                readerEngine.replacePages(
+                    state = latestSession,
+                    pages = pages,
+                    reflowAnchor = reflowAnchor,
+                    navigationRequestIdAtReflowStart = reflowStartRequestId
+                )
+            )
         }
     }
 

@@ -23,15 +23,19 @@ class ReaderSpreadLayoutTest {
         assertEquals(2, ReaderSpreadLayout.normalizePageIndex(3, pageCount = 10, settings = settings))
         assertEquals(listOf(2, 3), ReaderSpreadLayout.visiblePageIndices(3, pageCount = 10, settings = settings))
         assertEquals("3-4", ReaderSpreadLayout.pageRangeLabel(3, pageCount = 10, settings = settings))
+        assertEquals(2, ReaderSpreadLayout.sliderPositionForPage(3, pageCount = 10, settings = settings))
+        assertEquals(3, ReaderSpreadLayout.pageNumberForSliderPosition(2, pageCount = 10, settings = settings))
     }
 
     @Test
     fun `two page mode advances by spread and clamps odd final page`() {
         val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
 
+        assertEquals(3, ReaderSpreadLayout.sliderStepCount(pageCount = 5, settings = settings))
         assertEquals(2, ReaderSpreadLayout.nextPageIndex(0, pageCount = 5, settings = settings))
         assertEquals(4, ReaderSpreadLayout.nextPageIndex(2, pageCount = 5, settings = settings))
         assertEquals(listOf(4), ReaderSpreadLayout.visiblePageIndices(4, pageCount = 5, settings = settings))
+        assertEquals(5, ReaderSpreadLayout.pageNumberForSliderPosition(3, pageCount = 5, settings = settings))
         assertFalse(ReaderSpreadLayout.canGoNext(4, pageCount = 5, settings = settings))
         assertTrue(ReaderSpreadLayout.canGoNext(2, pageCount = 5, settings = settings))
     }

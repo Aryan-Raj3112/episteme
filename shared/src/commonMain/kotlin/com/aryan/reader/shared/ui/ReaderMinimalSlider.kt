@@ -1,8 +1,8 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -44,21 +44,23 @@ fun ReaderMinimalSlider(
     }
 
     val inputModifier = if (enabled) {
-        Modifier
-            .pointerInput(rangeStart, rangeEnd, widthPx) {
-                detectTapGestures { offset ->
-                    onValueChange(valueForOffset(offset.x))
-                    onValueChangeFinished?.invoke()
+        Modifier.pointerInput(rangeStart, rangeEnd, widthPx) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                onValueChange(valueForOffset(down.position.x))
+                down.consume()
+
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                    if (change == null || !change.pressed) break
+                    onValueChange(valueForOffset(change.position.x))
+                    change.consume()
                 }
+
+                onValueChangeFinished?.invoke()
             }
-            .pointerInput(rangeStart, rangeEnd, widthPx) {
-                detectDragGestures(
-                    onDragStart = { offset -> onValueChange(valueForOffset(offset.x)) },
-                    onDrag = { change, _ -> onValueChange(valueForOffset(change.position.x)) },
-                    onDragEnd = { onValueChangeFinished?.invoke() },
-                    onDragCancel = { onValueChangeFinished?.invoke() }
-                )
-            }
+        }
     } else {
         Modifier
     }

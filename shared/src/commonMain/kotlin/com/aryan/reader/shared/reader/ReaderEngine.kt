@@ -360,11 +360,27 @@ class ReaderEngine(
         return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
     }
 
-    fun replacePages(state: ReaderSessionState, pages: List<ReaderPage>): ReaderSessionState {
+    fun reflowAnchorFor(state: ReaderSessionState): ReaderLocator? {
+        return state.reader.currentPage?.toLocator(state.reader.book) ?: state.navigationLocator
+    }
+
+    fun replacePages(
+        state: ReaderSessionState,
+        pages: List<ReaderPage>,
+        reflowAnchor: ReaderLocator? = null,
+        navigationRequestIdAtReflowStart: Long? = null
+    ): ReaderSessionState {
         if (pages.isEmpty()) return state
-        val currentLocator = state.navigationLocator ?: state.reader.currentPage?.toLocator(state.reader.book)
-        val targetIndex = currentLocator
-            ?.let { locator -> pages.indexOfFirst { page -> page.contains(locator) } }
+        val explicitNavigationAfterReflowStarted = navigationRequestIdAtReflowStart != null &&
+            state.navigationRequestId != navigationRequestIdAtReflowStart
+        val anchor = when {
+            explicitNavigationAfterReflowStarted ->
+                state.navigationLocator ?: state.activeSearchResult?.locator ?: state.reader.currentPage?.toLocator(state.reader.book)
+            reflowAnchor != null -> reflowAnchor
+            else -> state.navigationLocator ?: state.reader.currentPage?.toLocator(state.reader.book)
+        }
+        val targetIndex = anchor
+            ?.let { locator -> pages.findPageIndexForLocator(locator) }
             ?.takeIf { it >= 0 }
             ?: state.reader.currentPage?.let { current ->
                 pages.indexOfFirst {
@@ -374,15 +390,23 @@ class ReaderEngine(
                 }.takeIf { it >= 0 }
             }
             ?: state.reader.currentPageIndex
-        val normalizedIndex = ReaderSpreadLayout.normalizePageIndex(targetIndex, pages.size, state.reader.settings)
+        val requestedIndex = targetIndex.coerceIn(0, pages.lastIndex)
+        val normalizedIndex = ReaderSpreadLayout.normalizePageIndex(requestedIndex, pages.size, state.reader.settings)
+        val normalizedLocator = anchor
+            ?.normalizedForResolvedPage(state.reader.book, pages, requestedIndex)
+            ?: pages.getOrNull(normalizedIndex)?.toLocator(state.reader.book)
+        val activeSearchIndex = normalizedLocator
+            ?.let { locator -> state.searchResults.indexOfFirst { it.locator.sameLocation(locator) } }
+            ?: -1
         val updated = state.copy(
             reader = state.reader.copy(
                 pages = pages,
                 currentPageIndex = normalizedIndex
             ),
-            navigationLocator = currentLocator ?: pages.getOrNull(normalizedIndex)?.toLocator(state.reader.book)
+            activeSearchResultIndex = activeSearchIndex,
+            navigationLocator = normalizedLocator
         )
-        return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
+        return if (updated.searchQuery.isNotBlank()) refreshSearchResults(updated) else updated
     }
 
     private fun pagesFor(book: SharedEpubBook, settings: ReaderSettings): List<ReaderPage> {
@@ -543,36 +567,7 @@ class ReaderEngine(
 
     fun search(state: ReaderSessionState, query: String): ReaderSessionState {
         val normalized = query.trim()
-        val results = if (normalized.isBlank()) {
-            emptyList()
-        } else {
-            state.reader.pages.flatMap { page ->
-                val matches = mutableListOf<ReaderSearchResult>()
-                var startIndex = 0
-                while (startIndex < page.text.length) {
-                    val index = page.text.indexOfSearch(normalized, startIndex, state.searchOptions)
-                    if (index < 0) break
-                    val endIndex = (index + normalized.length).coerceAtMost(page.text.length)
-                    matches +=
-                        ReaderSearchResult(
-                            pageIndex = page.pageIndex,
-                            chapterTitle = page.chapterTitle,
-                            preview = page.text.previewAround(index, normalized.length),
-                            matchIndex = index,
-                            chapterIndex = page.chapterIndex,
-                            locator = ReaderLocator(
-                                chapterIndex = page.chapterIndex,
-                                pageIndex = page.pageIndex,
-                                startOffset = page.startOffset + index,
-                                endOffset = page.startOffset + endIndex,
-                                textQuote = page.text.substring(index, endIndex)
-                            )
-                        )
-                    startIndex = index + normalized.length.coerceAtLeast(1)
-                }
-                matches
-            }
-        }
+        val results = searchResultsFor(state, normalized)
         val activeIndex = results.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }
             .takeIf { it >= 0 }
             ?: if (results.isNotEmpty()) 0 else -1
@@ -584,6 +579,51 @@ class ReaderEngine(
             activeSearchResultIndex = activeIndex
         )
         return updated.activeSearchResult?.let { goToSearchResult(updated, activeIndex) } ?: updated
+    }
+
+    private fun refreshSearchResults(state: ReaderSessionState): ReaderSessionState {
+        val normalized = state.searchQuery.trim()
+        val results = searchResultsFor(state, normalized)
+        val previousLocator = state.activeSearchResult?.locator
+        val activeIndex = previousLocator
+            ?.let { locator -> results.indexOfFirst { it.locator.sameLocation(locator) } }
+            ?.takeIf { it >= 0 }
+            ?: results.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }.takeIf { it >= 0 }
+            ?: if (results.isNotEmpty()) 0 else -1
+        return state.copy(
+            searchResults = results,
+            activeSearchResultIndex = activeIndex
+        )
+    }
+
+    private fun searchResultsFor(state: ReaderSessionState, normalized: String): List<ReaderSearchResult> {
+        if (normalized.isBlank()) return emptyList()
+        return state.reader.pages.flatMap { page ->
+            val matches = mutableListOf<ReaderSearchResult>()
+            var startIndex = 0
+            while (startIndex < page.text.length) {
+                val index = page.text.indexOfSearch(normalized, startIndex, state.searchOptions)
+                if (index < 0) break
+                val endIndex = (index + normalized.length).coerceAtMost(page.text.length)
+                matches +=
+                    ReaderSearchResult(
+                        pageIndex = page.pageIndex,
+                        chapterTitle = page.chapterTitle,
+                        preview = page.text.previewAround(index, normalized.length),
+                        matchIndex = index,
+                        chapterIndex = page.chapterIndex,
+                        locator = ReaderLocator(
+                            chapterIndex = page.chapterIndex,
+                            pageIndex = page.pageIndex,
+                            startOffset = page.startOffset + index,
+                            endOffset = page.startOffset + endIndex,
+                            textQuote = page.text.substring(index, endIndex)
+                        )
+                    )
+                startIndex = index + normalized.length.coerceAtLeast(1)
+            }
+            matches
+        }
     }
 
     fun nextSearchResult(state: ReaderSessionState): ReaderSessionState {
@@ -663,6 +703,34 @@ private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
     }
     val targetPage = locator.pageIndex
     return targetPage != null && targetPage == pageIndex
+}
+
+private fun List<ReaderPage>.findPageIndexForLocator(locator: ReaderLocator): Int {
+    return indexOfFirst { page -> page.contains(locator) }
+        .takeIf { it >= 0 }
+        ?: locator.pageIndex?.takeIf { it in indices }
+        ?: -1
+}
+
+private fun ReaderLocator.normalizedForResolvedPage(
+    book: SharedEpubBook,
+    pages: List<ReaderPage>,
+    pageIndex: Int
+): ReaderLocator? {
+    val page = pages.getOrNull(pageIndex) ?: return null
+    val chapter = book.chapters.getOrNull(page.chapterIndex)
+    val start = startOffset ?: page.startOffset
+    val end = (endOffset ?: start).coerceAtLeast(start)
+    return copy(pageIndex = page.pageIndex).withFallbacks(
+        chapterIndex = page.chapterIndex,
+        chapterId = chapter?.id,
+        href = chapter?.baseHref,
+        pageIndex = page.pageIndex,
+        startOffset = start,
+        endOffset = end,
+        textQuote = textQuote ?: page.text.preview(),
+        cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
+    )
 }
 
 private fun ReaderBookmark.normalizedForBook(book: SharedEpubBook, pages: List<ReaderPage>): ReaderBookmark? {

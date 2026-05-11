@@ -154,6 +154,35 @@ object ReaderSpreadLayout {
         val last = pages.last() + 1
         return if (first == last) "$first" else "$first-$last"
     }
+
+    fun sliderStepCount(pageCount: Int, settings: ReaderSettings): Int {
+        val total = pageCount.coerceAtLeast(1)
+        return if (settings.isTwoPageSpreadEnabled()) {
+            (total + 1) / 2
+        } else {
+            total
+        }
+    }
+
+    fun sliderPositionForPage(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int {
+        val normalized = normalizePageIndex(pageIndex, pageCount, settings)
+        val position = if (settings.isTwoPageSpreadEnabled()) {
+            (normalized / 2) + 1
+        } else {
+            normalized + 1
+        }
+        return position.coerceIn(1, sliderStepCount(pageCount, settings))
+    }
+
+    fun pageNumberForSliderPosition(position: Int, pageCount: Int, settings: ReaderSettings): Int {
+        val clamped = position.coerceIn(1, sliderStepCount(pageCount, settings))
+        val pageIndex = if (settings.isTwoPageSpreadEnabled()) {
+            (clamped - 1) * 2
+        } else {
+            clamped - 1
+        }
+        return normalizePageIndex(pageIndex, pageCount, settings) + 1
+    }
 }
 
 fun ReaderSettings.isTwoPageSpreadEnabled(): Boolean {

@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.test.Test
@@ -190,6 +191,68 @@ class ReaderEngineTest {
         assertTrue(engine.clearJumpHistory(forward).jumpHistory.locators.isEmpty())
     }
 
+    @Test
+    fun `replacePages uses captured reflow anchor when no newer navigation happened`() {
+        val engine = ReaderEngine()
+        val book = manualRangeBook()
+        val oldPages = listOf(
+            ReaderPage(0, 0, "One", "first", 0, 100),
+            ReaderPage(1, 0, "One", "second", 100, 200)
+        )
+        val newPages = listOf(
+            ReaderPage(0, 0, "One", "first expanded", 0, 140),
+            ReaderPage(1, 0, "One", "second shifted", 140, 260)
+        )
+        val session = engine.createSession(book).copy(
+            reader = PaginatedReaderState(book, oldPages, currentPageIndex = 1),
+            navigationLocator = ReaderLocator(chapterIndex = 0, pageIndex = 0, startOffset = 20, endOffset = 20),
+            navigationRequestId = 4L
+        )
+        val reflowAnchor = ReaderLocator(chapterIndex = 0, pageIndex = 1, startOffset = 160, endOffset = 160)
+
+        val replaced = engine.replacePages(
+            state = session,
+            pages = newPages,
+            reflowAnchor = reflowAnchor,
+            navigationRequestIdAtReflowStart = 4L
+        )
+
+        assertEquals(1, replaced.reader.currentPageIndex)
+        assertEquals(1, replaced.navigationLocator?.pageIndex)
+        assertEquals(160, replaced.navigationLocator?.startOffset)
+    }
+
+    @Test
+    fun `replacePages lets newer explicit navigation override reflow anchor`() {
+        val engine = ReaderEngine()
+        val book = manualRangeBook()
+        val oldPages = listOf(
+            ReaderPage(0, 0, "One", "first", 0, 100),
+            ReaderPage(1, 0, "One", "second", 100, 200)
+        )
+        val newPages = listOf(
+            ReaderPage(0, 0, "One", "first expanded", 0, 140),
+            ReaderPage(1, 0, "One", "second shifted", 140, 260)
+        )
+        val session = engine.createSession(book).copy(
+            reader = PaginatedReaderState(book, oldPages, currentPageIndex = 0),
+            navigationLocator = ReaderLocator(chapterIndex = 0, pageIndex = 0, startOffset = 20, endOffset = 20),
+            navigationRequestId = 5L
+        )
+        val staleReflowAnchor = ReaderLocator(chapterIndex = 0, pageIndex = 1, startOffset = 160, endOffset = 160)
+
+        val replaced = engine.replacePages(
+            state = session,
+            pages = newPages,
+            reflowAnchor = staleReflowAnchor,
+            navigationRequestIdAtReflowStart = 4L
+        )
+
+        assertEquals(0, replaced.reader.currentPageIndex)
+        assertEquals(0, replaced.navigationLocator?.pageIndex)
+        assertEquals(20, replaced.navigationLocator?.startOffset)
+    }
+
     private fun longBook(): SharedEpubBook {
         return SharedEpubBook(
             id = "long",
@@ -215,6 +278,21 @@ class ReaderEngineTest {
                 SharedEpubChapter(id = "one", title = "One", plainText = "First chapter text."),
                 SharedEpubChapter(id = "two", title = "Two", plainText = "Second chapter text."),
                 SharedEpubChapter(id = "three", title = "Three", plainText = "Third chapter text.")
+            )
+        )
+    }
+
+    private fun manualRangeBook(): SharedEpubBook {
+        return SharedEpubBook(
+            id = "manual",
+            fileName = "manual.epub",
+            title = "Manual",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = List(300) { "x" }.joinToString("")
+                )
             )
         )
     }

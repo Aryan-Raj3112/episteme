@@ -26,20 +26,32 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 class SharedMeasuredEpubPaginator(
     private val textMeasurer: TextMeasurer,
     private val density: Density,
-    private val fontFamily: FontFamily = FontFamily.Default
+    private val fontFamily: FontFamily = FontFamily.Default,
+    private val pageCache: SharedEpubPaginationCache? = null,
+    private val cacheWriteScope: CoroutineScope? = null
 ) {
     suspend fun paginate(
         book: SharedEpubBook,
         settings: ReaderSettings,
         viewport: ReaderViewportSpec
     ): List<ReaderPage> {
+        pageCache?.load(
+            book = book,
+            settings = settings,
+            viewport = viewport,
+            density = density.density,
+            fontScale = density.fontScale
+        )?.let { return it }
+
         val geometry = MeasuredPageGeometry.from(settings, viewport)
         val baseStyle = TextStyle(
             fontSize = settings.fontSize.sp,
@@ -58,7 +70,25 @@ class SharedMeasuredEpubPaginator(
                 baseStyle = baseStyle
             )
         }
-        return pages.mapIndexed { index, page -> page.copy(pageIndex = index) }
+        val measuredPages = pages.mapIndexed { index, page -> page.copy(pageIndex = index) }
+        pageCache?.let { cache ->
+            val savePages = suspend {
+                cache.save(
+                    book = book,
+                    settings = settings,
+                    viewport = viewport,
+                    pages = measuredPages,
+                    density = density.density,
+                    fontScale = density.fontScale
+                )
+            }
+            if (cacheWriteScope != null) {
+                cacheWriteScope.launch { savePages() }
+            } else {
+                savePages()
+            }
+        }
+        return measuredPages
     }
 
     private suspend fun paginateChapter(

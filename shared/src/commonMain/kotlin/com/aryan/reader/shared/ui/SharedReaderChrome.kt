@@ -2559,8 +2559,13 @@ private fun SharedReaderPageSlider(
 ) {
     val readerState = session.reader
     val totalPages = readerState.pages.size.coerceAtLeast(1)
-    val sliderMax = totalPages.coerceAtLeast(2)
-    val currentPageNumber = (readerState.currentSpreadStartIndex + 1).coerceIn(1, totalPages)
+    val sliderSteps = ReaderSpreadLayout.sliderStepCount(totalPages, readerState.settings)
+    val sliderMax = sliderSteps.coerceAtLeast(2)
+    val currentSliderPosition = ReaderSpreadLayout.sliderPositionForPage(
+        pageIndex = readerState.currentPageIndex,
+        pageCount = totalPages,
+        settings = readerState.settings
+    )
     val pageRangeLabel = ReaderSpreadLayout.pageRangeLabel(readerState.currentPageIndex, totalPages, readerState.settings)
     Row(
         modifier = modifier,
@@ -2573,10 +2578,18 @@ private fun SharedReaderPageSlider(
             color = contentColor.copy(alpha = 0.72f)
         )
         ReaderMinimalSlider(
-            value = currentPageNumber.toFloat(),
-            onValueChange = { value -> onPageNumberChange(value.roundToInt().coerceIn(1, totalPages)) },
+            value = currentSliderPosition.toFloat(),
+            onValueChange = { value ->
+                onPageNumberChange(
+                    ReaderSpreadLayout.pageNumberForSliderPosition(
+                        position = value.roundToInt(),
+                        pageCount = totalPages,
+                        settings = readerState.settings
+                    )
+                )
+            },
             valueRange = 1f..sliderMax.toFloat(),
-            enabled = totalPages > 1,
+            enabled = sliderSteps > 1,
             activeColor = contentColor.copy(alpha = 0.62f),
             inactiveColor = contentColor.copy(alpha = 0.18f),
             thumbColor = contentColor.copy(alpha = 0.86f),
