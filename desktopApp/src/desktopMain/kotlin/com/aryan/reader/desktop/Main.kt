@@ -8277,6 +8277,17 @@ private fun DesktopEpubWebView(
                 logDesktopTts("epub_highlight_js ${message.params.logPreview(500)}")
             }
         }
+        val selectionDebugLogHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerSelectionDebugLog"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                logEpubSelectionDebug(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
+            }
+        }
         val linkHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerLinkClicked"
 
@@ -8304,6 +8315,7 @@ private fun DesktopEpubWebView(
         bridge.register(selectionActionHandler)
         bridge.register(keyNavigationHandler)
         bridge.register(ttsHighlightLogHandler)
+        bridge.register(selectionDebugLogHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
@@ -8312,6 +8324,7 @@ private fun DesktopEpubWebView(
             bridge.unregister(selectionActionHandler)
             bridge.unregister(keyNavigationHandler)
             bridge.unregister(ttsHighlightLogHandler)
+            bridge.unregister(selectionDebugLogHandler)
             bridge.unregister(linkHandler)
         }
     }
@@ -8536,6 +8549,22 @@ private fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionPa
             else -> return@runCatching null
         }
         DesktopReaderSelectionActionPayload(action, text)
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
+
+private fun String.readerSelectionDebugMessageOrNull(): String? {
+    fun parse(rawJson: String): String? = runCatching {
+        Json.parseToJsonElement(rawJson)
+            .jsonObject["message"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
     }.getOrNull()
 
     parse(this)?.let { return it }
@@ -9408,6 +9437,7 @@ private fun String.urlEncode(): String {
 private const val PdfSelectionLogTag = "EpistemePdfSelection"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
+private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val ExternalLinkLogTag = "EpistemeExternalLink"
 
 private fun logPdfSelection(message: String) {
@@ -9420,6 +9450,10 @@ private fun logPdfLink(message: String) {
 
 private fun logEpubLink(message: String) {
     println("$EpubLinkLogTag $message")
+}
+
+private fun logEpubSelectionDebug(message: String) {
+    println("$EpubSelectionDebugLogTag $message")
 }
 
 private fun logExternalLink(message: String) {

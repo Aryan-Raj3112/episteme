@@ -538,6 +538,9 @@ object ReaderHtmlDocumentBuilder {
                   var activeSelectionHandle = null;
                   var selectionHandleFrame = null;
                   var pendingSelectionHandleEvent = null;
+                  var selectionDebugSequence = 0;
+                  var selectionDebugLastLineKey = null;
+                  var selectionDebugLastAt = 0;
                   function numberAttribute(element, name, fallback) {
                     if (!element) return fallback;
                     var value = parseInt(element.getAttribute(name) || '', 10);
@@ -555,6 +558,20 @@ object ReaderHtmlDocumentBuilder {
                     }
                   }
                   window.readerTtsLog = readerTtsLog;
+                  function readerSelectionDebugLog(message) {
+                    var line = 'EPUB_SELECTION_DEBUG ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerSelectionDebugLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
+                  window.readerSelectionDebugLog = readerSelectionDebugLog;
                   function readerTtsPreview(value, limit) {
                     return String(value || '').replace(/\s+/g, ' ').trim().substring(0, limit || 120);
                   }
@@ -976,6 +993,39 @@ object ReaderHtmlDocumentBuilder {
                     handle.style.left = (x - 12) + 'px';
                     handle.style.top = rect.bottom + 'px';
                   }
+                  function selectionDebugMode() {
+                    return document.body && document.body.classList.contains('reader-paginated') ? 'paginated' : 'vertical';
+                  }
+                  function selectionDebugRect(rect) {
+                    if (!rect) return 'none';
+                    return [
+                      Math.round(rect.left),
+                      Math.round(rect.top),
+                      Math.round(rect.right),
+                      Math.round(rect.bottom)
+                    ].join(',');
+                  }
+                  function selectionDebugNode(node) {
+                    if (!node) return 'null';
+                    var parent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+                    var label = readerElementLabel(parent);
+                    if (node.nodeType === Node.TEXT_NODE) label += ':text';
+                    return label.replace(/\s+/g, ' ').substring(0, 160);
+                  }
+                  function selectionDebugRange(range) {
+                    if (!range) return 'null';
+                    var startRect = rangeBoundaryRect(range.startContainer, range.startOffset, false);
+                    var endRect = rangeBoundaryRect(range.endContainer, range.endOffset, true);
+                    return 'collapsed=' + range.collapsed +
+                      ' start=' + selectionDebugNode(range.startContainer) + '@' + range.startOffset +
+                      ' startRect=' + selectionDebugRect(startRect) +
+                      ' end=' + selectionDebugNode(range.endContainer) + '@' + range.endOffset +
+                      ' endRect=' + selectionDebugRect(endRect);
+                  }
+                  function selectionDebugRangeTextLength(range) {
+                    if (!range) return -1;
+                    try { return range.toString().length; } catch (error) { return -1; }
+                  }
                   function usableRangeRect(rect) {
                     return rect && (rect.width > 0 || rect.height > 0) ? rect : null;
                   }
@@ -1071,9 +1121,19 @@ object ReaderHtmlDocumentBuilder {
                     selection.addRange(savedRange);
                     return true;
                   }
+                  function selectionChromeElement(node) {
+                    if (!node) return null;
+                    var element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+                    if (!element || !element.closest) return null;
+                    return element.closest('#reader-selection-menu, .reader-selection-handle');
+                  }
+                  function rangeTouchesSelectionChrome(range) {
+                    return !!range && (!!selectionChromeElement(range.startContainer) || !!selectionChromeElement(range.endContainer));
+                  }
                   function caretRangeFromPoint(clientX, clientY) {
                     if (document.caretRangeFromPoint) {
-                      return document.caretRangeFromPoint(clientX, clientY);
+                      var range = document.caretRangeFromPoint(clientX, clientY);
+                      return rangeTouchesSelectionChrome(range) ? null : range;
                     }
                     if (document.caretPositionFromPoint) {
                       var position = document.caretPositionFromPoint(clientX, clientY);
@@ -1081,12 +1141,13 @@ object ReaderHtmlDocumentBuilder {
                       var range = document.createRange();
                       range.setStart(position.offsetNode, position.offset);
                       range.collapse(true);
-                      return range;
+                      return rangeTouchesSelectionChrome(range) ? null : range;
                     }
                     return null;
                   }
                   function selectionRangeForHandle(handleName, pointRange) {
                     if (!savedRange || !pointRange) return null;
+                    if (rangeTouchesSelectionChrome(pointRange)) return null;
                     var next = document.createRange();
                     try {
                       if (handleName === 'start') {
@@ -1100,15 +1161,70 @@ object ReaderHtmlDocumentBuilder {
                       return null;
                     }
                     if (next.collapsed) return null;
+                    if (rangeTouchesSelectionChrome(next)) return null;
                     return next;
                   }
                   function updateSelectionHandle(event) {
                     if (!activeSelectionHandle) return;
                     var pointRange = caretRangeFromPoint(event.clientX, event.clientY);
+                    if (!pointRange) {
+                      var nowMissing = Date.now();
+                      if (nowMissing - selectionDebugLastAt > 350) {
+                        selectionDebugLastAt = nowMissing;
+                        readerSelectionDebugLog(
+                          'drag_point_missing seq=' + (++selectionDebugSequence) +
+                          ' mode=' + selectionDebugMode() +
+                          ' handle=' + activeSelectionHandle +
+                          ' x=' + Math.round(event.clientX) +
+                          ' y=' + Math.round(event.clientY) +
+                          ' scrollY=' + Math.round(window.scrollY)
+                        );
+                      }
+                      return;
+                    }
                     var nextRange = selectionRangeForHandle(activeSelectionHandle, pointRange);
-                    if (!nextRange) return;
-                    savedRange = nextRange.cloneRange();
+                    if (!nextRange) {
+                      var nowInvalid = Date.now();
+                      if (nowInvalid - selectionDebugLastAt > 350) {
+                        selectionDebugLastAt = nowInvalid;
+                        readerSelectionDebugLog(
+                          'drag_range_invalid seq=' + (++selectionDebugSequence) +
+                          ' mode=' + selectionDebugMode() +
+                          ' handle=' + activeSelectionHandle +
+                          ' x=' + Math.round(event.clientX) +
+                          ' y=' + Math.round(event.clientY) +
+                          ' point=' + selectionDebugRange(pointRange) +
+                          ' saved=' + selectionDebugRange(savedRange)
+                        );
+                      }
+                      return;
+                    }
+                    var pointRect = rangeBoundaryRect(pointRange.startContainer, pointRange.startOffset, activeSelectionHandle === 'start');
+                    var lineKey = pointRect
+                      ? [Math.round(pointRect.top), Math.round(pointRect.bottom)].join(':')
+                      : 'none';
+                    var now = Date.now();
+                    var shouldLogLine = lineKey !== selectionDebugLastLineKey || now - selectionDebugLastAt > 650;
                     var selection = window.getSelection();
+                    var previousRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+                    if (shouldLogLine) {
+                      selectionDebugLastLineKey = lineKey;
+                      selectionDebugLastAt = now;
+                      readerSelectionDebugLog(
+                        'drag_line seq=' + (++selectionDebugSequence) +
+                        ' mode=' + selectionDebugMode() +
+                        ' handle=' + activeSelectionHandle +
+                        ' x=' + Math.round(event.clientX) +
+                        ' y=' + Math.round(event.clientY) +
+                        ' line=' + lineKey +
+                        ' point=' + selectionDebugRange(pointRange) +
+                        ' previous=' + selectionDebugRange(previousRange) +
+                        ' next=' + selectionDebugRange(nextRange) +
+                        ' nextChars=' + selectionDebugRangeTextLength(nextRange) +
+                        ' scrollY=' + Math.round(window.scrollY)
+                      );
+                    }
+                    savedRange = nextRange.cloneRange();
                     selection.removeAllRanges();
                     selection.addRange(savedRange);
                     positionSelectionHandles(selection);
@@ -1137,6 +1253,18 @@ object ReaderHtmlDocumentBuilder {
                     activeSelectionHandle = handleName;
                     selectionPointerDown = true;
                     menu.style.display = 'none';
+                    selectionDebugLastLineKey = null;
+                    selectionDebugLastAt = 0;
+                    readerSelectionDebugLog(
+                      'drag_begin seq=' + (++selectionDebugSequence) +
+                      ' mode=' + selectionDebugMode() +
+                      ' handle=' + activeSelectionHandle +
+                      ' x=' + Math.round(event.clientX) +
+                      ' y=' + Math.round(event.clientY) +
+                      ' saved=' + selectionDebugRange(savedRange) +
+                      ' chars=' + selectionDebugRangeTextLength(savedRange) +
+                      ' scrollY=' + Math.round(window.scrollY)
+                    );
                     event.preventDefault();
                     event.stopPropagation();
                     if (event.currentTarget && event.currentTarget.setPointerCapture) {
@@ -1149,6 +1277,16 @@ object ReaderHtmlDocumentBuilder {
                     event.stopPropagation();
                     cancelSelectionHandleFrame();
                     updateSelectionHandle(event);
+                    readerSelectionDebugLog(
+                      'drag_end seq=' + (++selectionDebugSequence) +
+                      ' mode=' + selectionDebugMode() +
+                      ' handle=' + activeSelectionHandle +
+                      ' x=' + Math.round(event.clientX) +
+                      ' y=' + Math.round(event.clientY) +
+                      ' saved=' + selectionDebugRange(savedRange) +
+                      ' chars=' + selectionDebugRangeTextLength(savedRange) +
+                      ' scrollY=' + Math.round(window.scrollY)
+                    );
                     activeSelectionHandle = null;
                     selectionPointerDown = false;
                     scheduleMenuFromSelection();
@@ -1805,7 +1943,9 @@ object ReaderHtmlDocumentBuilder {
                     scheduleMenuFromSelection();
                   });
                   document.addEventListener('scroll', function () {
-                    if (!selectionPointerDown && !activeSelectionHandle) hideMenu();
+                    if (!selectionPointerDown && !activeSelectionHandle) {
+                      hideMenu();
+                    }
                   }, true);
                   document.addEventListener('scroll', scheduleVisiblePageReport, true);
                   window.addEventListener('scroll', scheduleVisiblePageReport, { passive: true });

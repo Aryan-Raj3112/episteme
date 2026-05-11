@@ -241,6 +241,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("beginSelectionHandleDrag('start'"))
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
         assertTrue(html.contains("document.addEventListener('selectstart'"))
+        assertTrue(html.contains("EPUB_SELECTION_DEBUG"))
+        assertTrue(html.contains("readerSelectionDebugLog('drag_line"))
+        assertTrue(html.contains("rangeTouchesSelectionChrome"))
+        assertTrue(html.contains("element.closest('#reader-selection-menu, .reader-selection-handle')"))
         assertFalse(html.contains("next.toString().trim().length"))
         assertTrue(html.contains("document.caretRangeFromPoint"))
     }
