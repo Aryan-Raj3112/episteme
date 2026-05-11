@@ -256,6 +256,7 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -7472,6 +7473,7 @@ private fun ReaderScreen(
         )
     }
     var readerViewport by remember(session.reader.book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    val paginationLayoutSignature = session.reader.settings.layoutSignature()
     val latestSession by rememberUpdatedState(session)
     val latestOnSessionChange by rememberUpdatedState(onSessionChange)
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
@@ -7484,12 +7486,13 @@ private fun ReaderScreen(
 
     LaunchedEffect(
         session.reader.book.id,
-        session.reader.settings,
+        paginationLayoutSignature,
         readerViewport,
         measuredPaginator
     ) {
         val settings = session.reader.settings
         if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) return@LaunchedEffect
+        delay(280L)
         val reflowStartSession = latestSession
         val reflowStartRequestId = reflowStartSession.navigationRequestId
         val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
@@ -7540,7 +7543,7 @@ private fun ReaderScreen(
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture
-    ) { html, background, navigationTarget, highlights, onVisiblePageChanged, onHighlightSelected ->
+    ) { html, background, appearanceScript, navigationTarget, highlights, onVisiblePageChanged, onHighlightSelected ->
         Surface(
             color = background,
             shape = RoundedCornerShape(8.dp),
@@ -7556,6 +7559,7 @@ private fun ReaderScreen(
             if (webViewRuntimeState.initialized) {
                 DesktopEpubWebView(
                     html = html,
+                    appearanceScript = appearanceScript,
                     navigationTarget = navigationTarget,
                     highlights = highlights,
                     onHighlightCreated = { highlight ->
@@ -7638,6 +7642,7 @@ private fun ReaderScreen(
 @Composable
 private fun DesktopEpubWebView(
     html: String,
+    appearanceScript: String,
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
@@ -7858,12 +7863,17 @@ private fun DesktopEpubWebView(
             )
         }
 
+        LaunchedEffect(appearanceScript, state.loadingState) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            navigator.evaluateJavaScript(appearanceScript)
+        }
+
         LaunchedEffect(
             navigationTarget.autoScroll,
             navigationTarget.readingMode,
             state.loadingState
         ) {
-            if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+            if (navigationTarget.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
             if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
             val autoScroll = navigationTarget.autoScroll.sanitized()
             val command = if (autoScroll.enabled) {
@@ -7879,7 +7889,7 @@ private fun DesktopEpubWebView(
             navigationTarget.readingMode,
             state.loadingState
         ) {
-            if (navigationTarget.readingMode != com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL) return@LaunchedEffect
+            if (navigationTarget.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
             if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
             val locator = navigationTarget.locator ?: return@LaunchedEffect
             navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
@@ -7899,7 +7909,7 @@ private fun DesktopEpubWebView(
                 )
                 "window.readerSetTtsLocator && window.readerSetTtsLocator(null, false);"
             } else {
-                val follow = navigationTarget.readingMode == com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL
+                val follow = navigationTarget.readingMode == ReaderReadingMode.VERTICAL
                 logDesktopTts(
                     "epub_highlight_command set mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId} " +
                         "follow=$follow chapter=${locator.chapterIndex} page=${locator.pageIndex} " +

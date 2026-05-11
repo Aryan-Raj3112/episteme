@@ -71,6 +71,58 @@ data class ReaderSettings(
     val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
 }
 
+data class ReaderLayoutSignature(
+    val fontSize: Int,
+    val lineSpacing: Float,
+    val horizontalMargin: Int,
+    val verticalMargin: Int,
+    val readingMode: ReaderReadingMode,
+    val textAlign: SharedReaderTextAlign,
+    val pageWidth: Int,
+    val fontFamily: String,
+    val paragraphSpacing: Float,
+    val imageScale: Float,
+    val pageSpreadMode: ReaderPageSpreadMode,
+    val customFontPath: String?
+)
+
+data class ReaderAppearanceSignature(
+    val darkMode: Boolean,
+    val themeId: String?,
+    val textureId: String?,
+    val textureAlpha: Float,
+    val backgroundColorArgb: Long?,
+    val textColorArgb: Long?
+)
+
+fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
+    return ReaderLayoutSignature(
+        fontSize = fontSize,
+        lineSpacing = lineSpacing,
+        horizontalMargin = resolvedHorizontalMargin,
+        verticalMargin = resolvedVerticalMargin,
+        readingMode = readingMode,
+        textAlign = textAlign,
+        pageWidth = pageWidth,
+        fontFamily = fontFamily,
+        paragraphSpacing = paragraphSpacing,
+        imageScale = imageScale,
+        pageSpreadMode = pageSpreadMode,
+        customFontPath = customFontPath
+    )
+}
+
+fun ReaderSettings.appearanceSignature(): ReaderAppearanceSignature {
+    return ReaderAppearanceSignature(
+        darkMode = darkMode,
+        themeId = themeId,
+        textureId = textureId,
+        textureAlpha = textureAlpha,
+        backgroundColorArgb = backgroundColorArgb,
+        textColorArgb = textColorArgb
+    )
+}
+
 data class ReaderViewportSpec(
     val widthPx: Int,
     val heightPx: Int

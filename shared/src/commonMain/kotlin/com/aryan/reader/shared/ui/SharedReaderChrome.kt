@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Translate
@@ -50,7 +51,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -60,6 +60,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -126,6 +127,8 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.appearanceSignature
+import com.aryan.reader.shared.reader.layoutSignature
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -197,6 +200,7 @@ fun SharedReaderScreen(
     readerContent: @Composable ColumnScope.(
         html: String,
         background: Color,
+        appearanceScript: String,
         navigationTarget: ReaderContentNavigationTarget,
         highlights: List<UserHighlight>,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -368,10 +372,21 @@ fun SharedReaderScreen(
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
+            val documentLayoutSignature = settings.layoutSignature()
+            val appearanceSignature = settings.appearanceSignature()
+            val textureDataUri = remember(settings.textureId) {
+                settings.textureId?.let(readerTextureDataUri)
+            }
+            val appearanceScript = remember(appearanceSignature, textureDataUri) {
+                ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                    settings = settings,
+                    textureDataUri = textureDataUri
+                )
+            }
             val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
                 remember(
                     readerState.book,
-                    settings,
+                    documentLayoutSignature,
                     session.searchQuery,
                     session.searchOptions,
                     highlightPalette,
@@ -392,14 +407,14 @@ fun SharedReaderScreen(
                         readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
                         cloudTtsEnabled = effectiveCloudTtsAvailable,
                         externalLookupEnabled = externalLookupAvailable,
-                        textureDataUri = settings.textureId?.let(readerTextureDataUri)
+                        textureDataUri = textureDataUri
                     )
                 }
             } else {
                 remember(
                     readerState.book,
                     page,
-                    settings,
+                    documentLayoutSignature,
                     session.searchQuery,
                     session.searchOptions,
                     highlightPalette,
@@ -421,13 +436,14 @@ fun SharedReaderScreen(
                         readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
                         cloudTtsEnabled = effectiveCloudTtsAvailable,
                         externalLookupEnabled = externalLookupAvailable,
-                        textureDataUri = settings.textureId?.let(readerTextureDataUri)
+                        textureDataUri = textureDataUri
                     )
                 }
             }
             readerContent(
                 html,
                 background,
+                appearanceScript,
                 ReaderContentNavigationTarget(
                     locator = navigationLocator,
                     requestId = session.navigationRequestId,
@@ -1311,10 +1327,12 @@ fun SharedReaderFormatControls(
                     label = "Font size",
                     value = settings.fontSize.toFloat(),
                     onValueChange = { value ->
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.toInt())))
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.roundToInt())))
                     },
                     valueRange = 14f..30f,
-                    valueLabel = settings.fontSize.toString()
+                    valueLabel = settings.fontSize.toString(),
+                    stepSize = 1f,
+                    formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
                     label = "Line height",
@@ -1323,7 +1341,8 @@ fun SharedReaderFormatControls(
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(lineSpacing = value)))
                     },
                     valueRange = 1.1f..2.1f,
-                    valueLabel = "${settings.lineSpacing.formatTwoDecimals()}x"
+                    valueLabel = "${settings.lineSpacing.formatTwoDecimals()}x",
+                    formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
                     label = "Paragraph gap",
@@ -1332,7 +1351,8 @@ fun SharedReaderFormatControls(
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(paragraphSpacing = value)))
                     },
                     valueRange = 0.5f..2.5f,
-                    valueLabel = "${settings.paragraphSpacing.formatTwoDecimals()}x"
+                    valueLabel = "${settings.paragraphSpacing.formatTwoDecimals()}x",
+                    formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
                     label = "Image size",
@@ -1341,13 +1361,14 @@ fun SharedReaderFormatControls(
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(imageScale = value)))
                     },
                     valueRange = 0.5f..2.0f,
-                    valueLabel = "${settings.imageScale.formatTwoDecimals()}x"
+                    valueLabel = "${settings.imageScale.formatTwoDecimals()}x",
+                    formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
                     label = "Horizontal margin",
                     value = settings.resolvedHorizontalMargin.toFloat(),
                     onValueChange = { value ->
-                        val nextHorizontal = value.toInt()
+                        val nextHorizontal = value.roundToInt()
                         val nextMargin = maxOf(nextHorizontal, settings.resolvedVerticalMargin)
                         onReaderAction(
                             ReaderAction.SettingsChanged(
@@ -1356,13 +1377,15 @@ fun SharedReaderFormatControls(
                         )
                     },
                     valueRange = 0f..160f,
-                    valueLabel = settings.resolvedHorizontalMargin.toString()
+                    valueLabel = settings.resolvedHorizontalMargin.toString(),
+                    stepSize = 4f,
+                    formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
                     label = "Vertical margin",
                     value = settings.resolvedVerticalMargin.toFloat(),
                     onValueChange = { value ->
-                        val nextVertical = value.toInt()
+                        val nextVertical = value.roundToInt()
                         val nextMargin = maxOf(settings.resolvedHorizontalMargin, nextVertical)
                         onReaderAction(
                             ReaderAction.SettingsChanged(
@@ -1371,16 +1394,20 @@ fun SharedReaderFormatControls(
                         )
                     },
                     valueRange = 0f..160f,
-                    valueLabel = settings.resolvedVerticalMargin.toString()
+                    valueLabel = settings.resolvedVerticalMargin.toString(),
+                    stepSize = 4f,
+                    formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
                     label = "Page width",
                     value = settings.pageWidth.toFloat(),
                     onValueChange = { value ->
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.toInt())))
+                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.roundToInt())))
                     },
                     valueRange = 520f..1100f,
-                    valueLabel = settings.pageWidth.toString()
+                    valueLabel = settings.pageWidth.toString(),
+                    stepSize = 20f,
+                    formatValue = { it.roundToInt().toString() }
                 )
             }
         }
@@ -1524,7 +1551,9 @@ fun SharedReaderThemeControls(
                             onSettingsChange(settings.copy(textureAlpha = value))
                         },
                         valueRange = 0f..1f,
-                        valueLabel = "${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%"
+                        valueLabel = "${(settings.textureAlpha.coerceIn(0f, 1f) * 100).roundToInt()}%",
+                        stepSize = 0.01f,
+                        formatValue = { "${(it.coerceIn(0f, 1f) * 100).roundToInt()}%" }
                     )
                 }
             }
@@ -1683,7 +1712,9 @@ fun SharedReaderVisualOptionsControls(
                     onReaderAction(ReaderAction.SettingsChanged(settings.copy(chapterTurnDragMultiplier = value)))
                 },
                 valueRange = 0.5f..2.0f,
-                valueLabel = "${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x"
+                valueLabel = "${settings.chapterTurnDragMultiplier.formatTwoDecimals()}x",
+                stepSize = 0.05f,
+                formatValue = { "${it.formatTwoDecimals()}x" }
             )
         }
     }
@@ -1747,7 +1778,9 @@ private fun SharedReaderExtrasControls(
                 value = autoScroll.speed,
                 onValueChange = { speed -> onAutoScrollChange(autoScroll.copy(speed = speed).sanitized()) },
                 valueRange = 12f..160f,
-                valueLabel = "${autoScroll.speed.roundToInt()}"
+                valueLabel = "${autoScroll.speed.roundToInt()}",
+                stepSize = 1f,
+                formatValue = { it.roundToInt().toString() }
             )
         }
 
@@ -2435,18 +2468,132 @@ private fun SharedReaderSettingSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
-    valueLabel: String
+    valueLabel: String,
+    stepSize: Float = 0.05f,
+    formatValue: ((Float) -> String)? = null,
+    debounceMillis: Long = 320L
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(valueLabel, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+    val rangeStart = valueRange.start
+    val rangeEnd = valueRange.endInclusive
+    fun snap(raw: Float): Float {
+        val clamped = raw.coerceIn(rangeStart, rangeEnd)
+        if (stepSize <= 0f) return clamped
+        val steps = ((clamped - rangeStart) / stepSize).roundToInt()
+        return (rangeStart + steps * stepSize).coerceIn(rangeStart, rangeEnd)
+    }
+
+    var draftValue by remember(label, rangeStart, rangeEnd) { mutableFloatStateOf(snap(value)) }
+    var pendingCommit by remember(label, rangeStart, rangeEnd) { mutableStateOf<Float?>(null) }
+    var isDragging by remember(label, rangeStart, rangeEnd) { mutableStateOf(false) }
+    var lastCommitted by remember(label, rangeStart, rangeEnd) { mutableFloatStateOf(snap(value)) }
+    val normalizedExternalValue = snap(value)
+
+    LaunchedEffect(normalizedExternalValue) {
+        if (pendingCommit == null) {
+            draftValue = normalizedExternalValue
+            lastCommitted = normalizedExternalValue
         }
-        Slider(
-            value = value.coerceIn(valueRange.start, valueRange.endInclusive),
-            onValueChange = onValueChange,
-            valueRange = valueRange
-        )
+    }
+
+    fun commit(next: Float) {
+        val snapped = snap(next)
+        draftValue = snapped
+        if (snapped != lastCommitted) {
+            lastCommitted = snapped
+            onValueChange(snapped)
+        }
+    }
+
+    LaunchedEffect(pendingCommit, isDragging) {
+        if (isDragging) return@LaunchedEffect
+        val pending = pendingCommit ?: return@LaunchedEffect
+        delay(debounceMillis)
+        commit(pending)
+        if (pendingCommit == pending) {
+            pendingCommit = null
+        }
+    }
+
+    fun updateDraft(next: Float) {
+        val snapped = snap(next)
+        draftValue = snapped
+        pendingCommit = snapped
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                formatValue?.invoke(draftValue) ?: valueLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            IconButton(
+                onClick = {
+                    isDragging = false
+                    val next = snap(draftValue - stepSize)
+                    pendingCommit = null
+                    commit(next)
+                },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Remove,
+                    contentDescription = "Decrease $label",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            ReaderMinimalSlider(
+                value = draftValue,
+                onValueChange = ::updateDraft,
+                onValueChangeStarted = { isDragging = true },
+                onValueChangeFinished = {
+                    isDragging = false
+                    pendingCommit?.let { commit(it) }
+                    pendingCommit = null
+                },
+                valueRange = valueRange,
+                activeColor = MaterialTheme.colorScheme.primary,
+                inactiveColor = MaterialTheme.colorScheme.surfaceVariant,
+                thumbColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = {
+                    isDragging = false
+                    val next = snap(draftValue + stepSize)
+                    pendingCommit = null
+                    commit(next)
+                },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Increase $label",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
     }
 }
 

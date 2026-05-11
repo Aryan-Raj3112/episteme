@@ -39,6 +39,30 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `visual settings update does not repaginate or move current page`() {
+        val engine = ReaderEngine()
+        val session = engine.goToPage(engine.createSession(longBook()), 1)
+        val oldPages = session.reader.pages
+        val oldPageIndex = session.reader.currentPageIndex
+
+        val updated = engine.updateSettings(
+            session,
+            session.reader.settings.copy(
+                darkMode = true,
+                themeId = "night",
+                backgroundColorArgb = 0xFF101010L,
+                textColorArgb = 0xFFEFEFEFL,
+                textureId = "paper",
+                textureAlpha = 0.25f
+            )
+        )
+
+        assertSame(oldPages, updated.reader.pages)
+        assertEquals(oldPageIndex, updated.reader.currentPageIndex)
+        assertEquals("night", updated.reader.settings.themeId)
+    }
+
+    @Test
     fun `search returns every match on a page`() {
         val engine = ReaderEngine()
         val session = engine.createSession(

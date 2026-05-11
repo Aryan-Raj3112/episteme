@@ -85,7 +85,7 @@ class ReaderEngine(
     private data class PaginationCacheKey(
         val bookId: String,
         val chapterSignature: Int,
-        val settings: ReaderSettings
+        val layoutSignature: ReaderLayoutSignature
     )
 
     private val paginationCache = object : LinkedHashMap<PaginationCacheKey, List<ReaderPage>>(8, 0.75f, true) {
@@ -341,6 +341,12 @@ class ReaderEngine(
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
+        val layoutChanged = state.reader.settings.layoutSignature() != settings.layoutSignature()
+        if (!layoutChanged) {
+            return state.copy(
+                reader = state.reader.copy(settings = settings)
+            )
+        }
         val current = state.reader.currentPage
         val pages = pagesFor(state.reader.book, settings)
         val newIndex = if (current == null) {
@@ -415,7 +421,7 @@ class ReaderEngine(
             chapterSignature = book.chapters.fold(1) { acc, chapter ->
                 31 * acc + chapter.id.hashCode() + chapter.plainText.length + chapter.plainText.hashCode()
             },
-            settings = settings
+            layoutSignature = settings.layoutSignature()
         )
         return synchronized(paginationCache) {
             paginationCache.getOrPut(key) {

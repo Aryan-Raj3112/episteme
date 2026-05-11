@@ -28,6 +28,8 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -44,6 +46,7 @@ class SharedMeasuredEpubPaginator(
         settings: ReaderSettings,
         viewport: ReaderViewportSpec
     ): List<ReaderPage> {
+        currentCoroutineContext().ensureActive()
         pageCache?.load(
             book = book,
             settings = settings,
@@ -52,6 +55,7 @@ class SharedMeasuredEpubPaginator(
             fontScale = density.fontScale
         )?.let { return it }
 
+        currentCoroutineContext().ensureActive()
         val geometry = MeasuredPageGeometry.from(settings, viewport)
         val baseStyle = TextStyle(
             fontSize = settings.fontSize.sp,
@@ -61,6 +65,7 @@ class SharedMeasuredEpubPaginator(
         )
         val pages = mutableListOf<ReaderPage>()
         book.chapters.forEachIndexed { chapterIndex, chapter ->
+            currentCoroutineContext().ensureActive()
             pages += paginateChapter(
                 chapter = chapter,
                 chapterIndex = chapterIndex,
@@ -70,6 +75,7 @@ class SharedMeasuredEpubPaginator(
                 baseStyle = baseStyle
             )
         }
+        currentCoroutineContext().ensureActive()
         val measuredPages = pages.mapIndexed { index, page -> page.copy(pageIndex = index) }
         pageCache?.let { cache ->
             val savePages = suspend {
@@ -99,6 +105,7 @@ class SharedMeasuredEpubPaginator(
         geometry: MeasuredPageGeometry,
         baseStyle: TextStyle
     ): List<ReaderPage> {
+        currentCoroutineContext().ensureActive()
         val sourceBlocks = chapter.semanticBlocks.ifEmpty { chapter.plainText.toPlainSemanticBlocks() }
         if (sourceBlocks.isEmpty()) {
             return listOf(
@@ -130,6 +137,7 @@ class SharedMeasuredEpubPaginator(
         }
 
         while (queue.isNotEmpty()) {
+            currentCoroutineContext().ensureActive()
             val block = queue.removeFirst()
             val blockHeight = measureBlock(block, geometry, baseStyle, settings)
             val fitsCurrent = blockHeight <= geometry.pageHeightPx &&
@@ -193,6 +201,7 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Int {
+        currentCoroutineContext().ensureActive()
         val margins = block.style.blockStyle.margin.verticalPx()
         val padding = block.style.blockStyle.padding.verticalPx()
         val contentWidth = (geometry.pageWidthPx - block.style.blockStyle.horizontalOuterPx()).coerceAtLeast(64)
@@ -217,6 +226,7 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Int {
+        currentCoroutineContext().ensureActive()
         val annotated = block.toAnnotatedString()
         if (annotated.text.isBlank()) return (settings.fontSize * settings.lineSpacing).roundToInt().coerceAtLeast(1)
         val style = block.textStyle(baseStyle, settings)
@@ -288,6 +298,7 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Pair<SemanticBlock, SemanticBlock>? {
+        currentCoroutineContext().ensureActive()
         if (availableHeight < (settings.fontSize * settings.lineSpacing * 2f).roundToInt()) return null
         return when (block) {
             is SemanticTextBlock -> splitTextBlock(block, availableHeight, geometry, baseStyle, settings)
@@ -311,6 +322,7 @@ class SharedMeasuredEpubPaginator(
         var high = text.length
         var best = 0
         while (low <= high) {
+            currentCoroutineContext().ensureActive()
             val mid = (low + high) / 2
             val candidate = block.sliceText(0, mid)
             val height = measureBlock(candidate, geometry, baseStyle, settings)

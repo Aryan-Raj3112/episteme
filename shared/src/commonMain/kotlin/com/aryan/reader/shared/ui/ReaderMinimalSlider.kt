@@ -28,6 +28,7 @@ fun ReaderMinimalSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    onValueChangeStarted: (() -> Unit)? = null,
     onValueChangeFinished: (() -> Unit)? = null,
     activeColor: Color? = null,
     inactiveColor: Color? = null,
@@ -47,6 +48,7 @@ fun ReaderMinimalSlider(
         Modifier.pointerInput(rangeStart, rangeEnd, widthPx) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                onValueChangeStarted?.invoke()
                 onValueChange(valueForOffset(down.position.x))
                 down.consume()
 
@@ -65,8 +67,8 @@ fun ReaderMinimalSlider(
         Modifier
     }
 
-    val effectiveActiveColor = activeColor ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
-    val effectiveInactiveColor = inactiveColor ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f)
+    val effectiveActiveColor = activeColor ?: MaterialTheme.colorScheme.primary
+    val effectiveInactiveColor = inactiveColor ?: MaterialTheme.colorScheme.surfaceVariant
     val effectiveThumbColor = thumbColor ?: MaterialTheme.colorScheme.primary
     val disabledAlpha = if (enabled) 1f else 0.38f
 
@@ -83,9 +85,8 @@ fun ReaderMinimalSlider(
             } else {
                 0f
             }
-            val trackHeight = 3.dp.toPx()
-            val thumbWidth = 6.dp.toPx()
-            val thumbHeight = 14.dp.toPx()
+            val trackHeight = 4.dp.toPx()
+            val thumbRadius = 7.dp.toPx()
             val centerY = size.height / 2f
             val cornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
             val activeWidth = size.width * fraction
@@ -103,16 +104,15 @@ fun ReaderMinimalSlider(
                 cornerRadius = cornerRadius
             )
 
-            val thumbCenterX = if (size.width <= thumbWidth) {
+            val thumbCenterX = if (size.width <= thumbRadius * 2f) {
                 size.width / 2f
             } else {
-                activeWidth.coerceIn(thumbWidth / 2f, size.width - thumbWidth / 2f)
+                activeWidth.coerceIn(thumbRadius, size.width - thumbRadius)
             }
-            drawRoundRect(
+            drawCircle(
                 color = effectiveThumbColor.copy(alpha = effectiveThumbColor.alpha * disabledAlpha),
-                topLeft = Offset(thumbCenterX - thumbWidth / 2f, centerY - thumbHeight / 2f),
-                size = Size(thumbWidth, thumbHeight),
-                cornerRadius = CornerRadius(thumbWidth / 2f, thumbWidth / 2f)
+                radius = thumbRadius,
+                center = Offset(thumbCenterX, centerY)
             )
         }
     }

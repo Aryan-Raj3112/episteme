@@ -127,6 +127,33 @@ object ReaderHtmlDocumentBuilder {
         )
     }
 
+    fun appearanceUpdateScript(
+        settings: ReaderSettings,
+        textureDataUri: String? = null
+    ): String {
+        val appearance = settings.toDocumentAppearanceCss(textureDataUri)
+        return """
+            (function () {
+              var root = document.documentElement;
+              if (!root) return;
+              root.style.colorScheme = ${appearance.colorScheme.toJsStringLiteral()};
+              root.style.setProperty('--reader-bg', ${appearance.background.toJsStringLiteral()});
+              root.style.setProperty('--reader-fg', ${appearance.foreground.toJsStringLiteral()});
+              root.style.setProperty('--reader-link', ${appearance.linkColors.color.toJsStringLiteral()});
+              root.style.setProperty('--reader-link-decoration', ${appearance.linkColors.decoration.toJsStringLiteral()});
+              root.style.setProperty('--reader-link-bg', ${appearance.linkColors.background.toJsStringLiteral()});
+              root.style.setProperty('--reader-highlight', ${appearance.highlight.toJsStringLiteral()});
+              var textureStyle = document.getElementById('reader-texture-style');
+              if (!textureStyle) {
+                textureStyle = document.createElement('style');
+                textureStyle.id = 'reader-texture-style';
+                document.head.appendChild(textureStyle);
+              }
+              textureStyle.textContent = ${appearance.textureOverlayCss.toJsStringLiteral()};
+            })();
+        """.trimIndent()
+    }
+
     private fun pageSectionHtml(
         book: SharedEpubBook,
         page: ReaderPage,
@@ -181,12 +208,7 @@ object ReaderHtmlDocumentBuilder {
         externalLookupEnabled: Boolean,
         textureDataUri: String?
     ): String {
-        val bgArgb = settings.backgroundColorArgb ?: if (settings.darkMode) 0xFF171A17L else 0xFFFFFCF5L
-        val fgArgb = settings.textColorArgb ?: if (settings.darkMode) 0xFFE7E3D8L else 0xFF24231FL
-        val bg = bgArgb.toCssColor()
-        val fg = fgArgb.toCssColor()
-        val linkColors = readerLinkCssColors(bgArgb, fgArgb, settings.darkMode)
-        val highlight = if (settings.darkMode) "#675A00" else "#FFE36E"
+        val appearance = settings.toDocumentAppearanceCss(textureDataUri)
         val align = when (settings.textAlign) {
             SharedReaderTextAlign.START -> "left"
             SharedReaderTextAlign.JUSTIFY -> "justify"
@@ -206,10 +228,6 @@ object ReaderHtmlDocumentBuilder {
                 else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
             }
         }
-        val textureOverlayCss = settings.textureId
-            ?.takeIf { settings.textureAlpha > 0.01f }
-            ?.toTextureOverlayCss(settings.textureAlpha, settings.darkMode, textureDataUri)
-            .orEmpty()
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
         }
@@ -246,13 +264,13 @@ object ReaderHtmlDocumentBuilder {
                 $bookCss
                 $customFontCss
                 :root {
-                  color-scheme: ${if (settings.darkMode) "dark" else "light"};
-                  --reader-bg: $bg;
-                  --reader-fg: $fg;
-                  --reader-link: ${linkColors.color};
-                  --reader-link-decoration: ${linkColors.decoration};
-                  --reader-link-bg: ${linkColors.background};
-                  --reader-highlight: $highlight;
+                  color-scheme: ${appearance.colorScheme};
+                  --reader-bg: ${appearance.background};
+                  --reader-fg: ${appearance.foreground};
+                  --reader-link: ${appearance.linkColors.color};
+                  --reader-link-decoration: ${appearance.linkColors.decoration};
+                  --reader-link-bg: ${appearance.linkColors.background};
+                  --reader-highlight: ${appearance.highlight};
                   --reader-font-size: ${settings.fontSize}px;
                   --reader-line-height: ${settings.lineSpacing};
                   --reader-page-width: ${settings.pageWidth}px;
@@ -283,7 +301,6 @@ object ReaderHtmlDocumentBuilder {
                   height: 100vh;
                   overflow: hidden;
                 }
-                $textureOverlayCss
                 .chapter, .page {
                   max-width: var(--reader-page-width);
                   margin: 0 auto 48px;
@@ -459,6 +476,7 @@ object ReaderHtmlDocumentBuilder {
                   text-decoration-color: var(--reader-link-decoration) !important;
                 }
               </style>
+              <style id="reader-texture-style">${appearance.textureOverlayCss}</style>
             </head>
             <body class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated" else "reader-vertical"}" data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
               $body
@@ -2017,6 +2035,31 @@ object ReaderHtmlDocumentBuilder {
         val background: String
     )
 
+    private data class ReaderDocumentAppearanceCss(
+        val background: String,
+        val foreground: String,
+        val linkColors: ReaderLinkCssColors,
+        val highlight: String,
+        val colorScheme: String,
+        val textureOverlayCss: String
+    )
+
+    private fun ReaderSettings.toDocumentAppearanceCss(textureDataUri: String?): ReaderDocumentAppearanceCss {
+        val bgArgb = backgroundColorArgb ?: if (darkMode) 0xFF171A17L else 0xFFFFFCF5L
+        val fgArgb = textColorArgb ?: if (darkMode) 0xFFE7E3D8L else 0xFF24231FL
+        return ReaderDocumentAppearanceCss(
+            background = bgArgb.toCssColor(),
+            foreground = fgArgb.toCssColor(),
+            linkColors = readerLinkCssColors(bgArgb, fgArgb, darkMode),
+            highlight = if (darkMode) "#675A00" else "#FFE36E",
+            colorScheme = if (darkMode) "dark" else "light",
+            textureOverlayCss = textureId
+                ?.takeIf { textureAlpha > 0.01f }
+                ?.toTextureOverlayCss(textureAlpha, darkMode, textureDataUri)
+                .orEmpty()
+        )
+    }
+
     private fun String.toCssFontUrl(): String {
         val trimmed = trim()
         val normalizedInput = trimmed.replace("\\", "/")
@@ -2082,6 +2125,30 @@ object ReaderHtmlDocumentBuilder {
 
     private fun String.escapeCssString(): String {
         return replace("\\", "\\\\").replace("'", "\\'")
+    }
+
+    private fun String.toJsStringLiteral(): String {
+        return buildString {
+            append('"')
+            this@toJsStringLiteral.forEach { char ->
+                when (char) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> {
+                        if (char.code < 0x20) {
+                            append("\\u")
+                            append(char.code.toString(16).padStart(4, '0'))
+                        } else {
+                            append(char)
+                        }
+                    }
+                }
+            }
+            append('"')
+        }
     }
 
     private fun String.applyUserHighlights(
