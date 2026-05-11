@@ -76,7 +76,13 @@ import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.CustomAppTheme
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamicColorScheme
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 private val SharedLightColorScheme = lightColorScheme(
@@ -668,14 +674,14 @@ fun SharedHsvColorPickerDialog(
                 ) {
                     preview(color)
 
-                    SharedSpectrumBox(
+                    SharedHsvWheel(
                         hue = hsv.hue,
                         saturation = hsv.saturation,
                         currentColor = color,
                         onHueSatChanged = { hue, saturation ->
                             hsv = hsv.copy(hue = hue, saturation = saturation)
                         },
-                        modifier = Modifier.fillMaxWidth().height(220.dp)
+                        modifier = Modifier.size(240.dp)
                     )
 
                     SharedBrightnessSlider(
@@ -751,6 +757,107 @@ fun SharedHsvColorPickerDialog(
                 }
             }
         }
+        }
+    }
+}
+
+@Composable
+fun SharedHsvWheel(
+    hue: Float,
+    saturation: Float,
+    currentColor: Color,
+    onHueSatChanged: (Float, Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val touchPadding = 12.dp
+
+    Box(
+        modifier = modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                val paddingPx = touchPadding.toPx()
+
+                fun update(offset: Offset) {
+                    val selection = sharedHsvWheelSelection(
+                        offsetX = offset.x,
+                        offsetY = offset.y,
+                        width = size.width.toFloat(),
+                        height = size.height.toFloat(),
+                        paddingPx = paddingPx
+                    )
+                    onHueSatChanged(selection.hue, selection.saturation)
+                }
+
+                update(down.position)
+                drag(down.id) { change ->
+                    change.consume()
+                    update(change.position)
+                }
+            }
+        }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val paddingPx = touchPadding.toPx()
+            val wheelRadius = ((min(size.width, size.height) - (paddingPx * 2f)) / 2f).coerceAtLeast(1f)
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val topLeft = Offset(center.x - wheelRadius, center.y - wheelRadius)
+            val wheelSize = Size(wheelRadius * 2f, wheelRadius * 2f)
+            val segments = 180
+            val sweep = 360f / segments
+
+            repeat(segments) { index ->
+                val segmentHue = index * sweep
+                drawArc(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color.White, Color.hsv(segmentHue, 1f, 1f)),
+                        center = center,
+                        radius = wheelRadius
+                    ),
+                    startAngle = segmentHue,
+                    sweepAngle = sweep + 0.8f,
+                    useCenter = true,
+                    topLeft = topLeft,
+                    size = wheelSize
+                )
+            }
+
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.16f),
+                radius = wheelRadius,
+                center = center,
+                style = Stroke(width = 1.dp.toPx())
+            )
+        }
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val paddingPx = touchPadding.toPx()
+            val wheelRadius = ((min(size.width, size.height) - (paddingPx * 2f)) / 2f).coerceAtLeast(1f)
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val angle = hue.normalizedHue().toDouble() * PI / 180.0
+            val radius = saturation.coerceIn(0f, 1f) * wheelRadius
+            val pointer = Offset(
+                x = center.x + (cos(angle).toFloat() * radius),
+                y = center.y + (sin(angle).toFloat() * radius)
+            )
+            val pointerRadius = 10.dp.toPx()
+            val strokeWidth = 2.dp.toPx()
+
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.25f),
+                radius = pointerRadius + 1.dp.toPx(),
+                center = Offset(pointer.x, pointer.y + 1.dp.toPx())
+            )
+            drawCircle(
+                color = currentColor.copy(alpha = 1f),
+                radius = pointerRadius,
+                center = pointer
+            )
+            drawCircle(
+                color = Color.White,
+                radius = pointerRadius,
+                center = pointer,
+                style = Stroke(width = strokeWidth)
+            )
         }
     }
 }
@@ -1081,6 +1188,27 @@ internal data class SharedHsvColor(
             value.coerceIn(0f, 1f)
         )
     }
+}
+
+internal fun sharedHsvWheelSelection(
+    offsetX: Float,
+    offsetY: Float,
+    width: Float,
+    height: Float,
+    paddingPx: Float = 0f
+): SharedHsvColor {
+    val wheelRadius = ((min(width, height) - (paddingPx * 2f)) / 2f).coerceAtLeast(1f)
+    val centerX = width / 2f
+    val centerY = height / 2f
+    val dx = offsetX - centerX
+    val dy = offsetY - centerY
+    val hue = (atan2(dy.toDouble(), dx.toDouble()) * 180.0 / PI).toFloat().normalizedHue()
+    val saturation = (sqrt(((dx * dx) + (dy * dy)).toDouble()).toFloat() / wheelRadius).coerceIn(0f, 1f)
+    return SharedHsvColor(
+        hue = hue,
+        saturation = saturation,
+        value = 1f
+    )
 }
 
 internal fun Color.toSharedHsvColor(): SharedHsvColor {

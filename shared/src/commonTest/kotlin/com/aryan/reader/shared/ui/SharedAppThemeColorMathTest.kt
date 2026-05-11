@@ -50,6 +50,26 @@ class SharedAppThemeColorMathTest {
         assertTrue(abs(original.blue - roundTripped.blue) < 0.01f)
     }
 
+    @Test
+    fun `hsv wheel maps center to no saturation and right edge to red`() {
+        val center = sharedHsvWheelSelection(
+            offsetX = 50f,
+            offsetY = 50f,
+            width = 100f,
+            height = 100f
+        )
+        val rightEdge = sharedHsvWheelSelection(
+            offsetX = 100f,
+            offsetY = 50f,
+            width = 100f,
+            height = 100f
+        )
+
+        assertClose(0f, center.saturation)
+        assertClose(0f, rightEdge.hue)
+        assertClose(1f, rightEdge.saturation)
+    }
+
     private fun assertClose(expected: Float, actual: Float) {
         assertTrue(abs(expected - actual) < 0.01f, "Expected $expected but was $actual")
     }

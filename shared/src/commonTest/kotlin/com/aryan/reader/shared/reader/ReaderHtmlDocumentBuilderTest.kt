@@ -163,12 +163,16 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertFalse(html.contains("""data-action="define""""))
         assertFalse(html.contains("""data-action="speak""""))
-        assertTrue(html.contains("""data-action="dictionary""""))
         assertTrue(html.contains("""data-action="web-search""""))
+        assertTrue(html.contains("""aria-label="Search""""))
+        assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
+        assertFalse(html.contains("""data-action="dictionary""""))
+        assertFalse(html.contains("""data-action="translate""""))
+        assertFalse(html.contains("""data-action="find""""))
     }
 
     @Test
-    fun `selection menu omits external lookup actions when offline`() {
+    fun `selection menu omits all external lookup actions when offline`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
             page = ReaderPage(
@@ -186,7 +190,55 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("""data-action="dictionary""""))
         assertFalse(html.contains("""data-action="web-search""""))
         assertFalse(html.contains("""data-action="translate""""))
-        assertTrue(html.contains("""data-action="find""""))
+        assertFalse(html.contains("""data-action="find""""))
+        assertTrue(html.contains("""data-action="copy""""))
+        assertTrue(html.contains("""data-action="clear""""))
+    }
+
+    @Test
+    fun `selection menu opens from regular selection and right click`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta",
+                startOffset = 0,
+                endOffset = 10
+            ),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("function scheduleMenuFromSelection()"))
+        assertTrue(html.contains("selectionAnchorRect(selection)"))
+        assertTrue(html.contains("document.addEventListener('selectionchange'"))
+        assertTrue(html.contains("document.addEventListener('pointerdown'"))
+        assertTrue(html.contains("document.addEventListener('mouseup'"))
+        assertTrue(html.contains("document.addEventListener('contextmenu'"))
+    }
+
+    @Test
+    fun `selection menu renders icons and draggable handles`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "alpha beta",
+                startOffset = 0,
+                endOffset = 10
+            ),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("""class="reader-selection-icon""""))
+        assertTrue(html.contains("""id="reader-selection-start-handle""""))
+        assertTrue(html.contains("""id="reader-selection-end-handle""""))
+        assertTrue(html.contains("beginSelectionHandleDrag('start'"))
+        assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
+        assertTrue(html.contains("document.caretRangeFromPoint"))
     }
 
     @Test

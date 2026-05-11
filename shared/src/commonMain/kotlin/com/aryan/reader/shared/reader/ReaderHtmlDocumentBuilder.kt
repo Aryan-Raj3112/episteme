@@ -232,24 +232,19 @@ object ReaderHtmlDocumentBuilder {
             """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
         }
         val defineButton = if (readerAiFeaturesEnabled) {
-            """<button type="button" class="reader-selection-action" data-icon="AI" data-action="define">Define</button>"""
+            readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
             ""
         }
         val speakButton = if (cloudTtsEnabled) {
-            """<button type="button" class="reader-selection-action" data-icon="TTS" data-action="speak">Speak</button>"""
+            readerSelectionActionButton("speak", "Speak", ReaderSelectionIconSpeakPath)
         } else {
             ""
         }
         val externalLookupButtons = if (externalLookupEnabled) {
-            """
-                <button type="button" class="reader-selection-action" data-icon="D" data-action="dictionary">Dict</button>
-                <button type="button" class="reader-selection-action" data-icon="F" data-action="find">Find</button>
-                <button type="button" class="reader-selection-action" data-icon="W" data-action="web-search">Web</button>
-                <button type="button" class="reader-selection-action" data-icon="TR" data-action="translate">Translate</button>
-            """.trimIndent()
+            readerSelectionActionButton("web-search", "Search", ReaderSelectionIconSearchPath)
         } else {
-            """<button type="button" class="reader-selection-action" data-icon="F" data-action="find">Find</button>"""
+            ""
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         val pageAnchorJson = pageAnchors.toPageAnchorJson()
@@ -438,8 +433,7 @@ object ReaderHtmlDocumentBuilder {
                   line-height: 1;
                   white-space: nowrap;
                 }
-                #reader-selection-menu .reader-selection-action::before {
-                  content: attr(data-icon);
+                #reader-selection-menu .reader-selection-icon {
                   display: grid;
                   place-items: center;
                   width: 24px;
@@ -447,9 +441,40 @@ object ReaderHtmlDocumentBuilder {
                   border-radius: 999px;
                   background: color-mix(in srgb, var(--reader-fg) 9%, transparent);
                   color: color-mix(in srgb, var(--reader-fg) 86%, transparent);
-                  font-size: 10px;
-                  font-weight: 800;
-                  letter-spacing: 0;
+                }
+                #reader-selection-menu .reader-selection-icon svg {
+                  width: 18px;
+                  height: 18px;
+                  display: block;
+                  fill: currentColor;
+                }
+                .reader-selection-handle {
+                  position: fixed;
+                  z-index: 99998;
+                  display: none;
+                  width: 24px;
+                  height: 24px;
+                  padding: 0;
+                  border: 0;
+                  background: transparent;
+                  color: #2563eb;
+                  cursor: ew-resize;
+                  touch-action: none;
+                }
+                .reader-selection-handle svg {
+                  width: 24px;
+                  height: 24px;
+                  display: block;
+                  fill: currentColor;
+                  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.28));
+                }
+                .reader-selection-handle-start svg {
+                  transform: rotate(30deg);
+                  transform-origin: 50% 0;
+                }
+                .reader-selection-handle-end svg {
+                  transform: rotate(-30deg);
+                  transform-origin: 50% 0;
                 }
                 .reader-content a[href],
                 .reader-content a[href]:link,
@@ -485,21 +510,34 @@ object ReaderHtmlDocumentBuilder {
                   $highlightButtons
                 </div>
                 <div class="reader-selection-actions">
-                  <button type="button" class="reader-selection-action" data-icon="C" data-action="copy">Copy</button>
+                  ${readerSelectionActionButton("copy", "Copy", ReaderSelectionIconCopyPath)}
                   $defineButton
                   $speakButton
                   $externalLookupButtons
-                  <button type="button" class="reader-selection-action" data-icon="X" data-action="clear">Clear</button>
+                  ${readerSelectionActionButton("clear", "Clear", ReaderSelectionIconClearPath)}
                 </div>
               </div>
+              <button type="button" id="reader-selection-start-handle" class="reader-selection-handle reader-selection-handle-start" aria-label="Adjust selection start" hidden>
+                ${readerSelectionSvg(ReaderSelectionIconTeardropPath)}
+              </button>
+              <button type="button" id="reader-selection-end-handle" class="reader-selection-handle reader-selection-handle-end" aria-label="Adjust selection end" hidden>
+                ${readerSelectionSvg(ReaderSelectionIconTeardropPath)}
+              </button>
               <script>
                 (function () {
                   var menu = document.getElementById('reader-selection-menu');
+                  var startHandle = document.getElementById('reader-selection-start-handle');
+                  var endHandle = document.getElementById('reader-selection-end-handle');
                   var savedRange = null;
                   var readerPageAnchors = $pageAnchorJson;
                   var lastReportedPageIndex = -1;
                   var lastReportedStartOffset = -1;
                   var reportTimer = null;
+                  var selectionMenuTimer = null;
+                  var selectionPointerDown = false;
+                  var activeSelectionHandle = null;
+                  var selectionHandleFrame = null;
+                  var pendingSelectionHandleEvent = null;
                   function numberAttribute(element, name, fallback) {
                     if (!element) return fallback;
                     var value = parseInt(element.getAttribute(name) || '', 10);
@@ -871,8 +909,66 @@ object ReaderHtmlDocumentBuilder {
                     var selection = window.getSelection();
                     return selection ? selection.toString().trim() : '';
                   }
+                  function hideSelectionHandles() {
+                    [startHandle, endHandle].forEach(function (handle) {
+                      if (!handle) return;
+                      handle.hidden = true;
+                      handle.style.display = 'none';
+                    });
+                  }
                   function hideMenu() {
                     menu.style.display = 'none';
+                    if (!activeSelectionHandle) hideSelectionHandles();
+                  }
+                  function selectionAnchorRect(selection) {
+                    if (!selection || selection.rangeCount === 0) return null;
+                    var range = selection.getRangeAt(0);
+                    var rect = range.getBoundingClientRect();
+                    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+                    var rects = range.getClientRects ? range.getClientRects() : [];
+                    return rects && rects.length > 0 ? rects[0] : null;
+                  }
+                  function positionMenu(left, top, anchorRect) {
+                    menu.style.visibility = 'hidden';
+                    menu.style.display = 'flex';
+                    var menuWidth = menu.offsetWidth || 300;
+                    var menuHeight = menu.offsetHeight || 230;
+                    var margin = 8;
+                    var nextLeft = left;
+                    var nextTop = top;
+                    if (anchorRect) {
+                      nextLeft = anchorRect.left + (anchorRect.width / 2) - (menuWidth / 2);
+                      nextTop = anchorRect.top - menuHeight - 14;
+                      if (nextTop < margin) nextTop = anchorRect.bottom + 14;
+                    }
+                    nextLeft = Math.max(margin, Math.min(window.innerWidth - menuWidth - margin, nextLeft));
+                    nextTop = Math.max(margin, Math.min(window.innerHeight - menuHeight - margin, nextTop));
+                    menu.style.left = nextLeft + 'px';
+                    menu.style.top = nextTop + 'px';
+                    menu.style.visibility = 'visible';
+                  }
+                  function showSelectionHandle(handle, rect, x) {
+                    if (!handle || !rect) return;
+                    handle.hidden = false;
+                    handle.style.display = 'block';
+                    handle.style.left = (x - 12) + 'px';
+                    handle.style.top = rect.bottom + 'px';
+                  }
+                  function positionSelectionHandles(selection) {
+                    if (!selection || selection.rangeCount === 0) return;
+                    var range = selection.getRangeAt(0);
+                    var rects = Array.prototype.slice.call(range.getClientRects ? range.getClientRects() : []);
+                    rects = rects.filter(function (rect) {
+                      return rect && (rect.width > 0 || rect.height > 0);
+                    });
+                    if (rects.length === 0) {
+                      hideSelectionHandles();
+                      return;
+                    }
+                    var first = rects[0];
+                    var last = rects[rects.length - 1];
+                    showSelectionHandle(startHandle, first, first.left);
+                    showSelectionHandle(endHandle, last, last.right);
                   }
                   function showMenu(event) {
                     var selection = window.getSelection();
@@ -885,9 +981,17 @@ object ReaderHtmlDocumentBuilder {
                       hideMenu();
                       return;
                     }
-                    menu.style.left = Math.max(8, Math.min(window.innerWidth - 300, event.clientX)) + 'px';
-                    menu.style.top = Math.max(8, Math.min(window.innerHeight - 230, event.clientY)) + 'px';
-                    menu.style.display = 'flex';
+                    var rect = event ? null : selectionAnchorRect(selection);
+                    positionMenu(event ? event.clientX : 0, event ? event.clientY : 0, rect);
+                    positionSelectionHandles(selection);
+                  }
+                  function scheduleMenuFromSelection() {
+                    if (selectionMenuTimer !== null) window.clearTimeout(selectionMenuTimer);
+                    selectionMenuTimer = window.setTimeout(function () {
+                      selectionMenuTimer = null;
+                      if (selectionText().length > 0) showMenu(null);
+                      else hideMenu();
+                    }, 90);
                   }
                   function restoreRange() {
                     if (!savedRange) return false;
@@ -895,6 +999,88 @@ object ReaderHtmlDocumentBuilder {
                     selection.removeAllRanges();
                     selection.addRange(savedRange);
                     return true;
+                  }
+                  function caretRangeFromPoint(clientX, clientY) {
+                    if (document.caretRangeFromPoint) {
+                      return document.caretRangeFromPoint(clientX, clientY);
+                    }
+                    if (document.caretPositionFromPoint) {
+                      var position = document.caretPositionFromPoint(clientX, clientY);
+                      if (!position) return null;
+                      var range = document.createRange();
+                      range.setStart(position.offsetNode, position.offset);
+                      range.collapse(true);
+                      return range;
+                    }
+                    return null;
+                  }
+                  function selectionRangeForHandle(handleName, pointRange) {
+                    if (!savedRange || !pointRange) return null;
+                    var next = document.createRange();
+                    try {
+                      if (handleName === 'start') {
+                        next.setStart(pointRange.startContainer, pointRange.startOffset);
+                        next.setEnd(savedRange.endContainer, savedRange.endOffset);
+                      } else {
+                        next.setStart(savedRange.startContainer, savedRange.startOffset);
+                        next.setEnd(pointRange.startContainer, pointRange.startOffset);
+                      }
+                    } catch (error) {
+                      return null;
+                    }
+                    if (next.collapsed || next.toString().trim().length === 0) return null;
+                    return next;
+                  }
+                  function updateSelectionHandle(event) {
+                    if (!activeSelectionHandle) return;
+                    var pointRange = caretRangeFromPoint(event.clientX, event.clientY);
+                    var nextRange = selectionRangeForHandle(activeSelectionHandle, pointRange);
+                    if (!nextRange) return;
+                    savedRange = nextRange.cloneRange();
+                    var selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(savedRange);
+                    positionSelectionHandles(selection);
+                  }
+                  function requestSelectionHandleUpdate(event) {
+                    if (!activeSelectionHandle) return;
+                    pendingSelectionHandleEvent = { clientX: event.clientX, clientY: event.clientY };
+                    if (selectionHandleFrame !== null) return;
+                    selectionHandleFrame = window.requestAnimationFrame(function () {
+                      selectionHandleFrame = null;
+                      var pending = pendingSelectionHandleEvent;
+                      pendingSelectionHandleEvent = null;
+                      if (pending) updateSelectionHandle(pending);
+                    });
+                  }
+                  function cancelSelectionHandleFrame() {
+                    if (selectionHandleFrame !== null) {
+                      window.cancelAnimationFrame(selectionHandleFrame);
+                      selectionHandleFrame = null;
+                    }
+                    pendingSelectionHandleEvent = null;
+                  }
+                  function beginSelectionHandleDrag(handleName, event) {
+                    if (!savedRange && !restoreRange()) return;
+                    cancelSelectionHandleFrame();
+                    activeSelectionHandle = handleName;
+                    selectionPointerDown = true;
+                    menu.style.display = 'none';
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (event.currentTarget && event.currentTarget.setPointerCapture) {
+                      try { event.currentTarget.setPointerCapture(event.pointerId); } catch (error) {}
+                    }
+                  }
+                  function finishSelectionHandleDrag(event) {
+                    if (!activeSelectionHandle) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cancelSelectionHandleFrame();
+                    updateSelectionHandle(event);
+                    activeSelectionHandle = null;
+                    selectionPointerDown = false;
+                    scheduleMenuFromSelection();
                   }
                   function copyText(text) {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -912,11 +1098,7 @@ object ReaderHtmlDocumentBuilder {
                     document.body.removeChild(textarea);
                   }
                   function fallbackSelectionAction(action, text) {
-                    if (action === 'translate') {
-                      window.open('https://translate.google.com/?sl=auto&tl=en&text=' + encodeURIComponent(text) + '&op=translate', '_blank');
-                    } else if (action === 'dictionary') {
-                      window.open('https://www.google.com/search?q=define+' + encodeURIComponent(text), '_blank');
-                    } else if (action === 'web-search') {
+                    if (action === 'web-search') {
                       window.open('https://www.google.com/search?q=' + encodeURIComponent(text), '_blank');
                     }
                   }
@@ -1462,6 +1644,24 @@ object ReaderHtmlDocumentBuilder {
                   menu.addEventListener('mousedown', function (event) {
                     event.preventDefault();
                   });
+                  if (startHandle && endHandle) {
+                    startHandle.addEventListener('pointerdown', function (event) {
+                      beginSelectionHandleDrag('start', event);
+                    });
+                    endHandle.addEventListener('pointerdown', function (event) {
+                      beginSelectionHandleDrag('end', event);
+                    });
+                    [startHandle, endHandle].forEach(function (handle) {
+                      handle.addEventListener('pointermove', function (event) {
+                        if (!activeSelectionHandle) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        requestSelectionHandleUpdate(event);
+                      });
+                      handle.addEventListener('pointerup', finishSelectionHandleDrag);
+                      handle.addEventListener('pointercancel', finishSelectionHandleDrag);
+                    });
+                  }
                   menu.addEventListener('click', function (event) {
                     var target = event.target && event.target.closest ? event.target.closest('button[data-action]') : event.target;
                     var action = target && target.getAttribute('data-action');
@@ -1475,10 +1675,7 @@ object ReaderHtmlDocumentBuilder {
                     if (action === 'highlight') highlightRange(target.getAttribute('data-color-id') || 'yellow');
                     if (action === 'define') sendSelectionAction('define', text);
                     if (action === 'speak') sendSelectionAction('speak', text);
-                    if (action === 'dictionary') sendSelectionAction('dictionary', text);
-                    if (action === 'find') window.find(text);
                     if (action === 'web-search') sendSelectionAction('web-search', text);
-                    if (action === 'translate') sendSelectionAction('translate', text);
                     if (action === 'clear') {
                       window.getSelection().removeAllRanges();
                       hideMenu();
@@ -1491,11 +1688,52 @@ object ReaderHtmlDocumentBuilder {
                       showMenu(event);
                     }
                   });
+                  document.addEventListener('selectionchange', function () {
+                    if (menu.contains(document.activeElement)) return;
+                    if (activeSelectionHandle) return;
+                    if (selectionPointerDown) return;
+                    scheduleMenuFromSelection();
+                  });
+                  document.addEventListener('pointermove', function (event) {
+                    if (!activeSelectionHandle) return;
+                    requestSelectionHandleUpdate(event);
+                  });
+                  document.addEventListener('pointerup', function (event) {
+                    if (activeSelectionHandle) {
+                      finishSelectionHandleDrag(event);
+                      return;
+                    }
+                    if (selectionPointerDown && !menu.contains(event.target)) {
+                      selectionPointerDown = false;
+                      scheduleMenuFromSelection();
+                    }
+                  });
+                  document.addEventListener('pointercancel', function () {
+                    if (!activeSelectionHandle) selectionPointerDown = false;
+                  });
+                  document.addEventListener('mouseup', function (event) {
+                    if (menu.contains(event.target)) return;
+                    if (activeSelectionHandle) return;
+                    selectionPointerDown = false;
+                    scheduleMenuFromSelection();
+                  });
+                  document.addEventListener('keyup', function () {
+                    scheduleMenuFromSelection();
+                  });
                   document.addEventListener('scroll', hideMenu, true);
                   document.addEventListener('scroll', scheduleVisiblePageReport, true);
                   window.addEventListener('scroll', scheduleVisiblePageReport, { passive: true });
+                  document.addEventListener('pointerdown', function (event) {
+                    if (event.button === 0 && !menu.contains(event.target)) {
+                      selectionPointerDown = true;
+                      hideMenu();
+                    }
+                  });
                   document.addEventListener('mousedown', function (event) {
-                    if (event.button === 0 && !menu.contains(event.target)) hideMenu();
+                    if (event.button === 0 && !menu.contains(event.target)) {
+                      selectionPointerDown = true;
+                      hideMenu();
+                    }
                   });
                   scrollToActiveLocator();
                   reportVisiblePage();
@@ -2325,6 +2563,15 @@ object ReaderHtmlDocumentBuilder {
         }
     }
 
+    private fun readerSelectionActionButton(action: String, label: String, pathData: String): String {
+        val safeLabel = label.escapeHtml()
+        return """<button type="button" class="reader-selection-action" data-action="${action.escapeHtml()}" aria-label="$safeLabel"><span class="reader-selection-icon" aria-hidden="true">${readerSelectionSvg(pathData)}</span><span>$safeLabel</span></button>"""
+    }
+
+    private fun readerSelectionSvg(pathData: String): String {
+        return """<svg viewBox="0 0 960 960" focusable="false" aria-hidden="true"><path d="$pathData"></path></svg>"""
+    }
+
     private data class TextSegment(
         val text: String,
         val startOffset: Int
@@ -2349,6 +2596,19 @@ object ReaderHtmlDocumentBuilder {
     private val textBlockStartPattern = Regex(
         """<([A-Za-z][A-Za-z0-9]*)\b[^>]*\bdata-reader-text-start="(\d+)"[^>]*\bdata-reader-text-end="(\d+)"[^>]*>"""
     )
+
+    private const val ReaderSelectionIconCopyPath =
+        "M360,720Q327,720 303.5,696.5Q280,673 280,640L280,160Q280,127 303.5,103.5Q327,80 360,80L720,80Q753,80 776.5,103.5Q800,127 800,160L800,640Q800,673 776.5,696.5Q753,720 720,720L360,720ZM360,640L720,640L720,160L360,160L360,640ZM200,880Q167,880 143.5,856.5Q120,833 120,800L120,240L200,240L200,800L640,800L640,880L200,880Z"
+    private const val ReaderSelectionIconDefinePath =
+        "M480,800Q432,762 376,741Q320,720 260,720Q218,720 177.5,731Q137,742 100,762Q79,773 59.5,761Q40,749 40,726L40,244Q40,233 45.5,223Q51,213 62,208Q108,184 158,172Q208,160 260,160Q318,160 373.5,175Q429,190 480,220Q531,190 586.5,175Q642,160 700,160Q752,160 802,172Q852,184 898,208Q909,213 914.5,223Q920,233 920,244L920,726Q920,749 900.5,761Q881,773 860,762Q823,742 782.5,731Q742,720 700,720Q640,720 584,741Q528,762 480,800ZM520,682Q564,661 608.5,650.5Q653,640 700,640Q736,640 770.5,646Q805,652 840,664L840,268Q807,254 771.5,247Q736,240 700,240Q653,240 607,252Q561,264 520,288L520,682ZM440,682L440,288Q399,264 353,252Q307,240 260,240Q224,240 188.5,247Q153,254 120,268L120,664Q155,652 189.5,646Q224,640 260,640Q307,640 351.5,650.5Q396,661 440,682Z"
+    private const val ReaderSelectionIconSpeakPath =
+        "M560,828L560,746Q653,719 706.5,642Q760,565 760,466Q760,367 706.5,290Q653,213 560,186L560,104Q687,133 763.5,234Q840,335 840,466Q840,597 763.5,698Q687,799 560,828ZM120,600L120,360L280,360L480,160L480,800L280,600L120,600ZM560,640L560,292Q612,317 646,364.5Q680,412 680,466Q680,520 646,567.5Q612,615 560,640Z"
+    private const val ReaderSelectionIconSearchPath =
+        "M784,840L532,588Q502,612 463,626Q424,640 380,640Q271,640 195.5,564.5Q120,489 120,380Q120,271 195.5,195.5Q271,120 380,120Q489,120 564.5,195.5Q640,271 640,380Q640,424 626,463Q612,502 588,532L840,784L784,840ZM380,560Q455,560 507.5,507.5Q560,455 560,380Q560,305 507.5,252.5Q455,200 380,200Q305,200 252.5,252.5Q200,305 200,380Q200,455 252.5,507.5Q305,560 380,560Z"
+    private const val ReaderSelectionIconClearPath =
+        "M256,760L200,704L424,480L200,256L256,200L480,424L704,200L760,256L536,480L760,704L704,760L480,536L256,760Z"
+    private const val ReaderSelectionIconTeardropPath =
+        "M480,860Q347,860 253.5,768Q160,676 160,544Q160,481 184.5,423.5Q209,366 254,322L480,100L706,322Q751,366 775.5,423.5Q800,481 800,544Q800,676 706.5,768Q613,860 480,860Z"
 
     private fun String.escapeHtml(): String {
         return replace("&", "&amp;")

@@ -475,8 +475,6 @@ fun SharedReaderScreen(
                         selectedHighlightId = null
                     },
                     onCopy = { onCopyText(selectedHighlight.text) },
-                    onDictionary = { onExternalLookup(ReaderExternalLookupAction.DICTIONARY, selectedHighlight.text) },
-                    onTranslate = { onExternalLookup(ReaderExternalLookupAction.TRANSLATE, selectedHighlight.text) },
                     onSearch = { onExternalLookup(ReaderExternalLookupAction.SEARCH, selectedHighlight.text) }
                 )
             }
@@ -500,8 +498,6 @@ private fun SharedReaderHighlightSheet(
     onSaveNote: (String) -> Unit,
     onDelete: () -> Unit,
     onCopy: () -> Unit,
-    onDictionary: () -> Unit,
-    onTranslate: () -> Unit,
     onSearch: () -> Unit
 ) {
     val locator = highlight.locator.withFallbacks(
@@ -586,14 +582,6 @@ private fun SharedReaderHighlightSheet(
         ) {
             SharedReaderBottomSheetToolButton(Icons.Default.ContentCopy, "Copy") {
                 onCopy()
-                onDismiss()
-            }
-            SharedReaderBottomSheetToolButton(Icons.Default.Psychology, "Dict") {
-                onDictionary()
-                onDismiss()
-            }
-            SharedReaderBottomSheetToolButton(Icons.Default.Translate, "Translate") {
-                onTranslate()
                 onDismiss()
             }
             SharedReaderBottomSheetToolButton(Icons.Default.Search, "Search") {
