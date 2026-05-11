@@ -21,7 +21,7 @@ class ReaderWorkspaceModelsTest {
     fun `epub workspace maps shared toolbar preferences to reader sidebars and inspector`() {
         val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
         val preferences = ReaderToolbarPreferences(
-            hiddenToolIds = setOf(ReaderTool.THEME.id, ReaderTool.FORMAT.id),
+            hiddenToolIds = setOf(ReaderTool.THEME.id, ReaderTool.FORMAT.id, ReaderTool.BOOKMARK.id),
             bottomToolIds = setOf(ReaderTool.SLIDER.id, ReaderTool.SEARCH.id)
         )
 
@@ -42,6 +42,7 @@ class ReaderWorkspaceModelsTest {
             model.leftSections
         )
         assertFalse(ReaderWorkspaceLeftSection.SEARCH in model.leftSections)
+        assertFalse(ReaderWorkspaceTopAction.BOOKMARK in model.topActions)
         assertFalse(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)

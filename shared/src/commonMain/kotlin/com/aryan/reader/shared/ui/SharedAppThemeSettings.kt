@@ -42,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
@@ -631,100 +632,127 @@ fun SharedHsvColorPickerDialog(
         hsv = nextColor.toSharedHsvColor()
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
+    SharedReaderModalLayer(onDismiss = onDismiss) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 620.dp)
+                    .heightIn(max = 600.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 16.dp
+            ) {
             Column(
-                modifier = modifier
-                    .widthIn(max = 560.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                preview(color)
-
-                SharedSpectrumBox(
-                    hue = hsv.hue,
-                    saturation = hsv.saturation,
-                    currentColor = color,
-                    onHueSatChanged = { hue, saturation ->
-                        hsv = hsv.copy(hue = hue, saturation = saturation)
-                    },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                SharedBrightnessSlider(
-                    hue = hsv.hue,
-                    saturation = hsv.saturation,
-                    value = hsv.value,
-                    onValueChanged = { hsv = hsv.copy(value = it) },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+                Column(
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
-                    SharedColorComparePill(
-                        oldColor = initialColor,
-                        newColor = color,
-                        modifier = Modifier.width(64.dp).height(36.dp)
+                    preview(color)
+
+                    SharedSpectrumBox(
+                        hue = hsv.hue,
+                        saturation = hsv.saturation,
+                        currentColor = color,
+                        onHueSatChanged = { hue, saturation ->
+                            hsv = hsv.copy(hue = hue, saturation = saturation)
+                        },
+                        modifier = Modifier.fillMaxWidth().height(220.dp)
                     )
 
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("Hex", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        SharedHexInput(color = color, onHexChanged = { updateFromColor(it) })
-                    }
+                    SharedBrightnessSlider(
+                        hue = hsv.hue,
+                        saturation = hsv.saturation,
+                        value = hsv.value,
+                        onValueChanged = { hsv = hsv.copy(value = it) },
+                        modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
+                    )
 
                     Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        SharedRgbInputColumn(
-                            label = "R",
-                            value = color.red,
-                            onValueChange = { updateFromColor(color.copy(red = it)) },
-                            modifier = Modifier.weight(1f)
+                        SharedColorComparePill(
+                            oldColor = initialColor,
+                            newColor = color,
+                            modifier = Modifier.width(64.dp).height(36.dp)
                         )
-                        SharedRgbInputColumn(
-                            label = "G",
-                            value = color.green,
-                            onValueChange = { updateFromColor(color.copy(green = it)) },
-                            modifier = Modifier.weight(1f)
+
+                        Column(
+                            modifier = Modifier.weight(1.6f),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("Hex", color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                            Spacer(Modifier.height(4.dp))
+                            SharedHexInput(color = color, onHexChanged = { updateFromColor(it) })
+                        }
+
+                        Row(
+                            modifier = Modifier.weight(2.4f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SharedRgbInputColumn(
+                                label = "R",
+                                value = color.red,
+                                onValueChange = { updateFromColor(color.copy(red = it)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            SharedRgbInputColumn(
+                                label = "G",
+                                value = color.green,
+                                onValueChange = { updateFromColor(color.copy(green = it)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            SharedRgbInputColumn(
+                                label = "B",
+                                value = color.blue,
+                                onValueChange = { updateFromColor(color.copy(blue = it)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = { onSave(color) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = color,
+                            contentColor = if (color.luminance() > 0.5f) Color.Black else Color.White
                         )
-                        SharedRgbInputColumn(
-                            label = "B",
-                            value = color.blue,
-                            onValueChange = { updateFromColor(color.copy(blue = it)) },
-                            modifier = Modifier.weight(1f)
-                        )
+                    ) {
+                        Text("Save", fontWeight = FontWeight.Bold)
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSave(color) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = color,
-                    contentColor = if (color.luminance() > 0.5f) Color.Black else Color.White
-                )
-            ) {
-                Text("Save", fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
         }
-    )
+        }
+    }
 }
 
 @Composable

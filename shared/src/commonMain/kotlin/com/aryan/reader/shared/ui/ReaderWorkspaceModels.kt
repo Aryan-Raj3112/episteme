@@ -77,11 +77,11 @@ fun epubReaderWorkspaceModel(
     externalLookupAvailable: Boolean = true
 ): ReaderWorkspaceModel {
     val preferences = toolbarPreferences.sanitized()
-    val leftSections = buildList {
-        if (preferences.isVisible(ReaderTool.TOC)) add(ReaderWorkspaceLeftSection.CONTENTS)
-        if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceLeftSection.NOTES)
-        if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceLeftSection.BOOKMARKS)
-    }
+    val leftSections = listOf(
+        ReaderWorkspaceLeftSection.CONTENTS,
+        ReaderWorkspaceLeftSection.NOTES,
+        ReaderWorkspaceLeftSection.BOOKMARKS
+    )
     val inspectorSections = buildList {
         if (preferences.isVisible(ReaderTool.THEME) || preferences.isVisible(ReaderTool.FORMAT)) {
             add(ReaderWorkspaceInspectorSection.APPEARANCE)

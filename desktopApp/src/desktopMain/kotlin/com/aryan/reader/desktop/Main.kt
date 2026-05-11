@@ -76,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -84,9 +85,12 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -2874,6 +2878,12 @@ private fun Long.toComposeColor(): Color {
 private val PdfInkTool.isDesktopHighlighter: Boolean
     get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
 
+private val SharedPdfAnnotation.isDesktopTextSelectionHighlight: Boolean
+    get() = kind == PdfAnnotationKind.HIGHLIGHT &&
+        text.isNotBlank() &&
+        rangeStartIndex != null &&
+        rangeEndIndex != null
+
 private fun List<PdfPagePoint>.withDesktopPdfDragPoint(
     point: Offset,
     canvasSize: IntSize,
@@ -3200,6 +3210,7 @@ private fun PdfReaderScreen(
     val selectedAnnotation = remember(annotations, selectedAnnotationId) {
         annotations.firstOrNull { it.id == selectedAnnotationId }
     }
+    val selectedTextHighlight = selectedAnnotation?.takeIf { it.isDesktopTextSelectionHighlight }
     val sortedAnnotations = remember(annotations) {
         annotations.sortedWith(compareBy<SharedPdfAnnotation> { it.pageIndex }.thenBy { it.createdAt })
     }
@@ -4221,11 +4232,17 @@ private fun PdfReaderScreen(
 
     @Composable
     fun PdfBottomChrome() {
+        val chromeBackground = pdfThemeStyle.viewerBackgroundColor
+        val chromeContent = pdfThemeStyle.theme.textColor.takeIf { it.isSpecified }
+            ?: if (chromeBackground.luminance() < 0.5f) Color.White else Color.Black
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(6.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 1.dp
+            color = chromeBackground,
+            contentColor = chromeContent,
+            tonalElevation = 0.dp,
+            shadowElevation = 1.dp,
+            border = BorderStroke(1.dp, chromeContent.copy(alpha = 0.12f))
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -4233,12 +4250,16 @@ private fun PdfReaderScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = "Previous page",
+                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                    )
                 }
                 Text(
                     "Page ${pageIndex + 1} of ${document.pageCount}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = chromeContent.copy(alpha = 0.72f)
                 )
                 if (document.pageCount > 1) {
                     ReaderMinimalSlider(
@@ -4246,6 +4267,9 @@ private fun PdfReaderScreen(
                         onValueChange = ::updatePdfPageScrub,
                         onValueChangeFinished = ::finishPdfPageScrub,
                         valueRange = 0f..(document.pageCount - 1).toFloat(),
+                        activeColor = chromeContent.copy(alpha = 0.62f),
+                        inactiveColor = chromeContent.copy(alpha = 0.18f),
+                        thumbColor = chromeContent.copy(alpha = 0.86f),
                         modifier = Modifier.weight(1f)
                     )
                 } else {
@@ -4254,10 +4278,14 @@ private fun PdfReaderScreen(
                 Text(
                     "${progressPercent.toInt()}%",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = chromeContent.copy(alpha = 0.72f)
                 )
                 IconButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = "Next page",
+                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                    )
                 }
             }
         }
@@ -4817,7 +4845,7 @@ private fun PdfReaderScreen(
                                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
                                                 val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
                                                     currentPdfAnnotations.asReversed().firstOrNull {
-                                                        it.kind == PdfAnnotationKind.HIGHLIGHT &&
+                                                        it.isDesktopTextSelectionHighlight &&
                                                             it.pageIndex == pageIndex &&
                                                             it.sharedPdfHitTest(point, pageCanvasSize)
                                                     }
@@ -5208,30 +5236,30 @@ private fun PdfReaderScreen(
                     )
             }
             when {
-                selectedAnnotation != null -> {
+                selectedTextHighlight != null -> {
                     DesktopReaderBottomSheet(
-                        title = selectedAnnotation.desktopSheetTitle(),
+                        title = selectedTextHighlight.desktopSheetTitle(),
                         onDismiss = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
                     ) {
                         DesktopPdfAnnotationEditor(
-                            annotation = selectedAnnotation,
+                            annotation = selectedTextHighlight,
                             onUpdate = ::updateAnnotation,
-                            onDelete = { deleteAnnotation(selectedAnnotation.id) },
+                            onDelete = { deleteAnnotation(selectedTextHighlight.id) },
                             onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) },
                             onCopy = {
-                                clipboardManager.setText(AnnotatedString(selectedAnnotation.text))
+                                clipboardManager.setText(AnnotatedString(selectedTextHighlight.text))
                                 dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
                             },
                             onDictionary = {
-                                openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, selectedAnnotation.text)
+                                openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, selectedTextHighlight.text)
                                 dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
                             },
                             onTranslate = {
-                                openPdfExternalLookup(ReaderExternalLookupAction.TRANSLATE, selectedAnnotation.text)
+                                openPdfExternalLookup(ReaderExternalLookupAction.TRANSLATE, selectedTextHighlight.text)
                                 dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
                             },
                             onSearch = {
-                                searchSelection(selectedAnnotation.toDesktopPdfTextSelection())
+                                searchSelection(selectedTextHighlight.toDesktopPdfTextSelection())
                                 dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
                             }
                         )
@@ -6069,7 +6097,7 @@ private fun DesktopVerticalPdfPage(
                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
                                 val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
                                     currentAnnotations.asReversed().firstOrNull {
-                                        it.kind == PdfAnnotationKind.HIGHLIGHT &&
+                                        it.isDesktopTextSelectionHighlight &&
                                             it.pageIndex == pageIndex &&
                                             it.sharedPdfHitTest(point, pageCanvasSize)
                                     }
@@ -6925,6 +6953,40 @@ private fun PdfTextSelectionOverlay(
     }
 }
 
+private object DesktopPdfSelectionMenuIcons {
+    val Copy = vector(
+        name = "DesktopPdfSelectionCopy",
+        pathData = "M360,720Q327,720 303.5,696.5Q280,673 280,640L280,160Q280,127 303.5,103.5Q327,80 360,80L720,80Q753,80 776.5,103.5Q800,127 800,160L800,640Q800,673 776.5,696.5Q753,720 720,720L360,720ZM360,640L720,640Q720,640 720,640Q720,640 720,640L720,160Q720,160 720,160Q720,160 720,160L360,160Q360,160 360,160Q360,160 360,160L360,640Q360,640 360,640Q360,640 360,640ZM200,880Q167,880 143.5,856.5Q120,833 120,800L120,240L200,240L200,800Q200,800 200,800Q200,800 200,800L640,800L640,880L200,880ZM360,640Q360,640 360,640Q360,640 360,640L360,160Q360,160 360,160Q360,160 360,160L360,160Q360,160 360,160Q360,160 360,160L360,640Q360,640 360,640Q360,640 360,640Z"
+    )
+    val Dictionary = vector(
+        name = "DesktopPdfSelectionDictionary",
+        pathData = "M160,569L205,569L228,503L332,503L356,569L400,569L303,311L257,311L160,569ZM241,466L279,359L281,359L319,466L241,466ZM560,396L560,328Q593,314 627.5,307Q662,300 700,300Q726,300 751,304Q776,308 800,314L800,378Q776,369 751.5,364.5Q727,360 700,360Q662,360 627,369.5Q592,379 560,396ZM560,616L560,548Q593,534 627.5,527Q662,520 700,520Q726,520 751,524Q776,528 800,534L800,598Q776,589 751.5,584.5Q727,580 700,580Q662,580 627,589Q592,598 560,616ZM560,506L560,438Q593,424 627.5,417Q662,410 700,410Q726,410 751,414Q776,418 800,424L800,488Q776,479 751.5,474.5Q727,470 700,470Q662,470 627,479.5Q592,489 560,506ZM260,640Q307,640 351.5,650.5Q396,661 440,682L440,288Q399,264 353,252Q307,240 260,240Q224,240 188.5,247Q153,254 120,268Q120,268 120,268Q120,268 120,268L120,664Q120,664 120,664Q120,664 120,664Q155,652 189.5,646Q224,640 260,640ZM520,682Q564,661 608.5,650.5Q653,640 700,640Q736,640 770.5,646Q805,652 840,664Q840,664 840,664Q840,664 840,664L840,268Q840,268 840,268Q840,268 840,268Q807,254 771.5,247Q736,240 700,240Q653,240 607,252Q561,264 520,288L520,682ZM480,800Q432,762 376,741Q320,720 260,720Q218,720 177.5,731Q137,742 100,762Q79,773 59.5,761Q40,749 40,726L40,244Q40,233 45.5,223Q51,213 62,208Q108,184 158,172Q208,160 260,160Q318,160 373.5,175Q429,190 480,220Q531,190 586.5,175Q642,160 700,160Q752,160 802,172Q852,184 898,208Q909,213 914.5,223Q920,233 920,244L920,726Q920,749 900.5,761Q881,773 860,762Q823,742 782.5,731Q742,720 700,720Q640,720 584,741Q528,762 480,800ZM280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461L280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461Q280,461 280,461L280,461Q280,461 280,461Q280,461 280,461Z"
+    )
+    val Translate = vector(
+        name = "DesktopPdfSelectionTranslate",
+        pathData = "M476,880L658,400L742,400L924,880L840,880L797,758L603,758L560,880L476,880ZM160,760L104,704L306,502Q271,467 242.5,422Q214,377 190,320L274,320Q294,359 314,388Q334,417 362,446Q395,413 430.5,353.5Q466,294 484,240L40,240L40,160L320,160L320,80L400,80L400,160L680,160L680,240L564,240Q543,312 501,388Q459,464 418,504L514,602L484,684L362,559L160,760ZM628,688L772,688L700,484L628,688Z"
+    )
+    val Search = vector(
+        name = "DesktopPdfSelectionSearch",
+        pathData = "M784,840L532,588Q502,612 463,626Q424,640 380,640Q271,640 195.5,564.5Q120,489 120,380Q120,271 195.5,195.5Q271,120 380,120Q489,120 564.5,195.5Q640,271 640,380Q640,424 626,463Q612,502 588,532L840,784L784,840ZM380,560Q455,560 507.5,507.5Q560,455 560,380Q560,305 507.5,252.5Q455,200 380,200Q305,200 252.5,252.5Q200,305 200,380Q200,455 252.5,507.5Q305,560 380,560Z"
+    )
+
+    private fun vector(name: String, pathData: String): ImageVector {
+        return ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 960f,
+            viewportHeight = 960f
+        ).apply {
+            addPath(
+                pathData = PathParser().parsePathString(pathData).toNodes(),
+                fill = SolidColor(Color.Black)
+            )
+        }.build()
+    }
+}
+
 @Composable
 private fun PdfSelectionMenu(
     selection: DesktopPdfTextSelection?,
@@ -6947,20 +7009,20 @@ private fun PdfSelectionMenu(
     selection ?: return
     val anchor = menuOffset ?: return
     val actions = buildList {
-        add(PdfSelectionMenuAction("Copy", Icons.Default.ContentCopy, onCopy))
-        if (showDefine) add(PdfSelectionMenuAction("Define", Icons.Default.Psychology, onDefine))
+        add(PdfSelectionMenuAction("Copy", DesktopPdfSelectionMenuIcons.Copy, onCopy))
+        if (showDefine) add(PdfSelectionMenuAction("Define", DesktopPdfSelectionMenuIcons.Dictionary, onDefine))
         if (showSpeak) add(PdfSelectionMenuAction("Speak", Icons.AutoMirrored.Filled.VolumeUp, onSpeak))
-        if (showExternalLookup) add(PdfSelectionMenuAction("Dict", Icons.Default.Psychology, onDictionary))
-        add(PdfSelectionMenuAction("Find", Icons.Default.Search, onSearch))
-        if (showExternalLookup) add(PdfSelectionMenuAction("Web", Icons.Default.Search, onWebSearch))
-        if (showExternalLookup) add(PdfSelectionMenuAction("Translate", Icons.Default.Translate, onTranslate))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Dict", DesktopPdfSelectionMenuIcons.Dictionary, onDictionary))
+        add(PdfSelectionMenuAction("Find", DesktopPdfSelectionMenuIcons.Search, onSearch))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Web", DesktopPdfSelectionMenuIcons.Search, onWebSearch))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Translate", DesktopPdfSelectionMenuIcons.Translate, onTranslate))
         add(PdfSelectionMenuAction("Clear", Icons.Default.Close, onClear, isDestructive = true))
     }
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp,
-        shadowElevation = 12.dp,
-        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 4.dp,
+        shadowElevation = 10.dp,
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.padding(
             start = anchor.x.coerceIn(
@@ -6975,7 +7037,7 @@ private fun PdfSelectionMenu(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(min = 220.dp, max = 300.dp)
+                .widthIn(min = 200.dp, max = 240.dp)
                 .padding(bottom = 6.dp)
         ) {
             Row(
@@ -6989,11 +7051,11 @@ private fun PdfSelectionMenu(
                 highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }.forEach { colorArgb ->
                     Surface(
                         modifier = Modifier
-                            .padding(horizontal = 5.dp)
-                            .size(28.dp)
+                            .padding(horizontal = 6.dp)
+                            .size(32.dp)
                             .clickable { onHighlight(colorArgb) },
                         color = Color(colorArgb),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
                         content = {}
                     )
@@ -7016,7 +7078,8 @@ private fun PdfSelectionMenu(
                         }
                         Column(
                             modifier = Modifier
-                                .width(78.dp)
+                                .width(64.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { action.onClick() }
                                 .padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -7026,7 +7089,7 @@ private fun PdfSelectionMenu(
                                 imageVector = action.icon,
                                 contentDescription = action.label,
                                 tint = tint,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                             Text(
                                 action.label,
@@ -7038,7 +7101,7 @@ private fun PdfSelectionMenu(
                         }
                     }
                     repeat(3 - rowActions.size) {
-                        Spacer(modifier = Modifier.width(78.dp))
+                        Spacer(modifier = Modifier.width(64.dp))
                     }
                 }
             }
@@ -7220,8 +7283,8 @@ private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
     )
 }
 
-private const val PdfSelectionMenuWidthPx = 300f
-private const val PdfSelectionMenuHeightPx = 230f
+private const val PdfSelectionMenuWidthPx = 240f
+private const val PdfSelectionMenuHeightPx = 250f
 private const val PdfSelectionMenuMarginPx = 6f
 
 internal fun desktopPdfAnnotationFile(documentPath: String): File {

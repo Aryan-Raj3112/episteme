@@ -204,6 +204,7 @@ fun SharedReaderScreen(
     val settings = readerState.settings
     val byokSettings = aiByokSettings.sanitized()
     val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+    val foreground = settings.textColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
     val activeTtsProgress = readerExtrasState.cloudTts.progress
@@ -330,8 +331,11 @@ fun SharedReaderScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(6.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 1.dp
+                color = background,
+                contentColor = foreground,
+                tonalElevation = 0.dp,
+                shadowElevation = 1.dp,
+                border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SharedReaderCompactNavigation(
@@ -342,7 +346,8 @@ fun SharedReaderScreen(
                         pageInfoText = if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoText else null,
                         onPrevious = { dispatch(ReaderAction.PreviousPage) },
                         onNext = { dispatch(ReaderAction.NextPage) },
-                        onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) }
+                        onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
+                        contentColor = foreground
                     )
                 }
             }
@@ -446,15 +451,13 @@ fun SharedReaderScreen(
                     onCopy = { onCopyText(selectedHighlight.text) },
                     onDictionary = { onExternalLookup(ReaderExternalLookupAction.DICTIONARY, selectedHighlight.text) },
                     onTranslate = { onExternalLookup(ReaderExternalLookupAction.TRANSLATE, selectedHighlight.text) },
-                    onSearch = { onExternalLookup(ReaderExternalLookupAction.SEARCH, selectedHighlight.text) },
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    onSearch = { onExternalLookup(ReaderExternalLookupAction.SEARCH, selectedHighlight.text) }
                 )
             }
             readerExtrasState.aiResult.hasContent -> {
                 SharedReaderAiResultSheet(
                     result = readerExtrasState.aiResult,
-                    onDismiss = onAiResultDismiss,
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    onDismiss = onAiResultDismiss
                 )
             }
         }
@@ -473,8 +476,7 @@ private fun SharedReaderHighlightSheet(
     onCopy: () -> Unit,
     onDictionary: () -> Unit,
     onTranslate: () -> Unit,
-    onSearch: () -> Unit,
-    modifier: Modifier = Modifier
+    onSearch: () -> Unit
 ) {
     val locator = highlight.locator.withFallbacks(
         chapterIndex = highlight.chapterIndex,
@@ -489,8 +491,7 @@ private fun SharedReaderHighlightSheet(
 
     SharedReaderBottomSheet(
         title = "Highlight",
-        onDismiss = onDismiss,
-        modifier = modifier
+        onDismiss = onDismiss
     ) {
         Row(
             modifier = Modifier
@@ -633,13 +634,11 @@ private fun SharedReaderBottomSheetToolButton(
 @Composable
 private fun SharedReaderAiResultSheet(
     result: ReaderAiResultState,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    onDismiss: () -> Unit
 ) {
     SharedReaderBottomSheet(
         title = result.title ?: "AI",
-        onDismiss = onDismiss,
-        modifier = modifier
+        onDismiss = onDismiss
     ) {
         val errorMessage = result.errorMessage
         when {
@@ -654,68 +653,69 @@ private fun SharedReaderAiResultSheet(
 private fun SharedReaderBottomSheet(
     title: String,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .zIndex(40f)
-    ) {
+    SharedReaderModalLayer(onDismiss = onDismiss) {
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.24f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-        )
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-                .fillMaxWidth(0.78f)
-                .widthIn(max = 560.dp)
-                .heightIn(max = 560.dp),
-            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp,
-            shadowElevation = 16.dp
+                .fillMaxSize()
+                .zIndex(40f)
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .width(42.dp)
-                        .height(4.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Transparent)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-                HorizontalDivider()
+            )
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .fillMaxWidth(0.78f)
+                    .widthIn(max = 560.dp)
+                    .heightIn(max = 560.dp),
+                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 16.dp
+            ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    content()
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .width(42.dp)
+                            .height(4.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    HorizontalDivider()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        content()
+                    }
                 }
             }
         }
@@ -2479,7 +2479,8 @@ private fun SharedReaderCompactNavigation(
     pageInfoText: String?,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
-    onPageNumberChange: (Int) -> Unit
+    onPageNumberChange: (Int) -> Unit,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2490,18 +2491,23 @@ private fun SharedReaderCompactNavigation(
             enabled = canGoPrevious,
             onClick = onPrevious
         ) {
-            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateBefore,
+                contentDescription = "Previous page",
+                tint = contentColor.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+            )
         }
         if (showSlider) {
             SharedReaderPageSlider(
                 session = session,
                 onPageNumberChange = onPageNumberChange,
+                contentColor = contentColor,
                 modifier = Modifier.weight(1f)
             )
         } else {
             Text(
                 pageInfoText.orEmpty(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = contentColor.copy(alpha = 0.72f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -2511,7 +2517,11 @@ private fun SharedReaderCompactNavigation(
             enabled = canGoNext,
             onClick = onNext
         ) {
-            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateNext,
+                contentDescription = "Next page",
+                tint = contentColor.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+            )
         }
     }
 }
@@ -2520,6 +2530,7 @@ private fun SharedReaderCompactNavigation(
 private fun SharedReaderPageSlider(
     session: ReaderSessionState,
     onPageNumberChange: (Int) -> Unit,
+    contentColor: Color,
     modifier: Modifier = Modifier
 ) {
     val readerState = session.reader
@@ -2534,13 +2545,16 @@ private fun SharedReaderPageSlider(
         Text(
             "$currentPageNumber / $totalPages",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = contentColor.copy(alpha = 0.72f)
         )
         ReaderMinimalSlider(
             value = currentPageNumber.toFloat(),
             onValueChange = { value -> onPageNumberChange(value.roundToInt().coerceIn(1, totalPages)) },
             valueRange = 1f..sliderMax.toFloat(),
             enabled = totalPages > 1,
+            activeColor = contentColor.copy(alpha = 0.62f),
+            inactiveColor = contentColor.copy(alpha = 0.18f),
+            thumbColor = contentColor.copy(alpha = 0.86f),
             modifier = Modifier.weight(1f)
         )
     }
