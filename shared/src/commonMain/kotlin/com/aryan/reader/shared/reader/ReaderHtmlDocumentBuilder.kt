@@ -183,27 +183,27 @@ object ReaderHtmlDocumentBuilder {
             ?.toTextureOverlayCss(settings.textureAlpha, settings.darkMode, textureDataUri)
             .orEmpty()
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
-            """<button type="button" data-action="highlight" data-color-id="${color.id}" title="${color.id.escapeHtml()}">${color.id.escapeHtml()}</button>"""
+            """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
         }
         val defineButton = if (readerAiFeaturesEnabled) {
-            """<button type="button" data-action="define">Define</button>"""
+            """<button type="button" class="reader-selection-action" data-icon="AI" data-action="define">Define</button>"""
         } else {
             ""
         }
         val speakButton = if (cloudTtsEnabled) {
-            """<button type="button" data-action="speak">Speak</button>"""
+            """<button type="button" class="reader-selection-action" data-icon="TTS" data-action="speak">Speak</button>"""
         } else {
             ""
         }
         val externalLookupButtons = if (externalLookupEnabled) {
             """
-                <button type="button" data-action="dictionary">Dict</button>
-                <button type="button" data-action="find">Find</button>
-                <button type="button" data-action="web-search">Web</button>
-                <button type="button" data-action="translate">Translate</button>
+                <button type="button" class="reader-selection-action" data-icon="D" data-action="dictionary">Dict</button>
+                <button type="button" class="reader-selection-action" data-icon="F" data-action="find">Find</button>
+                <button type="button" class="reader-selection-action" data-icon="W" data-action="web-search">Web</button>
+                <button type="button" class="reader-selection-action" data-icon="TR" data-action="translate">Translate</button>
             """.trimIndent()
         } else {
-            """<button type="button" data-action="find">Find</button>"""
+            """<button type="button" class="reader-selection-action" data-icon="F" data-action="find">Find</button>"""
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         val pageAnchorJson = pageAnchors.toPageAnchorJson()
@@ -310,20 +310,18 @@ object ReaderHtmlDocumentBuilder {
                   position: fixed;
                   z-index: 99999;
                   display: none;
-                  gap: 4px;
-                  align-items: center;
-                  flex-wrap: wrap;
-                  max-width: min(560px, calc(100vw - 16px));
-                  padding: 4px;
-                  border-radius: 8px;
+                  flex-direction: column;
+                  width: max-content;
+                  max-width: min(300px, calc(100vw - 16px));
+                  padding: 0 0 6px;
+                  border-radius: 14px;
                   background: color-mix(in srgb, var(--reader-bg) 92%, var(--reader-fg));
                   border: 1px solid color-mix(in srgb, var(--reader-fg) 18%, transparent);
-                  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+                  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+                  overflow: hidden;
                 }
                 #reader-selection-menu button {
                   border: 0;
-                  border-radius: 6px;
-                  padding: 6px 9px;
                   background: transparent;
                   color: var(--reader-fg);
                   font: 600 12px system-ui, sans-serif;
@@ -331,6 +329,57 @@ object ReaderHtmlDocumentBuilder {
                 }
                 #reader-selection-menu button:hover {
                   background: color-mix(in srgb, var(--reader-fg) 10%, transparent);
+                }
+                #reader-selection-menu .reader-selection-colors {
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  gap: 10px;
+                  width: 100%;
+                  box-sizing: border-box;
+                  padding: 10px 12px;
+                  border-bottom: 1px solid color-mix(in srgb, var(--reader-fg) 12%, transparent);
+                  overflow-x: auto;
+                }
+                #reader-selection-menu .reader-selection-color {
+                  width: 28px;
+                  height: 28px;
+                  flex: 0 0 auto;
+                  padding: 0;
+                  border-radius: 999px;
+                  background: var(--selection-color);
+                  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--reader-fg) 18%, transparent);
+                }
+                #reader-selection-menu .reader-selection-actions {
+                  display: grid;
+                  grid-template-columns: repeat(3, 78px);
+                  gap: 4px;
+                  padding: 6px 8px 2px;
+                }
+                #reader-selection-menu .reader-selection-action {
+                  min-height: 58px;
+                  border-radius: 10px;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  justify-content: center;
+                  gap: 5px;
+                  padding: 7px 4px;
+                  line-height: 1;
+                  white-space: nowrap;
+                }
+                #reader-selection-menu .reader-selection-action::before {
+                  content: attr(data-icon);
+                  display: grid;
+                  place-items: center;
+                  width: 24px;
+                  height: 24px;
+                  border-radius: 999px;
+                  background: color-mix(in srgb, var(--reader-fg) 9%, transparent);
+                  color: color-mix(in srgb, var(--reader-fg) 86%, transparent);
+                  font-size: 10px;
+                  font-weight: 800;
+                  letter-spacing: 0;
                 }
                 .reader-content a[href],
                 .reader-content a[href]:link,
@@ -361,12 +410,16 @@ object ReaderHtmlDocumentBuilder {
             <body data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
               $body
               <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
-                <button type="button" data-action="copy">Copy</button>
-                $highlightButtons
-                $defineButton
-                $speakButton
-                $externalLookupButtons
-                <button type="button" data-action="clear">Clear</button>
+                <div class="reader-selection-colors" aria-label="Highlight colors">
+                  $highlightButtons
+                </div>
+                <div class="reader-selection-actions">
+                  <button type="button" class="reader-selection-action" data-icon="C" data-action="copy">Copy</button>
+                  $defineButton
+                  $speakButton
+                  $externalLookupButtons
+                  <button type="button" class="reader-selection-action" data-icon="X" data-action="clear">Clear</button>
+                </div>
               </div>
               <script>
                 (function () {
@@ -740,8 +793,8 @@ object ReaderHtmlDocumentBuilder {
                       hideMenu();
                       return;
                     }
-                    menu.style.left = Math.max(8, Math.min(window.innerWidth - 360, event.clientX)) + 'px';
-                    menu.style.top = Math.max(8, Math.min(window.innerHeight - 54, event.clientY)) + 'px';
+                    menu.style.left = Math.max(8, Math.min(window.innerWidth - 300, event.clientX)) + 'px';
+                    menu.style.top = Math.max(8, Math.min(window.innerHeight - 230, event.clientY)) + 'px';
                     menu.style.display = 'flex';
                   }
                   function restoreRange() {
@@ -1279,7 +1332,8 @@ object ReaderHtmlDocumentBuilder {
                     event.preventDefault();
                   });
                   menu.addEventListener('click', function (event) {
-                    var action = event.target && event.target.getAttribute('data-action');
+                    var target = event.target && event.target.closest ? event.target.closest('button[data-action]') : event.target;
+                    var action = target && target.getAttribute('data-action');
                     var text = selectionText();
                     if (!text && restoreRange()) text = selectionText();
                     if (!text) {
@@ -1287,7 +1341,7 @@ object ReaderHtmlDocumentBuilder {
                       return;
                     }
                     if (action === 'copy') copyText(text);
-                    if (action === 'highlight') highlightRange(event.target.getAttribute('data-color-id') || 'yellow');
+                    if (action === 'highlight') highlightRange(target.getAttribute('data-color-id') || 'yellow');
                     if (action === 'define') sendSelectionAction('define', text);
                     if (action === 'speak') sendSelectionAction('speak', text);
                     if (action === 'dictionary') sendSelectionAction('dictionary', text);

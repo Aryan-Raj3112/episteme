@@ -6,9 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,22 +15,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +44,6 @@ fun ReaderWorkspaceShell(
     progressLabel: String,
     modifier: Modifier = Modifier,
     onReturnToLibrary: (() -> Unit)? = null,
-    topActions: @Composable RowScope.() -> Unit = {},
     leftSidebar: @Composable () -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -63,7 +58,7 @@ fun ReaderWorkspaceShell(
 
     LaunchedEffect(model.kind, model.chrome.forceVisibleReasons) {
         val reasons = model.chrome.forceVisibleReasons
-        if (reasons.any { it == "search" || it == "annotation" || it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
+        if (reasons.any { it == "search" || it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
             rightPanelOpen = true
         }
     }
@@ -94,8 +89,7 @@ fun ReaderWorkspaceShell(
                 rightPanelOpen = rightPanelOpen,
                 onReturnToLibrary = onReturnToLibrary,
                 onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
-                topActions = topActions
+                onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
             )
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -154,11 +148,8 @@ private fun ReaderWorkspaceTopChrome(
     rightPanelOpen: Boolean,
     onReturnToLibrary: (() -> Unit)?,
     onToggleLeftPanel: () -> Unit,
-    onToggleRightPanel: () -> Unit,
-    topActions: @Composable RowScope.() -> Unit
+    onToggleRightPanel: () -> Unit
 ) {
-    var overflowOpen by remember { mutableStateOf(false) }
-
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(6.dp),
@@ -170,6 +161,11 @@ private fun ReaderWorkspaceTopChrome(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            onReturnToLibrary?.let { returnToLibrary ->
+                IconButton(onClick = returnToLibrary, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to library")
+                }
+            }
             if (hasLeftPanel) {
                 IconButton(onClick = onToggleLeftPanel, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Menu, contentDescription = if (leftPanelOpen) "Hide reader navigation" else "Show reader navigation")
@@ -180,34 +176,9 @@ private fun ReaderWorkspaceTopChrome(
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(progressLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            onReturnToLibrary?.let { returnToLibrary ->
-                TextButton(
-                    onClick = returnToLibrary,
-                    contentPadding = PaddingValues(horizontal = 8.dp)
-                ) {
-                    Text("Library")
-                }
-            }
             if (hasRightPanel) {
                 IconButton(onClick = onToggleRightPanel, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Tune, contentDescription = if (rightPanelOpen) "Hide reader tools" else "Show reader tools")
-                }
-            }
-            Box {
-                IconButton(onClick = { overflowOpen = true }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Reader actions")
-                }
-                DropdownMenu(
-                    expanded = overflowOpen,
-                    onDismissRequest = { overflowOpen = false }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        topActions()
-                    }
                 }
             }
         }

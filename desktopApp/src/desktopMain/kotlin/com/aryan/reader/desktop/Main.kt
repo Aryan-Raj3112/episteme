@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -34,7 +35,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -51,10 +57,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,6 +85,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
@@ -1860,8 +1867,6 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
                                         ?.let { book -> resolvedDesktopReaderSettings(book, state.readerDefaultSettings) }
                                         ?: state.readerDefaultSettings,
-                                    onOpenPdf = ::importAndOpenPdf,
-                                    onOpenBook = ::importAndOpenBook,
                                     onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
@@ -1895,8 +1900,6 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                             session = updated
                                         )
                                     },
-                                    onOpenBook = ::importAndOpenBook,
-                                    onOpenPdf = ::importAndOpenPdf,
                                     onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
@@ -1921,6 +1924,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     cloudTtsControlsAvailable = featurePolicy.aiAndCloud,
                                     onExternalLookup = ::openReaderExternalLookup,
                                     onAiAction = ::runReaderAiAction,
+                                    onAiResultDismiss = {
+                                        readerExtrasState = readerExtrasState.copy(aiResult = ReaderAiResultState())
+                                    },
                                     onCloudTtsToggle = ::toggleReaderCloudTts,
                                     onCloudTtsStart = ::startReaderCloudTts,
                                     onCloudTtsPauseResume = ::pauseResumeReaderCloudTts,
@@ -2887,8 +2893,6 @@ private fun PdfReaderScreen(
     document: DesktopPdfDocument,
     initialPageIndex: Int,
     initialReaderSettings: ReaderSettings? = null,
-    onOpenPdf: () -> Unit,
-    onOpenBook: () -> Unit,
     onReturnToLibrary: (() -> Unit)? = null,
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
@@ -3433,7 +3437,12 @@ private fun PdfReaderScreen(
         }
     }
 
-    fun highlightSelection(pageIndex: Int, selection: DesktopPdfTextSelection, canvasSize: IntSize) {
+    fun highlightSelection(
+        pageIndex: Int,
+        selection: DesktopPdfTextSelection,
+        canvasSize: IntSize,
+        colorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb
+    ) {
         val now = System.currentTimeMillis()
         val highlightBounds = DesktopPdfium.textRectsForRange(
             document = document,
@@ -3474,7 +3483,7 @@ private fun PdfReaderScreen(
                     bounds = highlightBounds.firstOrNull(),
                     boundsList = highlightBounds,
                     text = selection.text,
-                    colorArgb = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
+                    colorArgb = colorArgb,
                     rangeStartIndex = selection.startIndex,
                     rangeEndIndex = selection.endIndex,
                     createdAt = now
@@ -3490,12 +3499,6 @@ private fun PdfReaderScreen(
         selectionStartHit = null
         selectionEndHit = null
         selectionMenuOffset = null
-    }
-
-    fun highlightCurrentSelection() {
-        val selection = textSelection ?: return
-        highlightSelection(pageIndex, selection, pageCanvasSize)
-        clearSelection()
     }
 
     fun searchSelection(selection: DesktopPdfTextSelection) {
@@ -4047,6 +4050,7 @@ private fun PdfReaderScreen(
         }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun PdfNavigationSidebar() {
         val tabs = listOf("TOC", "Annotations", "Bookmarks", "Pages")
@@ -4061,12 +4065,21 @@ private fun PdfReaderScreen(
             tonalElevation = 2.dp
         ) {
             Column(Modifier.fillMaxSize()) {
-                TabRow(selectedTabIndex = selectedTabIndex) {
+                ScrollableTabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    edgePadding = 0.dp
+                ) {
                     tabs.forEachIndexed { index, title ->
                         Tab(
                             selected = selectedTabIndex == index,
                             onClick = { selectedTabIndex = index },
-                            text = { Text(title) }
+                            text = {
+                                Text(
+                                    title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
@@ -4243,14 +4256,6 @@ private fun PdfReaderScreen(
         modifier = Modifier
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
-        topActions = {
-            TextButton(onClick = onOpenBook) {
-                Text("Open Book")
-            }
-            TextButton(onClick = onOpenPdf) {
-                Text("Open PDF")
-            }
-        },
         leftSidebar = { PdfNavigationSidebar() },
         rightInspector = {
             Surface(
@@ -4462,94 +4467,6 @@ private fun PdfReaderScreen(
                             isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                             onHighlighterSnapChange = { isHighlighterSnapEnabled = it }
                         )
-                    }
-                    selectedAnnotation?.let { annotation ->
-                        item {
-                            DesktopPdfAnnotationEditor(
-                                annotation = annotation,
-                                onUpdate = ::updateAnnotation,
-                                onDelete = { deleteAnnotation(annotation.id) },
-                                onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
-                            )
-                        }
-                    }
-                    if (sortedAnnotations.isNotEmpty()) {
-                        item {
-                            Text("Annotation list", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        }
-                        items(sortedAnnotations, key = { "annotation_${it.id}" }) { annotation ->
-                            Surface(
-                                color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            annotation.desktopLabel(),
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        TextButton(onClick = { deleteAnnotation(annotation.id) }) {
-                                            Text("Delete")
-                                        }
-                                    }
-                                    Text(
-                                        "Page ${annotation.pageIndex + 1}${annotation.text.takeIf { it.isNotBlank() }?.let { " - ${it.logPreview(48)}" }.orEmpty()}",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    selectedEmbeddedAnnotation?.let { annotation ->
-                        item {
-                            DesktopPdfEmbeddedAnnotationPanel(
-                                annotation = annotation,
-                                onCopy = { clipboardManager.setText(AnnotatedString(annotation.threadText())) },
-                                onClose = { selectedEmbeddedAnnotationId = null }
-                            )
-                        }
-                    }
-                    if (sortedEmbeddedAnnotations.isNotEmpty()) {
-                        item {
-                            Text("PDF comments", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        }
-                        items(sortedEmbeddedAnnotations, key = { "embedded_${it.id}" }) { annotation ->
-                            Surface(
-                                color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            annotation.author.ifBlank { "PDF comment" },
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Text("p. ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Text(
-                                        annotation.contents.ifBlank { annotation.replies.firstOrNull()?.contents.orEmpty() }.logPreview(80),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (annotation.replies.isNotEmpty()) {
-                                        Text(
-                                            "${annotation.replies.size} replies",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
                     if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
                         item {
@@ -5196,30 +5113,35 @@ private fun PdfReaderScreen(
                                     textSelection?.let(::copySelection)
                                     clearSelection()
                                 },
-                                onHighlight = ::highlightCurrentSelection,
+                                onHighlight = { colorArgb ->
+                                    textSelection?.let { selection ->
+                                        highlightSelection(pageIndex, selection, pageCanvasSize, colorArgb)
+                                    }
+                                    clearSelection()
+                                },
                                 onSearch = {
                                     textSelection?.let(::searchSelection)
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 onWebSearch = {
                                     textSelection?.let { openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, it.text) }
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 onDictionary = {
                                     textSelection?.let { openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, it.text) }
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 onDefine = {
                                     textSelection?.let { runPdfAiAction(ReaderAiFeature.DEFINE, it.text) }
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 onSpeak = {
                                     textSelection?.let { togglePdfCloudTts(it.text) }
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 onTranslate = {
                                     textSelection?.let(::translateSelection)
-                                    selectionMenuOffset = null
+                                    clearSelection()
                                 },
                                 showDefine = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
                                 showSpeak = aiByokSettings.sanitized().isCloudTtsAvailable,
@@ -5234,6 +5156,145 @@ private fun PdfReaderScreen(
                         pageCount = document.pageCount
                     )
             }
+            when {
+                selectedAnnotation != null -> {
+                    DesktopReaderBottomSheet(
+                        title = selectedAnnotation.desktopSheetTitle(),
+                        onDismiss = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
+                    ) {
+                        DesktopPdfAnnotationEditor(
+                            annotation = selectedAnnotation,
+                            onUpdate = ::updateAnnotation,
+                            onDelete = { deleteAnnotation(selectedAnnotation.id) },
+                            onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) },
+                            onCopy = {
+                                clipboardManager.setText(AnnotatedString(selectedAnnotation.text))
+                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            },
+                            onDictionary = {
+                                openPdfExternalLookup(ReaderExternalLookupAction.DICTIONARY, selectedAnnotation.text)
+                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            },
+                            onTranslate = {
+                                openPdfExternalLookup(ReaderExternalLookupAction.TRANSLATE, selectedAnnotation.text)
+                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            },
+                            onSearch = {
+                                searchSelection(selectedAnnotation.toDesktopPdfTextSelection())
+                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            }
+                        )
+                    }
+                }
+                selectedEmbeddedAnnotation != null -> {
+                    DesktopReaderBottomSheet(
+                        title = "PDF comment",
+                        onDismiss = { selectedEmbeddedAnnotationId = null }
+                    ) {
+                        DesktopPdfEmbeddedAnnotationPanel(
+                            annotation = selectedEmbeddedAnnotation,
+                            onCopy = { clipboardManager.setText(AnnotatedString(selectedEmbeddedAnnotation.threadText())) },
+                            onClose = { selectedEmbeddedAnnotationId = null }
+                        )
+                    }
+                }
+                pdfExtrasState.aiResult.hasContent -> {
+                    DesktopReaderAiResultSheet(
+                        result = pdfExtrasState.aiResult,
+                        onDismiss = { pdfExtrasState = pdfExtrasState.copy(aiResult = ReaderAiResultState()) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopReaderBottomSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .zIndex(40f)
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.24f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 760.dp)
+                .heightIn(max = 560.dp),
+            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            shadowElevation = 16.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(42.dp)
+                        .height(4.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+                HorizontalDivider()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopReaderAiResultSheet(
+    result: ReaderAiResultState,
+    onDismiss: () -> Unit
+) {
+    DesktopReaderBottomSheet(
+        title = result.title ?: "AI",
+        onDismiss = onDismiss
+    ) {
+        val errorMessage = result.errorMessage
+        when {
+            result.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
+            else -> SharedMarkdownText(result.text)
         }
     }
 }
@@ -5612,19 +5673,6 @@ private fun DesktopPdfExtrasPanel(
                     Text("Recap")
                 }
             }
-            if (extrasState.aiResult.hasContent) {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val aiErrorMessage = extrasState.aiResult.errorMessage
-                        Text(extrasState.aiResult.title ?: "AI", fontWeight = FontWeight.SemiBold)
-                        when {
-                            extrasState.aiResult.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            aiErrorMessage != null -> Text(aiErrorMessage, color = MaterialTheme.colorScheme.error)
-                            else -> SharedMarkdownText(extrasState.aiResult.text)
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -5843,7 +5891,7 @@ private fun DesktopVerticalPdfPage(
     shouldRender: Boolean,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
-    onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize) -> Unit,
+    onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize, Int) -> Unit,
     onSearchSelection: (DesktopPdfTextSelection) -> Unit,
     onWebSearchSelection: (DesktopPdfTextSelection) -> Unit,
     onDictionarySelection: (DesktopPdfTextSelection) -> Unit,
@@ -6393,33 +6441,33 @@ private fun DesktopVerticalPdfPage(
                             textSelection?.let(onCopySelection)
                             clearSelection()
                         },
-                        onHighlight = {
-                            textSelection?.let { onHighlightSelection(pageIndex, it, pageCanvasSize) }
+                        onHighlight = { colorArgb ->
+                            textSelection?.let { onHighlightSelection(pageIndex, it, pageCanvasSize, colorArgb) }
                             clearSelection()
                         },
                         onSearch = {
                             textSelection?.let(onSearchSelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         onWebSearch = {
                             textSelection?.let(onWebSearchSelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         onDictionary = {
                             textSelection?.let(onDictionarySelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         onDefine = {
                             textSelection?.let(onDefineSelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         onSpeak = {
                             textSelection?.let(onSpeakSelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         onTranslate = {
                             textSelection?.let(onTranslateSelection)
-                            selectionMenuOffset = null
+                            clearSelection()
                         },
                         showDefine = readerAiFeaturesAvailable,
                         showSpeak = cloudTtsAvailable,
@@ -6437,14 +6485,18 @@ private fun DesktopPdfAnnotationEditor(
     annotation: SharedPdfAnnotation,
     onUpdate: (SharedPdfAnnotation) -> Unit,
     onDelete: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onCopy: () -> Unit,
+    onDictionary: () -> Unit,
+    onTranslate: () -> Unit,
+    onSearch: () -> Unit
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(2.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Selected ${annotation.desktopLabel()}",
@@ -6461,6 +6513,57 @@ private fun DesktopPdfAnnotationEditor(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
+            if (annotation.text.isNotBlank()) {
+                Surface(
+                    color = Color(annotation.colorArgb).copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(annotation.colorArgb).copy(alpha = 0.28f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.heightIn(min = 72.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .width(6.dp)
+                                .fillMaxHeight()
+                                .background(Color(annotation.colorArgb))
+                        )
+                        Text(
+                            "\"${annotation.text}\"",
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                            modifier = Modifier.padding(14.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DesktopBottomSheetToolButton(
+                        icon = Icons.Default.ContentCopy,
+                        label = "Copy",
+                        onClick = onCopy
+                    )
+                    DesktopBottomSheetToolButton(
+                        icon = Icons.Default.Psychology,
+                        label = "Dict",
+                        onClick = onDictionary
+                    )
+                    DesktopBottomSheetToolButton(
+                        icon = Icons.Default.Translate,
+                        label = "Translate",
+                        onClick = onTranslate
+                    )
+                    DesktopBottomSheetToolButton(
+                        icon = Icons.Default.Search,
+                        label = "Search",
+                        onClick = onSearch
+                    )
+                }
+            }
             if (annotation.kind == PdfAnnotationKind.TEXT) {
                 OutlinedTextField(
                     value = annotation.text,
@@ -6482,7 +6585,7 @@ private fun DesktopPdfAnnotationEditor(
                 ) {
                     SharedPdfAnnotationDefaults.highlighterPalette
                 } else {
-                    SharedPdfAnnotationDefaults.penPalette
+                        SharedPdfAnnotationDefaults.penPalette
                 }
                 Text("Color", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -6497,6 +6600,15 @@ private fun DesktopPdfAnnotationEditor(
                         )
                     }
                 }
+                OutlinedTextField(
+                    value = annotation.note.orEmpty(),
+                    onValueChange = { note -> onUpdate(annotation.copy(note = note.takeIf { it.isNotBlank() })) },
+                    label = { Text("Note") },
+                    minLines = 3,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
             }
             if (annotation.kind == PdfAnnotationKind.INK) {
                 val strokeRange = annotation.tool.sharedPdfStrokeWidthRange()
@@ -6514,6 +6626,35 @@ private fun DesktopPdfAnnotationEditor(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DesktopBottomSheetToolButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+            modifier = Modifier.size(22.dp)
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -6621,6 +6762,23 @@ private fun SharedPdfAnnotation.desktopLabel(): String {
     }
 }
 
+private fun SharedPdfAnnotation.desktopSheetTitle(): String {
+    return when (kind) {
+        PdfAnnotationKind.HIGHLIGHT -> "Highlight"
+        PdfAnnotationKind.INK -> "Annotation"
+        PdfAnnotationKind.TEXT -> "Text note"
+    }
+}
+
+private fun SharedPdfAnnotation.toDesktopPdfTextSelection(): DesktopPdfTextSelection {
+    return DesktopPdfTextSelection(
+        text = text,
+        lineBounds = boundsList.ifEmpty { listOfNotNull(bounds) },
+        startIndex = rangeStartIndex ?: 0,
+        endIndex = rangeEndIndex ?: text.length
+    )
+}
+
 private fun SharedPdfEmbeddedAnnotation.threadText(): String {
     return buildString {
         append(author.ifBlank { "Unknown" })
@@ -6703,7 +6861,7 @@ private fun PdfSelectionMenu(
     menuOffset: Offset?,
     canvasSize: IntSize,
     onCopy: () -> Unit,
-    onHighlight: () -> Unit,
+    onHighlight: (Int) -> Unit,
     onSearch: () -> Unit,
     onWebSearch: () -> Unit,
     onDictionary: () -> Unit,
@@ -6717,11 +6875,22 @@ private fun PdfSelectionMenu(
 ) {
     selection ?: return
     val anchor = menuOffset ?: return
+    val actions = buildList {
+        add(PdfSelectionMenuAction("Copy", Icons.Default.ContentCopy, onCopy))
+        if (showDefine) add(PdfSelectionMenuAction("Define", Icons.Default.Psychology, onDefine))
+        if (showSpeak) add(PdfSelectionMenuAction("Speak", Icons.AutoMirrored.Filled.VolumeUp, onSpeak))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Dict", Icons.Default.Psychology, onDictionary))
+        add(PdfSelectionMenuAction("Find", Icons.Default.Search, onSearch))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Web", Icons.Default.Search, onWebSearch))
+        if (showExternalLookup) add(PdfSelectionMenuAction("Translate", Icons.Default.Translate, onTranslate))
+        add(PdfSelectionMenuAction("Clear", Icons.Default.Close, onClear, isDestructive = true))
+    }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 6.dp,
-        shadowElevation = 8.dp,
-        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 12.dp,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.padding(
             start = anchor.x.coerceIn(
                 PdfSelectionMenuMarginPx,
@@ -6733,25 +6902,85 @@ private fun PdfSelectionMenu(
             ).dp
         )
     ) {
-        Row(
+        Column(
             modifier = Modifier
-                .padding(horizontal = 6.dp, vertical = 4.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .widthIn(min = 220.dp, max = 300.dp)
+                .padding(bottom = 6.dp)
         ) {
-            TextButton(onClick = onCopy) { Text("Copy") }
-            TextButton(onClick = onHighlight) { Text("Highlight") }
-            if (showDefine) TextButton(onClick = onDefine) { Text("Define") }
-            if (showSpeak) TextButton(onClick = onSpeak) { Text("Speak") }
-            if (showExternalLookup) TextButton(onClick = onDictionary) { Text("Dict") }
-            TextButton(onClick = onSearch) { Text("Find") }
-            if (showExternalLookup) TextButton(onClick = onWebSearch) { Text("Web") }
-            if (showExternalLookup) TextButton(onClick = onTranslate) { Text("Translate") }
-            TextButton(onClick = onClear) { Text("Clear") }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SharedPdfAnnotationDefaults.highlighterPalette.forEach { colorArgb ->
+                    Surface(
+                        modifier = Modifier
+                            .padding(horizontal = 5.dp)
+                            .size(28.dp)
+                            .clickable { onHighlight(colorArgb) },
+                        color = Color(colorArgb),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+                        content = {}
+                    )
+                }
+            }
+            HorizontalDivider()
+            actions.chunked(3).forEach { rowActions ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    rowActions.forEach { action ->
+                        val tint = if (action.isDestructive) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                        Column(
+                            modifier = Modifier
+                                .width(78.dp)
+                                .clickable { action.onClick() }
+                                .padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = action.icon,
+                                contentDescription = action.label,
+                                tint = tint,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                action.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tint,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    repeat(3 - rowActions.size) {
+                        Spacer(modifier = Modifier.width(78.dp))
+                    }
+                }
+            }
         }
     }
 }
+
+private data class PdfSelectionMenuAction(
+    val label: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+    val isDestructive: Boolean = false
+)
 
 private fun DesktopPdfDocument.charHitAt(
     pageIndex: Int,
@@ -6920,8 +7149,8 @@ private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
     )
 }
 
-private const val PdfSelectionMenuWidthPx = 620f
-private const val PdfSelectionMenuHeightPx = 54f
+private const val PdfSelectionMenuWidthPx = 300f
+private const val PdfSelectionMenuHeightPx = 230f
 private const val PdfSelectionMenuMarginPx = 6f
 
 internal fun desktopPdfAnnotationFile(documentPath: String): File {
@@ -7016,8 +7245,6 @@ private fun ReaderScreen(
     session: ReaderSessionState,
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
-    onOpenBook: () -> Unit,
-    onOpenPdf: () -> Unit,
     onReturnToLibrary: (() -> Unit)? = null,
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
@@ -7034,6 +7261,7 @@ private fun ReaderScreen(
     cloudTtsControlsAvailable: Boolean,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
+    onAiResultDismiss: () -> Unit,
     onCloudTtsToggle: (String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
@@ -7046,6 +7274,7 @@ private fun ReaderScreen(
     webViewRuntimeState: DesktopWebViewRuntimeState,
     webViewNetworkAccessEnabled: Boolean
 ) {
+    val clipboardManager = LocalClipboardManager.current
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
 
@@ -7058,8 +7287,6 @@ private fun ReaderScreen(
         session = session,
         readerEngine = readerEngine,
         onSessionChange = onSessionChange,
-        onOpenBook = onOpenBook,
-        onOpenPdf = onOpenPdf,
         onReturnToLibrary = onReturnToLibrary,
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
@@ -7076,6 +7303,8 @@ private fun ReaderScreen(
         cloudTtsControlsAvailable = cloudTtsControlsAvailable,
         onExternalLookup = onExternalLookup,
         onAiAction = onAiAction,
+        onAiResultDismiss = onAiResultDismiss,
+        onCopyText = { text -> clipboardManager.setText(AnnotatedString(text)) },
         onCloudTtsStart = onCloudTtsStart,
         onCloudTtsPauseResume = onCloudTtsPauseResume,
         onCloudTtsStop = onCloudTtsStop,
