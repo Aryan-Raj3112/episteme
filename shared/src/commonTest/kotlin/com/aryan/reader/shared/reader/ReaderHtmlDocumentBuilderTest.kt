@@ -116,6 +116,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertEquals(2, Regex("<section class=\"page\"").findAll(html).count())
         assertTrue(html.contains("data-reader-page-index=\"2\""))
         assertTrue(html.contains("data-reader-page-index=\"3\""))
+        assertTrue(html.contains("readerPaginationLayoutLog"))
+        assertTrue(html.contains("EpistemeEpubPagination"))
     }
 
     @Test

@@ -9224,12 +9224,25 @@ private fun ReaderScreen(
         val reflowStartSession = latestSession
         val reflowStartRequestId = reflowStartSession.navigationRequestId
         val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
+        logEpubPagination(
+            "reflow_start book=\"${session.reader.book.title.logPreview()}\" " +
+                "viewport=${readerViewport.widthPx}x${readerViewport.heightPx} " +
+                "spread=${settings.pageSpreadMode} font=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
+                "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
+                "pageWidthSetting=${settings.pageWidth} oldPages=${reflowStartSession.reader.pages.size} " +
+                "anchorPage=${reflowAnchor?.pageIndex} anchorOffsets=${reflowAnchor?.startOffset}..${reflowAnchor?.endOffset}"
+        )
         val pages = measuredPaginator.paginate(
             book = session.reader.book,
             settings = settings,
             viewport = readerViewport
         )
-        if (pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)) {
+        val layoutChanged = pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)
+        logEpubPagination(
+            "reflow_result book=\"${session.reader.book.title.logPreview()}\" pages=${pages.size} " +
+                "layoutChanged=$layoutChanged currentPages=${latestSession.reader.pages.size}"
+        )
+        if (layoutChanged) {
             latestOnSessionChange(
                 readerEngine.replacePages(
                     state = latestSession,
@@ -9281,7 +9294,13 @@ private fun ReaderScreen(
                 .clip(RoundedCornerShape(8.dp))
                 .onSizeChanged { size ->
                     val next = ReaderViewportSpec(size.width, size.height)
-                    if (next != readerViewport) readerViewport = next
+                    if (next != readerViewport) {
+                        logEpubPagination(
+                            "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
+                                "previous=${readerViewport.widthPx}x${readerViewport.heightPx}"
+                        )
+                        readerViewport = next
+                    }
                 }
         ) {
             if (webViewRuntimeState.initialized) {
@@ -9502,6 +9521,17 @@ private fun DesktopEpubWebView(
                 logEpubSelectionDebug(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
             }
         }
+        val paginationLayoutLogHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerPaginationLayoutLog"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                logEpubPagination(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))
+            }
+        }
         val linkHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerLinkClicked"
 
@@ -9530,6 +9560,7 @@ private fun DesktopEpubWebView(
         bridge.register(keyNavigationHandler)
         bridge.register(ttsHighlightLogHandler)
         bridge.register(selectionDebugLogHandler)
+        bridge.register(paginationLayoutLogHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
@@ -9539,6 +9570,7 @@ private fun DesktopEpubWebView(
             bridge.unregister(keyNavigationHandler)
             bridge.unregister(ttsHighlightLogHandler)
             bridge.unregister(selectionDebugLogHandler)
+            bridge.unregister(paginationLayoutLogHandler)
             bridge.unregister(linkHandler)
         }
     }
@@ -9600,6 +9632,11 @@ private fun DesktopEpubWebView(
                 })();
                 """.trimIndent()
             )
+        }
+
+        LaunchedEffect(html, state.loadingState) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            navigator.evaluateJavaScript("window.readerPaginationLayoutLog && window.readerPaginationLayoutLog('desktop_finished');")
         }
 
         LaunchedEffect(appearanceScript, state.loadingState) {
@@ -9772,6 +9809,22 @@ private fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionPa
 }
 
 private fun String.readerSelectionDebugMessageOrNull(): String? {
+    fun parse(rawJson: String): String? = runCatching {
+        Json.parseToJsonElement(rawJson)
+            .jsonObject["message"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    parse(this)?.let { return it }
+    return runCatching {
+        Json.parseToJsonElement(this).jsonPrimitive.contentOrNull
+    }.getOrNull()?.let { parse(it) }
+}
+
+private fun String.readerPaginationLogMessageOrNull(): String? {
     fun parse(rawJson: String): String? = runCatching {
         Json.parseToJsonElement(rawJson)
             .jsonObject["message"]
@@ -10648,6 +10701,7 @@ private fun String.urlEncode(): String {
 private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
+private const val EpubPaginationLogTag = "EpistemeEpubPagination"
 private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val ExternalLinkLogTag = "EpistemeExternalLink"
 
@@ -10668,6 +10722,10 @@ private fun logPdfLink(message: String) {
 
 private fun logEpubLink(message: String) {
     logDesktopDiagnostic(EpubLinkLogTag) { message }
+}
+
+private fun logEpubPagination(message: String) {
+    logDesktopDiagnostic(EpubPaginationLogTag) { message }
 }
 
 private fun logEpubSelectionDebug(message: String) {

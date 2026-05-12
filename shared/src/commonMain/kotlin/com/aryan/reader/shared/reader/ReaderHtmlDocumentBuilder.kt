@@ -334,6 +334,10 @@ object ReaderHtmlDocumentBuilder {
                   margin-top: 0;
                   margin-bottom: calc(1em * var(--reader-paragraph-spacing));
                 }
+                h1, h2, h3, h4, h5, h6 {
+                  margin-top: 0;
+                  margin-bottom: calc(1em * var(--reader-paragraph-spacing));
+                }
                 img, svg, video {
                   max-width: var(--reader-image-scale);
                   height: auto;
@@ -589,6 +593,65 @@ object ReaderHtmlDocumentBuilder {
                     if (start !== null && end !== null) label += '[range=' + start + '..' + end + ']';
                     return label;
                   }
+                  function readerPaginationLog(message) {
+                    var line = 'EpistemeEpubPagination ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerPaginationLayoutLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
+                  function readerPaginationLayoutLog(reason) {
+                    if (!document.body || !document.body.classList.contains('reader-paginated')) return;
+                    var pages = Array.prototype.slice.call(document.querySelectorAll('.page[data-reader-page-index]'));
+                    var mode = document.querySelector('.reader-spread') ? 'spread' : 'single';
+                    var bodyStyle = window.getComputedStyle(document.body);
+                    var bodyPaddingY = (parseFloat(bodyStyle.paddingTop) || 0) + (parseFloat(bodyStyle.paddingBottom) || 0);
+                    pages.forEach(function (page) {
+                      var content = page.querySelector('.reader-content') || page;
+                      var pageRect = page.getBoundingClientRect();
+                      var contentRect = content.getBoundingClientRect();
+                      var children = Array.prototype.slice.call(content.children || []);
+                      var last = children.length ? children[children.length - 1] : null;
+                      var lastRect = last ? last.getBoundingClientRect() : null;
+                      var lastStyle = last ? window.getComputedStyle(last) : null;
+                      var lastMarginBottom = lastStyle ? (parseFloat(lastStyle.marginBottom) || 0) : 0;
+                      var pageOverflow = (page.scrollHeight || 0) - (page.clientHeight || 0);
+                      var contentOverflow = contentRect.bottom - pageRect.bottom;
+                      var lastOverflow = lastRect ? (lastRect.bottom + lastMarginBottom - pageRect.bottom) : 0;
+                      var overflowPx = Math.ceil(Math.max(0, pageOverflow, contentOverflow, lastOverflow));
+                      var pageIndex = numberAttribute(page, 'data-reader-page-index', -1);
+                      var chapterIndex = numberAttribute(page, 'data-reader-chapter-index', -1);
+                      var startOffset = numberAttribute(page, 'data-reader-page-start', -1);
+                      var endOffset = numberAttribute(page, 'data-reader-page-end', -1);
+                      var contentText = (content.textContent || '').replace(/\s+/g, ' ').trim();
+                      var lastText = last ? (last.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80) : '';
+                      readerPaginationLog(
+                        'render_layout reason=' + (reason || 'load') +
+                        ' mode=' + mode +
+                        ' page=' + (pageIndex + 1) +
+                        ' chapter=' + chapterIndex +
+                        ' range=' + startOffset + '..' + endOffset +
+                        ' overflowPx=' + overflowPx +
+                        ' pageClient=' + page.clientWidth + 'x' + page.clientHeight +
+                        ' pageScroll=' + page.scrollWidth + 'x' + page.scrollHeight +
+                        ' pageRect=' + Math.round(pageRect.width) + 'x' + Math.round(pageRect.height) +
+                        ' contentBottom=' + Math.round(contentRect.bottom - pageRect.top) +
+                        ' last=' + readerElementLabel(last) +
+                        ' lastBottom=' + (lastRect ? Math.round(lastRect.bottom - pageRect.top) : 'null') +
+                        ' lastMarginBottom=' + Math.round(lastMarginBottom) +
+                        ' bodyPaddingY=' + Math.round(bodyPaddingY) +
+                        ' textChars=' + contentText.length +
+                        ' lastText="' + lastText.replace(/"/g, '\\"') + '"'
+                      );
+                    });
+                  }
+                  window.readerPaginationLayoutLog = readerPaginationLayoutLog;
                   function scrollToLocator(locator) {
                     locator = locator || {};
                     var chapterIndex = locator.chapterIndex;
@@ -1963,8 +2026,10 @@ object ReaderHtmlDocumentBuilder {
                   });
                   scrollToActiveLocator();
                   reportVisiblePage();
+                  window.setTimeout(function () { readerPaginationLayoutLog('initial_timeout'); }, 80);
                   window.addEventListener('load', scrollToActiveLocator, { once: true });
                   window.addEventListener('load', reportVisiblePage, { once: true });
+                  window.addEventListener('load', function () { readerPaginationLayoutLog('window_load'); }, { once: true });
                 })();
               </script>
             </body>
