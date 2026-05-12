@@ -55,6 +55,34 @@ class DesktopReaderDefaultsTest {
     }
 
     @Test
+    fun `desktop paginated pdf page changes avoid high resolution first render`() {
+        assertEquals(
+            DesktopPdfPaginationFastFirstRenderMaxScale,
+            desktopPdfPaginationFirstRenderScale(requestedScale = 6f, hasPageRender = false)
+        )
+        assertEquals(
+            6f,
+            desktopPdfPaginationFirstRenderScale(
+                requestedScale = 6f,
+                hasPageRender = false,
+                isOpeningRender = true
+            )
+        )
+        assertEquals(
+            6f,
+            desktopPdfPaginationFirstRenderScale(requestedScale = 6f, hasPageRender = true)
+        )
+        assertEquals(
+            1.25f,
+            desktopPdfPaginationFirstRenderScale(requestedScale = 1.25f, hasPageRender = false)
+        )
+        assertEquals(
+            0.75f,
+            desktopPdfPaginationFirstRenderScale(requestedScale = 0.75f, hasPageRender = false)
+        )
+    }
+
+    @Test
     fun `desktop pdf anchored zoom keeps cursor content stable`() {
         assertEquals(
             300,
