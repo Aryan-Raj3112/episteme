@@ -95,10 +95,10 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.pptx.PptxCoverGenerator
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
-import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
@@ -2063,7 +2063,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val hasTextBoxes = textBoxFile.exists()
                 val hasHighlights = highlightFile.exists()
                 val hasAnyData = hasInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                Timber.d(
                     "android.cloud.export candidates book=${book.bookId} hasRichText=$hasRichText " +
                         "richBytes=${if (hasRichText) richTextFile.length() else 0L} hasAnyData=$hasAnyData"
                 )
@@ -2081,7 +2081,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 try {
                                     val content = file.readText().trim()
                                     if (key == "text") {
-                                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                        Timber.d(
                                             "android.cloud.export.readRichText book=${book.bookId} rawLen=${content.length} " +
                                                 "file=${file.absolutePath}"
                                         )
@@ -2093,8 +2093,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     }
                                 } catch (e: Exception) {
                                     if (key == "text") {
-                                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
-                                            .e(e, "android.cloud.export.richTextParseFailed book=${book.bookId}")
+                                        Timber.e(e, "android.cloud.export.richTextParseFailed book=${book.bookId}")
                                     }
                                     Timber.e(e, "Failed to parse local $key file")
                                 }
@@ -2111,7 +2110,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             val canonicalBundle = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
                             bundleFile.writeText(canonicalBundle)
                             if (hasRichText) {
-                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                Timber.d(
                                     "android.cloud.export.bundleReady book=${book.bookId} canonicalLen=${canonicalBundle.length} " +
                                         "bundleFile=${bundleFile.absolutePath}"
                                 )
@@ -2124,14 +2123,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                             if (uploaded != null) {
                                 if (hasRichText) {
-                                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                                    Timber
                                         .d("android.cloud.export.uploadSuccess book=${book.bookId} driveId=${uploaded.id}")
                                 }
                                 Timber.tag("AnnotationSync")
                                     .d("Bundle upload SUCCESS. ID: ${uploaded.id}")
                             } else {
                                 if (hasRichText) {
-                                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                                    Timber
                                         .e("android.cloud.export.uploadFailed book=${book.bookId}")
                                 }
                                 Timber.tag("AnnotationSync")
@@ -3226,7 +3225,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             try {
                 val jsonString = tempDownloadFile.readText()
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                Timber.d(
                     "android.cloud.import.downloaded book=$bookId rawLen=${jsonString.length}"
                 )
 
@@ -3262,7 +3261,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val bundle = JSONObject(
                         SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
                     )
-                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    Timber.d(
                         "android.cloud.import.bundle book=$bookId hasRichText=${bundle.has("text")} keys=${bundle.keys().asSequence().toList()}"
                     )
 
@@ -3272,13 +3271,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             val content = bundle.get(key).toString()
                             file.writeText(content)
                             if (key == "text") {
-                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                Timber.d(
                                     "android.cloud.import.writeRichText book=$bookId rawLen=${content.length} file=${file.absolutePath}"
                                 )
                             }
                         } else {
                             if (key == "text" && file.exists()) {
-                                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                                Timber.d(
                                     "android.cloud.import.deleteMissingRichText book=$bookId file=${file.absolutePath}"
                                 )
                             }
@@ -3443,7 +3442,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             seriesName = seriesName ?: finalBookMetadata.seriesName
             seriesIndex = seriesIndex ?: finalBookMetadata.seriesIndex
             description = description ?: finalBookMetadata.description
-        } else if (type == FileType.PDF || type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+        } else if (type in PDF_VIEWER_FILE_TYPES) {
             title = title ?: displayName
 
             if (type == FileType.PDF) {
@@ -3472,6 +3471,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (coverPath == null) {
                     val pdfCoverGenerator = PdfCoverGenerator(appContext)
                     val coverBitmap = pdfCoverGenerator.generateCover(uri)
+                    if (coverBitmap != null) {
+                        coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
+                    }
+                }
+            } else if (type == FileType.PPTX) {
+                if (coverPath == null) {
+                    val pptxCoverGenerator = PptxCoverGenerator(appContext)
+                    val coverBitmap = pptxCoverGenerator.generateCover(uri)
                     if (coverBitmap != null) {
                         coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
                     }
@@ -3853,7 +3860,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val type = item.type
             val bookId = item.bookId
 
-            if (type == FileType.PDF || type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+            if (type in PDF_VIEWER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
                 _internalState.update {
                     it.copy(
@@ -4096,7 +4103,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
 
-            if (type == FileType.PDF || type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+            if (type in PDF_VIEWER_FILE_TYPES) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
 
@@ -5644,6 +5651,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "application/vnd.comicbook+zip", "application/x-cbz", "application/vnd.comicbook-rar",
             "application/x-cbr", "application/x-rar-compressed", "application/x-cb7",
             "application/x-7z-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "application/vnd.oasis.opendocument.text", "application/x-vnd.oasis.opendocument.text-flat-xml",
             "text/csv", "text/comma-separated-values", "text/tab-separated-values", "application/json",
             "application/xml", "text/xml", "text/x-java-source", "text/x-python", "text/x-kotlin",

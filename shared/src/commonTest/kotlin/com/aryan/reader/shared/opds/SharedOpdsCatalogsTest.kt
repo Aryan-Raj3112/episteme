@@ -103,5 +103,16 @@ class SharedOpdsCatalogsTest {
                 urlPathSegment = null
             )
         )
+        assertEquals(
+            ".pptx",
+            SharedOpdsDownloadNamer.resolveExtension(
+                acquisition = OpdsAcquisition(
+                    "https://example.org/download",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                ),
+                contentDisposition = null,
+                urlPathSegment = null
+            )
+        )
     }
 }

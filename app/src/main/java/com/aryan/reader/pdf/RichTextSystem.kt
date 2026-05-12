@@ -57,7 +57,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import timber.log.Timber
 import java.io.File
 
@@ -267,18 +266,18 @@ class TextPaginationEngine {
         dirtyGlobalIndex: Int = 0
     ): List<PageTextLayout> {
         val totalLen = globalText.length
-        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+        Timber.d(
             "android.paginate start textLen=$totalLen page=${pageWidthPx.richAndroidLogFloat()}x${pageHeightPx.richAndroidLogFloat()} " +
                 "margin=${marginX.richAndroidLogFloat()},${marginY.richAndroidLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
         )
         if (totalLen == 0) {
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate empty -> p0:0-0")
+            Timber.d("android.paginate empty -> p0:0-0")
             return listOf(
                 PageTextLayout(0, AnnotatedString(""), 0, 0, pageHeightPx)
             )
         }
         if (pageWidthPx <= 0 || pageHeightPx <= 0) {
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate aborted invalid page size")
+            Timber.d("android.paginate aborted invalid page size")
             return emptyList()
         }
 
@@ -320,7 +319,7 @@ class TextPaginationEngine {
             "  Page ${it.pageIndex}: Global[${it.globalStartIndex}..${it.globalEndIndex}]"
         }
         Timber.tag("RichTextMigration").i("Pagination Map Generated:\n$mapLog")
-        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.paginate done -> ${resultLayouts.richAndroidLayoutSummary()}")
+        Timber.d("android.paginate done -> ${resultLayouts.richAndroidLayoutSummary()}")
 
         return resultLayouts
     }
@@ -350,7 +349,7 @@ private fun MutableList<PageTextLayout>.appendMeasuredAndroidRichTextSegment(
                 pageHeightPx = pageHeightPx
             )
         )
-        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+        Timber.d(
             "android.paginate pageBreakOnly page=$nextPageIndex global=$segmentStart..$breakEnd"
         )
         return nextPageIndex + 1
@@ -398,11 +397,11 @@ private fun MutableList<PageTextLayout>.appendMeasuredAndroidRichTextSegment(
             )
         )
         if (isLastContentPage && explicitBreakEnd != null) {
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            Timber.d(
                 "android.paginate pageBreak page=$nextPageIndex global=$globalStart..$globalEnd"
             )
         } else if (!fitsOnPage) {
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            Timber.d(
                 "android.paginate overflow page=$nextPageIndex global=$globalStart..$globalEnd line=$overflowLineIndex"
             )
         }
@@ -475,12 +474,12 @@ class PdfRichTextRepository(private val context: Context) {
     suspend fun load(bookId: String) {
         withContext(Dispatchers.IO) {
             val file = getFile(bookId)
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            Timber.d(
                 "android.repository.load start book=$bookId exists=${file.exists()} path=${file.absolutePath}"
             )
             if (!file.exists()) {
                 _document.value = GlobalRichDocument("", emptyList())
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d("android.repository.load missing -> empty book=$bookId")
+                Timber.d("android.repository.load missing -> empty book=$bookId")
                 return@withContext
             }
             try {
@@ -508,11 +507,11 @@ class PdfRichTextRepository(private val context: Context) {
                     )
                 }
                 _document.value = GlobalRichDocument(text, spans)
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                Timber.d(
                     "android.repository.load decoded book=$bookId rawLen=${jsonString.length} textLen=${text.length} spans=${spans.size}"
                 )
             } catch (e: Exception) {
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).e(e, "android.repository.load failed book=$bookId")
+                Timber.e(e, "android.repository.load failed book=$bookId")
                 Timber.e(e, "Failed to load rich text doc")
                 _document.value = GlobalRichDocument("", emptyList())
             }
@@ -523,7 +522,7 @@ class PdfRichTextRepository(private val context: Context) {
         _document.value = document
         withContext(Dispatchers.IO) {
             try {
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                Timber.d(
                     "android.repository.save start book=$bookId textLen=${document.text.length} spans=${document.spans.size}"
                 )
                 val obj = JSONObject().apply {
@@ -548,11 +547,11 @@ class PdfRichTextRepository(private val context: Context) {
                 }
                 val file = getFile(bookId)
                 file.writeText(obj.toString())
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                Timber.d(
                     "android.repository.save done book=$bookId bytes=${file.length()} path=${file.absolutePath}"
                 )
             } catch (e: Exception) {
-                Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).e(e, "android.repository.save failed book=$bookId")
+                Timber.e(e, "android.repository.save failed book=$bookId")
                 Timber.e(e, "Failed to save rich text doc")
             }
         }

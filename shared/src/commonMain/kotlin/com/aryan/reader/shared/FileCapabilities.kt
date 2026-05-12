@@ -159,6 +159,13 @@ object SharedFileCapabilities {
             extensions = setOf("fodt"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
             desktopSurface = ReaderFeatureSurface.TEXT_READER
+        ),
+        FileTypeCapability(
+            type = FileType.PPTX,
+            displayName = "PPTX",
+            extensions = setOf("pptx"),
+            androidSurface = ReaderFeatureSurface.PDF_VIEWER,
+            desktopSurface = null
         )
     )
 
@@ -178,6 +185,7 @@ object SharedFileCapabilities {
         FileType.CBR to "application/zip",
         FileType.CB7 to "application/zip",
         FileType.DOCX to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        FileType.PPTX to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         FileType.ODT to "application/vnd.oasis.opendocument.text",
         FileType.FODT to "application/x-vnd.oasis.opendocument.text-flat-xml"
     )

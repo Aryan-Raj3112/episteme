@@ -85,6 +85,7 @@ class MetadataExtractionWorker(
                         FileType.ODT -> parseZipTextMetadata(uri, "meta.xml")
                         FileType.FODT -> parseFlatXmlTextMetadata(uri)
                         FileType.DOCX -> parseZipTextMetadata(uri, "docProps/core.xml")
+                        FileType.PPTX -> parseZipTextMetadata(uri, "docProps/core.xml")
                         else -> TextMetadata()
                     }
 

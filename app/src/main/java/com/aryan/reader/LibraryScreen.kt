@@ -1597,7 +1597,7 @@ private fun LibraryListItem(
 ) {
     val context = LocalContext.current
     val placeholder = when (item.type) {
-        FileType.PDF -> R.drawable.pdf_placeholder
+        FileType.PDF, FileType.PPTX -> R.drawable.pdf_placeholder
         FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT, FileType.UNKNOWN -> R.drawable.epub_placeholder
     }
     val imageModel = remember(item.coverImagePath) {

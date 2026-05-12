@@ -31,7 +31,7 @@ object PdfiumCoreProvider {
 
 internal data class DocumentCacheItem(
     val doc: ReaderDocument,
-    val pfd: ParcelFileDescriptor,
+    val pfd: ParcelFileDescriptor?,
     val totalPages: Int,
     val pageAspectRatios: List<Float>,
     val flatTableOfContents: List<TocEntry>
@@ -48,7 +48,7 @@ internal class DocumentCache(val maxSize: Int = 3) {
             if (evicted) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try { oldValue.doc.close() } catch (e: Exception) { Timber.e(e) }
-                    try { oldValue.pfd.close() } catch (e: Exception) { Timber.e(e) }
+                    try { oldValue.pfd?.close() } catch (e: Exception) { Timber.e(e) }
                 }
             }
         }

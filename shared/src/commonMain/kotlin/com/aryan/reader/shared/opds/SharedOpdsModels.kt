@@ -37,6 +37,8 @@ data class OpdsAcquisition(
         get() = when {
             mimeType.contains("epub", ignoreCase = true) -> "EPUB"
             mimeType.contains("pdf", ignoreCase = true) -> "PDF"
+            mimeType.contains("presentationml.presentation", ignoreCase = true) ||
+                mimeType.contains("pptx", ignoreCase = true) -> "PPTX"
             mimeType.contains("markdown", ignoreCase = true) ||
                 mimeType.contains("text/x-markdown", ignoreCase = true) -> "MD"
             mimeType.contains("html", ignoreCase = true) ||
@@ -58,6 +60,7 @@ data class OpdsAcquisition(
         get() = when (formatName) {
             "EPUB" -> 5
             "PDF" -> 4
+            "PPTX" -> 4
             "MOBI" -> 3
             "FB2", "MD", "HTML" -> 2
             "CBZ", "CBR", "CB7" -> 1

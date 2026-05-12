@@ -188,6 +188,10 @@ class OpdsParserTest {
         val acquisitions = listOf(
             OpdsAcquisition("txt", "text/plain"),
             OpdsAcquisition("pdf", "application/pdf"),
+            OpdsAcquisition(
+                "pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
             OpdsAcquisition("epub", "application/epub+zip"),
             OpdsAcquisition("unknown", "application/octet-stream")
         )
@@ -200,9 +204,10 @@ class OpdsParserTest {
             navigationUrl = null
         )
 
-        assertEquals("EPUB", acquisitions[2].formatName)
+        assertEquals("EPUB", acquisitions[3].formatName)
+        assertEquals("PPTX", acquisitions[2].formatName)
         assertEquals("TXT", acquisitions[0].formatName)
-        assertEquals("OCTET-STREAM", acquisitions[3].formatName)
-        assertEquals(acquisitions[2], entry.bestAcquisition)
+        assertEquals("OCTET-STREAM", acquisitions[4].formatName)
+        assertEquals(acquisitions[3], entry.bestAcquisition)
     }
 }

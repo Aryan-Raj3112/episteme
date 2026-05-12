@@ -14,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import com.aryan.reader.FileType
 import com.aryan.reader.R
+import com.aryan.reader.pptx.PptxDocumentWrapper
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import io.legere.pdfiumandroid.suspend.PdfPageKt
@@ -79,7 +80,20 @@ object DocumentFactory {
             val catalogId = uri.getQueryParameter("catalogId")
             return OpdsStreamDocumentWrapper(context, bookId, urlTemplate, count, catalogId)
         }
-        return if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+        return if (type == FileType.PPTX) {
+            val cacheFile = File(context.cacheDir, "temp_pptx_${System.currentTimeMillis()}.pptx")
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        cacheFile.outputStream().use { output -> input.copyTo(output) }
+                    } ?: throw Exception("Failed to open PPTX")
+                }
+            } catch (e: Exception) {
+                runCatching { cacheFile.delete() }
+                throw e
+            }
+            PptxDocumentWrapper(cacheFile, deleteOnClose = true)
+        } else if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
             val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.${type.name.lowercase()}")
             withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use { input ->

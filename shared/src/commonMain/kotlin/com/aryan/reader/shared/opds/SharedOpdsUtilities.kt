@@ -76,6 +76,7 @@ object SharedOpdsDownloadNamer {
         return when (acquisition.formatName) {
             "EPUB" -> ".epub"
             "PDF" -> ".pdf"
+            "PPTX" -> ".pptx"
             "MOBI" -> ".mobi"
             "FB2" -> ".fb2"
             "CBZ" -> ".cbz"

@@ -49,6 +49,7 @@ class NonReaderLayoutModelsTest {
         assertEquals(groupedTypes.size, groupedTypes.toSet().size)
         assertTrue(FileType.DOCX in groupedTypes)
         assertTrue(FileType.FODT in groupedTypes)
+        assertFalse(FileType.PPTX in groupedTypes)
         assertTrue(
             nonReaderLibraryFileTypeGroups()
                 .any { it.title == "Comics" && FileType.CBR in it.fileTypes && FileType.CB7 in it.fileTypes }

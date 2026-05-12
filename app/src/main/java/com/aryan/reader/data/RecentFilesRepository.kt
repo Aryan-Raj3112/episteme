@@ -40,7 +40,6 @@ import java.io.FileOutputStream
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
-import com.aryan.reader.shared.pdf.SHARED_PDF_RICH_TEXT_LOG_TAG
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import org.json.JSONObject
 import org.json.JSONArray
@@ -275,7 +274,7 @@ class RecentFilesRepository(private val context: Context) {
         val hasHighlights = highlightFile.exists()
 
         Timber.tag("FolderAnnotationSync").d("File checks -> hasInk: $hasInk, hasRichText: $hasRichText, hasLayout: $hasLayout, hasTextBoxes: $hasTextBoxes, hasHighlights: $hasHighlights")
-        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+        Timber.d(
             "android.folder.export candidates book=$bookId hasRichText=$hasRichText " +
                 "richBytes=${if (hasRichText) richTextFile.length() else 0L} folder=$folderUriString"
         )
@@ -291,7 +290,7 @@ class RecentFilesRepository(private val context: Context) {
             try {
                 val content = file.readText().trim()
                 if (key == "text") {
-                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                    Timber.d(
                         "android.folder.export.readRichText book=$bookId rawLen=${content.length} file=${file.absolutePath}"
                     )
                 }
@@ -302,7 +301,7 @@ class RecentFilesRepository(private val context: Context) {
                 }
             } catch (e: Exception) {
                 if (key == "text") {
-                    Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG)
+                    Timber
                         .e(e, "android.folder.export.richTextParseFailed book=$bookId")
                 }
                 Timber.tag("FolderAnnotationSync").e(e, "Error parsing $key file")
@@ -328,7 +327,7 @@ class RecentFilesRepository(private val context: Context) {
 
         val canonicalBundleJson = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
         if (hasRichText) {
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            Timber.d(
                 "android.folder.export.saveSidecar book=$bookId timestamp=$finalTs canonicalLen=${canonicalBundleJson.length}"
             )
         }
@@ -348,7 +347,7 @@ class RecentFilesRepository(private val context: Context) {
             val bundle = JSONObject(
                 SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
             )
-            Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+            Timber.d(
                 "android.folder.import.bundle book=$bookId rawLen=${jsonString.length} " +
                     "hasRichText=${bundle.has("text")} keys=${bundle.keys().asSequence().toList()}"
             )
@@ -359,7 +358,7 @@ class RecentFilesRepository(private val context: Context) {
                     val contentStr = bundle.get(key).toString()
                     file.writeText(contentStr)
                     if (key == "text") {
-                        Timber.tag(SHARED_PDF_RICH_TEXT_LOG_TAG).d(
+                        Timber.d(
                             "android.folder.import.writeRichText book=$bookId rawLen=${contentStr.length} file=${file.absolutePath}"
                         )
                     }

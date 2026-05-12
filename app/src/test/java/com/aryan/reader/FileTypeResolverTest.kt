@@ -28,6 +28,7 @@ class FileTypeResolverTest {
     fun `metadata resolver maps provider mime types without exposing generic archives`() {
         assertEquals(FileType.PDF, resolveFileTypeFromMetadata("download", "application/pdf"))
         assertEquals(FileType.DOCX, resolveFileTypeFromMetadata("download", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+        assertEquals(FileType.PPTX, resolveFileTypeFromMetadata("download", "application/vnd.openxmlformats-officedocument.presentationml.presentation"))
         assertEquals(FileType.MD, resolveFileTypeFromMetadata("notes.markdown.txt", "text/plain; charset=utf-8"))
         assertEquals(FileType.EPUB, resolveFileTypeFromMetadata("book.epub.txt", "text/plain"))
         assertEquals(FileType.TXT, resolveFileTypeFromMetadata("notes", "text/plain"))
@@ -54,6 +55,7 @@ class FileTypeResolverTest {
     @Test
     fun `plain txt remains txt when inner extension is unsupported`() {
         assertEquals(FileType.TXT, resolveFileTypeFromName("notes.txt"))
+        assertEquals(FileType.PPTX, resolveFileTypeFromName("deck.pptx"))
         assertEquals(FileType.TXT, resolveFileTypeFromName("archive.unknown.txt"))
         assertNull(resolveFileTypeFromName("archive.zip"))
     }

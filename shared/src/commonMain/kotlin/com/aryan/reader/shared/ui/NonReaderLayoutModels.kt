@@ -136,7 +136,7 @@ private val LibraryFileTypeGroupTemplates = listOf(
     ),
     NonReaderLibraryFileTypeGroup(
         title = "Documents",
-        fileTypes = listOf(FileType.PDF, FileType.DOCX, FileType.ODT, FileType.FODT)
+        fileTypes = listOf(FileType.PDF, FileType.PPTX, FileType.DOCX, FileType.ODT, FileType.FODT)
     ),
     NonReaderLibraryFileTypeGroup(
         title = "Text and web",

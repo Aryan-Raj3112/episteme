@@ -109,6 +109,7 @@ class BookImporter(private val context: Context) {
             when (context.contentResolver.getType(uri)) {
                 "application/pdf" -> "pdf"
                 "application/epub+zip" -> "epub"
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> "pptx"
                 else -> "tmp"
             }
         }

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import com.aryan.reader.pdf.ReaderDocument
 
 private const val TAG = "PdfSearchDiag"
 
@@ -276,6 +277,69 @@ class PdfTextRepository(context: Context) {
 
             indexPage(bookId, document, pageIndex, onModelDownloading)
             dao.getPageText(bookId, pageIndex) ?: ""
+        }
+    }
+
+    suspend fun indexReaderPage(
+        bookId: String,
+        document: ReaderDocument,
+        pageIndex: Int,
+        onOcrModelDownloading: () -> Unit = {}
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            var text = ""
+            var ocrUsed = false
+
+            try {
+                document.openPage(pageIndex)?.use { page ->
+                    page.openTextPage().use { textPage ->
+                        val count = textPage.textPageCountChars()
+                        if (count > 0) {
+                            text = textPage.textPageGetText(0, count).orEmpty()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "ReaderDocument extraction failed for page $pageIndex")
+            }
+
+            if (text.isBlank()) {
+                var bitmap: android.graphics.Bitmap? = null
+                try {
+                    document.openPage(pageIndex)?.use { page ->
+                        val targetWidth = 1080
+                        val pageWidth = page.getPageWidthPoint()
+                        val pageHeight = page.getPageHeightPoint()
+                        if (pageWidth > 0 && pageHeight > 0) {
+                            val aspectRatio = pageWidth.toFloat() / pageHeight.toFloat()
+                            val targetHeight = (targetWidth / aspectRatio).toInt().coerceAtLeast(1)
+                            bitmap = createBitmap(targetWidth, targetHeight)
+                            page.renderPageBitmap(bitmap!!, 0, 0, targetWidth, targetHeight, false)
+                        }
+                    }
+
+                    bitmap?.let {
+                        try {
+                            val visionText = OcrHelper.extractTextFromBitmap(it, onOcrModelDownloading)
+                            text = visionText?.text.orEmpty()
+                            ocrUsed = true
+                        } finally {
+                            it.recycle()
+                            bitmap = null
+                        }
+                    }
+                } catch (e: Exception) {
+                    bitmap?.recycle()
+                    Timber.tag(TAG).e(e, "ReaderDocument OCR failed for page $pageIndex")
+                }
+            }
+
+            val cleaned = cleanIndexedText(text)
+            if (cleaned.isNotBlank()) {
+                dao.insertPageText(PdfSearchIndex(bookId = bookId, pageIndex = pageIndex, content = cleaned))
+            }
+
+            ocrUsed && cleaned.isNotEmpty()
         }
     }
 
@@ -598,5 +662,18 @@ class PdfTextRepository(context: Context) {
         }
 
         return null
+    }
+
+    private fun cleanIndexedText(raw: String): String {
+        if (raw.isBlank()) return ""
+        var text = raw
+        val patterns = listOf(
+            Regex("(?i)file:/?/?/?\\S+"),
+            Regex("(?i)/data/user/\\d+/\\S+"),
+            Regex("(?i)/storage/emulated/\\d+/\\S+"),
+            Regex("(?i)\\S*com\\.aryan\\.reader\\S*")
+        )
+        patterns.forEach { pattern -> text = text.replace(pattern, " ") }
+        return text.replace(Regex("\\s+"), " ").trim()
     }
 }

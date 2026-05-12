@@ -15,6 +15,7 @@ internal fun resolveFileTypeFromMetadata(fileName: String?, mimeType: String?): 
         "application/vnd.oasis.opendocument.text" -> FileType.ODT
         "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> FileType.PPTX
         "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
             when {
                 fileName?.endsWith(".cbz", ignoreCase = true) == true -> FileType.CBZ

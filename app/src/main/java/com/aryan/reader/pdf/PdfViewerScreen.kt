@@ -3041,12 +3041,13 @@ fun PdfViewerScreen(
             withContext(Dispatchers.IO) {
                 Timber.tag("PdfTabSync").v("UI: Opening PFD for $effectivePdfUri")
 
-                if (pdfUri.scheme != "opds-pse") {
+                val selectedDocumentType = uiState.selectedFileType ?: FileType.PDF
+                if (pdfUri.scheme != "opds-pse" && selectedDocumentType == FileType.PDF) {
                     currentPfdOpened = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
                     if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
                 }
 
-                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, uiState.selectedFileType ?: FileType.PDF, documentPassword, pdfiumCore)
+                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
 
                 if (!isActive) {
                     doc.close()
@@ -3136,7 +3137,7 @@ fun PdfViewerScreen(
                         currentBookId!!,
                         DocumentCacheItem(
                             doc = doc,
-                            pfd = currentPfdOpened!!,
+                            pfd = currentPfdOpened,
                             totalPages = pagesCount,
                             pageAspectRatios = ratios,
                             flatTableOfContents = flatTableOfContents
@@ -3203,8 +3204,8 @@ fun PdfViewerScreen(
                     isLoadingDocument = false
                 }
             } else {
-                Timber.e(e, "Error loading PDF document")
-                errorMessage = "Error loading PDF: ${e.localizedMessage}"
+                Timber.e(e, "Error loading fixed-layout document")
+                errorMessage = "Error loading document: ${e.localizedMessage}"
                 isLoadingDocument = false
             }
             if (pdfDocument == null) {
@@ -3287,7 +3288,8 @@ fun PdfViewerScreen(
     LaunchedEffect(effectivePdfUri, currentBookId, totalPages) {
         if (currentBookId == null || totalPages == 0) return@LaunchedEffect
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
-        if (uiState.selectedFileType != FileType.PDF) return@LaunchedEffect
+        val selectedDocumentType = uiState.selectedFileType ?: return@LaunchedEffect
+        if (selectedDocumentType != FileType.PDF && selectedDocumentType != FileType.PPTX) return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
             val storedLang = pdfTextRepository.getBookLanguage(currentBookId!!)
@@ -3298,6 +3300,7 @@ fun PdfViewerScreen(
             isBackgroundIndexing = true
             var bgPfd: ParcelFileDescriptor? = null
             var bgDoc: PdfDocumentKt? = null
+            var genericDoc: ReaderDocument? = null
 
             try {
                 val existingPages = pdfTextRepository.getIndexedPages(currentBookId!!)
@@ -3314,16 +3317,17 @@ fun PdfViewerScreen(
                     "Indexer: Starting background indexing for ${totalPages - existingPages.size} pages."
                 )
 
-                bgPfd = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
-                val openedBgPfd = bgPfd
-                if (openedBgPfd != null) {
+                val pagesToIndex = (0 until totalPages).filter { !existingPages.contains(it) }
+                val totalToDo = pagesToIndex.size
+                var completed = 0
+
+                if (selectedDocumentType == FileType.PDF) {
+                    bgPfd = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
+                    val openedBgPfd = bgPfd
+                    if (openedBgPfd == null) return@withContext
                     bgDoc = PdfiumEngineProvider.withPdfium {
                         pdfiumCore.newDocument(openedBgPfd, documentPassword)
                     }
-
-                    val pagesToIndex = (0 until totalPages).filter { !existingPages.contains(it) }
-                    val totalToDo = pagesToIndex.size
-                    var completed = 0
 
                     for (pageIndex in pagesToIndex) {
                         if (!isActive) break
@@ -3345,6 +3349,37 @@ fun PdfViewerScreen(
                                 totalIndexedSoFar.toFloat() / totalPages.toFloat()
                         }
                     }
+                } else {
+                    val openedGenericDoc = DocumentFactory.loadDocument(
+                        context = context,
+                        uri = effectivePdfUri,
+                        type = selectedDocumentType,
+                        password = null,
+                        pdfiumCore = pdfiumCore
+                    )
+                    genericDoc = openedGenericDoc
+
+                    for (pageIndex in pagesToIndex) {
+                        if (!isActive) break
+
+                        try {
+                            pdfTextRepository.indexReaderPage(
+                                bookId = currentBookId!!,
+                                document = openedGenericDoc,
+                                pageIndex = pageIndex,
+                                onOcrModelDownloading = { isOcrModelDownloading = true }
+                            )
+                        } catch (e: Exception) {
+                            Timber.e(e, "Indexer: Failed on page $pageIndex")
+                        }
+
+                        completed++
+                        if (completed % 5 == 0 || completed == totalToDo) {
+                            val totalIndexedSoFar = initialIndexedCount + completed
+                            backgroundIndexingProgress =
+                                totalIndexedSoFar.toFloat() / totalPages.toFloat()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Indexer: Fatal error")
@@ -3353,6 +3388,7 @@ fun PdfViewerScreen(
                     PdfiumEngineProvider.withPdfium {
                         bgDoc?.close()
                     }
+                    genericDoc?.close()
                     bgPfd?.close()
                 } catch (e: Exception) {
                     Timber.e(e, "Indexer: Cleanup failed")
