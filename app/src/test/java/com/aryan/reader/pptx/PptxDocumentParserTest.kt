@@ -42,6 +42,8 @@ class PptxDocumentParserTest {
             .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Inherited Placeholder") } } }
         assertEquals(PptxTextAlign.CENTER, inheritedPlaceholder.paragraphs.single().alignment)
         assertEquals(24f, inheritedPlaceholder.paragraphs.single().runs.first().sizePt)
+        assertEquals(PptxAutoFitMode.NORMAL, inheritedPlaceholder.autoFitMode)
+        assertEquals(0.8f, inheritedPlaceholder.fontScale, 0.001f)
         val centeredShape = deck.slides.single().elements
             .filterIsInstance<PptxShapeElement>()
             .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Centered") } } }
@@ -55,6 +57,7 @@ class PptxDocumentParserTest {
             .filterIsInstance<PptxShapeElement>()
             .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Grouped Text") } } }
         assertTrue(groupedShape.bounds.left > 35f)
+        assertEquals(PptxAutoFitMode.SHAPE, groupedShape.autoFitMode)
         assertTrue(
             deck.slides.single().elements.any {
                 it is PptxImageElement &&
@@ -146,7 +149,7 @@ class PptxDocumentParserTest {
                             </p:pic>
                             <p:sp>
                                 <p:nvSpPr><p:cNvPr id="4" name="Body"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
-                                <p:txBody><a:bodyPr/><a:p><a:r><a:t>Inherited Placeholder</a:t></a:r></a:p></p:txBody>
+                                <p:txBody><a:bodyPr><a:normAutofit fontScale="80000" lnSpcReduction="10000"/></a:bodyPr><a:p><a:r><a:t>Inherited Placeholder</a:t></a:r></a:p></p:txBody>
                             </p:sp>
                             <p:sp>
                                 <p:nvSpPr><p:cNvPr id="5" name="Centered"/></p:nvSpPr>
@@ -171,7 +174,7 @@ class PptxDocumentParserTest {
                                 <p:sp>
                                     <p:nvSpPr><p:cNvPr id="8" name="Grouped"/></p:nvSpPr>
                                     <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600000" cy="500000"/></a:xfrm></p:spPr>
-                                    <p:txBody><a:bodyPr/><a:p><a:r><a:t>Grouped Text</a:t></a:r></a:p></p:txBody>
+                                    <p:txBody><a:bodyPr><a:spAutoFit/></a:bodyPr><a:p><a:r><a:t>Grouped Text</a:t></a:r></a:p></p:txBody>
                                 </p:sp>
                             </p:grpSp>
                         </p:spTree>

@@ -48,10 +48,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import androidx.core.graphics.withSave
-import androidx.core.graphics.withClip
 import androidx.core.graphics.withTranslation
 
-internal const val PPTX_RENDERER_VERSION = 3
+internal const val PPTX_RENDERER_VERSION = 4
 private const val EMU_PER_POINT = 12_700f
 private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
 private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
@@ -98,7 +97,8 @@ internal data class PptxShapeElement(
     val rotationDegrees: Float = 0f,
     val renderText: Boolean = true,
     val fontScale: Float = 1f,
-    val lineSpacingReduction: Float = 0f
+    val lineSpacingReduction: Float = 0f,
+    val autoFitMode: PptxAutoFitMode = PptxAutoFitMode.NONE
 ) : PptxElement
 
 internal data class PptxImageElement(
@@ -177,6 +177,12 @@ internal enum class PptxVerticalAnchor {
     TOP,
     MIDDLE,
     BOTTOM
+}
+
+internal enum class PptxAutoFitMode {
+    NONE,
+    NORMAL,
+    SHAPE
 }
 
 internal data class PptxTextInsets(
@@ -585,7 +591,8 @@ internal object PptxDocumentParser {
             rotationDegrees = spPr?.rotationDegreesFromTransform() ?: element.rotationDegreesFromTransform(),
             renderText = placeholderKey == null || renderPlaceholderText,
             fontScale = bodyPr?.autoFitFontScale() ?: 1f,
-            lineSpacingReduction = bodyPr?.autoFitLineSpacingReduction() ?: 0f
+            lineSpacingReduction = bodyPr?.autoFitLineSpacingReduction() ?: 0f,
+            autoFitMode = bodyPr?.autoFitMode() ?: PptxAutoFitMode.NONE
         )
     }
 
@@ -868,7 +875,8 @@ private fun inheritPlaceholderProperties(
                 inherited.lineSpacingReduction
             } else {
                 shape.lineSpacingReduction
-            }
+            },
+            autoFitMode = if (shape.autoFitMode == PptxAutoFitMode.NONE) inherited.autoFitMode else shape.autoFitMode
         )
     }
 }
@@ -1229,12 +1237,13 @@ private object PptxSlideRenderer {
     private fun drawText(canvas: Canvas, shape: PptxShapeElement) {
         if (!shape.renderText) return
         val layout = layoutParagraphs(shape, shape.bounds)
-        val clip = shape.textBounds()
+        val clip = shape.textBounds().takeUnless { shape.autoFitMode == PptxAutoFitMode.SHAPE }
         layout.forEach { paragraph ->
-            canvas.withClip(clip) {
-                translate(paragraph.x, paragraph.y)
-                paragraph.layout.draw(this)
-            }
+            canvas.save()
+            clip?.let { canvas.clipRect(it) }
+            canvas.translate(paragraph.x, paragraph.y)
+            paragraph.layout.draw(canvas)
+            canvas.restore()
         }
     }
 
@@ -1290,30 +1299,28 @@ private object PptxSlideRenderer {
 
 private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidOutParagraph> {
     if (shape.paragraphs.isEmpty() || bounds.width() <= 0f || bounds.height() <= 0f) return emptyList()
-    val textBounds = shape.textBounds(bounds)
-    if (textBounds.width() <= 0f || textBounds.height() <= 0f) return emptyList()
+    val baseTextBounds = shape.textBounds(bounds)
+    if (baseTextBounds.width() <= 0f || baseTextBounds.height() <= 0f) return emptyList()
 
-    val layoutWidth = textBounds.width().roundToInt().coerceAtLeast(1)
-    val prepared = shape.paragraphs.mapNotNull { paragraph ->
-        val text = paragraph.displayText()
-        if (text.isBlank()) return@mapNotNull null
-        val spannable = paragraph.toSpannable(text, shape.fontScale)
-        val layout = StaticLayout.Builder
-            .obtain(spannable, 0, spannable.length, TextLayoutPaint, layoutWidth)
-            .setAlignment(paragraph.alignment.toLayoutAlignment())
-            .setIncludePad(false)
-            .setLineSpacing(
-                0f,
-                (paragraph.lineSpacingMultiple * (1f - shape.lineSpacingReduction)).coerceIn(0.55f, 2.5f)
-            )
-            .build()
-        PreparedParagraphLayout(paragraph, text, layout)
+    var fontScale = shape.fontScale
+    var prepared = prepareParagraphLayouts(shape, baseTextBounds, fontScale)
+    if (shape.autoFitMode == PptxAutoFitMode.NORMAL && prepared.isNotEmpty()) {
+        repeat(8) {
+            val totalHeight = prepared.totalHeight()
+            if (totalHeight <= baseTextBounds.height() || fontScale <= 0.35f) return@repeat
+            val fitRatio = (baseTextBounds.height() / totalHeight).coerceIn(0.35f, 0.96f)
+            fontScale = (fontScale * fitRatio).coerceAtLeast(0.35f)
+            prepared = prepareParagraphLayouts(shape, baseTextBounds, fontScale)
+        }
     }
     if (prepared.isEmpty()) return emptyList()
 
-    val totalHeight = prepared.sumOf { item ->
-        (item.paragraph.spaceBeforePt + item.layout.height + item.paragraph.spaceAfterPt).toDouble()
-    }.toFloat()
+    val totalHeight = prepared.totalHeight()
+    val textBounds = if (shape.autoFitMode == PptxAutoFitMode.SHAPE && totalHeight > baseTextBounds.height()) {
+        RectF(baseTextBounds).apply { bottom = top + totalHeight }
+    } else {
+        baseTextBounds
+    }
     var y = when (shape.verticalAnchor) {
         PptxVerticalAnchor.TOP -> textBounds.top
         PptxVerticalAnchor.MIDDLE -> textBounds.top + ((textBounds.height() - totalHeight) / 2f).coerceAtLeast(0f)
@@ -1322,7 +1329,7 @@ private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidO
 
     return prepared.mapNotNull { item ->
         y += item.paragraph.spaceBeforePt
-        if (y > textBounds.bottom) return@mapNotNull null
+        if (shape.autoFitMode != PptxAutoFitMode.SHAPE && y > textBounds.bottom) return@mapNotNull null
         val paragraphY = y
         val charBoxes = item.layout.charBoxesFor(item.text, textBounds.left, paragraphY)
             .map { rect -> rect.rotatedBounds(shape.bounds, shape.rotationDegrees) }
@@ -1335,6 +1342,37 @@ private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidO
             charBoxes = charBoxes
         )
     }
+}
+
+private fun prepareParagraphLayouts(
+    shape: PptxShapeElement,
+    textBounds: RectF,
+    fontScale: Float
+): List<PreparedParagraphLayout> {
+    val layoutWidth = textBounds.width().roundToInt().coerceAtLeast(1)
+    return shape.paragraphs.mapNotNull { paragraph ->
+        val text = paragraph.displayText()
+        if (text.isBlank()) return@mapNotNull null
+        val spannable = paragraph.toSpannable(text, fontScale)
+        val layout = StaticLayout.Builder
+            .obtain(spannable, 0, spannable.length, TextLayoutPaint, layoutWidth)
+            .setAlignment(paragraph.alignment.toLayoutAlignment())
+            .setIncludePad(true)
+            .setLineSpacing(0f, paragraph.effectiveLineSpacing(shape))
+            .build()
+        PreparedParagraphLayout(paragraph, text, layout)
+    }
+}
+
+private fun List<PreparedParagraphLayout>.totalHeight(): Float {
+    return sumOf { item ->
+        (item.paragraph.spaceBeforePt + item.layout.height + item.paragraph.spaceAfterPt).toDouble()
+    }.toFloat()
+}
+
+private fun PptxParagraph.effectiveLineSpacing(shape: PptxShapeElement): Float {
+    val reduced = lineSpacingMultiple * (1f - shape.lineSpacingReduction)
+    return reduced.coerceIn(0.9f, 2.5f)
 }
 
 private fun PptxShapeElement.textBounds(sourceBounds: RectF = bounds): RectF {
@@ -1740,6 +1778,14 @@ private fun Element.autoFitLineSpacingReduction(): Float? {
         ?.xmlFloat("lnSpcReduction")
         ?.let { it / 100_000f }
         ?.coerceIn(0f, 0.5f)
+}
+
+private fun Element.autoFitMode(): PptxAutoFitMode {
+    return when {
+        firstDirectByLocalTag("normAutofit") != null -> PptxAutoFitMode.NORMAL
+        firstDirectByLocalTag("spAutoFit") != null -> PptxAutoFitMode.SHAPE
+        else -> PptxAutoFitMode.NONE
+    }
 }
 
 private fun Element.typefaceName(theme: PptxTheme): String? {
