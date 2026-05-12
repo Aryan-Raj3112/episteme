@@ -41,3 +41,15 @@ internal expect fun SharedReaderModalLayer(
     level: SharedReaderModalLevel = SharedReaderModalLevel.Popup,
     content: @Composable () -> Unit
 )
+
+@Composable
+fun SharedReaderPopupLayer(
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    SharedReaderModalLayer(
+        onDismiss = onDismiss,
+        level = SharedReaderModalLevel.Popup,
+        content = content
+    )
+}

@@ -46,6 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -318,6 +319,7 @@ import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
+import com.aryan.reader.shared.ui.SharedReaderPopupLayer
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
@@ -4586,9 +4588,21 @@ private fun PdfReaderScreen(
         dispatchPdf(SharedPdfReaderAction.AnnotationDeleted(annotationId))
     }
 
+    fun goToAnnotation(annotation: SharedPdfAnnotation) {
+        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+        selectedEmbeddedAnnotationId = null
+        goToPage(annotation.pageIndex, recordJump = true)
+    }
+
     fun selectAnnotation(annotation: SharedPdfAnnotation?) {
         dispatchPdf(SharedPdfReaderAction.AnnotationSelected(annotation?.id))
         annotation?.let { goToPage(it.pageIndex, recordJump = true) }
+    }
+
+    fun goToEmbeddedAnnotation(annotation: SharedPdfEmbeddedAnnotation) {
+        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+        selectedEmbeddedAnnotationId = null
+        goToPage(annotation.pageIndex, recordJump = true)
     }
 
     fun selectEmbeddedAnnotation(annotation: SharedPdfEmbeddedAnnotation?) {
@@ -5077,6 +5091,9 @@ private fun PdfReaderScreen(
                             DesktopPdfNavigationEmpty("No annotations yet")
                         } else {
                             val annotationsListState = rememberLazyListState()
+                            var annotationMenuExpandedFor by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
+                            var embeddedAnnotationMenuExpandedFor by remember { mutableStateOf<SharedPdfEmbeddedAnnotation?>(null) }
+                            var deleteAnnotationConfirmFor by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
                             Box(modifier = Modifier.fillMaxSize()) {
                                 LazyColumn(
                                     state = annotationsListState,
@@ -5090,11 +5107,46 @@ private fun PdfReaderScreen(
                                         Surface(
                                             color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                                             shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .clickable { goToAnnotation(annotation) }
+                                                        .padding(8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                                    annotation.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                                        Text(note, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                }
+                                                Box {
+                                                    IconButton(onClick = { annotationMenuExpandedFor = annotation }) {
+                                                        Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                                    }
+                                                    DropdownMenu(
+                                                        expanded = annotationMenuExpandedFor == annotation,
+                                                        onDismissRequest = { annotationMenuExpandedFor = null }
+                                                    ) {
+                                                        DropdownMenuItem(
+                                                            text = { Text(if (annotation.note.isNullOrBlank() && annotation.kind != PdfAnnotationKind.TEXT) "Add note" else "Edit") },
+                                                            onClick = {
+                                                                annotationMenuExpandedFor = null
+                                                                selectAnnotation(annotation)
+                                                            }
+                                                        )
+                                                        DropdownMenuItem(
+                                                            text = { Text("Delete") },
+                                                            onClick = {
+                                                                annotationMenuExpandedFor = null
+                                                                deleteAnnotationConfirmFor = annotation
+                                                            }
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -5102,11 +5154,39 @@ private fun PdfReaderScreen(
                                         Surface(
                                             color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                                             shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .clickable { goToEmbeddedAnnotation(annotation) }
+                                                        .padding(8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                ) {
+                                                    Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                                    annotation.contents.takeIf { it.isNotBlank() }?.let { contents ->
+                                                        Text(contents, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                }
+                                                Box {
+                                                    IconButton(onClick = { embeddedAnnotationMenuExpandedFor = annotation }) {
+                                                        Icon(Icons.Default.MoreVert, contentDescription = "Comment options")
+                                                    }
+                                                    DropdownMenu(
+                                                        expanded = embeddedAnnotationMenuExpandedFor == annotation,
+                                                        onDismissRequest = { embeddedAnnotationMenuExpandedFor = null }
+                                                    ) {
+                                                        DropdownMenuItem(
+                                                            text = { Text("Open comment") },
+                                                            onClick = {
+                                                                embeddedAnnotationMenuExpandedFor = null
+                                                                selectEmbeddedAnnotation(annotation)
+                                                            }
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -5114,6 +5194,28 @@ private fun PdfReaderScreen(
                                 SharedReaderVerticalScrollbar(
                                     listState = annotationsListState,
                                     modifier = Modifier.align(Alignment.CenterEnd)
+                                )
+                            }
+                            deleteAnnotationConfirmFor?.let { annotation ->
+                                AlertDialog(
+                                    onDismissRequest = { deleteAnnotationConfirmFor = null },
+                                    title = { Text("Delete annotation?") },
+                                    text = { Text("This removes the annotation from this PDF.") },
+                                    confirmButton = {
+                                        TextButton(
+                                            onClick = {
+                                                deleteAnnotationConfirmFor = null
+                                                deleteAnnotation(annotation.id)
+                                            }
+                                        ) {
+                                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { deleteAnnotationConfirmFor = null }) {
+                                            Text("Cancel")
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -6388,66 +6490,68 @@ private fun DesktopReaderBottomSheet(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .zIndex(40f)
-    ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.24f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-        )
-        val sheetHorizontalPadding = 24.dp
-        val sheetAvailableWidth = (maxWidth - sheetHorizontalPadding - sheetHorizontalPadding).coerceAtLeast(0.dp)
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = sheetHorizontalPadding, vertical = 16.dp)
-                .width(sharedReaderPopupWidth(sheetAvailableWidth))
-                .heightIn(max = 560.dp),
-            shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp,
-            shadowElevation = 16.dp
+    SharedReaderPopupLayer(onDismiss = onDismiss) {
+        BoxWithConstraints(
+            modifier = modifier
+                .fillMaxSize()
+                .zIndex(40f)
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .width(42.dp)
-                        .height(4.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.24f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
-                HorizontalDivider()
+            )
+            val sheetHorizontalPadding = 24.dp
+            val sheetAvailableWidth = (maxWidth - sheetHorizontalPadding - sheetHorizontalPadding).coerceAtLeast(0.dp)
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = sheetHorizontalPadding, vertical = 16.dp)
+                    .width(sharedReaderPopupWidth(sheetAvailableWidth))
+                    .heightIn(max = 560.dp),
+                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 16.dp
+            ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    content()
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .width(42.dp)
+                            .height(4.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(999.dp))
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    HorizontalDivider()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        content()
+                    }
                 }
             }
         }

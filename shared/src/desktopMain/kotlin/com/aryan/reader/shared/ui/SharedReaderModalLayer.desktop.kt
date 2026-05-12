@@ -7,12 +7,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.WindowPosition
-import androidx.compose.ui.window.rememberDialogState
+import androidx.compose.ui.window.Window as ComposeWindow
+import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
 import java.awt.KeyboardFocusManager
-import java.awt.Window
+import java.awt.Window as AwtWindow
 
 @Composable
 internal actual fun SharedReaderModalLayer(
@@ -44,7 +44,7 @@ internal actual fun SharedReaderModalLayer(
             WindowPosition(Alignment.Center)
         }
     }
-    val state = rememberDialogState(position = dialogPosition, size = dialogSize)
+    val state = rememberWindowState(position = dialogPosition, size = dialogSize)
     val windowTitle = when (level) {
         SharedReaderModalLevel.Panel -> "Reader Panel"
         SharedReaderModalLevel.Popup -> "Reader Popup"
@@ -55,7 +55,7 @@ internal actual fun SharedReaderModalLayer(
         state.size = dialogSize
     }
 
-    DialogWindow(
+    ComposeWindow(
         onCloseRequest = onDismiss,
         state = state,
         title = windowTitle,
@@ -82,12 +82,12 @@ internal actual fun SharedReaderModalLayer(
 
 private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
 
-private fun currentNonModalOwnerWindow(): Window? {
+private fun currentNonModalOwnerWindow(): AwtWindow? {
     val activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
     if (activeWindow != null && !activeWindow.isSharedReaderModalWindow()) {
         return activeWindow
     }
-    return Window.getWindows()
+    return AwtWindow.getWindows()
         .filter { window -> window.isShowing && window.isDisplayable && !window.isSharedReaderModalWindow() }
         .maxByOrNull { window ->
             when {
@@ -99,7 +99,7 @@ private fun currentNonModalOwnerWindow(): Window? {
         }
 }
 
-private fun Window.isSharedReaderModalWindow(): Boolean {
+private fun AwtWindow.isSharedReaderModalWindow(): Boolean {
     val windowTitle = when (this) {
         is java.awt.Dialog -> title
         is java.awt.Frame -> title

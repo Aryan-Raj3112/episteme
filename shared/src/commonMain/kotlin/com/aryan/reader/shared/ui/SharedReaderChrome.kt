@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Remove
@@ -51,6 +52,9 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -233,6 +237,7 @@ fun SharedReaderScreen(
     val effectiveCloudTtsAvailable = cloudTtsControlsAvailable && byokSettings.isCloudTtsAvailable
     val readerFocusRequester = remember(session.reader.book.id) { FocusRequester() }
     var selectedHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
+    var sidebarNavigationHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
     val selectedHighlight = remember(session.highlights, selectedHighlightId) {
         session.highlights.firstOrNull { it.id == selectedHighlightId }
     }
@@ -320,8 +325,22 @@ fun SharedReaderScreen(
                 onGoToLocator = { dispatch(ReaderAction.JumpToLocator(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
                 onGoToHighlight = {
-                    selectedHighlightId = it.id
+                    sidebarNavigationHighlightId = it.id
+                    selectedHighlightId = null
                     dispatch(ReaderAction.JumpToLocator(it.locator))
+                },
+                onEditHighlight = {
+                    selectedHighlightId = it.id
+                },
+                highlightPalette = highlightPalette,
+                onHighlightColorChange = { highlight, color ->
+                    dispatch(ReaderAction.HighlightUpdated(highlight.id, color = color))
+                },
+                onDeleteHighlight = {
+                    dispatch(ReaderAction.HighlightDeleted(it.id))
+                    if (selectedHighlightId == it.id) {
+                        selectedHighlightId = null
+                    }
                 }
             )
         },
@@ -379,6 +398,12 @@ fun SharedReaderScreen(
             }
         }
     ) {
+        LaunchedEffect(sidebarNavigationHighlightId) {
+            if (sidebarNavigationHighlightId != null) {
+                delay(1_200)
+                sidebarNavigationHighlightId = null
+            }
+        }
         Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -466,7 +491,13 @@ fun SharedReaderScreen(
                 ),
                 session.highlights,
                 { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) },
-                { highlightId -> selectedHighlightId = highlightId }
+                { highlightId ->
+                    if (sidebarNavigationHighlightId == highlightId) {
+                        sidebarNavigationHighlightId = null
+                    } else {
+                        selectedHighlightId = highlightId
+                    }
+                }
             )
         }
         when {
@@ -2763,7 +2794,11 @@ private fun SharedReaderSidebar(
     onGoToChapter: (Int) -> Unit,
     onGoToLocator: (ReaderLocator) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
-    onGoToHighlight: (UserHighlight) -> Unit
+    onGoToHighlight: (UserHighlight) -> Unit,
+    onEditHighlight: (UserHighlight) -> Unit,
+    highlightPalette: ReaderHighlightPalette,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onDeleteHighlight: (UserHighlight) -> Unit
 ) {
     val tabs = remember(sections) {
         listOf(
@@ -2813,7 +2848,11 @@ private fun SharedReaderSidebar(
                 )
                 ReaderWorkspaceLeftSection.NOTES -> SharedReaderAnnotationsTab(
                     session = session,
-                    onGoToHighlight = onGoToHighlight
+                    onGoToHighlight = onGoToHighlight,
+                    onEditHighlight = onEditHighlight,
+                    highlightPalette = highlightPalette,
+                    onHighlightColorChange = onHighlightColorChange,
+                    onDeleteHighlight = onDeleteHighlight
                 )
                 ReaderWorkspaceLeftSection.BOOKMARKS -> SharedReaderBookmarksTab(
                     session = session,
@@ -3113,68 +3152,168 @@ private fun SharedReaderBookmarksTab(
 @Composable
 private fun SharedReaderAnnotationsTab(
     session: ReaderSessionState,
-    onGoToHighlight: (UserHighlight) -> Unit
+    onGoToHighlight: (UserHighlight) -> Unit,
+    onEditHighlight: (UserHighlight) -> Unit,
+    highlightPalette: ReaderHighlightPalette,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onDeleteHighlight: (UserHighlight) -> Unit
 ) {
     if (session.highlights.isEmpty()) {
         SharedReaderEmptyNavigation("No annotations yet")
     } else {
         val listState = rememberLazyListState()
+        var menuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
+        var deleteConfirmFor by remember { mutableStateOf<UserHighlight?>(null) }
+        val colors = highlightPalette.sanitized().colors
         Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .sharedAcceleratedLazyWheelScroll(listState)
-                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(session.highlights, key = { it.id }) { highlight ->
-                    val locator = highlight.locator.withFallbacks(
-                        chapterIndex = highlight.chapterIndex,
-                        cfi = highlight.cfi,
-                        textQuote = highlight.text
-                    )
-                    val chapterTitle = session.reader.book.chapters
-                        .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
-                        ?.title
-                        ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
-                    val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .sharedAcceleratedLazyWheelScroll(listState)
+                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(session.highlights, key = { it.id }) { highlight ->
+                        val locator = highlight.locator.withFallbacks(
+                            chapterIndex = highlight.chapterIndex,
+                            cfi = highlight.cfi,
+                            textQuote = highlight.text
+                        )
+                        val chapterTitle = session.reader.book.chapters
+                            .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
+                            ?.title
+                            ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
+                        val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(
+                            Column(
+                                modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp, end = 4.dp).fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { onGoToHighlight(highlight) },
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(12.dp)
+                                                .height(12.dp)
+                                                .background(highlight.color.color, RoundedCornerShape(2.dp))
+                                        )
+                                        Text(
+                                            listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    Box {
+                                        IconButton(onClick = { menuExpandedFor = highlight }) {
+                                            Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                        }
+                                        DropdownMenu(
+                                            expanded = menuExpandedFor == highlight,
+                                            onDismissRequest = { menuExpandedFor = null }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                colors.forEach { color ->
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(26.dp)
+                                                            .clip(CircleShape)
+                                                            .background(color.color)
+                                                            .border(
+                                                                width = if (highlight.color == color) 3.dp else 1.dp,
+                                                                color = if (highlight.color == color) {
+                                                                    MaterialTheme.colorScheme.primary
+                                                                } else {
+                                                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                                                },
+                                                                shape = CircleShape
+                                                            )
+                                                            .clickable {
+                                                                menuExpandedFor = null
+                                                                onHighlightColorChange(highlight, color)
+                                                            }
+                                                    )
+                                                }
+                                            }
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text(if (highlight.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                                onClick = {
+                                                    menuExpandedFor = null
+                                                    onEditHighlight(highlight)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Delete") },
+                                                onClick = {
+                                                    menuExpandedFor = null
+                                                    deleteConfirmFor = highlight
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(
                                     modifier = Modifier
-                                        .width(12.dp)
-                                        .height(12.dp)
-                                        .background(highlight.color.color, RoundedCornerShape(2.dp))
-                                )
-                                Text(
-                                    listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                            Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                                Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        .fillMaxWidth()
+                                        .clickable { onGoToHighlight(highlight) },
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                    highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                SharedReaderVerticalScrollbar(
+                    listState = listState,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
             }
-            SharedReaderVerticalScrollbar(
-                listState = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            deleteConfirmFor?.let { highlight ->
+                AlertDialog(
+                    onDismissRequest = { deleteConfirmFor = null },
+                    title = { Text("Delete annotation?") },
+                    text = { Text("This removes the highlight and its note.") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                deleteConfirmFor = null
+                                onDeleteHighlight(highlight)
+                            }
+                        ) {
+                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { deleteConfirmFor = null }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -3196,92 +3335,6 @@ private fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
         ReaderWorkspaceLeftSection.BOOKMARKS -> "Bookmarks"
         ReaderWorkspaceLeftSection.PAGES -> "Pages"
         ReaderWorkspaceLeftSection.SEARCH -> "Search"
-    }
-}
-
-@Composable
-private fun SharedHighlightListItem(
-    session: ReaderSessionState,
-    highlight: UserHighlight,
-    palette: ReaderHighlightPalette,
-    onGoToHighlight: (UserHighlight) -> Unit,
-    onColorChange: (UserHighlight, HighlightColor) -> Unit,
-    onNoteChange: (UserHighlight, String) -> Unit,
-    onDelete: (UserHighlight) -> Unit
-) {
-    val locator = highlight.locator.withFallbacks(
-        chapterIndex = highlight.chapterIndex,
-        cfi = highlight.cfi,
-        textQuote = highlight.text
-    )
-    val chapterTitle = session.reader.book.chapters
-        .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
-        ?.title
-        ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
-    val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
-    val colors = palette.sanitized().colors
-
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(8.dp)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(
-                    modifier = Modifier
-                        .width(12.dp)
-                        .height(12.dp)
-                        .background(highlight.color.color, RoundedCornerShape(2.dp))
-                )
-                Text(
-                    listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.horizontalScroll(rememberScrollState())
-            ) {
-                colors.forEach { color ->
-                    FilterChip(
-                        selected = highlight.color == color,
-                        onClick = { onColorChange(highlight, color) },
-                        label = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(10.dp)
-                                        .height(10.dp)
-                                        .background(color.color, RoundedCornerShape(2.dp))
-                                )
-                                Text(color.id)
-                            }
-                        }
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = highlight.note.orEmpty(),
-                onValueChange = { onNoteChange(highlight, it) },
-                label = { Text("Note") },
-                maxLines = 2,
-                modifier = Modifier.fillMaxWidth()
-            )
-            TextButton(onClick = { onDelete(highlight) }) {
-                Text("Delete")
-            }
-        }
     }
 }
 
