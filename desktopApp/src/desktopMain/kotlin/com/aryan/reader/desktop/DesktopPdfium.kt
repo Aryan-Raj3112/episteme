@@ -106,6 +106,11 @@ data class DesktopPdfMetadata(
     val author: String? = null
 )
 
+internal val DesktopPdfZoomSpec = PdfZoomSpec(
+    max = 8.0f,
+    maxRenderPixels = 64_000_000
+)
+
 data class DesktopPdfTextChar(
     val index: Int,
     val char: Char,
@@ -143,7 +148,7 @@ object DesktopPdfium {
 
     private val textUrlRegex = Regex("""\b(?:https?://|www\.)[^\s<>"']+""", RegexOption.IGNORE_CASE)
     private val pdfiumDll: File by lazy(::resolvePdfiumDll)
-    private val zoomSpec = PdfZoomSpec()
+    private val zoomSpec = DesktopPdfZoomSpec
     private val api: PdfiumLibrary by lazy {
         require(pdfiumDll.exists()) {
             "Missing Pdfium DLL. Expected pdfium-v8-win-x64 under third_party/pdfium/win-x64-v8/bin/pdfium.dll."
@@ -451,8 +456,10 @@ object DesktopPdfium {
         scale: Float,
         renderAnnotations: Boolean = true
     ): DesktopPdfPageRender {
+        val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
+        val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
         openComicDocuments[document.path]?.let { comic ->
-            val image = comic.renderPageBufferedImage(pageIndex, scale)
+            val image = comic.renderPageBufferedImage(pageIndex, safeScale)
             return DesktopPdfPageRender(
                 image = image.toComposeImageBitmap(),
                 width = image.width,
@@ -460,8 +467,6 @@ object DesktopPdfium {
             )
         }
         val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
-        val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
-        val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
         val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
         val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
         val stride = width * 4
@@ -495,12 +500,12 @@ object DesktopPdfium {
         scale: Float,
         renderAnnotations: Boolean = true
     ): BufferedImage {
-        openComicDocuments[document.path]?.let { comic ->
-            return comic.renderPageBufferedImage(pageIndex, scale)
-        }
-        val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
+        openComicDocuments[document.path]?.let { comic ->
+            return comic.renderPageBufferedImage(pageIndex, safeScale)
+        }
+        val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
         val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
         val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
         val stride = width * 4

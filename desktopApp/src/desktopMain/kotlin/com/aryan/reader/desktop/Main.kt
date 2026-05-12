@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -68,12 +70,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,12 +107,16 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed as isPointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -366,6 +374,8 @@ import javax.imageio.ImageIO
 import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -3092,6 +3102,157 @@ private fun List<PdfPagePoint>.withDesktopPdfDragPoint(
     return this + nextPoint
 }
 
+internal fun desktopPdfScrollZoomFactor(scrollDelta: Float): Float {
+    if (!scrollDelta.isFinite() || abs(scrollDelta) < 0.01f) return 1f
+    val normalizedDelta = scrollDelta.coerceIn(-8f, 8f)
+    return exp((-normalizedDelta * 0.12f).toDouble()).toFloat()
+}
+
+internal fun desktopPdfZoomTarget(
+    currentZoom: Float,
+    zoomSpec: PdfZoomSpec,
+    factor: Float
+): Float {
+    val baseZoom = currentZoom.takeIf { it.isFinite() } ?: zoomSpec.default
+    val safeFactor = factor.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return zoomSpec.clamp(baseZoom * safeFactor)
+}
+
+internal fun desktopPdfAnchoredScrollTarget(
+    currentScroll: Int,
+    anchor: Float,
+    oldZoom: Float,
+    newZoom: Float
+): Int {
+    if (
+        !anchor.isFinite() ||
+        !oldZoom.isFinite() ||
+        !newZoom.isFinite() ||
+        oldZoom <= 0f ||
+        newZoom <= 0f
+    ) {
+        return currentScroll.coerceAtLeast(0)
+    }
+    val zoomRatio = newZoom / oldZoom
+    return (((currentScroll + anchor) * zoomRatio) - anchor).roundToInt().coerceAtLeast(0)
+}
+
+internal fun desktopPdfAnchoredLazyItemScrollOffset(
+    itemOffset: Int,
+    anchor: Float,
+    oldZoom: Float,
+    newZoom: Float
+): Int {
+    if (
+        !anchor.isFinite() ||
+        !oldZoom.isFinite() ||
+        !newZoom.isFinite() ||
+        oldZoom <= 0f ||
+        newZoom <= 0f
+    ) {
+        return (-itemOffset).coerceAtLeast(0)
+    }
+    val zoomRatio = newZoom / oldZoom
+    val offsetWithinItem = anchor - itemOffset
+    return ((offsetWithinItem * zoomRatio) - anchor).roundToInt().coerceAtLeast(0)
+}
+
+internal fun desktopPdfAnchoredPageScrollDelta(
+    viewportRootOffset: Offset,
+    oldPageRootOffset: Offset,
+    currentPageRootOffset: Offset,
+    anchor: Offset,
+    oldZoom: Float,
+    newZoom: Float
+): IntOffset? {
+    if (
+        !anchor.x.isFinite() ||
+        !anchor.y.isFinite() ||
+        !oldZoom.isFinite() ||
+        !newZoom.isFinite() ||
+        oldZoom <= 0f ||
+        newZoom <= 0f
+    ) {
+        return null
+    }
+    val rootAnchor = viewportRootOffset + anchor
+    val oldPageLocal = rootAnchor - oldPageRootOffset
+    val zoomRatio = newZoom / oldZoom
+    val newPageLocal = Offset(oldPageLocal.x * zoomRatio, oldPageLocal.y * zoomRatio)
+    val desiredPageRoot = rootAnchor - newPageLocal
+    val delta = currentPageRootOffset - desiredPageRoot
+    return IntOffset(delta.x.roundToInt(), delta.y.roundToInt())
+}
+
+@Composable
+private fun Modifier.desktopPdfZoomGestures(
+    currentZoom: Float,
+    zoomSpec: PdfZoomSpec,
+    onZoomChanged: (oldZoom: Float, newZoom: Float, anchor: Offset?) -> Unit
+): Modifier {
+    val latestZoom by rememberUpdatedState(currentZoom)
+    val latestOnZoomChanged by rememberUpdatedState(onZoomChanged)
+    return this.pointerInput(zoomSpec) {
+        var gestureZoom = latestZoom
+        var appliedGestureZoom = latestZoom
+        var lastZoomEventAt = 0L
+        var lastAppliedZoomAt = 0L
+        fun applyZoomFactor(factor: Float, eventTime: Long, anchor: Offset?) {
+            if (lastZoomEventAt == 0L || eventTime - lastZoomEventAt > 180L) {
+                gestureZoom = latestZoom
+                appliedGestureZoom = latestZoom
+                lastAppliedZoomAt = 0L
+            }
+            val newZoom = desktopPdfZoomTarget(gestureZoom, zoomSpec, factor)
+            gestureZoom = newZoom
+            lastZoomEventAt = eventTime
+            val shouldApplyNow = lastAppliedZoomAt == 0L ||
+                eventTime - lastAppliedZoomAt >= DesktopPdfZoomGestureFrameMillis ||
+                newZoom == zoomSpec.min ||
+                newZoom == zoomSpec.max
+            if (shouldApplyNow && newZoom != appliedGestureZoom) {
+                latestOnZoomChanged(appliedGestureZoom, newZoom, anchor)
+                appliedGestureZoom = newZoom
+                lastAppliedZoomAt = eventTime
+            }
+        }
+
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val eventTime = event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L
+                if (event.type == PointerEventType.Scroll && event.keyboardModifiers.isPointerCtrlPressed) {
+                    val scrollDelta = event.changes.fold(Offset.Zero) { total, change ->
+                        total + change.scrollDelta
+                    }
+                    val zoomDelta = if (abs(scrollDelta.y) >= abs(scrollDelta.x)) scrollDelta.y else scrollDelta.x
+                    val factor = desktopPdfScrollZoomFactor(zoomDelta)
+                    if (abs(factor - 1f) > 0.0001f) {
+                        applyZoomFactor(factor, eventTime, event.changes.firstOrNull()?.position)
+                        event.changes.forEach { it.consume() }
+                    }
+                    continue
+                }
+
+                val pressedPointers = event.changes.count { it.pressed }
+                if (pressedPointers > 1) {
+                    val zoomChange = event.calculateZoom()
+                    if (zoomChange.isFinite() && abs(zoomChange - 1f) > 0.005f) {
+                        val centroid = event.calculateCentroid(useCurrent = false)
+                        val anchor = if (centroid == Offset.Unspecified) {
+                            event.changes.firstOrNull { it.pressed }?.position
+                        } else {
+                            centroid
+                        }
+                        applyZoomFactor(zoomChange, eventTime, anchor)
+                    }
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PdfReaderScreen(
     document: DesktopPdfDocument,
@@ -3112,7 +3273,7 @@ private fun PdfReaderScreen(
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
 ) {
-    val zoomSpec = remember { PdfZoomSpec() }
+    val zoomSpec = remember { DesktopPdfZoomSpec }
     var pdfReaderSettings by remember(document.path) {
         mutableStateOf(initialReaderSettings.toDesktopPdfReaderSettings())
     }
@@ -3133,12 +3294,17 @@ private fun PdfReaderScreen(
         )
     }
     var renderedPage by remember(document.path) { mutableStateOf<DesktopPdfPageRender?>(null) }
+    var renderedPageIndex by remember(document.path) { mutableStateOf<Int?>(null) }
     var renderError by remember(document.path) { mutableStateOf<String?>(null) }
     var isRendering by remember(document.path) { mutableStateOf(false) }
     var renderJob by remember(document.path) { mutableStateOf<Job?>(null) }
+    val zoomAnchorJob = remember(document.path) { AtomicReference<Job?>(null) }
     var activeTextDraft by remember(document.path) { mutableStateOf<SharedPdfTextDraft?>(null) }
     var textStyleConfig by remember(document.path) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var pageCanvasSize by remember(document.path) { mutableStateOf(IntSize.Zero) }
+    var pdfZoomViewportRootOffset by remember(document.path) { mutableStateOf(Offset.Zero) }
+    var paginatedPageRootOffset by remember(document.path) { mutableStateOf(Offset.Zero) }
+    val verticalPageRootOffsets = remember(document.path) { mutableStateMapOf<Int, Offset>() }
     var activeStroke by remember(document.path, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
     var isHighlighterSnapEnabled by remember(document.path) { mutableStateOf(false) }
     var selectionStartIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
@@ -3206,6 +3372,8 @@ private fun PdfReaderScreen(
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentPdfAnnotations by rememberUpdatedState(pdfState.annotations)
     val currentPdfPageIndex by rememberUpdatedState(pdfState.pageIndex)
+    val currentPdfScale by rememberUpdatedState(pdfState.zoom)
+    val currentPdfDisplayMode by rememberUpdatedState(pdfState.displayMode)
 
     fun clearPdfInteractionState() {
         activeStroke = emptyList()
@@ -3368,6 +3536,112 @@ private fun PdfReaderScreen(
     val pageIndex = pdfState.pageIndex
     val scale = pdfState.zoom
     val displayMode = pdfState.displayMode
+
+    fun applyAnchoredPdfZoom(oldZoom: Float, newZoom: Float, anchor: Offset?) {
+        val displayModeAtZoomStart = displayMode
+        val viewportRootOffsetAtZoomStart = pdfZoomViewportRootOffset
+        val pageRootOffsetAtZoomStart = paginatedPageRootOffset
+        val targetHorizontalScroll = anchor?.let {
+            desktopPdfAnchoredScrollTarget(pageHorizontalScrollState.value, it.x, oldZoom, newZoom)
+        }
+        val targetVerticalScroll = anchor?.let {
+            desktopPdfAnchoredScrollTarget(pageVerticalScrollState.value, it.y, oldZoom, newZoom)
+        }
+        val targetVerticalItem = if (displayModeAtZoomStart == PdfDisplayMode.VERTICAL_SCROLL && anchor != null) {
+            verticalListState.layoutInfo.visibleItemsInfo
+                .firstOrNull { item ->
+                    anchor.y >= item.offset.toFloat() && anchor.y <= (item.offset + item.size).toFloat()
+                }
+                ?.let { item ->
+                    val fallbackOffset = desktopPdfAnchoredLazyItemScrollOffset(
+                        itemOffset = item.offset,
+                        anchor = anchor.y,
+                        oldZoom = oldZoom,
+                        newZoom = newZoom
+                    )
+                    val pageRootOffset = verticalPageRootOffsets[item.index]
+                    Triple(item.index, fallbackOffset, pageRootOffset)
+                }
+        } else {
+            null
+        }
+        dispatchPdf(SharedPdfReaderAction.ZoomChanged(newZoom))
+        if (anchor != null) {
+            val nextAnchorJob = pdfScope.launch {
+                withFrameNanos { }
+                when (displayModeAtZoomStart) {
+                    PdfDisplayMode.PAGINATION -> {
+                        suspend fun correctPageAnchor() {
+                            val pageDelta = desktopPdfAnchoredPageScrollDelta(
+                                viewportRootOffset = viewportRootOffsetAtZoomStart,
+                                oldPageRootOffset = pageRootOffsetAtZoomStart,
+                                currentPageRootOffset = paginatedPageRootOffset,
+                                anchor = anchor,
+                                oldZoom = oldZoom,
+                                newZoom = newZoom
+                            )
+                            if (pageDelta != null) {
+                                if (abs(pageDelta.x) > 1) {
+                                    pageHorizontalScrollState.scrollTo(
+                                        (pageHorizontalScrollState.value + pageDelta.x).coerceAtLeast(0)
+                                    )
+                                }
+                                if (abs(pageDelta.y) > 1) {
+                                    pageVerticalScrollState.scrollTo(
+                                        (pageVerticalScrollState.value + pageDelta.y).coerceAtLeast(0)
+                                    )
+                                }
+                            } else if (targetHorizontalScroll != null && targetVerticalScroll != null) {
+                                pageHorizontalScrollState.scrollTo(targetHorizontalScroll)
+                                pageVerticalScrollState.scrollTo(targetVerticalScroll)
+                            }
+                        }
+                        correctPageAnchor()
+                        withFrameNanos { }
+                        correctPageAnchor()
+                    }
+                    PdfDisplayMode.VERTICAL_SCROLL -> {
+                        suspend fun correctVerticalAnchor() {
+                            val targetItem = targetVerticalItem
+                            val oldPageRootOffset = targetItem?.third
+                            val currentPageRootOffset = targetItem?.first?.let { verticalPageRootOffsets[it] }
+                            val pageDelta = if (oldPageRootOffset != null && currentPageRootOffset != null) {
+                                desktopPdfAnchoredPageScrollDelta(
+                                    viewportRootOffset = viewportRootOffsetAtZoomStart,
+                                    oldPageRootOffset = oldPageRootOffset,
+                                    currentPageRootOffset = currentPageRootOffset,
+                                    anchor = anchor,
+                                    oldZoom = oldZoom,
+                                    newZoom = newZoom
+                                )
+                            } else {
+                                null
+                            }
+                            if (pageDelta != null) {
+                                if (abs(pageDelta.x) > 1) {
+                                    pageHorizontalScrollState.scrollTo(
+                                        (pageHorizontalScrollState.value + pageDelta.x).coerceAtLeast(0)
+                                    )
+                                }
+                                if (abs(pageDelta.y) > 1) {
+                                    verticalListState.scrollBy(pageDelta.y.toFloat())
+                                }
+                            } else {
+                                targetHorizontalScroll?.let { pageHorizontalScrollState.scrollTo(it) }
+                                targetItem?.let { (itemIndex, scrollOffset, _) ->
+                                    verticalListState.scrollToItem(itemIndex, scrollOffset)
+                                }
+                            }
+                        }
+                        correctVerticalAnchor()
+                        withFrameNanos { }
+                        correctVerticalAnchor()
+                    }
+                }
+            }
+            zoomAnchorJob.getAndSet(nextAnchorJob)?.cancel()
+        }
+    }
 
     LaunchedEffect(document.path, pageIndex, displayMode) {
         runCatching { pdfReaderFocusRequester.requestFocus() }
@@ -4167,35 +4441,59 @@ private fun PdfReaderScreen(
             isRendering = false
             renderError = null
             renderedPage = null
+            renderedPageIndex = null
             return@LaunchedEffect
         }
+        val targetPageIndex = pageIndex
+        val targetScale = scale
+        val hasPageRender = renderedPage != null && renderedPageIndex == targetPageIndex
+        if (!hasPageRender) {
+            renderedPage = null
+            renderedPageIndex = null
+            isRendering = true
+        }
         renderJob = launch {
-            delay(90)
+            delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
             isRendering = true
             renderError = null
-            val pageSize = document.pageSizes[pageIndex]
+            val pageSize = document.pageSizes.getOrNull(targetPageIndex)
+            if (pageSize == null) {
+                renderedPage = null
+                renderedPageIndex = null
+                renderError = "Failed to render page."
+                isRendering = false
+                return@launch
+            }
             val safeScale = zoomSpec.safeRenderScale(
                 pageSize.width,
-                pageSize.height, scale
+                pageSize.height,
+                targetScale
             )
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    DesktopPdfium.renderPage(document, pageIndex, safeScale)
+                    DesktopPdfium.renderPage(document, targetPageIndex, safeScale)
                 }
             }
-            if (pageIndex != pageIndex || scale != scale) {
+            if (
+                currentPdfPageIndex != targetPageIndex ||
+                currentPdfScale != targetScale ||
+                currentPdfDisplayMode != PdfDisplayMode.PAGINATION
+            ) {
                 return@launch
             }
-            renderedPage = result.getOrNull()
+            result.getOrNull()?.let { render ->
+                renderedPage = render
+                renderedPageIndex = targetPageIndex
+            }
             renderError = result.exceptionOrNull()?.message
-                ?: if (renderedPage == null) "Failed to render page." else null
+                ?: if (renderedPage == null || renderedPageIndex != targetPageIndex) "Failed to render page." else null
             renderedPage?.let { render ->
                 logPdfSelection(
-                    "render page=${pageIndex + 1} " +
-                        "requestedScale=${scale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
+                    "render page=${targetPageIndex + 1} " +
+                        "requestedScale=${targetScale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
                         "pageSize=${pageSize.width.formatLogFloat()}x${pageSize.height.formatLogFloat()} " +
                         "bitmap=${render.width}x${render.height} capped=${safeScale < zoomSpec.clamp(
-                            scale
+                            targetScale
                         )}"
                 )
             }
@@ -4852,6 +5150,14 @@ private fun PdfReaderScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
+                        .onGloballyPositioned { coordinates ->
+                            pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                        }
+                        .desktopPdfZoomGestures(
+                            currentZoom = scale,
+                            zoomSpec = zoomSpec,
+                            onZoomChanged = ::applyAnchoredPdfZoom
+                        )
                 ) {
                     LazyColumn(
                         state = verticalListState,
@@ -4912,7 +5218,10 @@ private fun PdfReaderScreen(
                                 onTextAnnotationSelected = ::selectTextAnnotation,
                                 onTextDraftStarted = ::startActiveTextDraft,
                                 onTextDraftChanged = ::updateActiveTextDraft,
-                                onTextDraftBoundsChanged = ::updateActiveTextDraftBounds
+                                onTextDraftBoundsChanged = ::updateActiveTextDraftBounds,
+                                onPagePositioned = { page, offset ->
+                                    verticalPageRootOffsets[page] = offset
+                                }
                             )
                         }
                     }
@@ -4926,19 +5235,32 @@ private fun PdfReaderScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
+                        .onGloballyPositioned { coordinates ->
+                            pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                        }
+                        .desktopPdfZoomGestures(
+                            currentZoom = scale,
+                            zoomSpec = zoomSpec,
+                            onZoomChanged = ::applyAnchoredPdfZoom
+                        )
                         .horizontalScroll(pageHorizontalScrollState)
                         .verticalScroll(pageVerticalScrollState)
                         .padding(24.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                when {
-                    isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
-                    renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
-                    renderedPage != null -> {
-                        val pageRender = renderedPage!!
-                        val pageWidthDp = with(density) { pageRender.width.toDp() }
-                        val pageHeightDp = with(density) { pageRender.height.toDp() }
-                        val pageRenderScale = pageRender.width / document.pageSizes[pageIndex].width
+                    val currentPageRender = renderedPage.takeIf { renderedPageIndex == pageIndex }
+                    when {
+                    currentPageRender != null -> {
+                        val pageRender = currentPageRender
+                        val pageSize = document.pageSizes.getOrNull(pageIndex)
+                        if (pageSize == null) {
+                            Text("Failed to render page.", color = MaterialTheme.colorScheme.error)
+                            return@Box
+                        }
+                        val pageDisplayScale = zoomSpec.clamp(scale)
+                        val pageWidthDp = with(density) { (pageSize.width * pageDisplayScale).toDp() }
+                        val pageHeightDp = with(density) { (pageSize.height * pageDisplayScale).toDp() }
+                        val pageRenderScale = pageRender.width / pageSize.width
                         val pageAnnotations = remember(annotations, pageIndex, pageCanvasSize) {
                             annotations
                                 .filter { it.pageIndex == pageIndex }
@@ -5018,12 +5340,16 @@ private fun PdfReaderScreen(
                         Box(
                             modifier = Modifier
                                 .size(pageWidthDp, pageHeightDp)
+                                .onGloballyPositioned { coordinates ->
+                                    paginatedPageRootOffset = coordinates.positionInRoot()
+                                }
                                 .onSizeChanged { size ->
                                     if (pageCanvasSize != size) {
                                         logPdfSelection(
                                             "layout page=${pageIndex + 1} " +
                                                 "canvas=${size.formatLogSize()} bitmap=${pageRender.width}x${pageRender.height} " +
-                                                "requestedScale=${scale.formatLogFloat()} renderScale=${pageRenderScale.formatLogFloat()}"
+                                                "requestedScale=${scale.formatLogFloat()} displayScale=${pageDisplayScale.formatLogFloat()} " +
+                                                "renderScale=${pageRenderScale.formatLogFloat()}"
                                         )
                                     }
                                     pageCanvasSize = size
@@ -5485,6 +5811,8 @@ private fun PdfReaderScreen(
                             )
                         }
                     }
+                    isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
+                    renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
                 }
                     DesktopPdfPageScrubOverlay(
                         pageIndex = pageScrubPreview,
@@ -6236,14 +6564,15 @@ private fun DesktopVerticalPdfPage(
     onTextAnnotationSelected: (SharedPdfAnnotation) -> Unit,
     onTextDraftStarted: (Int, Offset, IntSize) -> Unit,
     onTextDraftChanged: (String, IntSize) -> Unit,
-    onTextDraftBoundsChanged: (PdfPageBounds) -> Unit
+    onTextDraftBoundsChanged: (PdfPageBounds) -> Unit,
+    onPagePositioned: (Int, Offset) -> Unit
 ) {
     val density = LocalDensity.current
     val pageInteractionSource = remember { MutableInteractionSource() }
-    var renderedPage by remember(document.path, pageIndex, scale) { mutableStateOf<DesktopPdfPageRender?>(null) }
-    var renderError by remember(document.path, pageIndex, scale) { mutableStateOf<String?>(null) }
-    var isRendering by remember(document.path, pageIndex, scale) { mutableStateOf(true) }
-    var pageCanvasSize by remember(document.path, pageIndex, scale) { mutableStateOf(IntSize.Zero) }
+    var renderedPage by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfPageRender?>(null) }
+    var renderError by remember(document.path, pageIndex) { mutableStateOf<String?>(null) }
+    var isRendering by remember(document.path, pageIndex) { mutableStateOf(true) }
+    var pageCanvasSize by remember(document.path, pageIndex) { mutableStateOf(IntSize.Zero) }
     var selectionStartIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
     var selectionEndIndex by remember(document.path, pageIndex) { mutableStateOf<Int?>(null) }
     var selectionStartHit by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfCharHit?>(null) }
@@ -6278,7 +6607,10 @@ private fun DesktopVerticalPdfPage(
             clearInteractionState()
             return@LaunchedEffect
         }
-        isRendering = true
+        val hasPageRender = renderedPage != null
+        if (!hasPageRender) {
+            isRendering = true
+        }
         renderError = null
         val pageSize = document.pageSizes.getOrNull(pageIndex)
         if (pageSize == null) {
@@ -6287,12 +6619,13 @@ private fun DesktopVerticalPdfPage(
             isRendering = false
             return@LaunchedEffect
         }
-        delay(45)
+        delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
+        isRendering = true
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
         val result = withContext(Dispatchers.IO) {
             runCatching { DesktopPdfium.renderPage(document, pageIndex, safeScale) }
         }
-        renderedPage = result.getOrNull()
+        result.getOrNull()?.let { renderedPage = it }
         renderError = result.exceptionOrNull()?.message
             ?: if (renderedPage == null) "Failed to render page." else null
         isRendering = false
@@ -6320,7 +6653,7 @@ private fun DesktopVerticalPdfPage(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         val pageSize = document.pageSizes.getOrNull(pageIndex)
-        val placeholderScale = pageSize?.let { zoomSpec.safeRenderScale(it.width, it.height, scale) } ?: scale
+        val placeholderScale = zoomSpec.clamp(scale)
         val placeholderWidthDp = with(density) { ((pageSize?.width ?: 612f) * placeholderScale).toDp() }
         val placeholderHeightDp = with(density) { ((pageSize?.height ?: 792f) * placeholderScale).toDp() }
         val renderedPageWidth = renderedPage?.width ?: 0
@@ -6338,6 +6671,9 @@ private fun DesktopVerticalPdfPage(
             modifier = Modifier
                 .size(placeholderWidthDp, placeholderHeightDp)
                 .background(Color.White, RoundedCornerShape(2.dp))
+                .onGloballyPositioned { coordinates ->
+                    onPagePositioned(pageIndex, coordinates.positionInRoot())
+                }
                 .onSizeChanged { pageCanvasSize = it }
                 .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
                     if (isRichTextMode) return@pointerInput
@@ -6684,8 +7020,6 @@ private fun DesktopVerticalPdfPage(
                 !shouldRender -> {
                     Text("Page ${pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                isRendering -> CircularProgressIndicator()
-                renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
                 renderedPage != null -> {
                     val pageRender = renderedPage!!
                     val pageAnnotations = remember(annotations, pageIndex, pageCanvasSize) {
@@ -6886,6 +7220,8 @@ private fun DesktopVerticalPdfPage(
                         onClear = ::clearSelection
                     )
                 }
+                isRendering -> CircularProgressIndicator()
+                renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -7963,6 +8299,8 @@ private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
 }
 
 private const val DesktopPdfSelectionPreviewThrottleMillis = 32L
+private const val DesktopPdfZoomGestureFrameMillis = 16L
+private const val DesktopPdfZoomRenderDebounceMillis = 300L
 private val DesktopPdfSelectionInlineWhitespaceRegex = Regex("[ \\t\\x0B\\f\\r]+")
 private val DesktopPdfSelectionBlankLinesRegex = Regex("\\n{3,}")
 private const val PdfSelectionMenuWidthPx = 240f

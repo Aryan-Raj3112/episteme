@@ -51,15 +51,10 @@ const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
 private const val SHARED_PDF_ZWSP = "\u200B"
 private const val SHARED_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
 
-const val SHARED_PDF_RICH_TEXT_LOG_TAG: String = "PdfRichTextTrace"
-
 object SharedPdfRichTextLog {
     var enabled: Boolean = true
 
     fun d(message: String) {
-        if (enabled) {
-            println("$SHARED_PDF_RICH_TEXT_LOG_TAG $message")
-        }
     }
 }
 
