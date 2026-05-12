@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,11 +39,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -69,6 +72,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -165,6 +169,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.PdfDisplayMode
+import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 import com.aryan.reader.shared.ReaderAiByokSettings
@@ -316,10 +321,13 @@ import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
+import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
 import com.aryan.reader.shared.ui.pdfReaderWorkspaceModel
+import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
+import com.aryan.reader.shared.ui.sharedReaderPopupWidth
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
@@ -3698,7 +3706,6 @@ private fun PdfReaderScreen(
                 "renderJobActive=${renderJob?.isActive == true}"
         }
         pdfZoomPreview = null
-        val displayModeAtZoomStart = activeDisplayMode
         val viewportRootOffsetAtZoomStart = pdfZoomViewportRootOffset
         val pageRootOffsetAtZoomStart = paginatedPageRootOffset
         val targetHorizontalScroll = anchor?.let {
@@ -3707,7 +3714,7 @@ private fun PdfReaderScreen(
         val targetVerticalScroll = anchor?.let {
             desktopPdfAnchoredScrollTarget(pageVerticalScrollState.value, it.y, oldZoom, newZoom)
         }
-        val targetVerticalItem = if (displayModeAtZoomStart == PdfDisplayMode.VERTICAL_SCROLL && anchor != null) {
+        val targetVerticalItem = if (activeDisplayMode == PdfDisplayMode.VERTICAL_SCROLL && anchor != null) {
             verticalZoomAnchorItem(anchor)
                 ?.let { item ->
                     val fallbackOffset = desktopPdfAnchoredLazyItemScrollOffset(
@@ -3726,7 +3733,7 @@ private fun PdfReaderScreen(
         if (anchor != null) {
             val nextAnchorJob = pdfScope.launch {
                 withFrameNanos { }
-                when (displayModeAtZoomStart) {
+                when (activeDisplayMode) {
                     PdfDisplayMode.PAGINATION -> {
                         suspend fun correctPageAnchor() {
                             val pageDelta = desktopPdfAnchoredPageScrollDelta(
@@ -3765,7 +3772,8 @@ private fun PdfReaderScreen(
                     PdfDisplayMode.VERTICAL_SCROLL -> {
                         suspend fun correctVerticalAnchor() {
                             val oldPageRootOffset = targetVerticalItem?.third
-                            val currentPageRootOffset = targetVerticalItem?.first?.let { verticalPageRootOffsets[it] }
+                            val currentPageRootOffset =
+                                targetVerticalItem?.first?.let { verticalPageRootOffsets[it] }
                             val pageDelta =
                                 if (oldPageRootOffset != null && currentPageRootOffset != null) {
                                     desktopPdfAnchoredPageScrollDelta(
@@ -4945,6 +4953,11 @@ private fun PdfReaderScreen(
     fun PdfNavigationSidebar() {
         val tabs = listOf("TOC", "Annotations", "Bookmarks", "Pages")
         var selectedTabIndex by remember(document.path) { mutableStateOf(0) }
+        val navigationScope = rememberCoroutineScope()
+        val pdfTocParentIndices = remember(document.toc) { desktopPdfTocParentIndices(document.toc) }
+        var expandedPdfTocEntryIndices by remember(document.path, document.toc) {
+            mutableStateOf(pdfTocParentIndices)
+        }
 
         Surface(
             modifier = Modifier
@@ -4979,26 +4992,82 @@ private fun PdfReaderScreen(
                         if (document.toc.isEmpty()) {
                             DesktopPdfNavigationEmpty("No table of contents")
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize().padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                itemsIndexed(document.toc, key = { index, entry -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }) { _, entry ->
-                                    Surface(
-                                        color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
+                            val tocListState = rememberLazyListState()
+                            val visibleTocItems by remember(document.toc) {
+                                derivedStateOf { desktopVisiblePdfTocEntries(document.toc, expandedPdfTocEntryIndices) }
+                            }
+                            val currentOriginalIndex = remember(document.toc, pageIndex) {
+                                document.toc.indexOfLast { it.pageIndex <= pageIndex }
+                                    .takeIf { it >= 0 }
+                                    ?: document.toc.indexOfFirst { it.pageIndex == pageIndex }.takeIf { it >= 0 }
+                            }
+                            fun locateCurrentTocEntry() {
+                                val originalIndex = currentOriginalIndex ?: return
+                                navigationScope.launch {
+                                    expandedPdfTocEntryIndices = expandedPdfTocEntryIndices +
+                                        desktopPdfTocAncestorIndices(document.toc, originalIndex)
+                                    repeat(4) {
+                                        val visibleIndex = visibleTocItems.indexOfFirst { it.first == originalIndex }
+                                        if (visibleIndex >= 0) {
+                                            tocListState.animateScrollToItem(visibleIndex)
+                                            return@launch
+                                        }
+                                        delay(30)
+                                    }
+                                }
+                            }
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    TextButton(onClick = { expandedPdfTocEntryIndices = pdfTocParentIndices }) {
+                                        Text("Expand all")
+                                    }
+                                    TextButton(onClick = { expandedPdfTocEntryIndices = emptySet() }) {
+                                        Text("Collapse all")
+                                    }
+                                    TextButton(onClick = ::locateCurrentTocEntry, enabled = currentOriginalIndex != null) {
+                                        Text("Locate")
+                                    }
+                                }
+                                HorizontalDivider()
+                                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                    LazyColumn(
+                                        state = tocListState,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .sharedAcceleratedLazyWheelScroll(tocListState)
+                                            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .padding(start = (entry.nestLevel * 12).dp)
-                                                .padding(horizontal = 8.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                            Text("p. ${entry.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        items(
+                                            visibleTocItems,
+                                            key = { (index, entry) -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }
+                                        ) { (originalIndex, entry) ->
+                                            val nextItem = document.toc.getOrNull(originalIndex + 1)
+                                            val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                            val isExpanded = originalIndex in expandedPdfTocEntryIndices
+                                            DesktopPdfTocTreeItem(
+                                                entry = entry,
+                                                selected = originalIndex == currentOriginalIndex,
+                                                hasChildren = hasChildren,
+                                                isExpanded = isExpanded,
+                                                onToggleExpand = {
+                                                    expandedPdfTocEntryIndices = if (isExpanded) {
+                                                        expandedPdfTocEntryIndices - originalIndex
+                                                    } else {
+                                                        expandedPdfTocEntryIndices + originalIndex
+                                                    }
+                                                },
+                                                onClick = { goToPage(entry.pageIndex, recordJump = true) }
+                                            )
                                         }
                                     }
+                                    SharedReaderVerticalScrollbar(
+                                        listState = tocListState,
+                                        modifier = Modifier.align(Alignment.CenterEnd)
+                                    )
                                 }
                             }
                         }
@@ -5007,34 +5076,45 @@ private fun PdfReaderScreen(
                         if (sortedAnnotations.isEmpty() && sortedEmbeddedAnnotations.isEmpty()) {
                             DesktopPdfNavigationEmpty("No annotations yet")
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize().padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
-                                    Surface(
-                                        color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
-                                    ) {
-                                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            val annotationsListState = rememberLazyListState()
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                LazyColumn(
+                                    state = annotationsListState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .sharedAcceleratedLazyWheelScroll(annotationsListState)
+                                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
+                                        Surface(
+                                            color = if (annotation.id == selectedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.fillMaxWidth().clickable { selectAnnotation(annotation) }
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(annotation.desktopLabel(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                    items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
+                                        Surface(
+                                            color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                            }
                                         }
                                     }
                                 }
-                                items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
-                                    Surface(
-                                        color = if (annotation.id == selectedEmbeddedAnnotationId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.fillMaxWidth().clickable { selectEmbeddedAnnotation(annotation) }
-                                    ) {
-                                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            Text(annotation.author.ifBlank { "PDF comment" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("Page ${annotation.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
-                                }
+                                SharedReaderVerticalScrollbar(
+                                    listState = annotationsListState,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                )
                             }
                         }
                     }
@@ -5042,49 +5122,89 @@ private fun PdfReaderScreen(
                         if (bookmarks.isEmpty()) {
                             DesktopPdfNavigationEmpty("No bookmarks yet")
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize().padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
-                                    Surface(
-                                        color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
-                                    ) {
-                                        Text(
-                                            bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
-                                            modifier = Modifier.padding(8.dp)
-                                        )
+                            val bookmarksListState = rememberLazyListState()
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                LazyColumn(
+                                    state = bookmarksListState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .sharedAcceleratedLazyWheelScroll(bookmarksListState)
+                                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
+                                        Surface(
+                                            color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
+                                        ) {
+                                            Text(
+                                                bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                                                modifier = Modifier.padding(8.dp)
+                                            )
+                                        }
                                     }
                                 }
+                                SharedReaderVerticalScrollbar(
+                                    listState = bookmarksListState,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                )
                             }
                         }
                     }
                     3 -> {
                         val pageRows = remember(document.pageCount) { (0 until document.pageCount).chunked(3) }
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize().padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(pageRows, key = { row -> row.firstOrNull() ?: 0 }) { row ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    row.forEach { page ->
-                                        DesktopPdfThumbnailTile(
-                                            document = document,
-                                            pageIndex = page,
-                                            selected = page == pageIndex,
-                                            onClick = { goToPage(page, recordJump = true) },
-                                            modifier = Modifier.weight(1f)
-                                        )
+                        val pagesListState = rememberLazyListState()
+                        val currentRowIndex = pageIndex / 3
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        navigationScope.launch {
+                                            pagesListState.animateScrollToItem(currentRowIndex.coerceIn(0, pageRows.lastIndex.coerceAtLeast(0)))
+                                        }
                                     }
-                                    repeat(3 - row.size) {
-                                        Spacer(Modifier.weight(1f))
+                                ) {
+                                    Text("Locate")
+                                }
+                            }
+                            HorizontalDivider()
+                            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                LazyColumn(
+                                    state = pagesListState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .sharedAcceleratedLazyWheelScroll(pagesListState)
+                                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(pageRows, key = { row -> row.firstOrNull() ?: 0 }) { row ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            row.forEach { page ->
+                                                DesktopPdfThumbnailTile(
+                                                    document = document,
+                                                    pageIndex = page,
+                                                    selected = page == pageIndex,
+                                                    onClick = { goToPage(page, recordJump = true) },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                            repeat(3 - row.size) {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                        }
                                     }
                                 }
+                                SharedReaderVerticalScrollbar(
+                                    listState = pagesListState,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                )
                             }
                         }
                     }
@@ -5164,8 +5284,9 @@ private fun PdfReaderScreen(
             .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
-        leftSidebar = { PdfNavigationSidebar() },
+        leftSidebar = { _ -> PdfNavigationSidebar() },
         rightInspector = {
+            val pdfInspectorListState = rememberLazyListState()
             Surface(
                 modifier = Modifier
                     .width(340.dp)
@@ -5173,10 +5294,15 @@ private fun PdfReaderScreen(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp)
             ) {
-                LazyColumn(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = pdfInspectorListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .sharedAcceleratedLazyWheelScroll(pdfInspectorListState, multiplier = 2.8f)
+                            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                     item {
                         Text("Tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
@@ -5502,6 +5628,11 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
+                    }
+                    SharedReaderVerticalScrollbar(
+                        listState = pdfInspectorListState,
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
                 }
             }
         },
@@ -6257,7 +6388,7 @@ private fun DesktopReaderBottomSheet(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .zIndex(40f)
@@ -6272,12 +6403,13 @@ private fun DesktopReaderBottomSheet(
                     onClick = onDismiss
                 )
         )
+        val sheetHorizontalPadding = 24.dp
+        val sheetAvailableWidth = (maxWidth - sheetHorizontalPadding - sheetHorizontalPadding).coerceAtLeast(0.dp)
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-                .fillMaxWidth(0.78f)
-                .widthIn(max = 560.dp)
+                .padding(horizontal = sheetHorizontalPadding, vertical = 16.dp)
+                .width(sharedReaderPopupWidth(sheetAvailableWidth))
                 .heightIn(max = 560.dp),
             shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -6791,6 +6923,107 @@ private fun DesktopPdfJumpHistoryControls(
                     )
                 }
             }
+        }
+    }
+}
+
+private fun desktopPdfTocParentIndices(toc: List<PdfTocEntry>): Set<Int> {
+    return toc.indices.filter { index ->
+        val next = toc.getOrNull(index + 1)
+        next != null && next.nestLevel > toc[index].nestLevel
+    }.toSet()
+}
+
+private fun desktopPdfTocAncestorIndices(
+    toc: List<PdfTocEntry>,
+    originalIndex: Int
+): Set<Int> {
+    val targetDepth = toc.getOrNull(originalIndex)?.nestLevel ?: return emptySet()
+    val ancestors = mutableSetOf<Int>()
+    var currentDepth = targetDepth
+    for (index in originalIndex downTo 0) {
+        val entry = toc[index]
+        if (entry.nestLevel < currentDepth) {
+            ancestors += index
+            currentDepth = entry.nestLevel
+        }
+        if (currentDepth == 0) break
+    }
+    return ancestors
+}
+
+private fun desktopVisiblePdfTocEntries(
+    toc: List<PdfTocEntry>,
+    expandedIndices: Set<Int>
+): List<Pair<Int, PdfTocEntry>> {
+    val result = mutableListOf<Pair<Int, PdfTocEntry>>()
+    val visibilityStack = BooleanArray(50) { false }
+    visibilityStack[0] = true
+
+    toc.forEachIndexed { index, entry ->
+        val depth = entry.nestLevel.coerceIn(0, visibilityStack.lastIndex)
+        if (visibilityStack[depth]) {
+            result += index to entry
+            if (depth + 1 < visibilityStack.size) {
+                visibilityStack[depth + 1] = index in expandedIndices
+            }
+        } else if (depth + 1 < visibilityStack.size) {
+            visibilityStack[depth + 1] = false
+        }
+    }
+    return result
+}
+
+@Composable
+private fun DesktopPdfTocTreeItem(
+    entry: PdfTocEntry,
+    selected: Boolean,
+    hasChildren: Boolean,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 46.dp)
+                .padding(start = (entry.nestLevel.coerceAtLeast(0) * 14).dp)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = hasChildren) { onToggleExpand() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (hasChildren) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                entry.title,
+                fontWeight = if (selected) FontWeight.Bold else if (entry.nestLevel == 0) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                "p. ${entry.pageIndex + 1}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }

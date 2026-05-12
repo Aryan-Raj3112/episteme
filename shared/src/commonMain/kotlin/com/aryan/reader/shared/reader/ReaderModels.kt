@@ -11,7 +11,15 @@ data class SharedEpubBook(
     val title: String,
     val author: String? = null,
     val chapters: List<SharedEpubChapter>,
-    val css: Map<String, String> = emptyMap()
+    val css: Map<String, String> = emptyMap(),
+    val tableOfContents: List<SharedEpubTocEntry> = emptyList()
+)
+
+data class SharedEpubTocEntry(
+    val label: String,
+    val href: String,
+    val fragmentId: String? = null,
+    val depth: Int = 0
 )
 
 data class SharedEpubChapter(

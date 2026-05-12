@@ -10,16 +10,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberDialogState
+import kotlinx.coroutines.delay
 import java.awt.KeyboardFocusManager
+import java.awt.Window
 
 @Composable
 internal actual fun SharedReaderModalLayer(
     onDismiss: () -> Unit,
+    level: SharedReaderModalLevel,
     content: @Composable () -> Unit
 ) {
     val anchor = LocalSharedReaderModalAnchorBounds.current
     val density = LocalDensity.current
-    val ownerWindow = remember { KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow }
+    val ownerWindow = remember { currentNonModalOwnerWindow() }
     val dialogSize = with(density) {
         anchor?.let {
             DpSize(
@@ -42,6 +45,10 @@ internal actual fun SharedReaderModalLayer(
         }
     }
     val state = rememberDialogState(position = dialogPosition, size = dialogSize)
+    val windowTitle = when (level) {
+        SharedReaderModalLevel.Panel -> "Reader Panel"
+        SharedReaderModalLevel.Popup -> "Reader Popup"
+    }
 
     LaunchedEffect(dialogPosition, dialogSize) {
         state.position = dialogPosition
@@ -51,12 +58,54 @@ internal actual fun SharedReaderModalLayer(
     DialogWindow(
         onCloseRequest = onDismiss,
         state = state,
-        title = "Reader",
+        title = windowTitle,
         undecorated = true,
         transparent = true,
         resizable = false,
-        alwaysOnTop = true
+        alwaysOnTop = true,
+        focusable = true
     ) {
+        val modalWindow = window
+        LaunchedEffect(modalWindow, level) {
+            modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
+            modalWindow.isAlwaysOnTop = true
+            if (level == SharedReaderModalLevel.Popup) {
+                delay(40)
+                modalWindow.toFront()
+                modalWindow.requestFocus()
+                modalWindow.requestFocusInWindow()
+            }
+        }
         content()
     }
+}
+
+private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
+
+private fun currentNonModalOwnerWindow(): Window? {
+    val activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+    if (activeWindow != null && !activeWindow.isSharedReaderModalWindow()) {
+        return activeWindow
+    }
+    return Window.getWindows()
+        .filter { window -> window.isShowing && window.isDisplayable && !window.isSharedReaderModalWindow() }
+        .maxByOrNull { window ->
+            when {
+                window.isFocused -> 3
+                window.isActive -> 2
+                window.isVisible -> 1
+                else -> 0
+            }
+        }
+}
+
+private fun Window.isSharedReaderModalWindow(): Boolean {
+    val windowTitle = when (this) {
+        is java.awt.Dialog -> title
+        is java.awt.Frame -> title
+        else -> ""
+    }
+    return name?.startsWith(SharedReaderModalWindowNamePrefix) == true ||
+        windowTitle.startsWith("Reader Panel") ||
+        windowTitle.startsWith("Reader Popup")
 }

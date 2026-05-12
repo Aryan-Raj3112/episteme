@@ -9,6 +9,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -24,11 +25,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Remove
@@ -59,11 +64,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,15 +128,18 @@ import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
+import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
+import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.appearanceSignature
 import com.aryan.reader.shared.reader.layoutSignature
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 data class ReaderContentNavigationTarget(
@@ -301,11 +311,13 @@ fun SharedReaderScreen(
                 }
             }
             .focusable(),
-        leftSidebar = {
+        leftSidebar = { _ ->
             SharedReaderSidebar(
                 session = session,
+                readerEngine = readerEngine,
                 sections = workspaceModel.leftSections,
                 onGoToChapter = { dispatch(ReaderAction.JumpToChapter(it)) },
+                onGoToLocator = { dispatch(ReaderAction.JumpToLocator(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
                 onGoToHighlight = {
                     selectedHighlightId = it.id
@@ -670,7 +682,7 @@ private fun SharedReaderBottomSheet(
     content: @Composable () -> Unit
 ) {
     SharedReaderModalLayer(onDismiss = onDismiss) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(40f)
@@ -685,12 +697,13 @@ private fun SharedReaderBottomSheet(
                         onClick = onDismiss
                     )
             )
+            val sheetHorizontalPadding = 24.dp
+            val sheetAvailableWidth = (maxWidth - sheetHorizontalPadding - sheetHorizontalPadding).coerceAtLeast(0.dp)
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-                    .fillMaxWidth(0.78f)
-                    .widthIn(max = 560.dp)
+                    .padding(horizontal = sheetHorizontalPadding, vertical = 16.dp)
+                    .width(sharedReaderPopupWidth(sheetAvailableWidth))
                     .heightIn(max = 560.dp),
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -2745,8 +2758,10 @@ private fun SharedReaderPageSlider(
 @Composable
 private fun SharedReaderSidebar(
     session: ReaderSessionState,
+    readerEngine: ReaderEngine,
     sections: List<ReaderWorkspaceLeftSection>,
     onGoToChapter: (Int) -> Unit,
+    onGoToLocator: (ReaderLocator) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
     onGoToHighlight: (UserHighlight) -> Unit
 ) {
@@ -2792,6 +2807,8 @@ private fun SharedReaderSidebar(
             when (selectedSection) {
                 ReaderWorkspaceLeftSection.CONTENTS -> SharedReaderTocTab(
                     session = session,
+                    readerEngine = readerEngine,
+                    onGoToLocator = onGoToLocator,
                     onGoToChapter = onGoToChapter
                 )
                 ReaderWorkspaceLeftSection.NOTES -> SharedReaderAnnotationsTab(
@@ -2811,31 +2828,243 @@ private fun SharedReaderSidebar(
 @Composable
 private fun SharedReaderTocTab(
     session: ReaderSessionState,
+    readerEngine: ReaderEngine,
+    onGoToLocator: (ReaderLocator) -> Unit,
     onGoToChapter: (Int) -> Unit
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(session.reader.book.chapters.indices.toList()) { index ->
-            val chapter = session.reader.book.chapters[index]
-            val selected = session.reader.currentPage?.chapterIndex == index
-            Surface(
-                color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.fillMaxWidth().clickable { onGoToChapter(index) }
-            ) {
-                Text(
-                    chapter.title,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val chapters = session.reader.book.chapters
+    val tocEntries = remember(session.reader.book.tableOfContents, chapters) {
+        session.reader.book.tableOfContents.ifEmpty {
+            chapters.map { chapter ->
+                SharedEpubTocEntry(
+                    label = chapter.title,
+                    href = chapter.baseHref ?: chapter.id,
+                    depth = 0
                 )
             }
         }
     }
+    if (tocEntries.isEmpty()) {
+        SharedReaderEmptyNavigation("No table of contents")
+        return
+    }
+
+    val allParentIndices = remember(tocEntries) {
+        tocEntries.indices.filter { index ->
+            val next = tocEntries.getOrNull(index + 1)
+            next != null && next.depth > tocEntries[index].depth
+        }.toSet()
+    }
+    var expandedEntryIndices by remember(tocEntries) { mutableStateOf(allParentIndices) }
+    val visibleItemInfo by remember(tocEntries) {
+        derivedStateOf {
+            val result = mutableListOf<Pair<Int, SharedEpubTocEntry>>()
+            val visibilityStack = BooleanArray(50) { false }
+            visibilityStack[0] = true
+
+            tocEntries.forEachIndexed { index, entry ->
+                val depth = entry.depth.coerceIn(0, visibilityStack.lastIndex)
+                if (visibilityStack[depth]) {
+                    result += index to entry
+                    if (depth + 1 < visibilityStack.size) {
+                        visibilityStack[depth + 1] = index in expandedEntryIndices
+                    }
+                } else if (depth + 1 < visibilityStack.size) {
+                    visibilityStack[depth + 1] = false
+                }
+            }
+            result
+        }
+    }
+    val currentChapterIndex = session.reader.currentPage?.chapterIndex
+    val activeOriginalIndex = remember(tocEntries, chapters, currentChapterIndex) {
+        tocEntries.indexOfFirst { entry ->
+            val targetChapter = entry.targetChapterIndex(chapters)
+            targetChapter == currentChapterIndex
+        }.takeIf { it >= 0 } ?: currentChapterIndex?.takeIf { it in tocEntries.indices }
+    }
+
+    fun expandParentsFor(originalIndex: Int) {
+        var currentDepth = tocEntries.getOrNull(originalIndex)?.depth ?: return
+        val nextExpanded = expandedEntryIndices.toMutableSet()
+        for (index in originalIndex downTo 0) {
+            val entry = tocEntries[index]
+            if (entry.depth < currentDepth) {
+                nextExpanded += index
+                currentDepth = entry.depth
+            }
+            if (currentDepth == 0) break
+        }
+        expandedEntryIndices = nextExpanded
+    }
+
+    fun locateCurrent() {
+        val originalIndex = activeOriginalIndex ?: return
+        coroutineScope.launch {
+            expandParentsFor(originalIndex)
+            repeat(4) {
+                val visibleIndex = visibleItemInfo.indexOfFirst { it.first == originalIndex }
+                if (visibleIndex >= 0) {
+                    listState.animateScrollToItem(visibleIndex)
+                    return@launch
+                }
+                delay(30)
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            TextButton(onClick = { expandedEntryIndices = allParentIndices }) {
+                Text("Expand all")
+            }
+            TextButton(onClick = { expandedEntryIndices = emptySet() }) {
+                Text("Collapse all")
+            }
+            TextButton(onClick = ::locateCurrent, enabled = activeOriginalIndex != null) {
+                Text("Locate")
+            }
+        }
+        HorizontalDivider()
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .sharedAcceleratedLazyWheelScroll(listState)
+                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                itemsIndexed(
+                    visibleItemInfo,
+                    key = { _, item -> "${item.first}_${item.second.href}_${item.second.fragmentId.orEmpty()}" }
+                ) { _, item ->
+                    val (originalIndex, entry) = item
+                    val nextItem = tocEntries.getOrNull(originalIndex + 1)
+                    val hasChildren = nextItem != null && nextItem.depth > entry.depth
+                    val isExpanded = originalIndex in expandedEntryIndices
+                    val targetChapterIndex = entry.targetChapterIndex(chapters)
+                    val selected = targetChapterIndex == currentChapterIndex
+
+                    SharedReaderTocTreeItem(
+                        title = entry.label,
+                        pageLabel = targetChapterIndex?.let { "Ch. ${it + 1}" },
+                        depth = entry.depth,
+                        isExpanded = isExpanded,
+                        hasChildren = hasChildren,
+                        isCurrent = selected,
+                        onToggleExpand = {
+                            expandedEntryIndices = if (isExpanded) {
+                                expandedEntryIndices - originalIndex
+                            } else {
+                                expandedEntryIndices + originalIndex
+                            }
+                        },
+                        onClick = {
+                            val chapterIndex = targetChapterIndex
+                            if (chapterIndex != null) {
+                                val fragment = entry.fragmentId
+                                if (fragment.isNullOrBlank()) {
+                                    onGoToChapter(chapterIndex)
+                                } else {
+                                    when (val target = readerEngine.resolveLink(session, "#$fragment", chapterIndex)) {
+                                        is ReaderLinkTarget.Internal -> onGoToLocator(target.locator)
+                                        else -> onGoToChapter(chapterIndex)
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+            SharedReaderVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderTocTreeItem(
+    title: String,
+    pageLabel: String?,
+    depth: Int,
+    isExpanded: Boolean,
+    hasChildren: Boolean,
+    isCurrent: Boolean,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 46.dp)
+                .padding(start = (depth.coerceAtLeast(0) * 14).dp)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable(enabled = hasChildren) { onToggleExpand() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (hasChildren) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                title,
+                fontWeight = if (isCurrent) FontWeight.Bold else if (depth == 0) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (pageLabel != null) {
+                Text(
+                    pageLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun SharedEpubTocEntry.targetChapterIndex(
+    chapters: List<com.aryan.reader.shared.reader.SharedEpubChapter>
+): Int? {
+    val targetPath = href.normalizedReaderTocPath()
+    return chapters.indexOfFirst { chapter ->
+        val chapterPath = chapter.baseHref.orEmpty().normalizedReaderTocPath()
+        chapterPath == targetPath ||
+            chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/') ||
+            chapter.id == href
+    }.takeIf { it >= 0 }
+}
+
+private fun String.normalizedReaderTocPath(): String {
+    return replace('\\', '/')
+        .substringBefore('#')
+        .substringBefore('?')
+        .trim('/')
 }
 
 @Composable
@@ -2846,26 +3075,37 @@ private fun SharedReaderBookmarksTab(
     if (session.bookmarks.isEmpty()) {
         SharedReaderEmptyNavigation("No bookmarks yet")
     } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(session.bookmarks, key = { it.id }) { bookmark ->
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { onGoToBookmark(bookmark) }
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .fillMaxWidth()
+        val listState = rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .sharedAcceleratedLazyWheelScroll(listState)
+                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(session.bookmarks, key = { it.id }) { bookmark ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onGoToBookmark(bookmark) }
                     ) {
-                        Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Column(
+                            modifier = Modifier
+                                .padding(8.dp)
+                                .fillMaxWidth()
+                        ) {
+                            Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
+            SharedReaderVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
         }
     }
 }
@@ -2878,52 +3118,63 @@ private fun SharedReaderAnnotationsTab(
     if (session.highlights.isEmpty()) {
         SharedReaderEmptyNavigation("No annotations yet")
     } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(session.highlights, key = { it.id }) { highlight ->
-                val locator = highlight.locator.withFallbacks(
-                    chapterIndex = highlight.chapterIndex,
-                    cfi = highlight.cfi,
-                    textQuote = highlight.text
-                )
-                val chapterTitle = session.reader.book.chapters
-                    .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
-                    ?.title
-                    ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
-                val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
-                ) {
-                    Column(
-                        modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+        val listState = rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .sharedAcceleratedLazyWheelScroll(listState)
+                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(session.highlights, key = { it.id }) { highlight ->
+                    val locator = highlight.locator.withFallbacks(
+                        chapterIndex = highlight.chapterIndex,
+                        cfi = highlight.cfi,
+                        textQuote = highlight.text
+                    )
+                    val chapterTitle = session.reader.book.chapters
+                        .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
+                        ?.title
+                        ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
+                    val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onGoToHighlight(highlight) }
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .width(12.dp)
-                                    .height(12.dp)
-                                    .background(highlight.color.color, RoundedCornerShape(2.dp))
-                            )
-                            Text(
-                                listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Column(
+                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(12.dp)
+                                        .height(12.dp)
+                                        .background(highlight.color.color, RoundedCornerShape(2.dp))
+                                )
+                                Text(
+                                    listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }
             }
+            SharedReaderVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
         }
     }
 }

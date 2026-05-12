@@ -14,7 +14,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import java.io.File
 
 private const val SharedJvmBookLoadCacheSchemaVersion = 1
-private const val SharedJvmBookLoadCacheProcessingVersion = 2
+private const val SharedJvmBookLoadCacheProcessingVersion = 3
 
 data class SharedJvmBookLoadCacheKey(
     val canonicalPath: String,
@@ -102,7 +102,8 @@ private data class CachedSharedEpubBook(
     @ProtoNumber(9) val title: String,
     @ProtoNumber(10) val author: String?,
     @ProtoNumber(11) val css: Map<String, String>,
-    @ProtoNumber(12) val chapters: List<CachedSharedEpubChapter>
+    @ProtoNumber(12) val chapters: List<CachedSharedEpubChapter>,
+    @ProtoNumber(13) val tableOfContents: List<CachedSharedEpubTocEntry> = emptyList()
 ) {
     fun toBook(): SharedEpubBook {
         return SharedEpubBook(
@@ -111,7 +112,8 @@ private data class CachedSharedEpubBook(
             title = title,
             author = author,
             css = css,
-            chapters = chapters.map { it.toChapter() }
+            chapters = chapters.map { it.toChapter() },
+            tableOfContents = tableOfContents.map { it.toEntry() }
         )
     }
 
@@ -129,7 +131,36 @@ private data class CachedSharedEpubBook(
                 title = book.title,
                 author = book.author,
                 css = book.css,
-                chapters = book.chapters.map(CachedSharedEpubChapter::from)
+                chapters = book.chapters.map(CachedSharedEpubChapter::from),
+                tableOfContents = book.tableOfContents.map(CachedSharedEpubTocEntry::from)
+            )
+        }
+    }
+}
+
+@Serializable
+private data class CachedSharedEpubTocEntry(
+    @ProtoNumber(1) val label: String,
+    @ProtoNumber(2) val href: String,
+    @ProtoNumber(3) val fragmentId: String?,
+    @ProtoNumber(4) val depth: Int
+) {
+    fun toEntry(): SharedEpubTocEntry {
+        return SharedEpubTocEntry(
+            label = label,
+            href = href,
+            fragmentId = fragmentId,
+            depth = depth
+        )
+    }
+
+    companion object {
+        fun from(entry: SharedEpubTocEntry): CachedSharedEpubTocEntry {
+            return CachedSharedEpubTocEntry(
+                label = entry.label,
+                href = entry.href,
+                fragmentId = entry.fragmentId,
+                depth = entry.depth
             )
         }
     }

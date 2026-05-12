@@ -97,6 +97,7 @@ object SharedJvmBookLoader {
             val manifest = parseEpubManifest(opf)
             val cssByPath = loadEpubCss(zip, manifest, basePath)
             val cssRules = parseCssRules(cssByPath)
+            val tableOfContents = parseEpubTableOfContents(zip, manifest, basePath)
             val spine = Regex("<itemref[^>]*idref=[\"']([^\"']+)[\"'][^>]*/?>")
                 .findAll(opf)
                 .mapNotNull { match -> manifest[match.groupValues[1]] }
@@ -131,6 +132,7 @@ object SharedJvmBookLoader {
                 title = title,
                 author = author,
                 css = cssByPath,
+                tableOfContents = tableOfContents,
                 chapters = chapters.ifEmpty {
                     listOf(
                         SharedEpubChapter(
@@ -1072,6 +1074,62 @@ object SharedJvmBookLoader {
         }.toMap()
     }
 
+    private fun parseEpubTableOfContents(
+        zip: ZipFile,
+        manifest: Map<String, String>,
+        basePath: String
+    ): List<SharedEpubTocEntry> {
+        val manifestNcxHref = manifest.values.firstOrNull { it.endsWith(".ncx", ignoreCase = true) }
+        val ncxPath = manifestNcxHref
+            ?.let { normalizeZipPath(basePath + it) }
+            ?: zip.entries().asSequence()
+                .map { it.name }
+                .firstOrNull { it.endsWith(".ncx", ignoreCase = true) }
+            ?: return emptyList()
+        val document = zip.readBytesOrNull(ncxPath)?.let(::xmlDocument) ?: return emptyList()
+        val navMap = document.allElementsByLocalTag("navmap").firstOrNull() ?: return emptyList()
+        val ncxBasePath = ncxPath.substringBeforeLast('/', missingDelimiterValue = "")
+        val entries = mutableListOf<SharedEpubTocEntry>()
+
+        fun visit(parent: Element, depth: Int) {
+            parent.childrenByLocalTag("navpoint").forEach { navPoint ->
+                val label = navPoint.childrenByLocalTag("navlabel")
+                    .firstOrNull()
+                    ?.allElementsByLocalTag("text")
+                    ?.firstOrNull()
+                    ?.text()
+                    ?.normalizeReaderWhitespace()
+                    .takeUnlessBlank()
+                    ?: "Section ${entries.size + 1}"
+                val src = navPoint.childrenByLocalTag("content")
+                    .firstOrNull()
+                    ?.xmlAttr("src")
+                    .orEmpty()
+                    .trim()
+                val href = src.substringBefore('#').substringBefore('?').percentDecodedOrSelf()
+                val fragmentId = src.substringAfter('#', missingDelimiterValue = "")
+                    .substringBefore('?')
+                    .takeUnlessBlank()
+                    ?.percentDecodedOrSelf()
+                if (href.isNotBlank()) {
+                    val absoluteHref = normalizeZipPath(
+                        if (ncxBasePath.isBlank()) href else "$ncxBasePath/$href"
+                    )
+                    entries += SharedEpubTocEntry(
+                        label = label,
+                        href = absoluteHref,
+                        fragmentId = fragmentId,
+                        depth = depth.coerceAtLeast(0)
+                    )
+                }
+                visit(navPoint, depth + 1)
+            }
+        }
+
+        visit(navMap, depth = 0)
+        return entries
+    }
+
     private fun loadEpubCss(zip: ZipFile, manifest: Map<String, String>, basePath: String): Map<String, String> {
         return manifest.values
             .filter { it.endsWith(".css", ignoreCase = true) }
@@ -1183,6 +1241,10 @@ object SharedJvmBookLoader {
             }
         }
         return parts.joinToString("/")
+    }
+
+    private fun String.percentDecodedOrSelf(): String {
+        return runCatching { URLDecoder.decode(this, Charsets.UTF_8.name()) }.getOrDefault(this)
     }
 
     private fun String.withEmbeddedResources(zip: ZipFile, chapterPath: String): String {

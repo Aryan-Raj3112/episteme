@@ -11,6 +11,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -639,15 +640,16 @@ fun SharedHsvColorPickerDialog(
     }
 
     SharedReaderModalLayer(onDismiss = onDismiss) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
+            val dialogHorizontalPadding = 24.dp
+            val dialogAvailableWidth = (maxWidth - dialogHorizontalPadding - dialogHorizontalPadding).coerceAtLeast(0.dp)
             Surface(
                 modifier = Modifier
-                    .padding(24.dp)
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 620.dp)
+                    .padding(dialogHorizontalPadding)
+                    .width(sharedReaderPopupWidth(dialogAvailableWidth))
                     .heightIn(max = 600.dp),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,

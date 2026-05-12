@@ -7,6 +7,7 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 internal actual fun SharedReaderModalLayer(
     onDismiss: () -> Unit,
+    level: SharedReaderModalLevel,
     content: @Composable () -> Unit
 ) {
     Dialog(

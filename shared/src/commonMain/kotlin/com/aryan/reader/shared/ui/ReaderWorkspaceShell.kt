@@ -48,7 +48,7 @@ fun ReaderWorkspaceShell(
     progressLabel: String,
     modifier: Modifier = Modifier,
     onReturnToLibrary: (() -> Unit)? = null,
-    leftSidebar: @Composable () -> Unit,
+    leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
     content: @Composable BoxScope.() -> Unit
@@ -127,7 +127,8 @@ fun ReaderWorkspaceShell(
                             onDismiss = {
                                 leftPanelOpen = false
                                 rightPanelOpen = false
-                            }
+                            },
+                            level = SharedReaderModalLevel.Panel
                         ) {
                             Box(Modifier.fillMaxSize()) {
                                 if (leftPanelOpen && model.leftSections.isNotEmpty()) {
@@ -138,7 +139,7 @@ fun ReaderWorkspaceShell(
                                             .align(Alignment.CenterStart)
                                             .width(if (wide) 340.dp else 320.dp)
                                     ) {
-                                        leftSidebar()
+                                        leftSidebar { leftPanelOpen = false }
                                     }
                                 }
                                 if (rightPanelOpen && model.inspectorSections.isNotEmpty()) {
