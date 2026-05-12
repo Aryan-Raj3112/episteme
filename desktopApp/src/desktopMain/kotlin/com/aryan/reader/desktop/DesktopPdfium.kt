@@ -1,5 +1,8 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.FileType
@@ -30,10 +33,17 @@ data class DesktopPdfDocument(
     val pageSizes: List<DesktopPdfPageSize>,
     val formatLabel: String = "PDF",
     val toc: List<PdfTocEntry> = emptyList(),
-    val embeddedAnnotations: List<SharedPdfEmbeddedAnnotation> = emptyList()
+    private val initialEmbeddedAnnotations: List<SharedPdfEmbeddedAnnotation> = emptyList()
 ) {
+    var embeddedAnnotations: List<SharedPdfEmbeddedAnnotation> by mutableStateOf(initialEmbeddedAnnotations)
+        private set
+
     private val textPageCache = LinkedHashMap<Int, DesktopPdfTextPageData>()
     private val searchIndex = SharedPdfSearchIndex(pageCount)
+
+    fun replaceEmbeddedAnnotations(annotations: List<SharedPdfEmbeddedAnnotation>) {
+        embeddedAnnotations = annotations
+    }
 
     fun textPageData(pageIndex: Int): DesktopPdfTextPageData {
         if (pageIndex !in 0 until pageCount) return DesktopPdfTextPageData()
@@ -205,7 +215,7 @@ object DesktopPdfium {
     }
 
     @Synchronized
-    fun load(file: File, password: String? = null): DesktopPdfDocument {
+    fun load(file: File, password: String? = null, loadEmbeddedAnnotations: Boolean = true): DesktopPdfDocument {
         initLibrary()
         val startedAt = System.currentTimeMillis()
         val loadedDocument = loadDocument(file, password)
@@ -217,12 +227,13 @@ object DesktopPdfium {
             val pageCount = api.FPDF_GetPageCount(document)
             logPdfiumOpen("metadata_loaded pageCount=$pageCount elapsedMs=${System.currentTimeMillis() - startedAt}")
             val pageSizes = (0 until pageCount).map { pageIndex ->
-                loadPage(document, pageIndex).usePointer { page ->
-                    DesktopPdfPageSize(
-                        width = api.FPDF_GetPageWidthF(page),
-                        height = api.FPDF_GetPageHeightF(page)
-                    )
-                }
+                pageSizeByIndex(document, pageIndex)
+                    ?: loadPage(document, pageIndex).usePointer { page ->
+                        DesktopPdfPageSize(
+                            width = api.FPDF_GetPageWidthF(page),
+                            height = api.FPDF_GetPageHeightF(page)
+                        )
+                    }
             }
             logPdfiumOpen("page_sizes_loaded pages=$pageCount elapsedMs=${System.currentTimeMillis() - startedAt}")
 
@@ -230,11 +241,17 @@ object DesktopPdfium {
             logPdfiumOpen("text_index_deferred pages=$pageCount elapsedMs=${System.currentTimeMillis() - startedAt}")
             val toc = extractTableOfContents(document, pageCount)
             logPdfiumOpen("toc_extracted entries=${toc.size} elapsedMs=${System.currentTimeMillis() - startedAt}")
-            val embeddedAnnotations = extractEmbeddedAnnotations(document, pageSizes)
-            logPdfiumOpen(
-                "embedded_annotations_extracted count=${embeddedAnnotations.size} " +
-                    "elapsedMs=${System.currentTimeMillis() - startedAt}"
-            )
+            val embeddedAnnotations = if (loadEmbeddedAnnotations) {
+                extractEmbeddedAnnotations(document, pageSizes).also { annotations ->
+                    logPdfiumOpen(
+                        "embedded_annotations_extracted count=${annotations.size} " +
+                            "elapsedMs=${System.currentTimeMillis() - startedAt}"
+                    )
+                }
+            } else {
+                logPdfiumOpen("embedded_annotations_deferred elapsedMs=${System.currentTimeMillis() - startedAt}")
+                emptyList()
+            }
 
             val result = DesktopPdfDocument(
                 path = file.absolutePath,
@@ -242,7 +259,7 @@ object DesktopPdfium {
                 pageCount = pageCount,
                 pageSizes = pageSizes,
                 toc = toc,
-                embeddedAnnotations = embeddedAnnotations
+                initialEmbeddedAnnotations = embeddedAnnotations
             )
             logPdfiumOpen("open_complete elapsedMs=${System.currentTimeMillis() - startedAt}")
             return result
@@ -294,6 +311,25 @@ object DesktopPdfium {
             pageSizes = comic.pageSizes,
             formatLabel = "OPDS"
         )
+    }
+
+    fun loadEmbeddedAnnotations(document: DesktopPdfDocument): List<SharedPdfEmbeddedAnnotation> {
+        if (synchronized(this) { openComicDocuments.containsKey(document.path) }) return emptyList()
+        val startedAt = System.currentTimeMillis()
+        val annotations = mutableListOf<SharedPdfEmbeddedAnnotation>()
+        for ((pageIndex, pageSize) in document.pageSizes.withIndex()) {
+            val pageAnnotations = synchronized(this) {
+                if (openComicDocuments.containsKey(document.path)) return annotations
+                val nativeDocument = openDocuments[document.path]?.pointer ?: return annotations
+                extractEmbeddedAnnotationsForPage(nativeDocument, pageIndex, pageSize)
+            }
+            annotations += pageAnnotations
+        }
+        logPdfiumOpen(
+            "embedded_annotations_loaded_async count=${annotations.size} " +
+                "elapsedMs=${System.currentTimeMillis() - startedAt}"
+        )
+        return annotations
     }
 
     @Synchronized
@@ -900,16 +936,24 @@ object DesktopPdfium {
         pageSizes: List<DesktopPdfPageSize>
     ): List<SharedPdfEmbeddedAnnotation> {
         return pageSizes.flatMapIndexed { pageIndex, pageSize ->
-            runCatching {
-                loadPage(document, pageIndex).usePointer { page ->
-                    val count = api.FPDFPage_GetAnnotCount(page).coerceAtLeast(0)
-                    val rawAnnotations = (0 until count).mapNotNull { index ->
-                        extractEmbeddedAnnotation(page, pageIndex, index, pageSize)
-                    }
-                    SharedPdfEmbeddedAnnotationThreads.group(rawAnnotations)
-                }
-            }.getOrDefault(emptyList())
+            extractEmbeddedAnnotationsForPage(document, pageIndex, pageSize)
         }
+    }
+
+    private fun extractEmbeddedAnnotationsForPage(
+        document: Pointer,
+        pageIndex: Int,
+        pageSize: DesktopPdfPageSize
+    ): List<SharedPdfEmbeddedAnnotation> {
+        return runCatching {
+            loadPage(document, pageIndex).usePointer { page ->
+                val count = api.FPDFPage_GetAnnotCount(page).coerceAtLeast(0)
+                val rawAnnotations = (0 until count).mapNotNull { index ->
+                    extractEmbeddedAnnotation(page, pageIndex, index, pageSize)
+                }
+                SharedPdfEmbeddedAnnotationThreads.group(rawAnnotations)
+            }
+        }.getOrDefault(emptyList())
     }
 
     private fun extractEmbeddedAnnotation(
@@ -994,6 +1038,19 @@ object DesktopPdfium {
         val page = api.FPDF_LoadPage(document, pageIndex)
             ?: error("Pdfium could not open page ${pageIndex + 1}.")
         return PointerResource(page, api::FPDF_ClosePage)
+    }
+
+    private fun pageSizeByIndex(document: Pointer, pageIndex: Int): DesktopPdfPageSize? {
+        val width = DoubleArray(1)
+        val height = DoubleArray(1)
+        val loaded = runCatching {
+            api.FPDF_GetPageSizeByIndex(document, pageIndex, width, height)
+        }.getOrDefault(0)
+        return if (loaded != 0 && width[0] > 0.0 && height[0] > 0.0) {
+            DesktopPdfPageSize(width[0].toFloat(), height[0].toFloat())
+        } else {
+            null
+        }
     }
 
     private fun initLibrary() {
@@ -1203,6 +1260,7 @@ object DesktopPdfium {
         fun FPDF_GetLastError(): Int
         fun FPDF_GetMetaText(document: Pointer, tag: String, buffer: Pointer?, buflen: Int): Int
         fun FPDF_GetPageCount(document: Pointer): Int
+        fun FPDF_GetPageSizeByIndex(document: Pointer, pageIndex: Int, width: DoubleArray, height: DoubleArray): Int
         fun FPDFBookmark_GetFirstChild(document: Pointer, bookmark: Pointer?): Pointer?
         fun FPDFBookmark_GetNextSibling(document: Pointer, bookmark: Pointer): Pointer?
         fun FPDFBookmark_GetTitle(bookmark: Pointer, buffer: Pointer?, buflen: Int): Int

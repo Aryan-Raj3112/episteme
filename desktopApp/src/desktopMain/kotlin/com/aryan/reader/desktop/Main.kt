@@ -369,6 +369,37 @@ import javax.swing.JFileChooser
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+private data class DesktopReaderOpening(
+    val requestId: Long,
+    val bookId: String,
+    val title: String,
+    val formatLabel: String,
+    val returnTab: SharedAppTab
+)
+
+private sealed interface DesktopReaderOpenResult {
+    val opening: DesktopReaderOpening
+    val book: BookItem
+
+    data class Pdf(
+        override val opening: DesktopReaderOpening,
+        override val book: BookItem,
+        val document: DesktopPdfDocument
+    ) : DesktopReaderOpenResult
+
+    data class Text(
+        override val opening: DesktopReaderOpening,
+        override val book: BookItem,
+        val session: ReaderSessionState
+    ) : DesktopReaderOpenResult
+
+    data class Failure(
+        override val opening: DesktopReaderOpening,
+        override val book: BookItem,
+        val message: String
+    ) : DesktopReaderOpenResult
+}
+
 fun main() {
     configureComposeSwingInterop()
     application {
@@ -553,6 +584,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         )
     }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
+    var openingReader by remember { mutableStateOf<DesktopReaderOpening?>(null) }
+    var nextReaderOpenRequestId by remember { mutableStateOf(0L) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
@@ -1111,6 +1144,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 refs = result.shelfRefs
             )
             if (activeReaderBookId != null && completedState.rawLibraryBooks.none { it.id == activeReaderBookId }) {
+                openingReader = null
                 activePdfDocument?.close()
                 activePdfDocument = null
                 activeReaderBookId = null
@@ -1262,10 +1296,61 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
+    fun schedulePdfEmbeddedAnnotationsLoad(document: DesktopPdfDocument) {
+        scope.launch {
+            delay(650L)
+            if (activePdfDocument?.path != document.path) return@launch
+            val annotations = withContext(Dispatchers.IO) {
+                DesktopPdfium.loadEmbeddedAnnotations(document)
+            }
+            if (activePdfDocument?.path == document.path) {
+                document.replaceEmbeddedAnnotations(annotations)
+            }
+        }
+    }
+
+    fun applyReaderOpenResult(result: DesktopReaderOpenResult) {
+        if (openingReader?.requestId != result.opening.requestId) {
+            if (result is DesktopReaderOpenResult.Pdf && activePdfDocument?.path != result.document.path) {
+                result.document.close()
+            }
+            return
+        }
+
+        openingReader = null
+        when (result) {
+            is DesktopReaderOpenResult.Failure -> {
+                selectedTab = result.opening.returnTab
+                updateState(state.withBanner(result.message, isError = true))
+            }
+
+            is DesktopReaderOpenResult.Pdf -> {
+                activePdfDocument?.takeIf { it.path != result.document.path }?.close()
+                activePdfDocument = result.document
+                activeReaderBookId = result.book.id
+                recordBookOpened(result.book.id)
+                selectedTab = SharedAppTab.READER
+                if (result.book.type == FileType.PDF) {
+                    schedulePdfEmbeddedAnnotationsLoad(result.document)
+                }
+            }
+
+            is DesktopReaderOpenResult.Text -> {
+                activePdfDocument?.close()
+                activePdfDocument = null
+                readerSession = result.session
+                activeReaderBookId = result.book.id
+                recordBookOpened(result.book.id)
+                selectedTab = SharedAppTab.READER
+            }
+        }
+    }
+
     fun openReader(book: BookItem) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
+        if (openingReader?.bookId == book.id) return
+
         if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
-            scheduleOpenedBookMetadataExtraction(book)
             val path = book.path
             if (path.isNullOrBlank()) {
                 updateState(
@@ -1277,76 +1362,29 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 return
             }
             val streamReference = SharedOpdsStreamUri.parse(path)
-            if (streamReference != null) {
-                if (!featurePolicy.opdsCatalogs) {
-                    updateState(state.withBanner("OPDS streams are unavailable in this desktop build.", isError = true))
-                    return
-                }
-                if (activePdfDocument?.path == path) {
-                    activeReaderBookId = book.id
-                    recordBookOpened(book.id)
-                    selectedTab = SharedAppTab.READER
-                    return
-                }
-                activePdfDocument?.close()
-                activePdfDocument = null
-                val document = runCatching {
-                    DesktopPdfium.loadOpdsStream(
-                        path = path,
-                        title = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
-                        reference = streamReference,
-                        catalog = opdsRepository.catalogById(streamReference.catalogId)
-                    )
-                }.getOrElse { error ->
-                    updateState(
-                        state.withBanner(
-                            "Could not open OPDS stream: ${error.message ?: "unknown error"}",
-                            isError = true
-                        )
-                    )
-                    return
-                }
-                activePdfDocument = document
-                activeReaderBookId = book.id
-                recordBookOpened(book.id)
-                selectedTab = SharedAppTab.READER
+            if (streamReference != null && !featurePolicy.opdsCatalogs) {
+                updateState(state.withBanner("OPDS streams are unavailable in this desktop build.", isError = true))
                 return
             }
-            val readerFile = File(path)
-            val readerPath = readerFile.absolutePath
+            val readerPath = streamReference?.let { path } ?: File(path).absolutePath
             if (activePdfDocument?.path == readerPath) {
+                openingReader = null
                 activeReaderBookId = book.id
                 recordBookOpened(book.id)
                 selectedTab = SharedAppTab.READER
                 return
             }
-            activePdfDocument?.close()
-            activePdfDocument = null
-            val document = runCatching {
-                if (book.type == FileType.PDF) {
-                    DesktopPdfium.load(readerFile)
-                } else {
-                    DesktopPdfium.loadComic(readerFile, book.type)
-                }
-            }.getOrElse { error ->
-                updateState(
-                    state.withBanner(
-                        "Could not open ${SharedFileCapabilities.displayNameFor(book.type)}: " +
-                            (error.message ?: "unknown error"),
-                        isError = true
-                    )
-                )
+        } else if (
+            desktopReaderSurface == ReaderFeatureSurface.EPUB_READER ||
+            desktopReaderSurface == ReaderFeatureSurface.TEXT_READER
+        ) {
+            if (activePdfDocument == null && activeReaderBookId == book.id) {
+                openingReader = null
+                recordBookOpened(book.id)
+                selectedTab = SharedAppTab.READER
                 return
             }
-
-            activePdfDocument = document
-            activeReaderBookId = book.id
-            recordBookOpened(book.id)
-            selectedTab = SharedAppTab.READER
-            return
-        }
-
-        if (desktopReaderSurface != ReaderFeatureSurface.EPUB_READER && desktopReaderSurface != ReaderFeatureSurface.TEXT_READER) {
+        } else {
             updateState(
                 state.withBanner(
                     "${SharedFileCapabilities.displayNameFor(book.type)} reader support comes later. " +
@@ -1355,44 +1393,88 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             )
             return
         }
+
         scheduleOpenedBookMetadataExtraction(book)
 
-        val loadedBook = runCatching {
-            val path = book.path
-            if (path.isNullOrBlank()) {
-                SampleReaderBooks.desktopWelcomeBook()
-            } else {
-                SharedJvmBookLoader.load(
-                    file = File(path),
-                    type = book.type,
-                    titleOverride = book.title?.takeIf { it.isNotBlank() },
-                    authorOverride = book.author?.takeIf { it.isNotBlank() }
-                )
-            }
-        }.getOrElse { error ->
-            updateState(state.withBanner("Could not open ${book.type.name}: ${error.message ?: "unknown error"}", isError = true))
-            return
-        }
-
-        activePdfDocument?.close()
-        activePdfDocument = null
-        val restoredSettings = resolvedDesktopReaderSettings(book, state.readerDefaultSettings)
-        val restoredSession = readerEngine.createSession(
-            book = loadedBook,
-            settings = restoredSettings,
-            initialPageIndex = book.lastPageIndex ?: 0,
-            bookmarks = book.readerBookmarks,
-            highlights = book.readerHighlights
+        val opening = DesktopReaderOpening(
+            requestId = ++nextReaderOpenRequestId,
+            bookId = book.id,
+            title = book.cardTitleForMessage(),
+            formatLabel = SharedFileCapabilities.displayNameFor(book.type),
+            returnTab = selectedTab.takeUnless { it == SharedAppTab.READER } ?: SharedAppTab.LIBRARY
         )
-        val restoredProgress = book.progressPercentage
-        readerSession = if (book.lastPageIndex == null && restoredProgress != null) {
-            readerEngine.goToProgress(restoredSession, restoredProgress.coerceIn(0f, 100f) / 100f)
-        } else {
-            restoredSession
-        }
-        activeReaderBookId = book.id
-        recordBookOpened(book.id)
+        val readerDefaultSettings = state.readerDefaultSettings
+        openingReader = opening
         selectedTab = SharedAppTab.READER
+
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    when (desktopReaderSurface) {
+                        ReaderFeatureSurface.PDF_VIEWER -> {
+                            val path = book.path.orEmpty()
+                            val streamReference = SharedOpdsStreamUri.parse(path)
+                            val document = if (streamReference != null) {
+                                DesktopPdfium.loadOpdsStream(
+                                    path = path,
+                                    title = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
+                                    reference = streamReference,
+                                    catalog = opdsRepository.catalogById(streamReference.catalogId)
+                                )
+                            } else {
+                                val readerFile = File(path)
+                                if (book.type == FileType.PDF) {
+                                    DesktopPdfium.load(readerFile, loadEmbeddedAnnotations = false)
+                                } else {
+                                    DesktopPdfium.loadComic(readerFile, book.type)
+                                }
+                            }
+                            DesktopReaderOpenResult.Pdf(opening, book, document)
+                        }
+
+                        ReaderFeatureSurface.EPUB_READER,
+                        ReaderFeatureSurface.TEXT_READER -> {
+                            val loadedBook = book.path
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { path ->
+                                    SharedJvmBookLoader.load(
+                                        file = File(path),
+                                        type = book.type,
+                                        titleOverride = book.title?.takeIf { it.isNotBlank() },
+                                        authorOverride = book.author?.takeIf { it.isNotBlank() }
+                                    )
+                                }
+                                ?: SampleReaderBooks.desktopWelcomeBook()
+                            val restoredSettings = resolvedDesktopReaderSettings(book, readerDefaultSettings)
+                            val restoredSession = readerEngine.createSession(
+                                book = loadedBook,
+                                settings = restoredSettings,
+                                initialPageIndex = book.lastPageIndex ?: 0,
+                                bookmarks = book.readerBookmarks,
+                                highlights = book.readerHighlights
+                            )
+                            val restoredProgress = book.progressPercentage
+                            val session = if (book.lastPageIndex == null && restoredProgress != null) {
+                                readerEngine.goToProgress(restoredSession, restoredProgress.coerceIn(0f, 100f) / 100f)
+                            } else {
+                                restoredSession
+                            }
+                            DesktopReaderOpenResult.Text(opening, book, session)
+                        }
+
+                        else -> error("${SharedFileCapabilities.displayNameFor(book.type)} reader support comes later.")
+                    }
+                }.getOrElse { error ->
+                    DesktopReaderOpenResult.Failure(
+                        opening = opening,
+                        book = book,
+                        message = "Could not open ${SharedFileCapabilities.displayNameFor(book.type)}: " +
+                            (error.message ?: "unknown error")
+                    )
+                }
+            }
+            applyReaderOpenResult(result)
+        }
     }
 
     fun removeFolder(shelf: Shelf) {
@@ -1405,6 +1487,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         SharedLibraryEditor.removeFolder(state, shelfRecords, shelfRefs, shelf)?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
             if (wasReadingRemovedBook) {
+                openingReader = null
                 activePdfDocument?.close()
                 activePdfDocument = null
                 activeReaderBookId = null
@@ -1420,10 +1503,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
     fun closeReaderTab(book: BookItem) {
         val wasActive = activeReaderBookId == book.id
+        if (openingReader?.bookId == book.id) {
+            openingReader = null
+        }
         val remainingIds = state.openTabIds.filterNot { it == book.id }
         updateState(state.reduce(AppAction.BookTabClosed(book.id)))
         if (!wasActive) return
 
+        openingReader = null
         activePdfDocument?.close()
         activePdfDocument = null
         activeReaderBookId = null
@@ -1439,6 +1526,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun closeAllReaderTabs() {
+        openingReader = null
         activePdfDocument?.close()
         activePdfDocument = null
         activeReaderBookId = null
@@ -1920,8 +2008,17 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         )
 
                         SharedAppTab.READER -> {
+                            val opening = openingReader
                             val pdfDocument = activePdfDocument
-                            if (pdfDocument != null) {
+                            if (opening != null) {
+                                DesktopReaderOpeningScreen(
+                                    opening = opening,
+                                    onReturnToLibrary = {
+                                        openingReader = null
+                                        selectedTab = opening.returnTab
+                                    }
+                                )
+                            } else if (pdfDocument != null) {
                                 PdfReaderScreen(
                                     document = pdfDocument,
                                     initialPageIndex = activeReaderBookId
@@ -2382,6 +2479,39 @@ internal fun resolvedDesktopReaderSettings(
     readerDefaultSettings: ReaderSettings
 ): ReaderSettings {
     return book.readerSettings ?: readerDefaultSettings
+}
+
+@Composable
+private fun DesktopReaderOpeningScreen(
+    opening: DesktopReaderOpening,
+    onReturnToLibrary: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CircularProgressIndicator()
+            Text(
+                text = "Opening ${opening.title}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = opening.formatLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            TextButton(onClick = onReturnToLibrary) {
+                Text("Return to library")
+            }
+        }
+    }
 }
 
 @Composable

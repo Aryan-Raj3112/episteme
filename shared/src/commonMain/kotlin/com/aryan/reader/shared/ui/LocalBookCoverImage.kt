@@ -7,5 +7,5 @@ import androidx.compose.ui.Modifier
 internal expect fun LocalBookCoverImage(
     path: String,
     contentDescription: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier
 )
