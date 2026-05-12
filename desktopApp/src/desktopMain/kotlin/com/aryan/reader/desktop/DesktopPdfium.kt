@@ -1118,11 +1118,11 @@ object DesktopPdfium {
     }
 
     private fun logPdfiumOpen(message: String) {
-        println("DesktopPdfiumOpen $message")
+        logDesktopDiagnostic("DesktopPdfiumOpen") { message }
     }
 
     private fun logPdfiumLink(message: String) {
-        println("DesktopPdfiumLink $message")
+        logDesktopDiagnostic("DesktopPdfiumLink") { message }
     }
 
     private fun Float.formatLogFloat(): String {

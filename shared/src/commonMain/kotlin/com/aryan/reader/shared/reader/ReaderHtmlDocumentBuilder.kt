@@ -2850,6 +2850,6 @@ object ReaderHtmlDocumentBuilder {
     }
 
     private fun logReaderHtml(message: String) {
-        println("ReaderHtmlRender $message")
+        logSharedReaderDiagnostic("ReaderHtmlRender") { message }
     }
 }

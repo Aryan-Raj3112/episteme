@@ -3690,13 +3690,13 @@ private fun PdfReaderScreen(
     fun applyAnchoredPdfZoom(oldZoom: Float, newZoom: Float, anchor: Offset?) {
         val activePageIndex = currentPdfPageIndex
         val activeDisplayMode = currentPdfDisplayMode
-        logPdfZoomPerf(
+        logPdfZoomPerf {
             "commit_start mode=$activeDisplayMode page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
                 "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
                 "renderPage=${renderedPageIndex?.let { it + 1 } ?: "none"} " +
                 "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
                 "renderJobActive=${renderJob?.isActive == true}"
-        )
+        }
         pdfZoomPreview = null
         val displayModeAtZoomStart = activeDisplayMode
         val viewportRootOffsetAtZoomStart = pdfZoomViewportRootOffset
@@ -3811,13 +3811,13 @@ private fun PdfReaderScreen(
         val activePageIndex = currentPdfPageIndex
         val activeScale = currentPdfScale
         val activeDisplayMode = currentPdfDisplayMode
-        logPdfZoomPerf(
+        logPdfZoomPerf {
             "preview mode=$activeDisplayMode page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
                 "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
                 "hasRender=${renderedPage != null && renderedPageIndex == activePageIndex} " +
                 "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
                 "renderJobActive=${renderJob?.isActive == true} cacheKeys=${paginatedRenderCache.keys.sorted().map { it + 1 }}"
-        )
+        }
         val existingPreview = pdfZoomPreview
         val baseZoom = existingPreview
             ?.takeIf { it.displayMode == activeDisplayMode && it.baseZoom.isFinite() && it.baseZoom > 0f }
@@ -3864,11 +3864,11 @@ private fun PdfReaderScreen(
         val evictedPages = paginatedRenderCache.keys
             .filter { it !in keepRange }
         evictedPages.forEach { paginatedRenderCache.remove(it) }
-        logPdfZoomPerf(
+        logPdfZoomPerf {
             "cache_put page=${page + 1} scale=${renderScale.formatLogFloat()} " +
                 "bitmap=${render.width}x${render.height} current=${activePageIndex + 1} " +
                 "keys=${paginatedRenderCache.keys.sorted().map { it + 1 }} evicted=${evictedPages.map { it + 1 }}"
-        )
+        }
     }
 
     LaunchedEffect(document.path, pageIndex, displayMode) {
@@ -4032,15 +4032,15 @@ private fun PdfReaderScreen(
         }
         indexedSearchPageCount = restoredPageCount
         isSearchIndexing = indexedSearchPageCount < document.pageCount
-        logPdfZoomPerf(
+        logPdfZoomPerf {
             "search_index_restore indexed=$indexedSearchPageCount/${document.pageCount} active=$isSearchIndexing"
-        )
+        }
         withContext(Dispatchers.IO) {
             DesktopPdfium.indexSearchPages(
                 document = document,
                 onProgress = { indexed, _ ->
                     indexedSearchPageCount = indexed
-                    logPdfZoomPerf("search_index_progress indexed=$indexed/${document.pageCount}")
+                    logPdfZoomPerf { "search_index_progress indexed=$indexed/${document.pageCount}" }
                 },
                 shouldContinue = { isActive }
             )
@@ -4051,7 +4051,7 @@ private fun PdfReaderScreen(
         if (!isActive) return@LaunchedEffect
         indexedSearchPageCount = document.indexedSearchTextPageCount()
         isSearchIndexing = false
-        logPdfZoomPerf("search_index_done indexed=$indexedSearchPageCount/${document.pageCount}")
+        logPdfZoomPerf { "search_index_done indexed=$indexedSearchPageCount/${document.pageCount}" }
     }
 
     LaunchedEffect(document.path, searchQuery, indexedSearchPageCount) {
@@ -4678,19 +4678,19 @@ private fun PdfReaderScreen(
             renderedPageScale = null
             return@LaunchedEffect
         }
-        logPdfZoomPerf(
+        logPdfZoomPerf {
             "render_effect page=${pageIndex + 1} scale=${scale.formatLogFloat()} " +
                 "existingPage=${renderedPageIndex?.let { it + 1 } ?: "none"} " +
                 "existingScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
                 "searchIndexing=$isSearchIndexing indexed=$indexedSearchPageCount/${document.pageCount} " +
                 "cacheKeys=${paginatedRenderCache.keys.sorted().map { it + 1 }}"
-        )
+        }
         if (renderedPageIndex != pageIndex) {
             paginatedRenderCache[pageIndex]?.let { cached ->
-                logPdfZoomPerf(
+                logPdfZoomPerf {
                     "cache_hit page=${pageIndex + 1} scale=${cached.scale.formatLogFloat()} " +
                         "bitmap=${cached.render.width}x${cached.render.height}"
-                )
+                }
                 renderedPage = cached.render
                 renderedPageIndex = pageIndex
                 renderedPageScale = cached.scale
@@ -4700,7 +4700,7 @@ private fun PdfReaderScreen(
         }
         val hasPageRender = renderedPage != null && renderedPageIndex == pageIndex
         if (!hasPageRender) {
-            logPdfZoomPerf("cache_miss page=${pageIndex + 1}; showing spinner until first render")
+            logPdfZoomPerf { "cache_miss page=${pageIndex + 1}; showing spinner until first render" }
             renderedPage = null
             renderedPageIndex = null
             renderedPageScale = null
@@ -4726,18 +4726,18 @@ private fun PdfReaderScreen(
                 hasPageRender = hasPageRender,
                 isOpeningRender = isOpeningRender
             )
-            logPdfZoomPerf(
+            logPdfZoomPerf {
                 "render_plan page=${pageIndex + 1} requestedScale=${scale.formatLogFloat()} " +
                     "safeScale=${safeScale.formatLogFloat()} firstScale=${firstRenderScale.formatLogFloat()} " +
                     "hasRender=$hasPageRender opening=$isOpeningRender"
-            )
+            }
 
             suspend fun renderAt(renderScale: Float, delayMillis: Long, showSpinner: Boolean): Boolean {
-                logPdfZoomPerf(
+                logPdfZoomPerf {
                     "render_scheduled page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                         "requestedScale=${scale.formatLogFloat()} delayMs=$delayMillis showSpinner=$showSpinner " +
                         "hasPageRender=$hasPageRender"
-                )
+                }
                 delay(delayMillis)
                 if (showSpinner) {
                     isRendering = true
@@ -4753,11 +4753,11 @@ private fun PdfReaderScreen(
                 if (currentPdfPageIndex != pageIndex || currentPdfScale != scale ||
                     currentPdfDisplayMode != PdfDisplayMode.PAGINATION
                 ) {
-                    logPdfZoomPerf(
+                    logPdfZoomPerf {
                         "render_stale page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                             "elapsedMs=$elapsedMs currentPage=${currentPdfPageIndex + 1} " +
                             "currentScale=${currentPdfScale.formatLogFloat()} mode=$currentPdfDisplayMode"
-                    )
+                    }
                     return false
                 }
                 result.getOrNull()?.let { render ->
@@ -4768,11 +4768,11 @@ private fun PdfReaderScreen(
                 }
                 renderError = result.exceptionOrNull()?.message
                     ?: if (renderedPage == null || renderedPageIndex != pageIndex) "Failed to render page." else null
-                logPdfZoomPerf(
+                logPdfZoomPerf {
                     "render_end page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                         "requestedScale=${scale.formatLogFloat()} elapsedMs=$elapsedMs success=${result.isSuccess} " +
                         "error=${result.exceptionOrNull()?.message?.logPreview() ?: "none"}"
-                )
+                }
                 renderedPage?.let { render ->
                     logPdfSelection(
                         "render page=${pageIndex + 1} " +
@@ -4795,9 +4795,9 @@ private fun PdfReaderScreen(
                     cached != null &&
                     cached.scale >= DesktopPdfPaginationFastFirstRenderMaxScale - DesktopPdfRenderScaleTolerance
                 ) {
-                    logPdfZoomPerf(
+                    logPdfZoomPerf {
                         "prefetch_skip_cached page=${pageToPrefetch + 1} scale=${cached.scale.formatLogFloat()}"
-                    )
+                    }
                     return
                 }
                 val prefetchPageSize = document.pageSizes.getOrNull(pageToPrefetch) ?: return
@@ -4806,10 +4806,10 @@ private fun PdfReaderScreen(
                     prefetchPageSize.height,
                     DesktopPdfPaginationFastFirstRenderMaxScale
                 )
-                logPdfZoomPerf(
+                logPdfZoomPerf {
                     "prefetch_start page=${pageToPrefetch + 1} scale=${prefetchScale.formatLogFloat()} " +
                         "current=${pageIndex + 1}"
-                )
+                }
                 val startedAt = System.currentTimeMillis()
                 val result = withContext(Dispatchers.IO) {
                     runCatching {
@@ -4821,21 +4821,21 @@ private fun PdfReaderScreen(
                     currentPdfDisplayMode != PdfDisplayMode.PAGINATION ||
                     pdfZoomPreview != null
                 ) {
-                    logPdfZoomPerf(
+                    logPdfZoomPerf {
                         "prefetch_stale page=${pageToPrefetch + 1} elapsedMs=$elapsedMs " +
                             "currentPage=${currentPdfPageIndex + 1} currentScale=${currentPdfScale.formatLogFloat()} " +
                             "mode=$currentPdfDisplayMode preview=${pdfZoomPreview != null}"
-                    )
+                    }
                     return
                 }
                 result.getOrNull()?.let { render ->
                     cachePaginatedRender(pageToPrefetch, prefetchScale, render)
                 }
-                logPdfZoomPerf(
+                logPdfZoomPerf {
                     "prefetch_end page=${pageToPrefetch + 1} scale=${prefetchScale.formatLogFloat()} " +
                         "elapsedMs=$elapsedMs success=${result.isSuccess} " +
                         "error=${result.exceptionOrNull()?.message?.logPreview() ?: "none"}"
-                )
+                }
             }
 
             val existingScale = renderedPageScale
@@ -10310,23 +10310,27 @@ private fun logPdfSelection(message: String) {
 }
 
 private fun logPdfZoomPerf(message: String) {
-    println("$PdfZoomPerfLogTag $message")
+    logDesktopDiagnostic(PdfZoomPerfLogTag) { message }
+}
+
+private inline fun logPdfZoomPerf(message: () -> String) {
+    logDesktopDiagnostic(PdfZoomPerfLogTag, message)
 }
 
 private fun logPdfLink(message: String) {
-    println("$PdfLinkLogTag $message")
+    logDesktopDiagnostic(PdfLinkLogTag) { message }
 }
 
 private fun logEpubLink(message: String) {
-    println("$EpubLinkLogTag $message")
+    logDesktopDiagnostic(EpubLinkLogTag) { message }
 }
 
 private fun logEpubSelectionDebug(message: String) {
-    println("$EpubSelectionDebugLogTag $message")
+    logDesktopDiagnostic(EpubSelectionDebugLogTag) { message }
 }
 
 private fun logExternalLink(message: String) {
-    println("$ExternalLinkLogTag $message")
+    logDesktopDiagnostic(ExternalLinkLogTag) { message }
 }
 
 private fun DesktopPdfLinkTarget.formatLogTarget(): String {

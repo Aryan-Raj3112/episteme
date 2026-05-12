@@ -31,6 +31,17 @@ class DesktopBuildProfileTest {
     }
 
     @Test
+    fun `desktop diagnostics are disabled unless explicitly enabled`() {
+        assertFalse(desktopDiagnosticsFlag(null))
+        assertFalse(desktopDiagnosticsFlag(""))
+        assertFalse(desktopDiagnosticsFlag("false"))
+        assertFalse(desktopDiagnosticsFlag("1"))
+
+        assertTrue(desktopDiagnosticsFlag("true"))
+        assertTrue(desktopDiagnosticsFlag(" TRUE "))
+    }
+
+    @Test
     fun `bundled webview detection requires cef binaries`() {
         val dir = Files.createTempDirectory("episteme-kcef-test").toFile()
         try {

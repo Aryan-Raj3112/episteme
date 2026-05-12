@@ -36,9 +36,18 @@ abstract class CheckBundledWebViewRuntimeTask : DefaultTask() {
 
 val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard").get().lowercase()
 val isOssOfflineDesktop = desktopFlavor == "oss-offline"
+val desktopDiagnostics = providers.gradleProperty("desktopDiagnostics")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion").orElse("1.0.0")
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
 val bundledWebViewDir = layout.projectDirectory.dir("kcef-bundle")
 val desktopWindowsIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.ico")
+val desktopWindowsUpgradeUuid = if (isOssOfflineDesktop) {
+    "ca13b201-940a-420a-8a3f-16e7d83d12a8"
+} else {
+    "c04c5823-b25a-4f38-a1cf-0da7b02ac397"
+}
 
 val checkBundledWebViewRuntime by tasks.registering(CheckBundledWebViewRuntimeTask::class) {
     bundleDir.set(bundledWebViewDir)
@@ -86,11 +95,16 @@ compose.desktop {
         jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
         jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
+        jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
+
+        buildTypes.release.proguard {
+            obfuscate.set(false)
+        }
 
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = if (isOssOfflineDesktop) "Episteme OSS Offline" else "Episteme"
-            packageVersion = "1.0.0"
+            packageVersion = desktopPackageVersion.get()
             description = if (isOssOfflineDesktop) {
                 "Episteme desktop offline shell"
             } else {
@@ -100,6 +114,10 @@ compose.desktop {
             appResourcesRootDir.set(generatedDesktopResourcesDir)
             windows {
                 iconFile.set(desktopWindowsIconFile)
+                dirChooser = true
+                menuGroup = "Episteme"
+                perUserInstall = true
+                upgradeUuid = desktopWindowsUpgradeUuid
             }
         }
     }
@@ -109,6 +127,7 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
     jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
     jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
+    jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
@@ -118,10 +137,17 @@ tasks.withType<JavaExec>().configureEach {
 tasks.matching {
     it.name in setOf(
         "createDistributable",
+        "createReleaseDistributable",
         "prepareAppResources",
+        "prepareReleaseAppResources",
         "packageDistributionForCurrentOS",
+        "packageReleaseDistributionForCurrentOS",
         "packageExe",
-        "packageMsi"
+        "packageReleaseExe",
+        "packageMsi",
+        "packageReleaseMsi",
+        "runDistributable",
+        "runReleaseDistributable"
     )
 }.configureEach {
     dependsOn(prepareBundledDesktopResources)

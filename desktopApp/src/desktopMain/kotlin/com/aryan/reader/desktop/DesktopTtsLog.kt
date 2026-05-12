@@ -3,7 +3,7 @@ package com.aryan.reader.desktop
 private const val DesktopTtsLogTag = "EpistemeDesktopTts"
 
 internal fun logDesktopTts(message: String) {
-    println("$DesktopTtsLogTag $message")
+    logDesktopDiagnostic(DesktopTtsLogTag) { message }
 }
 
 internal fun Throwable.desktopTtsSummary(): String {

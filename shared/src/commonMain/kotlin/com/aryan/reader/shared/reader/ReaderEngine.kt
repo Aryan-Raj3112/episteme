@@ -970,5 +970,5 @@ private fun Char?.isWordChar(): Boolean {
 }
 
 private fun logReaderLink(message: String) {
-    println("ReaderLinkResolve $message")
+    logSharedReaderDiagnostic("ReaderLinkResolve") { message }
 }
